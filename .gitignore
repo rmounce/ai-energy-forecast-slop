@@ -1,0 +1,14 @@
+# Generated files, and private config
+*.json
+
+# Trained model
+*.pkl
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Explicitly include
+!config.example.json
