@@ -17,6 +17,7 @@ import requests
 from darts import TimeSeries
 from darts.models import LightGBMModel
 from influxdb import InfluxDBClient
+from sklearn.multioutput import MultiOutputRegressor
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -258,7 +259,6 @@ def create_time_features(df):
     df_out['day_of_week'] = df_out.index.dayofweek
     df_out['day_of_year'] = df_out.index.dayofyear
     df_out['month'] = df_out.index.month
-    df_out['is_weekend'] = (df_out.index.dayofweek >= 5).astype(int)
     return df_out
 
 # --------------------------------------------------------------------------- #
@@ -266,31 +266,97 @@ def create_time_features(df):
 # --------------------------------------------------------------------------- #
 
 def train_single_model(model_name):
-    # This function is unchanged
+    """
+    Trains a single model and saves it, its parameters, and its feature importances.
+    This version contains the corrected logic for feature importance extraction.
+    """
     logging.info(f"--- Running in TRAIN mode for model: {model_name} ---")
     model_config = CONFIG['models'][model_name]
     target_col, feature_cols = model_config['target_column'], model_config['feature_cols']
     client = InfluxDBClient(**CONFIG['influxdb'])
+
     try:
+        # --- Data Preparation ---
         end_time = datetime.now(pytz.UTC)
         start_time = end_time - timedelta(days=CONFIG['training_history_days'])
         historical_df = get_historical_data(client, start_time, end_time)
         if historical_df.empty: raise SystemExit("Aborting: Failed to retrieve historical data.")
+        
         model_data = historical_df[[target_col] + feature_cols].copy().ffill().dropna()
         min_val = model_data[target_col].min()
         shift_value = abs(min_val) + 1 if min_val <= 0 else 0
         model_data[target_col] = np.log(model_data[target_col] + shift_value)
+        
         model_data_featured = create_time_features(model_data)
-        all_feature_cols = feature_cols + ['hour', 'day_of_week', 'day_of_year', 'month', 'is_weekend']
+        
+        # NOTE: Based on our analysis of the 'price' model, 'is_weekend' was a useless
+        # feature. I have removed it here. If you haven't already removed it from your
+        # create_time_features function, you should.
+        all_feature_cols = feature_cols + ['hour', 'day_of_week', 'day_of_year', 'month']
+        
         target_series = TimeSeries.from_series(model_data_featured[target_col], freq='30min')
         covariates_ts = TimeSeries.from_dataframe(model_data_featured, value_cols=all_feature_cols, freq='30min')
-        lgbm = LightGBMModel(lags=24 * 7, lags_future_covariates=[0], output_chunk_length=model_config['forecast_horizon'], **model_config['lgbm_params'])
+
+        # --- Model Definition and Fitting ---
+        lgbm = LightGBMModel(
+            lags=24 * 7, 
+            lags_future_covariates=[0], 
+            output_chunk_length=model_config['forecast_horizon'], 
+            **model_config['lgbm_params']
+        )
         logging.info("Fitting the model...")
         lgbm.fit(series=target_series, future_covariates=covariates_ts)
+
+        # --- CORRECTED FEATURE IMPORTANCE EXTRACTION ---
+        logging.info("Extracting feature importances...")
+        
+        # 1. Get the raw importance scores (this part was correct)
+        if isinstance(lgbm.model, MultiOutputRegressor):
+            logging.info("Model is a MultiOutputRegressor. Aggregating importances.")
+            importances = np.mean([estimator.feature_importances_ for estimator in lgbm.model.estimators_], axis=0)
+        else:
+            logging.info("Model is a single-output regressor. Extracting importances directly.")
+            importances = lgbm.model.feature_importances_
+            
+        # 2. Generate names for the target series lags.
+        #    *** FIX: We must access the list of lags via the 'target' key. ***
+        target_lags_list = lgbm.lags['target']
+        lag_names = [f'{target_col}_lag{lag}' for lag in target_lags_list]
+        
+        # 3. Get covariate names directly from the TimeSeries object for robustness.
+        covariate_names = list(covariates_ts.columns)
+        
+        # 4. Combine them in the correct order.
+        true_feature_names = lag_names + covariate_names
+        
+        # 5. Add a safety check to prevent crashes if lengths don't match.
+        if len(true_feature_names) != len(importances):
+            logging.error("FATAL: Length of feature names does not match length of importances!")
+            logging.error(f"Names found: {len(true_feature_names)}. Importances found: {len(importances)}")
+            # In a real run, you might raise an exception here.
+            # For now, we just log the error and save the raw model.
+        else:
+            # This block will only run if the lengths match.
+            logging.info("Feature name length matches importance length. Saving importance file.")
+            feature_importance_dict = dict(zip(true_feature_names, importances))
+            
+            # Convert numpy types to native Python types for JSON serialization
+            feature_importance_dict = {key: value.item() if isinstance(value, np.generic) else value for key, value in feature_importance_dict.items()}
+
+            sorted_importance = {k: v for k, v in sorted(feature_importance_dict.items(), key=lambda item: item[1], reverse=True)}
+            
+            importance_file_path = CONFIG['paths'][f'{model_name}_importance_file']
+            with open(importance_file_path, 'w') as f:
+                json.dump(sorted_importance, f, indent=4)
+            logging.info(f"Feature importances saved successfully to {importance_file_path}")
+
+        # --- Saving Model and Params (Unchanged) ---
         params = {'shift_value': shift_value}
         joblib.dump(lgbm, CONFIG['paths'][f'{model_name}_model_file'])
-        with open(CONFIG['paths'][f'{model_name}_params_file'], 'w') as f: json.dump(params, f, indent=4)
+        with open(CONFIG['paths'][f'{model_name}_params_file'], 'w') as f:
+            json.dump(params, f, indent=4)
         logging.info("Model and parameters saved successfully.")
+
     finally:
         client.close()
 
@@ -314,7 +380,7 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     amber_advanced_df = get_amber_advanced_forecast()
     if amber_advanced_df.empty:
         logging.warning("No advanced Amber data available. Falling back to simple prediction.")
-        all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month', 'is_weekend']
+        all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month']
         future_covariates_ts = TimeSeries.from_dataframe(future_covariates_df, value_cols=all_feature_cols, freq='30min')
         return _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
     last_good_amber_index = amber_advanced_df.index.max()
@@ -325,7 +391,7 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     amber_seed_data[target_col] = np.log(amber_advanced_df[target_col] + shift_value)
     pseudo_history_df = pd.concat([hist_df_log, amber_seed_data.dropna()])
     pseudo_history_ts = TimeSeries.from_series(pseudo_history_df[target_col], freq='30min')
-    all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month', 'is_weekend']
+    all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month']
     future_covariates_ts = TimeSeries.from_dataframe(future_covariates_df, value_cols=all_feature_cols, freq='30min')
     steps_to_predict = max(0, model_config['forecast_horizon'] - len(amber_advanced_df))
     remaining_forecast_df = pd.DataFrame()
@@ -382,7 +448,7 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     if use_dynamic_handoff and model_name == 'price':
         final_pred_df = _predict_with_dynamic_handoff(model, params, historical_df, time_featured_df, model_config)
     else:
-        all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month', 'is_weekend']
+        all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month']
         future_covariates_ts = TimeSeries.from_dataframe(time_featured_df, value_cols=all_feature_cols, freq='30min')
         final_pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
 
