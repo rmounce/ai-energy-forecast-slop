@@ -35,16 +35,20 @@
             "target_column": "power_load",
             "feature_cols": ["power_pv", "temperature_adelaide", "humidity_adelaide", "wind_speed_adelaide"],
             "lgbm_params": {"n_estimators": 200, "num_leaves": 25, "learning_rate": 0.05, "max_depth": 6, "reg_alpha": 0.1, "reg_lambda": 0.1, "random_state": 42, "n_jobs": -1},
-            "forecast_horizon": 144
+            "forecast_horizon": 144,
+            "training_history_days": 365
         }
     },
     "paths": {
         "price_model_file": "price_model.pkl",
         "price_params_file": "price_params.json",
+        "price_importance_file": "price_importance.json",
         "load_model_file": "load_model.pkl",
         "load_params_file": "load_params.json",
+        "load_importance_file": "load_importance.json",
         "tariff_file": "tariff_profile.json",
-        "prediction_output_file": "predictions.json"
+        "prediction_output_file": "predictions.json",
+        "forecast_log_file": "forecast_log.csv"
     },
     "training_history_days": 730,
     "prediction_history_days": 10,

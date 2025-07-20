@@ -6,8 +6,10 @@
 import argparse
 import json
 import logging
+import os
 import warnings
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import joblib
 import numpy as np
@@ -130,86 +132,78 @@ def remove_gst(price):
         return price
 
 def get_amber_advanced_forecast():
-    """Gets Amber's advanced price forecast using mixed 5/30 minute data with backfill."""
+    # This function remains unchanged
     logging.info("Retrieving Amber Electric ADVANCED price forecast (mixed intervals)...")
-    entity_id = CONFIG['home_assistant']['amber_billing_entity']  # Use the billing interval entity
+    entity_id = CONFIG['home_assistant']['amber_billing_entity']
     entity_state = get_entity_state(entity_id)
-    if not entity_state: 
+    if not entity_state:
         return pd.DataFrame()
-    
+
     forecasts = entity_state.get("attributes", {}).get("Forecasts", [])
-    if not forecasts: 
+    if not forecasts:
         return pd.DataFrame()
 
     processed = []
     five_minute_intervals = []
     thirty_minute_intervals = []
-    
-    # Separate 5-minute and 30-minute intervals
+
     for f in forecasts:
-        if (f.get('advanced_price_predicted') is not None and 
-            f.get('per_kwh') is not None and 
+        if (f.get('advanced_price_predicted') is not None and
+            f.get('per_kwh') is not None and
             f.get('spot_per_kwh') is not None):
-            
+
             per_kwh = float(f['per_kwh'])
             spot_per_kwh = float(f['spot_per_kwh'])
             advanced_price_incl_gst = float(f['advanced_price_predicted'])
             duration = f.get('duration', 30)
-            
+
             tariff = remove_gst(per_kwh) - spot_per_kwh
             advanced_price_no_tariff = remove_gst(advanced_price_incl_gst) - tariff
-            
+
             start_time = pd.to_datetime(f['start_time']).round('min')
-            
+
             interval_data = {
                 'datetime': start_time,
                 'aemo_price_sa1': advanced_price_no_tariff
             }
-            
+
             if duration == 5:
                 five_minute_intervals.append(interval_data)
             else:
                 thirty_minute_intervals.append(interval_data)
-    
-    # Process 5-minute intervals: group by 30-minute boundaries and average
+
     if five_minute_intervals:
         grouped_5min = {}
         for interval in five_minute_intervals:
-            # Round down to 30-minute boundary
             boundary = interval['datetime'].floor('30min')
             if boundary not in grouped_5min:
                 grouped_5min[boundary] = []
             grouped_5min[boundary].append(interval['aemo_price_sa1'])
-        
-        # Create averaged 30-minute intervals from 5-minute data
+
         for boundary, prices in grouped_5min.items():
             processed.append({
                 'datetime': boundary,
                 'aemo_price_sa1': sum(prices) / len(prices)
             })
-    
-    # Add 30-minute intervals
+
     processed.extend(thirty_minute_intervals)
-    
+
     if not processed:
         return pd.DataFrame(columns=['aemo_price_sa1'], index=pd.to_datetime([]).tz_localize('UTC'))
-    
-    # Sort by datetime
+
     processed.sort(key=lambda x: x['datetime'])
-    
-    # Check if we need to backfill the current interval
+
     now = pd.Timestamp.now(tz='UTC')
     current_interval_start = now.floor('30min')
     earliest_forecast = processed[0]['datetime']
-    
+
     if earliest_forecast > current_interval_start:
-        # Backfill: create a forecast for the current 30-minute interval
         backfill_entry = {
             'datetime': current_interval_start,
             'aemo_price_sa1': processed[0]['aemo_price_sa1']
         }
         processed.insert(0, backfill_entry)
-    
+
     return pd.DataFrame(processed).set_index('datetime')
 
 
@@ -265,10 +259,54 @@ def create_time_features(df):
 # 5. MODEL TRAINING, PREDICTION & PUBLISHING FUNCTIONS
 # --------------------------------------------------------------------------- #
 
+def log_forecast_data(model_name, model_version, prediction_type, final_pred_df, future_covariates_df):
+    """
+    Logs model inputs (future covariates) and outputs (predictions) to a CSV file.
+    """
+    logging.info("Logging forecast data and covariates...")
+    log_file_path = Path(CONFIG['paths']['forecast_log_file'])
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    log_df = final_pred_df.copy()
+
+    # <-- FIX: Ensure the prediction DataFrame index is timezone-aware (UTC) to match covariates.
+    if log_df.index.tz is None:
+        log_df.index = log_df.index.tz_localize('UTC')
+
+    prediction_col = log_df.columns[0]
+    log_df.rename(columns={prediction_col: f'{model_name}_prediction'}, inplace=True)
+    log_df = log_df.join(future_covariates_df, how='left')
+    log_df['forecast_creation_time'] = datetime.now(pytz.UTC).isoformat()
+    log_df['model_version'] = model_version
+    log_df['model_name'] = model_name
+    log_df['prediction_type'] = prediction_type
+    log_df[f'{model_name}_actual'] = np.nan
+    log_df.index.name = 'forecast_target_time'
+    log_df.reset_index(inplace=True)
+
+    core_cols = ['forecast_creation_time', 'forecast_target_time', 'model_name', 'model_version', 'prediction_type']
+    pred_cols = [f'{model_name}_prediction', f'{model_name}_actual']
+    # Handle cases where actual columns for other models might exist
+    if f'price_actual' not in log_df.columns: log_df['price_actual'] = np.nan
+    if f'load_actual' not in log_df.columns: log_df['load_actual'] = np.nan
+    feature_cols = sorted([col for col in log_df.columns if col not in core_cols + pred_cols])
+    
+    # Define full column order to ensure consistency
+    full_order = core_cols + ['price_prediction', 'price_actual', 'load_prediction', 'load_actual'] + feature_cols
+    # Filter out columns that don't exist in this specific log_df to avoid KeyErrors
+    final_cols = [col for col in full_order if col in log_df.columns]
+    log_df = log_df[final_cols]
+    
+    try:
+        header = not log_file_path.exists()
+        log_df.to_csv(log_file_path, mode='a', header=header, index=False)
+        logging.info(f"Successfully logged {len(log_df)} records to {log_file_path}")
+    except Exception as e:
+        logging.error(f"Failed to write to forecast log file: {e}")
+
 def train_single_model(model_name):
     """
-    Trains a single model and saves it, its parameters, and its feature importances.
-    This version contains the corrected logic for feature importance extraction.
+    Trains a single model and saves it.
     """
     logging.info(f"--- Running in TRAIN mode for model: {model_name} ---")
     model_config = CONFIG['models'][model_name]
@@ -276,81 +314,56 @@ def train_single_model(model_name):
     client = InfluxDBClient(**CONFIG['influxdb'])
 
     try:
-        # --- Data Preparation ---
+        # <-- FIX: Use model-specific history days if available, otherwise use global default.
+        training_days = model_config.get('training_history_days', CONFIG['training_history_days'])
+        logging.info(f"Using a training history of {training_days} days.")
         end_time = datetime.now(pytz.UTC)
-        start_time = end_time - timedelta(days=CONFIG['training_history_days'])
+        start_time = end_time - timedelta(days=training_days)
+
         historical_df = get_historical_data(client, start_time, end_time)
         if historical_df.empty: raise SystemExit("Aborting: Failed to retrieve historical data.")
-        
+
         model_data = historical_df[[target_col] + feature_cols].copy().ffill().dropna()
         min_val = model_data[target_col].min()
         shift_value = abs(min_val) + 1 if min_val <= 0 else 0
         model_data[target_col] = np.log(model_data[target_col] + shift_value)
-        
+
         model_data_featured = create_time_features(model_data)
-        
-        # NOTE: Based on our analysis of the 'price' model, 'is_weekend' was a useless
-        # feature. I have removed it here. If you haven't already removed it from your
-        # create_time_features function, you should.
         all_feature_cols = feature_cols + ['hour', 'day_of_week', 'day_of_year', 'month']
-        
+
         target_series = TimeSeries.from_series(model_data_featured[target_col], freq='30min')
         covariates_ts = TimeSeries.from_dataframe(model_data_featured, value_cols=all_feature_cols, freq='30min')
 
-        # --- Model Definition and Fitting ---
         lgbm = LightGBMModel(
-            lags=24 * 7, 
-            lags_future_covariates=[0], 
-            output_chunk_length=model_config['forecast_horizon'], 
+            lags=24 * 7,
+            lags_future_covariates=[0],
+            output_chunk_length=model_config['forecast_horizon'],
             **model_config['lgbm_params']
         )
         logging.info("Fitting the model...")
         lgbm.fit(series=target_series, future_covariates=covariates_ts)
 
-        # --- CORRECTED FEATURE IMPORTANCE EXTRACTION ---
         logging.info("Extracting feature importances...")
-        
-        # 1. Get the raw importance scores (this part was correct)
         if isinstance(lgbm.model, MultiOutputRegressor):
-            logging.info("Model is a MultiOutputRegressor. Aggregating importances.")
             importances = np.mean([estimator.feature_importances_ for estimator in lgbm.model.estimators_], axis=0)
         else:
-            logging.info("Model is a single-output regressor. Extracting importances directly.")
             importances = lgbm.model.feature_importances_
-            
-        # 2. Generate names for the target series lags.
-        #    *** FIX: We must access the list of lags via the 'target' key. ***
+        
         target_lags_list = lgbm.lags['target']
         lag_names = [f'{target_col}_lag{lag}' for lag in target_lags_list]
-        
-        # 3. Get covariate names directly from the TimeSeries object for robustness.
         covariate_names = list(covariates_ts.columns)
-        
-        # 4. Combine them in the correct order.
         true_feature_names = lag_names + covariate_names
-        
-        # 5. Add a safety check to prevent crashes if lengths don't match.
+
         if len(true_feature_names) != len(importances):
             logging.error("FATAL: Length of feature names does not match length of importances!")
-            logging.error(f"Names found: {len(true_feature_names)}. Importances found: {len(importances)}")
-            # In a real run, you might raise an exception here.
-            # For now, we just log the error and save the raw model.
         else:
-            # This block will only run if the lengths match.
-            logging.info("Feature name length matches importance length. Saving importance file.")
-            feature_importance_dict = dict(zip(true_feature_names, importances))
-            
-            # Convert numpy types to native Python types for JSON serialization
-            feature_importance_dict = {key: value.item() if isinstance(value, np.generic) else value for key, value in feature_importance_dict.items()}
-
+            feature_importance_dict = {key: value.item() for key, value in zip(true_feature_names, importances)}
             sorted_importance = {k: v for k, v in sorted(feature_importance_dict.items(), key=lambda item: item[1], reverse=True)}
-            
             importance_file_path = CONFIG['paths'][f'{model_name}_importance_file']
             with open(importance_file_path, 'w') as f:
                 json.dump(sorted_importance, f, indent=4)
             logging.info(f"Feature importances saved successfully to {importance_file_path}")
 
-        # --- Saving Model and Params (Unchanged) ---
         params = {'shift_value': shift_value}
         joblib.dump(lgbm, CONFIG['paths'][f'{model_name}_model_file'])
         with open(CONFIG['paths'][f'{model_name}_params_file'], 'w') as f:
@@ -408,32 +421,40 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     return final_forecast_df
 
 def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=False):
+    # This function is largely the same, but now passes data to the modified logger
     logging.info(f"--- Running in PREDICT mode for model: {model_name} ---")
     model_config = CONFIG['models'][model_name]
+    model_file_path = CONFIG['paths'][f'{model_name}_model_file']
     try:
-        model = joblib.load(CONFIG['paths'][f'{model_name}_model_file'])
+        model = joblib.load(model_file_path)
         with open(CONFIG['paths'][f'{model_name}_params_file'], 'r') as f: params = json.load(f)
+        mod_time = os.path.getmtime(model_file_path)
+        model_version = datetime.fromtimestamp(mod_time, tz=pytz.UTC).isoformat()
+        logging.info(f"Loaded model '{model_name}'. Version (timestamp): {model_version}")
     except FileNotFoundError:
         raise SystemExit(f"Model for '{model_name}' not found. Please run 'train-{model_name}' first.")
-    
-    # --- FIX: Align forecast to the start of the current 30-minute interval ---
+
     now = datetime.now(pytz.UTC)
     minute = 30 if now.minute >= 30 else 0
     forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
     logging.info(f"Aligning forecast to start at current interval: {forecast_start_time}")
-    
+
     logging.info("Fetching all future covariate data...")
     future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast()}
-    if not use_dynamic_handoff:
+    prediction_type = 'simple'
+    if use_dynamic_handoff and model_name == 'price':
+        prediction_type = 'dynamic_handoff'
+    else:
         future_sources['amber_spot'] = get_amber_spot_price_forecast()
-    
+
     future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
     future_covariates_df = future_covariates_df[future_covariates_df.index >= forecast_start_time]
 
     time_featured_df = create_time_features(future_covariates_df)
     missing_cols = [col for col in model_config['feature_cols'] if col not in time_featured_df.columns]
     if missing_cols: raise SystemExit(f"FATAL: Missing future data for features: {missing_cols}. Check HA connection.")
-    
+
+    original_covariates_for_log = time_featured_df.copy()
     time_featured_df = time_featured_df.ffill().bfill()
     time_featured_df.dropna(inplace=True)
     if time_featured_df.empty: raise SystemExit(f"FATAL: Could not create a complete future covariate set.")
@@ -445,21 +466,29 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     finally:
         client.close()
 
-    if use_dynamic_handoff and model_name == 'price':
+    if prediction_type == 'dynamic_handoff':
         final_pred_df = _predict_with_dynamic_handoff(model, params, historical_df, time_featured_df, model_config)
     else:
         all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month']
         future_covariates_ts = TimeSeries.from_dataframe(time_featured_df, value_cols=all_feature_cols, freq='30min')
         final_pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
 
+    log_forecast_data(
+        model_name=model_name,
+        model_version=model_version,
+        prediction_type=prediction_type,
+        final_pred_df=final_pred_df,
+        future_covariates_df=original_covariates_for_log
+    )
+
     if model_name == 'price':
         final_pred_df.rename(columns={model_config['target_column']: 'wholesale_price'}, inplace=True)
         if not use_dynamic_handoff and 'amber_spot' in future_sources and not future_sources['amber_spot'].empty:
             final_pred_df.update(future_sources['amber_spot'])
         apply_tariffs_to_forecast(final_pred_df)
-    
+
     logging.info(f"--- Prediction complete for {model_name} ---")
-    
+
     final_pred_df.index.name = 'timestamp'
     output_df = final_pred_df.reset_index()
     if output_df['timestamp'].dt.tz is None:
@@ -468,7 +497,7 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     output_data = output_df.to_dict('records')
     try:
         with open(CONFIG['paths']['prediction_output_file'], 'r') as f: all_predictions = json.load(f)
-    except FileNotFoundError: all_predictions = {}
+    except (FileNotFoundError, json.JSONDecodeError): all_predictions = {}
     all_predictions[f'{model_name}_forecast'] = output_data
     all_predictions[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
     with open(CONFIG['paths']['prediction_output_file'], 'w') as f: json.dump(all_predictions, f, indent=4)
@@ -479,6 +508,7 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
         publish_forecast_to_hass(model_name, final_pred_df)
 
 def apply_tariffs_to_forecast(pred_df):
+    # This function remains unchanged
     logging.info("Applying tariffs to wholesale price forecast with conditional GST...")
     try:
         with open(CONFIG['paths']['tariff_file'], 'r') as f:
@@ -491,25 +521,25 @@ def apply_tariffs_to_forecast(pred_df):
 
     if not isinstance(pred_df.index, pd.DatetimeIndex):
         pred_df.index = pd.to_datetime(pred_df.index)
-        
+
     if pred_df.index.tz is None:
         pred_df.index = pred_df.index.tz_localize('UTC')
 
     local_tz = pytz.timezone(CONFIG['timezone'])
     pred_df['local_time'] = pred_df.index.tz_convert(local_tz).time.astype(str)
-    
+
     general_tariff_map = tariffs.get('general_tariff', {})
     feed_in_tariff_map = tariffs.get('feed_in_tariff', {})
 
     pred_df['general_tariff'] = pred_df['local_time'].map(general_tariff_map).fillna(0)
     pred_df['feed_in_tariff'] = pred_df['local_time'].map(feed_in_tariff_map).fillna(0)
-    
+
     general_price_ex_gst = pred_df['wholesale_price'] + pred_df['general_tariff']
     feed_in_price_ex_gst = pred_df['wholesale_price'] + pred_df['feed_in_tariff']
 
     pred_df['general_price'] = np.where(general_price_ex_gst > 0, general_price_ex_gst * CONFIG['gst_rate'], general_price_ex_gst)
     pred_df['feed_in_price'] = np.where(feed_in_price_ex_gst < 0, feed_in_price_ex_gst * CONFIG['gst_rate'], feed_in_price_ex_gst)
-    
+
     pred_df.drop(columns=['local_time', 'general_tariff', 'feed_in_tariff'], inplace=True)
     logging.info("Successfully applied general and feed-in tariffs with conditional GST.")
 
@@ -531,7 +561,7 @@ def publish_forecast_to_hass(model_name, forecast_df):
     logging.info(f"Successfully published state '{state}' and attributes to {entity_id}.")
 
 def _get_tariff_data(entity_id, is_feed_in=False):
-    """Helper to fetch and calculate tariff data from an Amber entity."""
+    # This function remains unchanged
     entity_state = get_entity_state(entity_id)
     if not entity_state: return pd.DataFrame()
     forecasts = entity_state.get("attributes", {}).get("Forecasts", [])
@@ -542,7 +572,6 @@ def _get_tariff_data(entity_id, is_feed_in=False):
             per_kwh_dollars = float(f['per_kwh'])
             spot_per_kwh_dollars = float(f['spot_per_kwh'])
             if is_feed_in:
-                # Per Kwh for feed-in is already negative, representing a credit.
                 tariff = -remove_gst(per_kwh_dollars) - spot_per_kwh_dollars
             else:
                 tariff = remove_gst(per_kwh_dollars) - spot_per_kwh_dollars
@@ -577,12 +606,87 @@ def update_tariffs():
     except Exception as e:
         logging.error(f"Failed to save tariff profile: {e}")
 
+def backfill_actuals():
+    # This function is unchanged
+    logging.info("--- Running in BACKFILL-ACTUALS mode ---")
+    log_file_path = Path(CONFIG['paths']['forecast_log_file'])
+    if not log_file_path.exists():
+        logging.warning("Forecast log file does not exist. Nothing to backfill.")
+        return
+
+    try:
+        log_df = pd.read_csv(log_file_path, parse_dates=['forecast_target_time'])
+    except pd.errors.EmptyDataError:
+        logging.warning("Forecast log file is empty. Nothing to backfill.")
+        return
+        
+    if log_df.empty:
+        logging.info("Forecast log is empty. Nothing to backfill.")
+        return
+
+    if log_df['forecast_target_time'].dt.tz is None:
+        log_df['forecast_target_time'] = log_df['forecast_target_time'].dt.tz_localize('UTC')
+
+    now = datetime.now(pytz.UTC)
+    
+    # Create masks for records that are in the past and need filling
+    price_mask = log_df['price_actual'].isna() & (log_df['forecast_target_time'] < now) & log_df['price_prediction'].notna()
+    load_mask = log_df['load_actual'].isna() & (log_df['forecast_target_time'] < now) & log_df['load_prediction'].notna()
+
+    price_to_fill = log_df[price_mask]
+    load_to_fill = log_df[load_mask]
+    
+    if price_to_fill.empty and load_to_fill.empty:
+        logging.info("No past forecast records require backfilling.")
+        return
+
+    client = InfluxDBClient(**CONFIG['influxdb'])
+    try:
+        combined_start_time = min(
+            price_to_fill['forecast_target_time'].min() if not price_to_fill.empty else pd.Timestamp.max.tz_localize('UTC'),
+            load_to_fill['forecast_target_time'].min() if not load_to_fill.empty else pd.Timestamp.max.tz_localize('UTC')
+        )
+        combined_end_time = max(
+            price_to_fill['forecast_target_time'].max() if not price_to_fill.empty else pd.Timestamp.min.tz_localize('UTC'),
+            load_to_fill['forecast_target_time'].max() if not load_to_fill.empty else pd.Timestamp.min.tz_localize('UTC')
+        )
+        
+        logging.info(f"Fetching actuals from {combined_start_time} to {combined_end_time} to backfill.")
+        actuals_df = get_historical_data(client, combined_start_time, combined_end_time)
+        
+        if not actuals_df.empty:
+            actuals_df.rename(columns={'aemo_price_sa1': 'price_actual', 'power_load': 'load_actual'}, inplace=True)
+            
+            # Use combine_first to fill NaNs in log_df from actuals_df
+            log_df.set_index('forecast_target_time', inplace=True)
+            original_rows = len(log_df)
+            log_df = log_df.combine_first(actuals_df[['price_actual', 'load_actual']]).reset_index()
+            # Ensure no new rows were added
+            log_df = log_df.iloc[:original_rows]
+
+            # Count how many values were actually filled
+            filled_price_count = price_mask.sum() - log_df['price_actual'].isna().sum()
+            filled_load_count = load_mask.sum() - log_df['load_actual'].isna().sum()
+            logging.info(f"Updated {filled_price_count} price_actual and {filled_load_count} load_actual records.")
+        else:
+            logging.warning("No historical data returned for the backfill period.")
+
+    finally:
+        client.close()
+
+    try:
+        log_df.to_csv(log_file_path, index=False)
+        logging.info("Successfully saved backfilled data to log file.")
+    except Exception as e:
+        logging.error(f"Failed to save backfilled log file: {e}")
+
+
 # --------------------------------------------------------------------------- #
 # 6. MAIN EXECUTION BLOCK
 # --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="Energy Price & Load Forecasting Pipeline")
-    parser.add_argument('mode', choices=['train-price', 'train-load', 'predict-price', 'predict-load', 'update-tariffs'], help="The mode to run the script in.")
+    parser.add_argument('mode', choices=['train-price', 'train-load', 'predict-price', 'predict-load', 'update-tariffs', 'backfill-actuals'], help="The mode to run the script in.")
     parser.add_argument('--publish-hass', action='store_true', help="Publish forecasts as attributes to Home Assistant entities.")
     parser.add_argument('--dynamic-handoff', action='store_true', help="For 'predict-price' mode, use Amber's advanced forecast to seed the model.")
     parser.add_argument('--config', default='config.json', help="Path to the configuration file.")
@@ -601,6 +705,8 @@ def main():
         predict_with_model('load', args.publish_hass)
     elif args.mode == 'update-tariffs':
         update_tariffs()
+    elif args.mode == 'backfill-actuals':
+        backfill_actuals()
 
 if __name__ == "__main__":
     main()

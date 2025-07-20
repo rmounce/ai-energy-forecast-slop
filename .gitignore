@@ -1,5 +1,6 @@
 # Generated files, and private config
 *.json
+*.csv
 
 # Trained model
 *.pkl
