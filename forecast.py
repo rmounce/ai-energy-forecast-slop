@@ -752,6 +752,16 @@ def update_adjusters():
         
     df = pd.read_csv(log_file)
     df['forecast_target_time'] = pd.to_datetime(df['forecast_target_time'], format='ISO8601')
+
+    history_days = CONFIG.get('adjuster_history_days')
+    if history_days:
+        logging.info(f"Using a rolling window of the last {history_days} days for adjuster calculation.")
+        cutoff_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=history_days)
+        df = df[df['forecast_target_time'] >= cutoff_date]
+        if df.empty:
+            logging.warning("No data found within the rolling window. Aborting adjuster update.")
+            return
+
     df.set_index('forecast_target_time', inplace=True)
     df['target_time_of_day'] = df.index.time
 
