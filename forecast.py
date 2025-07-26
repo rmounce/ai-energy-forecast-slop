@@ -262,13 +262,14 @@ def create_time_features(df):
 # 5. MODEL TRAINING, PREDICTION & PUBLISHING FUNCTIONS
 # --------------------------------------------------------------------------- #
 
-# --- MODIFIED FUNCTION ---
 def log_forecast_data(model_name, model_version, prediction_type, final_pred_df, future_covariates_df):
     """
-    Logs model inputs and outputs to a CSV, ensuring a consistent column structure.
+    Logs model inputs and outputs to a model-specific CSV file, enforcing a
+    canonical column order to ensure consistency.
     """
-    logging.info("Logging forecast data and covariates...")
-    log_file_path = Path(CONFIG['paths']['forecast_log_file'])
+    logging.info(f"Logging forecast data for '{model_name}' model...")
+
+    log_file_path = Path(CONFIG['paths'][f'{model_name}_forecast_log_file'])
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     log_df = final_pred_df.copy()
@@ -276,49 +277,55 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
     if log_df.index.tz is None:
         log_df.index = log_df.index.tz_localize('UTC')
 
-    # Rename the specific prediction column for this model run
     prediction_col = log_df.columns[0]
-    log_df.rename(columns={prediction_col: f'{model_name}_prediction'}, inplace=True)
+    log_df.rename(columns={prediction_col: 'prediction'}, inplace=True)
+    log_df['actual'] = np.nan
 
-    # Join with the features used for this prediction
     log_df = log_df.join(future_covariates_df, how='left')
 
-    # Add metadata
     log_df['forecast_creation_time'] = datetime.now(pytz.UTC).isoformat()
     log_df['model_version'] = model_version
-    log_df['model_name'] = model_name
     log_df['prediction_type'] = prediction_type
 
     log_df.index.name = 'forecast_target_time'
     log_df.reset_index(inplace=True)
 
-    # --- ROBUSTNESS FIX ---
-    # Define the complete, ideal set of columns for the log file
-    all_possible_cols = [
-        'forecast_creation_time', 'forecast_target_time', 'model_name',
-        'model_version', 'prediction_type',
-        'price_prediction', 'price_actual',
-        'load_prediction', 'load_actual'
+    # --- ROBUSTNESS FIX: Define and enforce a canonical column order ---
+    CANONICAL_COLUMN_ORDER = [
+        'forecast_creation_time',
+        'forecast_target_time',
+        'model_name',
+        'model_version',
+        'prediction_type',
+        'prediction',
+        'actual',
+        'hour',
+        'day_of_week',
+        'day_of_year',
+        'month',
+        'power_pv',
+        'aemo_price_sa1',
+        'temperature_adelaide',
+        'humidity_adelaide',
+        'wind_speed_adelaide'
     ]
-    # Add all feature columns that could exist
-    all_possible_cols.extend(sorted(list(future_covariates_df.columns)))
 
-    # Ensure all columns exist, filling with NaN if they don't.
-    for col in all_possible_cols:
+    # Ensure all canonical columns exist in the DataFrame, adding them as NaN if they don't.
+    # This handles cases where a model might not have all features (e.g., price model lacks aemo_price_sa1 feature).
+    for col in CANONICAL_COLUMN_ORDER:
         if col not in log_df.columns:
             log_df[col] = np.nan
 
-    # Reorder the dataframe to match the ideal structure
-    final_cols_order = [col for col in all_possible_cols if col in log_df.columns]
-    log_df = log_df[final_cols_order]
+    # Filter the list to only include columns that exist in our dataframe,
+    # then reorder the dataframe to match. This prevents KeyErrors.
+    final_cols = [col for col in CANONICAL_COLUMN_ORDER if col in log_df.columns]
+    log_df = log_df[final_cols]
+    
+    # --- End of fix ---
 
-    try:
-        # If the file doesn't exist or is empty, write the header.
-        header = not log_file_path.exists() or os.path.getsize(log_file_path) == 0
-        log_df.to_csv(log_file_path, mode='a', header=header, index=False)
-        logging.info(f"Successfully logged {len(log_df)} records to {log_file_path}")
-    except Exception as e:
-        logging.error(f"Failed to write to forecast log file: {e}")
+    header = not log_file_path.exists() or os.path.getsize(log_file_path) == 0
+    log_df.to_csv(log_file_path, mode='a', header=header, index=False)
+    logging.info(f"Successfully logged {len(log_df)} records to {log_file_path} with consistent column order.")
 
 
 def train_single_model(model_name):
@@ -622,78 +629,63 @@ def update_tariffs():
     except Exception as e:
         logging.error(f"Failed to save tariff profile: {e}")
 
-# --- MODIFIED FUNCTION ---
-def backfill_actuals():
+def _backfill_single_log(model_name: str):
     """
-    Updates the forecast log with actual observed values from InfluxDB.
-    This version is more robust and handles missing columns gracefully.
+    Helper function to backfill actuals for a single model's log file.
     """
-    logging.info("--- Running in BACKFILL-ACTUALS mode ---")
-    log_file_path = Path(CONFIG['paths']['forecast_log_file'])
+    log_file_path = Path(CONFIG['paths'][f'{model_name}_forecast_log_file'])
+    target_column = CONFIG['models'][model_name]['target_column']
+    
+    logging.info(f"--- Backfilling model: '{model_name}' ---")
     if not log_file_path.exists() or os.path.getsize(log_file_path) == 0:
-        logging.warning("Forecast log file does not exist or is empty. Nothing to backfill.")
+        logging.info(f"Log file for '{model_name}' not found or is empty. Skipping.")
         return
 
     log_df = pd.read_csv(log_file_path, parse_dates=['forecast_target_time'])
-
-    if log_df.empty:
-        logging.info("Log file is empty after reading. Nothing to backfill.")
-        return
-
     if log_df['forecast_target_time'].dt.tz is None:
         log_df['forecast_target_time'] = log_df['forecast_target_time'].dt.tz_localize('UTC')
 
     now = datetime.now(pytz.UTC)
-
-    # --- ROBUSTNESS FIX ---
-    # Check for columns before creating masks
-    price_to_fill = pd.DataFrame()
-    if 'price_prediction' in log_df.columns and 'price_actual' in log_df.columns:
-        price_mask = log_df['price_actual'].isna() & (log_df['forecast_target_time'] < now) & log_df['price_prediction'].notna()
-        price_to_fill = log_df[price_mask]
-        logging.info(f"Found {len(price_to_fill)} price records to backfill.")
-
-    load_to_fill = pd.DataFrame()
-    if 'load_prediction' in log_df.columns and 'load_actual' in log_df.columns:
-        load_mask = log_df['load_actual'].isna() & (log_df['forecast_target_time'] < now) & log_df['load_prediction'].notna()
-        load_to_fill = log_df[load_mask]
-        logging.info(f"Found {len(load_to_fill)} load records to backfill.")
-
-    if price_to_fill.empty and load_to_fill.empty:
-        logging.info("No past forecast records require backfilling at this time.")
+    mask_to_fill = log_df['actual'].isna() & (log_df['forecast_target_time'] < now)
+    
+    records_to_fill = log_df[mask_to_fill]
+    if records_to_fill.empty:
+        logging.info(f"No records need backfilling for '{model_name}'.")
         return
 
-    # Consolidate time range for a single efficient query
-    all_times_to_fill = pd.concat([price_to_fill['forecast_target_time'], load_to_fill['forecast_target_time']]).unique()
-    start_time = pd.to_datetime(all_times_to_fill.min())
-    end_time = pd.to_datetime(all_times_to_fill.max())
+    logging.info(f"Found {len(records_to_fill)} records to backfill for '{model_name}'.")
+    start_time = records_to_fill['forecast_target_time'].min()
+    end_time = records_to_fill['forecast_target_time'].max()
 
-    logging.info(f"Fetching actuals from {start_time} to {end_time} to backfill.")
+    logging.info(f"Querying InfluxDB for '{target_column}' from {start_time} to {end_time}.")
     client = InfluxDBClient(**CONFIG['influxdb'])
     try:
         actuals_df = get_historical_data(client, start_time, end_time)
-        if actuals_df.empty:
-            logging.warning("No historical data returned for the backfill period.")
+        if actuals_df.empty or target_column not in actuals_df.columns:
+            logging.warning(f"No historical data found for '{target_column}' in the time range.")
             return
 
-        actuals_df.rename(columns={'aemo_price_sa1': 'price_actual', 'power_load': 'load_actual'}, inplace=True)
-
-        # Use the dataframe index for efficient updating
+        # Prepare actuals for merging
+        actuals_df = actuals_df[[target_column]].rename(columns={target_column: 'actual'})
+        
+        # Use dataframe index for efficient updating
         log_df.set_index('forecast_target_time', inplace=True)
-        if 'price_actual' in actuals_df.columns:
-            log_df.update(actuals_df[['price_actual']])
-        if 'load_actual' in actuals_df.columns:
-            log_df.update(actuals_df[['load_actual']])
+        log_df.update(actuals_df)
         log_df.reset_index(inplace=True)
-
+        
     finally:
         client.close()
+    
+    log_df.to_csv(log_file_path, index=False)
+    logging.info(f"Successfully saved backfilled data to {log_file_path}")
 
-    try:
-        log_df.to_csv(log_file_path, index=False)
-        logging.info("Successfully saved backfilled data to log file.")
-    except Exception as e:
-        logging.error(f"Failed to save backfilled log file: {e}")
+def backfill_actuals():
+    """
+    Runs the backfill process for all configured models.
+    """
+    logging.info("--- Running in BACKFILL-ACTUALS mode for all models ---")
+    _backfill_single_log('price')
+    _backfill_single_log('load')
 
 
 # --------------------------------------------------------------------------- #

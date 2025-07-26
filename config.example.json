@@ -48,7 +48,8 @@
         "load_importance_file": "load_importance.json",
         "tariff_file": "tariff_profile.json",
         "prediction_output_file": "predictions.json",
-        "forecast_log_file": "forecast_log.csv"
+        "price_forecast_log_file": "price_forecast_log.csv",
+        "load_forecast_log_file": "load_forecast_log.csv"
     },
     "training_history_days": 730,
     "prediction_history_days": 10,
