@@ -11,5 +11,8 @@ __pycache__/
 .venv/
 .env
 
+# Until I bother figuring out how to exclude my data
+*.ipynb
+
 # Explicitly include
 !config.example.json

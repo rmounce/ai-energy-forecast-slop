@@ -264,69 +264,85 @@ def create_time_features(df):
 
 def log_forecast_data(model_name, model_version, prediction_type, final_pred_df, future_covariates_df):
     """
-    Logs model inputs and outputs to a model-specific CSV file, enforcing a
-    canonical column order to ensure consistency.
+    Logs data to a model-specific CSV, intelligently matching the column order
+    of the existing file to prevent misalignment.
     """
     logging.info(f"Logging forecast data for '{model_name}' model...")
-
     log_file_path = Path(CONFIG['paths'][f'{model_name}_forecast_log_file'])
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # --- Prepare the new data in memory ---
     log_df = final_pred_df.copy()
-
     if log_df.index.tz is None:
         log_df.index = log_df.index.tz_localize('UTC')
 
     prediction_col = log_df.columns[0]
     log_df.rename(columns={prediction_col: 'prediction'}, inplace=True)
     log_df['actual'] = np.nan
-
     log_df = log_df.join(future_covariates_df, how='left')
-
     log_df['forecast_creation_time'] = datetime.now(pytz.UTC).isoformat()
     log_df['model_version'] = model_version
     log_df['prediction_type'] = prediction_type
-
     log_df.index.name = 'forecast_target_time'
     log_df.reset_index(inplace=True)
 
-    # --- ROBUSTNESS FIX: Define and enforce a canonical column order ---
+    # --- ROBUSTNESS FIX: Determine and Enforce Column Order ---
+    final_column_order = []
+    file_exists = log_file_path.exists() and os.path.getsize(log_file_path) > 0
+
+    if file_exists:
+        # File exists, so the file's header is the source of truth for the column order.
+        final_column_order = pd.read_csv(log_file_path, nrows=0).columns.tolist()
+    else:
+        # File is new, so we define a default canonical order for its creation.
+        # This will only run once for each log file.
+        final_column_order = [
+            'forecast_creation_time', 'forecast_target_time', 'model_name', 'model_version',
+            'prediction_type', 'prediction', 'actual',
+            'power_pv', 'power_pv_actual',
+            'temperature_adelaide', 'temperature_adelaide_actual',
+            'humidity_adelaide', 'humidity_adelaide_actual',
+            'wind_speed_adelaide', 'wind_speed_adelaide_actual',
+            'aemo_price_sa1',
+            'hour', 'day_of_week', 'day_of_year', 'month'
+        ]
+
+    # Add any missing columns to the new data with NaN values
+    for col in final_column_order:
+        if col not in log_df.columns:
+            log_df[col] = np.nan
+    
+    # Reorder the new data to precisely match the target order (from file or default)
+    # and filter out any columns in the new data that aren't in the target order.
+    log_df = log_df[final_column_order]
+
+    # Append to the CSV. 'header=False' is crucial for appending.
+    # If the file is new, we write the header; otherwise, we don't.
+    log_df.to_csv(log_file_path, mode='a', header=(not file_exists), index=False)
+    logging.info(f"Successfully logged {len(log_df)} records to {log_file_path} with consistent column order.")
+
+    # --- MODIFICATION: Add covariate actuals to the canonical schema ---
     CANONICAL_COLUMN_ORDER = [
-        'forecast_creation_time',
-        'forecast_target_time',
-        'model_name',
-        'model_version',
-        'prediction_type',
-        'prediction',
-        'actual',
-        'hour',
-        'day_of_week',
-        'day_of_year',
-        'month',
-        'power_pv',
-        'aemo_price_sa1',
-        'temperature_adelaide',
-        'humidity_adelaide',
-        'wind_speed_adelaide'
+        'forecast_creation_time', 'forecast_target_time', 'model_name',
+        'model_version', 'prediction_type', 'prediction', 'actual',
+        'power_pv', 'power_pv_actual',
+        'temperature_adelaide', 'temperature_adelaide_actual',
+        'humidity_adelaide', 'humidity_adelaide_actual',
+        'wind_speed_adelaide', 'wind_speed_adelaide_actual',
+        'aemo_price_sa1', # This is a covariate for the load model
+        'hour', 'day_of_week', 'day_of_year', 'month'
     ]
 
-    # Ensure all canonical columns exist in the DataFrame, adding them as NaN if they don't.
-    # This handles cases where a model might not have all features (e.g., price model lacks aemo_price_sa1 feature).
     for col in CANONICAL_COLUMN_ORDER:
         if col not in log_df.columns:
             log_df[col] = np.nan
 
-    # Filter the list to only include columns that exist in our dataframe,
-    # then reorder the dataframe to match. This prevents KeyErrors.
     final_cols = [col for col in CANONICAL_COLUMN_ORDER if col in log_df.columns]
     log_df = log_df[final_cols]
     
-    # --- End of fix ---
-
     header = not log_file_path.exists() or os.path.getsize(log_file_path) == 0
     log_df.to_csv(log_file_path, mode='a', header=header, index=False)
     logging.info(f"Successfully logged {len(log_df)} records to {log_file_path} with consistent column order.")
-
 
 def train_single_model(model_name):
     """
@@ -473,11 +489,20 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
     future_covariates_df = future_covariates_df[future_covariates_df.index >= forecast_start_time]
 
-    time_featured_df = create_time_features(future_covariates_df)
+    # 1. Keep a clean copy of the original, unadjusted forecasts.
+    original_covariates_for_log = future_covariates_df.copy()
+
+    # 2. Apply adjustments to a new dataframe that will be used for prediction.
+    adjusted_covariates_df = apply_covariate_adjustments(future_covariates_df)
+    
+    # (Optional) Call the new function to publish the adjusted data
+    if publish_to_hass:
+        publish_adjusted_covariates_to_hass(adjusted_covariates_df)
+
+    time_featured_df = create_time_features(adjusted_covariates_df)
     missing_cols = [col for col in model_config['feature_cols'] if col not in time_featured_df.columns]
     if missing_cols: raise SystemExit(f"FATAL: Missing future data for features: {missing_cols}. Check HA connection.")
 
-    original_covariates_for_log = time_featured_df.copy()
     time_featured_df = time_featured_df.ffill().bfill()
     time_featured_df.dropna(inplace=True)
     if time_featured_df.empty: raise SystemExit(f"FATAL: Could not create a complete future covariate set.")
@@ -501,7 +526,7 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
         model_version=model_version,
         prediction_type=prediction_type,
         final_pred_df=final_pred_df,
-        future_covariates_df=original_covariates_for_log
+        future_covariates_df=original_covariates_for_log # Use the preserved original data
     )
 
     if model_name == 'price':
@@ -631,46 +656,67 @@ def update_tariffs():
 
 def _backfill_single_log(model_name: str):
     """
-    Helper function to backfill actuals for a single model's log file.
+    Helper function to backfill actuals for a single model's log file,
+    including both the main prediction and all covariate forecasts.
     """
     log_file_path = Path(CONFIG['paths'][f'{model_name}_forecast_log_file'])
-    target_column = CONFIG['models'][model_name]['target_column']
     
     logging.info(f"--- Backfilling model: '{model_name}' ---")
     if not log_file_path.exists() or os.path.getsize(log_file_path) == 0:
         logging.info(f"Log file for '{model_name}' not found or is empty. Skipping.")
         return
 
-    log_df = pd.read_csv(log_file_path, parse_dates=['forecast_target_time'])
+    # Load the data from the CSV file
+    log_df = pd.read_csv(log_file_path)
+
+    # --- ROBUSTNESS FIX: Explicitly convert the timestamp column after loading ---
+    # This guarantees the correct dtype before we use the .dt accessor.
+    try:
+        log_df['forecast_target_time'] = pd.to_datetime(log_df['forecast_target_time'], format='ISO8601')
+    except Exception as e:
+        logging.error(f"Could not parse 'forecast_target_time' in {log_file_path}. Error: {e}")
+        return
+    # --- End of fix ---
+
     if log_df['forecast_target_time'].dt.tz is None:
         log_df['forecast_target_time'] = log_df['forecast_target_time'].dt.tz_localize('UTC')
 
-    now = datetime.now(pytz.UTC)
-    mask_to_fill = log_df['actual'].isna() & (log_df['forecast_target_time'] < now)
+    # Define the mapping from InfluxDB names to our '_actual' column names
+    actual_col_map = {
+        CONFIG['models'][model_name]['target_column']: 'actual',
+        'power_pv': 'power_pv_actual',
+        'temperature_adelaide': 'temperature_adelaide_actual',
+        'humidity_adelaide': 'humidity_adelaide_actual',
+        'wind_speed_adelaide': 'wind_speed_adelaide_actual',
+    }
     
+    # Find all records where at least one of the actual columns is missing
+    cols_to_check = [col for col in actual_col_map.values() if col in log_df.columns]
+    mask_to_fill = log_df[cols_to_check].isna().any(axis=1) & (log_df['forecast_target_time'] < datetime.now(pytz.UTC))
+
     records_to_fill = log_df[mask_to_fill]
     if records_to_fill.empty:
         logging.info(f"No records need backfilling for '{model_name}'.")
         return
 
-    logging.info(f"Found {len(records_to_fill)} records to backfill for '{model_name}'.")
+    logging.info(f"Found {len(records_to_fill)} records with missing actuals to backfill for '{model_name}'.")
     start_time = records_to_fill['forecast_target_time'].min()
     end_time = records_to_fill['forecast_target_time'].max()
 
-    logging.info(f"Querying InfluxDB for '{target_column}' from {start_time} to {end_time}.")
+    logging.info(f"Querying InfluxDB for all actuals from {start_time} to {end_time}.")
     client = InfluxDBClient(**CONFIG['influxdb'])
     try:
         actuals_df = get_historical_data(client, start_time, end_time)
-        if actuals_df.empty or target_column not in actuals_df.columns:
-            logging.warning(f"No historical data found for '{target_column}' in the time range.")
+        if actuals_df.empty:
+            logging.warning("No historical data found for the backfill time range.")
             return
 
-        # Prepare actuals for merging
-        actuals_df = actuals_df[[target_column]].rename(columns={target_column: 'actual'})
+        # Prepare actuals df by renaming columns according to our map
+        actuals_renamed_df = actuals_df.rename(columns=actual_col_map)
         
-        # Use dataframe index for efficient updating
         log_df.set_index('forecast_target_time', inplace=True)
-        log_df.update(actuals_df)
+        # Update fills in NaNs from the right DataFrame into the left one, matching on index
+        log_df.update(actuals_renamed_df)
         log_df.reset_index(inplace=True)
         
     finally:
@@ -687,13 +733,166 @@ def backfill_actuals():
     _backfill_single_log('price')
     _backfill_single_log('load')
 
+def update_adjusters():
+    """
+    Analyzes the forecast logs to calculate time-of-day biases for covariates
+    and saves them as JSON adjustment profiles.
+    """
+    logging.info("--- Running in UPDATE-ADJUSTERS mode ---")
+    if 'adjusters' not in CONFIG:
+        logging.warning("No 'adjusters' section in config.json. Nothing to do.")
+        return
+
+    # We can use either log file, as the covariate data is identical.
+    # Let's prefer the load log as it's less sparse.
+    log_file = Path(CONFIG['paths']['load_forecast_log_file'])
+    if not log_file.exists():
+        logging.error(f"Log file {log_file} not found. Cannot generate adjusters.")
+        return
+        
+    df = pd.read_csv(log_file)
+    df['forecast_target_time'] = pd.to_datetime(df['forecast_target_time'], format='ISO8601')
+    df.set_index('forecast_target_time', inplace=True)
+    df['target_time_of_day'] = df.index.time
+
+    for cov_name, adjuster_config in CONFIG['adjusters'].items():
+        logging.info(f"Generating adjuster for: {cov_name}")
+        forecast_col = cov_name
+        actual_col = f"{cov_name}_actual"
+
+        if forecast_col not in df.columns or actual_col not in df.columns:
+            logging.warning(f"Columns for {cov_name} not found in log. Skipping.")
+            continue
+            
+        # Create a clean df for this specific covariate
+        cov_df = df[[forecast_col, actual_col, 'target_time_of_day']].dropna()
+        if cov_df.empty:
+            logging.warning(f"No complete forecast/actual pairs for {cov_name}. Skipping.")
+            continue
+
+        if adjuster_config['type'] == 'additive':
+            # Calculate the additive error (actual - forecast)
+            cov_df['error'] = cov_df[actual_col] - cov_df[forecast_col]
+            # Group by time of day and find the mean error
+            bias_profile = cov_df.groupby('target_time_of_day')['error'].mean()
+            logging.info(f"Calculated additive bias profile with {len(bias_profile)} entries.")
+            
+        elif adjuster_config['type'] == 'multiplicative':
+            # For PV, a scaling factor is better. Avoid division by zero.
+            cov_df_safe = cov_df[cov_df[forecast_col] > 10] # Only use forecasts > 10W for stable factors
+            # Calculate scaling factor (actual / forecast)
+            cov_df_safe['scaling_factor'] = cov_df_safe[actual_col] / cov_df_safe[forecast_col]
+            # Replace infinite values and clip to prevent extreme adjustments (e.g., 0.1x to 2.0x)
+            bias_profile = cov_df_safe.groupby('target_time_of_day')['scaling_factor'].mean()
+            bias_profile.replace([np.inf, -np.inf], np.nan, inplace=True)
+            bias_profile.dropna(inplace=True)
+            bias_profile = bias_profile.clip(0.1, 2.0)
+            logging.info(f"Calculated multiplicative bias profile with {len(bias_profile)} entries.")
+        
+        else:
+            logging.warning(f"Unknown adjuster type '{adjuster_config['type']}' for {cov_name}. Skipping.")
+            continue
+            
+        # Convert to a dictionary format that's JSON-friendly
+        profile_dict = {str(k): v for k, v in bias_profile.to_dict().items()}
+
+        # Save the profile to its JSON file
+        try:
+            with open(adjuster_config['path'], 'w') as f:
+                json.dump(profile_dict, f, indent=4)
+            logging.info(f"Successfully saved adjuster profile to {adjuster_config['path']}")
+        except Exception as e:
+            logging.error(f"Failed to save adjuster profile for {cov_name}: {e}")
+
+def apply_covariate_adjustments(future_covariates_df):
+    """
+    Loads adjuster profiles and applies corrections to the future covariates DataFrame.
+    """
+    logging.info("Applying covariate forecast adjustments...")
+    if 'adjusters' not in CONFIG:
+        return future_covariates_df # Return unchanged if no adjusters are configured
+
+    adjusted_df = future_covariates_df.copy()
+    adjusted_df['time_of_day'] = adjusted_df.index.time.astype(str)
+
+    for cov_name, adjuster_config in CONFIG['adjusters'].items():
+        if cov_name not in adjusted_df.columns:
+            continue
+            
+        try:
+            with open(adjuster_config['path'], 'r') as f:
+                profile = json.load(f)
+        except FileNotFoundError:
+            # This is not an error; the profile may not have been generated yet.
+            continue
+            
+        logging.info(f"Applying '{adjuster_config['type']}' adjustment to '{cov_name}'...")
+        
+        # Create a mapping Series from the profile
+        adjustment_map = pd.Series(profile)
+        
+        if adjuster_config['type'] == 'additive':
+            # Map the time of day to the additive adjustment value, fill missing with 0
+            adjustments = adjusted_df['time_of_day'].map(adjustment_map).fillna(0)
+            adjusted_df[cov_name] += adjustments
+            
+        elif adjuster_config['type'] == 'multiplicative':
+            # Map the time of day to the scaling factor, fill missing with 1 (no change)
+            adjustments = adjusted_df['time_of_day'].map(adjustment_map).fillna(1.0)
+            adjusted_df[cov_name] *= adjustments
+
+    return adjusted_df.drop(columns=['time_of_day'])
+
+def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
+    """
+    Publishes adjusted covariate forecasts to specified Home Assistant entities.
+    """
+    logging.info("Publishing adjusted covariates to Home Assistant...")
+    if 'adjusters' not in CONFIG:
+        return
+
+    for cov_name, adjuster_config in CONFIG['adjusters'].items():
+        entity_id = adjuster_config.get('publish_entity_id')
+        
+        # Skip if no entity_id is configured or if the column doesn't exist
+        if not entity_id or cov_name not in adjusted_covariates_df.columns:
+            continue
+
+        logging.info(f"Publishing adjusted '{cov_name}' to {entity_id}")
+        
+        # Prepare the data for this specific covariate
+        forecast_df = adjusted_covariates_df[[cov_name]].copy()
+        forecast_df.index.name = 'timestamp'
+        output_df = forecast_df.reset_index()
+        
+        if output_df.empty:
+            logging.warning(f"No data to publish for {cov_name}.")
+            continue
+            
+        if output_df['timestamp'].dt.tz is None:
+            output_df['timestamp'] = output_df['timestamp'].dt.tz_localize('UTC')
+        output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
+        
+        # Create the state and attributes payload
+        state = round(forecast_df.iloc[0][cov_name], 2)
+        friendly_name = f"AI Adjusted {cov_name.replace('_', ' ').title()} Forecast"
+        attributes = {
+            "forecasts": output_df.to_dict('records'),
+            "last_updated": datetime.now(pytz.UTC).isoformat(),
+            "friendly_name": friendly_name,
+            "icon": "mdi:chart-line"
+        }
+        
+        payload = {"state": state, "attributes": attributes}
+        call_ha_api('POST', f"states/{entity_id}", payload=payload)
+        logging.info(f"Successfully published state '{state}' and attributes to {entity_id}.")
 
 # --------------------------------------------------------------------------- #
 # 6. MAIN EXECUTION BLOCK
 # --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="Energy Price & Load Forecasting Pipeline")
-    parser.add_argument('mode', choices=['train-price', 'train-load', 'predict-price', 'predict-load', 'update-tariffs', 'backfill-actuals'], help="The mode to run the script in.")
+    parser.add_argument('mode', choices=['train-price', 'train-load', 'predict-price', 'predict-load', 'update-tariffs', 'backfill-actuals', 'update-adjusters'], help="The mode to run the script in.")
     parser.add_argument('--publish-hass', action='store_true', help="Publish forecasts as attributes to Home Assistant entities.")
     parser.add_argument('--dynamic-handoff', action='store_true', help="For 'predict-price' mode, use Amber's advanced forecast to seed the model.")
     parser.add_argument('--config', default='config.json', help="Path to the configuration file.")
@@ -714,6 +913,8 @@ def main():
         update_tariffs()
     elif args.mode == 'backfill-actuals':
         backfill_actuals()
+    elif args.mode == 'update-adjusters':
+        update_adjusters()
 
 if __name__ == "__main__":
     main()

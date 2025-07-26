@@ -51,6 +51,24 @@
         "price_forecast_log_file": "price_forecast_log.csv",
         "load_forecast_log_file": "load_forecast_log.csv"
     },
+    "adjusters": {
+        "power_pv": {
+            "path": "adjuster_power_pv.json",
+            "type": "multiplicative"
+        },
+        "temperature_adelaide": {
+            "path": "adjuster_temperature.json",
+            "type": "additive"
+        },
+        "humidity_adelaide": {
+            "path": "adjuster_humidity.json",
+            "type": "additive"
+        },
+        "wind_speed_adelaide": {
+            "path": "adjuster_wind_speed.json",
+            "type": "additive"
+        }
+    },
     "training_history_days": 730,
     "prediction_history_days": 10,
     "timezone": "Australia/Adelaide",
