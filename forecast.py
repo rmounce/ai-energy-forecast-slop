@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+#import pdb
+
 # # --------------------------------------------------------------------------- #
 # 1. IMPORTS
 # --------------------------------------------------------------------------- #
@@ -20,6 +22,10 @@ from darts import TimeSeries
 from darts.models import LightGBMModel
 from influxdb import InfluxDBClient
 from sklearn.multioutput import MultiOutputRegressor
+
+import io
+import re
+import zipfile
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -54,24 +60,45 @@ CONFIG = load_config()
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# 4. DATA FETCHING & PROCESSING FUNCTIONS
+# --------------------------------------------------------------------------- #
+
 def get_historical_data(client, start_time, end_time):
-    # This function remains unchanged
+    # This function is REFINED based on your InfluxDB schema
     logging.info(f"Querying historical data from {start_time.date()} to {end_time.date()}")
     start_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_str = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # This dictionary is now structured to query the correct fields from your measurements.
     data_sources = {
+        # Core measurements
         'power_load': f'SELECT mean("mean_value") FROM "rp_30m"."power_load_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'power_pv': f'SELECT mean("mean_value") FROM "rp_30m"."power_pv_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'temperature_adelaide': f'SELECT mean("mean_value") FROM "rp_30m"."temperature_adelaide" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'humidity_adelaide': f'SELECT mean("mean_value") FROM "rp_30m"."humidity_adelaide" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'wind_speed_adelaide': f'SELECT mean("mean_value") FROM "rp_30m"."wind_speed_adelaide" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+
+        # SA1 Data (from a single measurement)
         'aemo_price_sa1': f'SELECT mean("price") / 1000 FROM "rp_30m"."aemo_dispatch_sa1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+        'total_demand_sa1': f'SELECT mean("total_demand") FROM "rp_30m"."aemo_dispatch_sa1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+        'net_interchange_sa1': f'SELECT mean("net_interchange") FROM "rp_30m"."aemo_dispatch_sa1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+
+        # VIC1 Data (VERIFY aemo_dispatch_vic1_30m measurement name)
+        'total_demand_vic1': f'SELECT mean("total_demand") FROM "rp_30m"."aemo_dispatch_vic1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+        'net_interchange_vic1': f'SELECT mean("net_interchange") FROM "rp_30m"."aemo_dispatch_vic1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+        
+        # NSW1 Data (VERIFY aemo_dispatch_nsw1_30m measurement name)
+        'total_demand_nsw1': f'SELECT mean("total_demand") FROM "rp_30m"."aemo_dispatch_nsw1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+        'net_interchange_nsw1': f'SELECT mean("net_interchange") FROM "rp_30m"."aemo_dispatch_nsw1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
     }
+    
     dataframes = {}
     for name, query in data_sources.items():
         try:
             result = client.query(query)
-            if result:
+            # This existing logic handles the queries perfectly, as each query returns a single 'mean' column.
+            if result and result.get_points():
                 df = pd.DataFrame(result.get_points())
                 df['time'] = pd.to_datetime(df['time'])
                 df.set_index('time', inplace=True)
@@ -79,9 +106,13 @@ def get_historical_data(client, start_time, end_time):
                 dataframes[name] = df
         except Exception as e:
             logging.error(f"Error querying {name}: {e}")
+
     if not dataframes:
         logging.error("FATAL: No data retrieved from InfluxDB.")
         return pd.DataFrame()
+        
+    # Using 'outer' join correctly handles missing data, like your 2-week interchange gap, by creating NaNs.
+    # The ffill().dropna() in the training function will handle these.
     return pd.concat(dataframes.values(), axis=1, join='outer')
 
 
@@ -249,6 +280,170 @@ def get_weather_forecast():
     logging.info(f"Retrieved and interpolated {len(weather_30min)} weather forecast records.")
     return weather_30min
 
+def get_aemo_forecast():
+    """
+    Retrieves and processes demand and interchange forecasts by combining two AEMO sources:
+    1. A high-resolution JSON API for the immediate ~24h forecast.
+    2. The 7-day outlook ZIP/CSV report for the long-term forecast.
+    The data is then stitched together to form a complete, continuous forecast.
+    """
+    logging.info("Retrieving AEMO demand and interchange forecast (multi-source)...")
+    
+    # --- Part 1: Fetch Short-Term (Next ~24h) Forecast via JSON API ---
+    short_term_df = _get_aemo_short_term_forecast()
+
+    # --- Part 2: Fetch Long-Term (7-Day) Forecast via NEMWeb ZIP File ---
+    long_term_df = _get_aemo_7_day_outlook_forecast()
+
+    # --- Part 3: Combine Forecasts ---
+    if short_term_df.empty and long_term_df.empty:
+        logging.error("Failed to retrieve any AEMO forecast data from all sources.")
+        return pd.DataFrame()
+    
+    if short_term_df.empty:
+        logging.warning("Using only the long-term AEMO forecast.")
+        return long_term_df
+        
+    if long_term_df.empty:
+        logging.warning("Using only the short-term AEMO forecast.")
+        return short_term_df
+
+    # Combine the two dataframes. The `combine_first` method fills NaN values in 
+    # short_term_df with the values from long_term_df for the same index.
+    # This is perfect for appending the long-term data where the short-term one ends.
+    combined_df = short_term_df.combine_first(long_term_df)
+
+    # Ensure the data is continuous and sorted
+    final_df = combined_df.resample('30min').mean().ffill().bfill()
+    final_df.sort_index(inplace=True)
+
+    logging.info(f"Successfully combined short and long-term AEMO forecasts into {len(final_df)} intervals.")
+    return final_df
+
+def _get_aemo_short_term_forecast():
+    """Helper to fetch the ~24h JSON API forecast."""
+    logging.info("Fetching AEMO short-term forecast (JSON API)...")
+    try:
+        url = "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN"
+        payload = {"timeScale": ["30MIN"]}
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Could not fetch short-term AEMO forecast: {e}")
+        return pd.DataFrame()
+
+    if "5MIN" not in data or not data["5MIN"]:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data['5MIN'])
+    # (The rest of this function is the same as the previous correct version)
+    required_cols = ['SETTLEMENTDATE', 'REGIONID', 'TOTALDEMAND', 'NETINTERCHANGE']
+    df = df[df['REGIONID'].isin(CONFIG['aemo_forecast']['regions'])]
+    nem_tz = pytz.timezone('Etc/GMT-10')
+    df['timestamp_end'] = pd.to_datetime(df['SETTLEMENTDATE']).dt.tz_localize(nem_tz)
+    df = df.sort_values(['REGIONID', 'timestamp_end']).reset_index(drop=True)
+    df['duration'] = df.groupby('REGIONID')['timestamp_end'].diff().fillna(pd.Timedelta(minutes=5))
+    df['timestamp'] = (df['timestamp_end'] - df['duration']).dt.tz_convert('UTC')
+    df.set_index('timestamp', inplace=True)
+    pivot_df = df.pivot_table(index='timestamp', columns='REGIONID', values=['TOTALDEMAND', 'NETINTERCHANGE'])
+    pivot_df.columns = ['_'.join(col).strip() for col in pivot_df.columns.values]
+    rename_map = {
+        'TOTALDEMAND_SA1': 'total_demand_sa1', 'NETINTERCHANGE_SA1': 'net_interchange_sa1',
+        'TOTALDEMAND_VIC1': 'total_demand_vic1', 'NETINTERCHANGE_VIC1': 'net_interchange_vic1',
+        'TOTALDEMAND_NSW1': 'total_demand_nsw1', 'NETINTERCHANGE_NSW1': 'net_interchange_nsw1',
+    }
+    pivot_df.rename(columns=rename_map, inplace=True)
+    return pivot_df.resample('30min').mean()
+
+def _get_aemo_7_day_outlook_forecast():
+    """Helper to fetch and parse the latest 7-Day Outlook report from NEMWeb."""
+    logging.info("Fetching AEMO 7-Day Outlook forecast (NEMWeb ZIP)...")
+    try:
+        # 1. Scrape the directory to find the latest file
+        dir_url = "https://nemweb.com.au/Reports/Current/SEVENDAYOUTLOOK_FULL/"
+        response = requests.get(dir_url, timeout=30)
+        response.raise_for_status()
+        
+        file_pattern = r"PUBLIC_SEVENDAYOUTLOOK_FULL_(\d{14})_\d+\.zip"
+        files = re.findall(file_pattern, response.text)
+        if not files:
+            logging.error("Could not find any 7-Day Outlook ZIP files in the directory.")
+            return pd.DataFrame()
+            
+        latest_file_timestamp = sorted(files, reverse=True)[0]
+        full_filename_match = re.search(f'PUBLIC_SEVENDAYOUTLOOK_FULL_{latest_file_timestamp}.*?\.zip', response.text)
+        if not full_filename_match:
+             logging.error("Could not reconstruct full filename for the 7-Day Outlook.")
+             return pd.DataFrame()
+
+        zip_url = f"{dir_url}{full_filename_match.group(0)}"
+        logging.info(f"Downloading latest report: {zip_url}")
+
+        # 2. Download and extract the CSV from the ZIP in memory
+        zip_response = requests.get(zip_url, timeout=60)
+        zip_response.raise_for_status()
+        
+        with zipfile.ZipFile(io.BytesIO(zip_response.content)) as z:
+            csv_filename = z.namelist()[0]
+            with z.open(csv_filename) as f:
+                lines = f.read().decode('utf-8').splitlines()
+                header_line = None
+                data_lines = []
+                for line in lines:
+                    if line.startswith('I,'):
+                        header_line = line.split(',')
+                    elif line.startswith('D,'):
+                        data_lines.append(line.split(','))
+
+                if not header_line or not data_lines:
+                    logging.error("Could not find header ('I') or data ('D') rows in the CSV.")
+                    return pd.DataFrame()
+                
+                data_df = pd.DataFrame(data_lines, columns=header_line)
+
+    except Exception as e:
+        logging.error(f"Failed during processing of AEMO 7-Day Outlook: {e}")
+        return pd.DataFrame()
+
+    # 4. Clean, process, and pivot the data
+    required_cols = ['INTERVAL_DATETIME', 'REGIONID', 'SCHEDULED_DEMAND', 'NET_INTERCHANGE']
+    if not all(col in data_df.columns for col in required_cols):
+        logging.error("7-Day Outlook CSV is missing required columns.")
+        return pd.DataFrame()
+
+    nem_tz = pytz.timezone('Etc/GMT-10')
+    datetime_format = '"%Y/%m/%d %H:%M:%S"'
+    
+    # --- FIX ---
+    # The timestamp is the END of the interval. To get the START time for consistency,
+    # we must subtract 30 minutes after parsing.
+    data_df['timestamp'] = (
+        pd.to_datetime(data_df['INTERVAL_DATETIME'], format=datetime_format)
+        .dt.tz_localize(nem_tz) 
+        - pd.Timedelta(minutes=30)
+    ).dt.tz_convert('UTC')
+    # --- END OF FIX ---
+
+    data_df.set_index('timestamp', inplace=True)
+    
+    data_df['SCHEDULED_DEMAND'] = pd.to_numeric(data_df['SCHEDULED_DEMAND'], errors='coerce')
+    data_df['NET_INTERCHANGE'] = pd.to_numeric(data_df['NET_INTERCHANGE'], errors='coerce')
+    
+    data_df = data_df[data_df['REGIONID'].isin(CONFIG['aemo_forecast']['regions'])]
+    
+    pivot_df = data_df.pivot_table(index='timestamp', columns='REGIONID', values=['SCHEDULED_DEMAND', 'NET_INTERCHANGE'])
+    pivot_df.columns = ['_'.join(col).strip() for col in pivot_df.columns.values]
+
+    rename_map = {
+        'SCHEDULED_DEMAND_SA1': 'total_demand_sa1', 'NET_INTERCHANGE_SA1': 'net_interchange_sa1',
+        'SCHEDULED_DEMAND_VIC1': 'total_demand_vic1', 'NET_INTERCHANGE_VIC1': 'net_interchange_vic1',
+        'SCHEDULED_DEMAND_NSW1': 'total_demand_nsw1', 'NET_INTERCHANGE_NSW1': 'net_interchange_nsw1',
+    }
+    pivot_df.rename(columns=rename_map, inplace=True)
+    
+    return pivot_df
+
 def create_time_features(df):
     # This function is unchanged
     df_out = df.copy()
@@ -257,6 +452,7 @@ def create_time_features(df):
     df_out['day_of_year'] = df_out.index.dayofyear
     df_out['month'] = df_out.index.month
     return df_out
+
 
 # --------------------------------------------------------------------------- #
 # 5. MODEL TRAINING, PREDICTION & PUBLISHING FUNCTIONS
@@ -373,6 +569,24 @@ def train_single_model(model_name):
         target_series = TimeSeries.from_series(model_data_featured[target_col], freq='30min')
         covariates_ts = TimeSeries.from_dataframe(model_data_featured, value_cols=all_feature_cols, freq='30min')
 
+        sample_weight = None
+        weighting_config = model_config.get('recency_weighting')
+        if weighting_config and weighting_config.get('enabled'):
+            logging.info("Applying recency weighting to the training data.")
+            half_life_days = weighting_config.get('half_life_days', 90)
+            
+            time_delta_days = (model_data_featured.index.max() - model_data_featured.index).total_seconds() / (24 * 3600)
+            
+            weights_series = pd.Series(
+                np.power(2, -time_delta_days / half_life_days),
+                index=model_data_featured.index
+            )
+            
+            # The sample_weight parameter MUST be a Darts TimeSeries object.
+            # We convert our pandas Series of weights into this format.
+            sample_weight = TimeSeries.from_series(weights_series, freq='30min')
+            logging.info(f"Sample weights calculated and converted to TimeSeries with a half-life of {half_life_days} days.")
+
         lgbm = LightGBMModel(
             lags=24 * 7,
             lags_future_covariates=[0],
@@ -380,7 +594,8 @@ def train_single_model(model_name):
             **model_config['lgbm_params']
         )
         logging.info("Fitting the model...")
-        lgbm.fit(series=target_series, future_covariates=covariates_ts)
+        # Pass the weights to the fit method. If sample_weight is None, Darts ignores it.
+        lgbm.fit(series=target_series, future_covariates=covariates_ts, sample_weight=sample_weight)
 
         logging.info("Extracting feature importances...")
         if isinstance(lgbm.model, MultiOutputRegressor):
@@ -480,6 +695,10 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
 
     logging.info("Fetching all future covariate data...")
     future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast()}
+    if model_name == 'price':
+        # Only retrieve from internet if needed
+        future_sources['aemo'] = get_aemo_forecast()
+
     prediction_type = 'simple'
     if use_dynamic_handoff and model_name == 'price':
         prediction_type = 'dynamic_handoff'
