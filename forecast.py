@@ -444,16 +444,6 @@ def _get_aemo_7_day_outlook_forecast():
     
     return pivot_df
 
-def create_time_features(df):
-    # This function is unchanged
-    df_out = df.copy()
-    df_out['hour'] = df_out.index.hour
-    df_out['day_of_week'] = df_out.index.dayofweek
-    df_out['day_of_year'] = df_out.index.dayofyear
-    df_out['month'] = df_out.index.month
-    return df_out
-
-
 # --------------------------------------------------------------------------- #
 # 5. MODEL TRAINING, PREDICTION & PUBLISHING FUNCTIONS
 # --------------------------------------------------------------------------- #
@@ -550,6 +540,8 @@ def train_single_model(model_name):
     client = InfluxDBClient(**CONFIG['influxdb'])
 
     try:
+        target_lags_list = model_config.get('target_lags', 48 * 7)
+        future_covariate_lags_list = model_config.get('future_covariate_lags', [0])
         training_days = model_config.get('training_history_days', CONFIG['training_history_days'])
         logging.info(f"Using a training history of {training_days} days.")
         end_time = datetime.now(pytz.UTC)
@@ -558,16 +550,16 @@ def train_single_model(model_name):
         historical_df = get_historical_data(client, start_time, end_time)
         if historical_df.empty: raise SystemExit("Aborting: Failed to retrieve historical data.")
 
+        # The 'model_data' dataframe should NOT have time features in it anymore
         model_data = historical_df[[target_col] + feature_cols].copy().ffill().dropna()
         min_val = model_data[target_col].min()
         shift_value = abs(min_val) + 1 if min_val <= 0 else 0
         model_data[target_col] = np.log(model_data[target_col] + shift_value)
 
-        model_data_featured = create_time_features(model_data)
-        all_feature_cols = feature_cols + ['hour', 'day_of_week', 'day_of_year', 'month']
-
-        target_series = TimeSeries.from_series(model_data_featured[target_col], freq='30min')
-        covariates_ts = TimeSeries.from_dataframe(model_data_featured, value_cols=all_feature_cols, freq='30min')
+        # We no longer call create_time_features here.
+        # Darts will create the time features internally.
+        target_series = TimeSeries.from_series(model_data[target_col], freq='30min')
+        covariates_ts = TimeSeries.from_dataframe(model_data, value_cols=feature_cols, freq='30min')
 
         sample_weight = None
         weighting_config = model_config.get('recency_weighting')
@@ -575,41 +567,46 @@ def train_single_model(model_name):
             logging.info("Applying recency weighting to the training data.")
             half_life_days = weighting_config.get('half_life_days', 90)
             
-            time_delta_days = (model_data_featured.index.max() - model_data_featured.index).total_seconds() / (24 * 3600)
+            time_delta_days = (model_data.index.max() - model_data.index).total_seconds() / (24 * 3600)
             
             weights_series = pd.Series(
                 np.power(2, -time_delta_days / half_life_days),
-                index=model_data_featured.index
+                index=model_data.index
             )
             
-            # The sample_weight parameter MUST be a Darts TimeSeries object.
-            # We convert our pandas Series of weights into this format.
             sample_weight = TimeSeries.from_series(weights_series, freq='30min')
             logging.info(f"Sample weights calculated and converted to TimeSeries with a half-life of {half_life_days} days.")
 
+        encoders_config = model_config.get('add_encoders') # Get the encoder config
+
         lgbm = LightGBMModel(
-            lags=24 * 7,
-            lags_future_covariates=[0],
+            lags=model_config.get('target_lags'),
+            lags_future_covariates=model_config.get('future_covariate_lags'),
             output_chunk_length=model_config['forecast_horizon'],
+            add_encoders=encoders_config, # Pass the config to Darts
             **model_config['lgbm_params']
         )
         logging.info("Fitting the model...")
-        # Pass the weights to the fit method. If sample_weight is None, Darts ignores it.
         lgbm.fit(series=target_series, future_covariates=covariates_ts, sample_weight=sample_weight)
 
         logging.info("Extracting feature importances...")
+        
+        # This is the most reliable Darts-native way to get the feature names.
+        # The `lagged_feature_names` attribute holds the correctly ordered list
+        # of all features used by the model (target lags, covariate lags, and encoders).
+        true_feature_names = lgbm.lagged_feature_names
+
         if isinstance(lgbm.model, MultiOutputRegressor):
+            # For a multi-output model, we average the importances across all output steps.
             importances = np.mean([estimator.feature_importances_ for estimator in lgbm.model.estimators_], axis=0)
         else:
+            # For a single-output model (or when multi_models=False).
             importances = lgbm.model.feature_importances_
-        
-        target_lags_list = lgbm.lags['target']
-        lag_names = [f'{target_col}_lag{lag}' for lag in target_lags_list]
-        covariate_names = list(covariates_ts.columns)
-        true_feature_names = lag_names + covariate_names
 
         if len(true_feature_names) != len(importances):
-            logging.error("FATAL: Length of feature names does not match length of importances!")
+            logging.error(f"FATAL: Length of feature names ({len(true_feature_names)}) does not match length of importances ({len(importances)})!")
+            # Add this logging to help debug if it ever fails again
+            logging.error(f"Darts feature names: {true_feature_names}")
         else:
             feature_importance_dict = {key: value.item() for key, value in zip(true_feature_names, importances)}
             sorted_importance = {k: v for k, v in sorted(feature_importance_dict.items(), key=lambda item: item[1], reverse=True)}
@@ -640,16 +637,21 @@ def _predict_simple(model, params, historical_df, future_covariates_ts, model_co
     return pred_df
 
 def _predict_with_dynamic_handoff(model, params, historical_df, future_covariates_df, model_config):
-    # This function is unchanged
+    # This function is unchanged until the TimeSeries creation
     logging.info("Generating forecast using 'dynamic handoff' method.")
     target_col = model_config['target_column']
     shift_value = params['shift_value']
     amber_advanced_df = get_amber_advanced_forecast()
     if amber_advanced_df.empty:
         logging.warning("No advanced Amber data available. Falling back to simple prediction.")
-        all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month']
-        future_covariates_ts = TimeSeries.from_dataframe(future_covariates_df, value_cols=all_feature_cols, freq='30min')
+        # CORRECTED: Use only feature_cols here as well
+        future_covariates_ts = TimeSeries.from_dataframe(
+            future_covariates_df, 
+            value_cols=model_config['feature_cols'], 
+            freq='30min'
+        )
         return _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
+        
     last_good_amber_index = amber_advanced_df.index.max()
     logging.info(f"Using Amber advanced forecast for {len(amber_advanced_df) / 2} hours (up to {last_good_amber_index}).")
     hist_df_log = historical_df[[target_col] + model_config['feature_cols']].copy().ffill().dropna()
@@ -658,8 +660,14 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     amber_seed_data[target_col] = np.log(amber_advanced_df[target_col] + shift_value)
     pseudo_history_df = pd.concat([hist_df_log, amber_seed_data.dropna()])
     pseudo_history_ts = TimeSeries.from_series(pseudo_history_df[target_col], freq='30min')
-    all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month']
-    future_covariates_ts = TimeSeries.from_dataframe(future_covariates_df, value_cols=all_feature_cols, freq='30min')
+    
+    # CORRECTED: And again here, only use the real feature_cols
+    future_covariates_ts = TimeSeries.from_dataframe(
+        future_covariates_df, 
+        value_cols=model_config['feature_cols'], 
+        freq='30min'
+    )
+    
     steps_to_predict = max(0, model_config['forecast_horizon'] - len(amber_advanced_df))
     remaining_forecast_df = pd.DataFrame()
     if steps_to_predict > 0:
@@ -675,7 +683,11 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     return final_forecast_df
 
 def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=False):
-    # This function is largely the same, but now passes data to the modified logger
+    """
+    Loads a trained model and generates a forecast. This function now correctly
+    combines historical and future covariate data to support models that use lags
+    on future covariates.
+    """
     logging.info(f"--- Running in PREDICT mode for model: {model_name} ---")
     model_config = CONFIG['models'][model_name]
     model_file_path = CONFIG['paths'][f'{model_name}_model_file']
@@ -693,10 +705,10 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
     logging.info(f"Aligning forecast to start at current interval: {forecast_start_time}")
 
-    logging.info("Fetching all future covariate data...")
+    # 1. Fetch all data sources: future forecasts AND recent history
+    logging.info("Fetching all future covariate and recent historical data...")
     future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast()}
     if model_name == 'price':
-        # Only retrieve from internet if needed
         future_sources['aemo'] = get_aemo_forecast()
 
     prediction_type = 'simple'
@@ -705,40 +717,83 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     else:
         future_sources['amber_spot'] = get_amber_spot_price_forecast()
 
-    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
-    future_covariates_df = future_covariates_df[future_covariates_df.index >= forecast_start_time]
-
-    # 1. Keep a clean copy of the original, unadjusted forecasts.
-    original_covariates_for_log = future_covariates_df.copy()
-
-    # 2. Apply adjustments to a new dataframe that will be used for prediction.
-    adjusted_covariates_df = apply_covariate_adjustments(future_covariates_df)
-    
-    # (Optional) Call the new function to publish the adjusted data
-    if publish_to_hass:
-        publish_adjusted_covariates_to_hass(adjusted_covariates_df)
-
-    time_featured_df = create_time_features(adjusted_covariates_df)
-    missing_cols = [col for col in model_config['feature_cols'] if col not in time_featured_df.columns]
-    if missing_cols: raise SystemExit(f"FATAL: Missing future data for features: {missing_cols}. Check HA connection.")
-
-    time_featured_df = time_featured_df.ffill().bfill()
-    time_featured_df.dropna(inplace=True)
-    if time_featured_df.empty: raise SystemExit(f"FATAL: Could not create a complete future covariate set.")
-
     client = InfluxDBClient(**CONFIG['influxdb'])
     try:
-        historical_df = get_historical_data(client, forecast_start_time - timedelta(days=CONFIG['prediction_history_days']), forecast_start_time - timedelta(minutes=30))
+        # Fetch recent history for the target series AND for historical covariates
+        history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
+        history_end = forecast_start_time - timedelta(minutes=30)
+        historical_df = get_historical_data(client, history_start, history_end)
         if historical_df.empty: raise SystemExit("Aborting: Failed to get recent history for prediction.")
     finally:
         client.close()
 
+    # 2. Prepare ONE single, continuous dataframe for ALL covariates (past and future)
+    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
+    
+    # Take only the covariate columns from the full historical data
+    historical_covariates_df = historical_df[model_config['feature_cols']]
+    
+    # Combine historical and future covariates. Give preference to future data where indices overlap.
+    combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
+    combined_covariates_df = combined_covariates_df[~combined_covariates_df.index.duplicated(keep='last')].sort_index()
+
+    # 3. Apply adjustments and handle publishing
+    original_covariates_for_log = combined_covariates_df.copy() # Use the combined df for logging
+    adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
+    
+    if publish_to_hass:
+        # Publish only the future part of the adjusted data
+        publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
+        publish_adjusted_covariates_to_hass(publish_df)
+
+    # 4. Perform prediction using the correctly prepared data
     if prediction_type == 'dynamic_handoff':
-        final_pred_df = _predict_with_dynamic_handoff(model, params, historical_df, time_featured_df, model_config)
+        # The helper function receives the full combined dataframe
+        final_pred_df = _predict_with_dynamic_handoff(model, params, historical_df, adjusted_covariates_df, model_config)
     else:
-        all_feature_cols = model_config['feature_cols'] + ['hour', 'day_of_week', 'day_of_year', 'month']
-        future_covariates_ts = TimeSeries.from_dataframe(time_featured_df, value_cols=all_feature_cols, freq='30min')
+        # Create the TimeSeries from the combined dataframe. Darts will handle the slicing.
+        # This TimeSeries now correctly contains data BEFORE forecast_start_time.
+        future_covariates_ts = TimeSeries.from_dataframe(
+            adjusted_covariates_df.ffill().bfill(), # Fill any gaps just in case
+            value_cols=model_config['feature_cols'],
+            freq='30min'
+        )
         final_pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
+
+    # 5. Log and save the results (this part of the function is unchanged)
+    log_forecast_data(
+        model_name=model_name,
+        model_version=model_version,
+        prediction_type=prediction_type,
+        final_pred_df=final_pred_df,
+        future_covariates_df=original_covariates_for_log
+    )
+
+    if model_name == 'price':
+        final_pred_df.rename(columns={model_config['target_column']: 'wholesale_price'}, inplace=True)
+        if not use_dynamic_handoff and 'amber_spot' in future_sources and not future_sources['amber_spot'].empty:
+            final_pred_df.update(future_sources['amber_spot'])
+        apply_tariffs_to_forecast(final_pred_df)
+
+    logging.info(f"--- Prediction complete for {model_name} ---")
+
+    final_pred_df.index.name = 'timestamp'
+    output_df = final_pred_df.reset_index()
+    if output_df['timestamp'].dt.tz is None:
+        output_df['timestamp'] = output_df['timestamp'].dt.tz_localize('UTC')
+    output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
+    output_data = output_df.to_dict('records')
+    try:
+        with open(CONFIG['paths']['prediction_output_file'], 'r') as f: all_predictions = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError): all_predictions = {}
+    all_predictions[f'{model_name}_forecast'] = output_data
+    all_predictions[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
+    with open(CONFIG['paths']['prediction_output_file'], 'w') as f: json.dump(all_predictions, f, indent=4)
+    logging.info(f"Saved {model_name} forecast to {CONFIG['paths']['prediction_output_file']}.")
+    print("\nForecast Head:")
+    print(final_pred_df.head())
+    if publish_to_hass:
+        publish_forecast_to_hass(model_name, final_pred_df)
 
     log_forecast_data(
         model_name=model_name,
