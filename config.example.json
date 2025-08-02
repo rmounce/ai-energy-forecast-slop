@@ -2,41 +2,86 @@
     "influxdb": {
         "host": "localhost",
         "port": 8086,
-        "username": "user",
-        "password": "YOUR_INFLUXDB_PASSWORD",
-        "database": "hass"
+        "username": "your_influxdb_user",
+        "password": "your_influxdb_password",
+        "database": "home_assistant"
     },
     "home_assistant": {
-        "url": "http://localhost:8123",
-        "token": "YOUR_HOME_ASSISTANT_LONG_LIVED_ACCESS_TOKEN",
-        "weather_entity": "weather.your_weather_provider_hourly",
-        "amber_entity": "sensor.amber_30min_forecasts_general_price",
-        "amber_feed_in_entity": "sensor.amber_30min_forecasts_feed_in_price",
-        "amber_billing_entity": "sensor.amber_billing_interval_forecasts_general_price",
+        "url": "http://homeassistant.local:8123",
+        "token": "your_long_lived_access_token",
+        "weather_entity": "weather.your_local_weather",
+        "amber_entity": "sensor.your_electricity_price_forecast",
+        "amber_feed_in_entity": "sensor.your_feed_in_price_forecast",
+        "amber_billing_entity": "sensor.your_billing_interval_price_forecast",
         "solcast_entities": [
-            "sensor.solcast_pv_forecast_forecast_today",
-            "sensor.solcast_pv_forecast_forecast_tomorrow",
-            "sensor.solcast_pv_forecast_forecast_day_3",
-            "sensor.solcast_pv_forecast_forecast_day_4"
+            "sensor.your_solcast_forecast_today",
+            "sensor.your_solcast_forecast_tomorrow",
+            "sensor.your_solcast_forecast_day_3"
         ],
         "publish_entities": {
             "price": "sensor.ai_price_forecast",
             "load": "sensor.ai_load_forecast"
         }
     },
+    "aemo_forecast": {
+        "url": "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN",
+        "regions": ["SA1", "VIC1", "NSW1", "QLD1", "TAS1"]
+    },
     "models": {
         "price": {
             "target_column": "aemo_price_sa1",
-            "feature_cols": ["power_pv", "temperature_adelaide", "humidity_adelaide", "wind_speed_adelaide"],
+            "feature_cols": [
+                "power_pv",
+                "temperature_location",
+                "humidity_location",
+                "wind_speed_location",
+                "total_demand_sa1",
+                "net_interchange_sa1",
+                "total_demand_vic1",
+                "net_interchange_vic1",
+                "total_demand_nsw1",
+                "net_interchange_nsw1"
+            ],
+            "add_encoders": {
+                "datetime_attribute": {"future": ["hour", "day_of_week", "day_of_year"]}
+            },
+            "target_lags": [
+                -1, -2, -3, -4, -5, -6,
+                -12,
+                -24,
+                -47, -48, -49,
+                -95, -96, -97,
+                -335, -336, -337
+            ],
+            "future_covariate_lags": [-4, -3, -2, -1, 0, 1, 2, 3, 4],
             "lgbm_params": {"n_estimators": 250, "num_leaves": 31, "learning_rate": 0.03, "max_depth": 7, "reg_alpha": 0.1, "reg_lambda": 0.1, "random_state": 42, "n_jobs": -1},
-            "forecast_horizon": 144
+            "forecast_horizon": 144,
+            "training_history_days": 730,
+            "recency_weighting": {
+                "enabled": true,
+                "half_life_days": 180
+            }
         },
         "load": {
             "target_column": "power_load",
-            "feature_cols": ["power_pv", "temperature_adelaide", "humidity_adelaide", "wind_speed_adelaide"],
+            "feature_cols": ["power_pv", "temperature_location", "humidity_location", "wind_speed_location"],
+            "add_encoders": {
+                "datetime_attribute": {"future": ["hour", "day_of_week", "day_of_year"]}
+            },
+            "future_covariate_lags": [-4, -3, -2, -1, 0, 1, 2, 3, 4],
+            "target_lags": [
+                -1, -2, -3, -4, -5, -6, -12,
+                -47, -48, -49,
+                -95, -96, -97,
+                -335, -336, -337
+            ],
             "lgbm_params": {"n_estimators": 200, "num_leaves": 25, "learning_rate": 0.05, "max_depth": 6, "reg_alpha": 0.1, "reg_lambda": 0.1, "random_state": 42, "n_jobs": -1},
             "forecast_horizon": 144,
-            "training_history_days": 365
+            "training_history_days": 730,
+            "recency_weighting": {
+                "enabled": true,
+                "half_life_days": 90
+            }
         }
     },
     "paths": {
@@ -54,23 +99,28 @@
     "adjusters": {
         "power_pv": {
             "path": "adjuster_power_pv.json",
-            "type": "multiplicative"
+            "type": "multiplicative",
+            "publish_entity_id": "sensor.ai_pv_forecast"
         },
-        "temperature_adelaide": {
+        "temperature_location": {
             "path": "adjuster_temperature.json",
-            "type": "additive"
+            "type": "additive",
+            "publish_entity_id": "sensor.ai_temperature_forecast"
         },
-        "humidity_adelaide": {
+        "humidity_location": {
             "path": "adjuster_humidity.json",
-            "type": "additive"
+            "type": "additive",
+            "publish_entity_id": "sensor.ai_humidity_forecast"
         },
-        "wind_speed_adelaide": {
+        "wind_speed_location": {
             "path": "adjuster_wind_speed.json",
-            "type": "additive"
+            "type": "additive",
+            "publish_entity_id": "sensor.ai_wind_forecast"
         }
     },
+    "adjuster_history_days": 30,
     "training_history_days": 730,
     "prediction_history_days": 10,
-    "timezone": "Australia/Adelaide",
+    "timezone": "Australia/Sydney",
     "gst_rate": 1.10
 }
