@@ -694,78 +694,37 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
         final_forecast_df = pd.concat([final_forecast_df, remaining_forecast_df])
     return final_forecast_df
 
-def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=False, publish_covariates=False):
+def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, original_covariates_for_log, publish_to_hass, use_dynamic_handoff):
     """
-    Loads a trained model and generates forecasts. It can generate and sort P10, P50,
-    and P90 price forecasts, and publishes adjusted covariates.
+    WORKER FUNCTION: Executes the prediction for a single model using pre-fetched and
+    pre-processed data. This function does no data fetching or processing itself.
     """
-    logging.info(f"--- Running in PREDICT mode for model: {model_name} ---")
+    logging.info(f"\n>>> Executing prediction for model: {model_name} <<<")
     model_config = CONFIG['models'][model_name]
     model_file_path = CONFIG['paths'][f'{model_name}_model_file']
+
     try:
         model = joblib.load(model_file_path)
-        with open(CONFIG['paths'][f'{model_name}_params_file'], 'r') as f: params = json.load(f)
+        with open(CONFIG['paths'][f'{model_name}_params_file'], 'r') as f:
+            params = json.load(f)
         mod_time = os.path.getmtime(model_file_path)
         model_version = datetime.fromtimestamp(mod_time, tz=pytz.UTC).isoformat()
         logging.info(f"Loaded model '{model_name}'. Version (timestamp): {model_version}")
     except FileNotFoundError:
-        raise SystemExit(f"Model for '{model_name}' not found. Please run 'train-{model_name}' first.")
+        logging.error(f"Model for '{model_name}' not found. Cannot run prediction. Please train first.")
+        return # Exit this worker function if model is not found
 
-    now = datetime.now(pytz.UTC)
-    minute = 30 if now.minute >= 30 else 0
-    forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
-    logging.info(f"Aligning forecast to start at current interval: {forecast_start_time}")
-
-    # 1. Fetch all data sources
-    logging.info("Fetching all future covariate and recent historical data...")
-    future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast()}
-    if model_name == 'price':
-        future_sources['aemo'] = get_aemo_forecast()
-
+    # Determine prediction type based on flags and model name
     prediction_type = 'simple'
     if use_dynamic_handoff and model_name == 'price':
         prediction_type = 'dynamic_handoff'
-    else:
-        future_sources['amber_spot'] = get_amber_spot_price_forecast()
 
-    client = InfluxDBClient(**CONFIG['influxdb'])
-    try:
-        history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
-        history_end = forecast_start_time - timedelta(minutes=30)
-        historical_df = get_historical_data(client, history_start, history_end)
-        if historical_df.empty: raise SystemExit("Aborting: Failed to get recent history for prediction.")
-    finally:
-        client.close()
-
-    # 2. Prepare Covariate DataFrames
-    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
-    historical_covariates_df = historical_df[model_config['feature_cols']]
-    combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
-    combined_covariates_df = combined_covariates_df[~combined_covariates_df.index.duplicated(keep='last')].sort_index()
-
-    # 3. Apply adjustments and PUBLISH ADJUSTED COVARIATES (RESTORED)
-    original_covariates_for_log = combined_covariates_df.copy()
-    adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
-    
-    if publish_covariates:
-        publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
-        publish_adjusted_covariates_to_hass(publish_df)
-
-    # Fill gaps for the model's input
-    adjusted_covariates_for_prediction = adjusted_covariates_df.copy()
-    adjusted_covariates_for_prediction.ffill(inplace=True)
-    adjusted_covariates_for_prediction.bfill(inplace=True)
-
-    # 4. Generate all required forecasts with sorting logic
+    # This dictionary will hold all generated forecasts (p10, p50, p90, etc.)
     all_forecasts = {}
-    
+
     if model_name == 'price' and prediction_type == 'dynamic_handoff':
         logging.info("--- Generating and sorting P10, P50, and P90 percentile forecasts ---")
-        percentiles = {
-            'p50': 'advanced_price_predicted',
-            'p10': 'advanced_price_low',
-            'p90': 'advanced_price_high'
-        }
+        percentiles = {'p50': 'advanced_price_predicted', 'p10': 'advanced_price_low', 'p90': 'advanced_price_high'}
         
         raw_forecasts = {}
         for key, price_attribute in percentiles.items():
@@ -774,7 +733,7 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
             if amber_df.empty:
                 logging.warning(f"No advanced Amber data for {key}. Skipping this forecast.")
                 continue
-            pred_df = _predict_with_dynamic_handoff(model, params, historical_df, adjusted_covariates_df, model_config, amber_df)
+            pred_df = _predict_with_dynamic_handoff(model, params, historical_df, adjusted_covariates_for_prediction, model_config, amber_df)
             raw_forecasts[key] = pred_df.rename(columns={model_config['target_column']: key})
 
         if len(raw_forecasts) == 3:
@@ -788,43 +747,50 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
         else:
             logging.warning("Could not generate all three forecasts. Using raw forecasts without sorting.")
             all_forecasts = raw_forecasts
-
     else: # For 'load' model or simple 'price' prediction
-        pred_df = _predict_simple(
-            model, params, historical_df, 
-            TimeSeries.from_dataframe(adjusted_covariates_df.ffill().bfill(), value_cols=model_config['feature_cols'], freq='30min'),
-            model_config
+        future_covariates_ts = TimeSeries.from_dataframe(
+            adjusted_covariates_for_prediction, value_cols=model_config['feature_cols'], freq='30min'
         )
+        pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
         all_forecasts[model_name] = pred_df
 
-    # 5. Process and Save the Primary Forecast (P50 or load)
+    # Log the primary forecast
     primary_key = 'p50' if (model_name == 'price' and prediction_type == 'dynamic_handoff') else model_name
     if primary_key in all_forecasts:
-        primary_pred_df = all_forecasts[primary_key].copy()
-        log_forecast_data(model_name, model_version, prediction_type, primary_pred_df, original_covariates_for_log)
-        
-        if model_name == 'price':
-             primary_pred_df.rename(columns={primary_pred_df.columns[0]: 'wholesale_price'}, inplace=True)
-             if not use_dynamic_handoff and 'amber_spot' in future_sources and not future_sources['amber_spot'].empty:
-                 primary_pred_df.update(future_sources['amber_spot'])
-             apply_tariffs_to_forecast(primary_pred_df)
-        
-        primary_pred_df.index.name = 'timestamp'
-        output_df = primary_pred_df.reset_index()
-        output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
-        output_data = output_df.to_dict('records')
-        try:
-            with open(CONFIG['paths']['prediction_output_file'], 'r') as f: all_predictions = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError): all_predictions = {}
-        all_predictions[f'{model_name}_forecast'] = output_data
-        all_predictions[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
-        with open(CONFIG['paths']['prediction_output_file'], 'w') as f: json.dump(all_predictions, f, indent=4)
-        logging.info(f"Saved primary {model_name} forecast to {CONFIG['paths']['prediction_output_file']}.")
-        print("\nPrimary Forecast Head:"); print(primary_pred_df.head())
+        primary_pred_df_for_log = all_forecasts[primary_key].copy()
+        log_forecast_data(model_name, model_version, prediction_type, primary_pred_df_for_log, original_covariates_for_log)
+    else:
+        logging.warning(f"Primary forecast key '{primary_key}' not found in generated forecasts. Skipping logging and saving.")
+        return # Nothing more to do
 
-    # 6. Publish all generated forecasts to Home Assistant
+    # Save the primary forecast to the main JSON file
+    primary_pred_df_for_save = all_forecasts[primary_key].copy()
+    if model_name == 'price':
+        primary_pred_df_for_save.rename(columns={primary_pred_df_for_save.columns[0]: 'wholesale_price'}, inplace=True)
+        # For simple price forecasts, 'amber_spot' is fetched by the orchestrator. We need to get it here.
+        # This is a bit of a workaround for the refactoring. A cleaner way would be to pass future_sources down.
+        if not use_dynamic_handoff:
+            amber_spot_df = get_amber_spot_price_forecast()
+            if not amber_spot_df.empty:
+                primary_pred_df_for_save.update(amber_spot_df)
+        apply_tariffs_to_forecast(primary_pred_df_for_save)
+    
+    primary_pred_df_for_save.index.name = 'timestamp'
+    output_df = primary_pred_df_for_save.reset_index()
+    output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
+    output_data = output_df.to_dict('records')
+    try:
+        with open(CONFIG['paths']['prediction_output_file'], 'r') as f: all_predictions = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError): all_predictions = {}
+    all_predictions[f'{model_name}_forecast'] = output_data
+    all_predictions[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
+    with open(CONFIG['paths']['prediction_output_file'], 'w') as f: json.dump(all_predictions, f, indent=4)
+    logging.info(f"Saved primary {model_name} forecast to {CONFIG['paths']['prediction_output_file']}.")
+    print(f"\nPrimary Forecast Head for {model_name}:"); print(primary_pred_df_for_save.head())
+
+    # Publish all relevant forecasts to Home Assistant
     if publish_to_hass:
-        logging.info("--- Publishing all generated forecasts to Home Assistant ---")
+        logging.info(f"--- Publishing all generated forecasts for {model_name} to Home Assistant ---")
         publish_map = {'p50': model_name, 'p10': f"{model_name}_p10", 'p90': f"{model_name}_p90", 'load': 'load'}
         for key, forecast_df in all_forecasts.items():
             publish_name = publish_map.get(key)
@@ -835,8 +801,71 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
                 publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
                 apply_tariffs_to_forecast(publish_df)
             publish_forecast_to_hass(publish_name, publish_df)
+
+def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_covariates):
+    """
+    ORCHESTRATOR: Fetches and processes data once, then runs predictions
+    for a list of specified models to improve efficiency.
+    """
+    logging.info(f"--- Prediction Orchestrator started for models: {models_to_run} ---")
+
+    # 1. Fetch all data sources ONCE
+    logging.info("Fetching all future covariate and recent historical data...")
+    # Fetch all possible sources needed by any model
+    future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast(), 'aemo': get_aemo_forecast()}
+
+    now = datetime.now(pytz.UTC)
+    minute = 30 if now.minute >= 30 else 0
+    forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
     
-    logging.info(f"--- All processing for {model_name} complete ---")
+    client = InfluxDBClient(**CONFIG['influxdb'])
+    try:
+        history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
+        history_end = forecast_start_time - timedelta(minutes=30)
+        historical_df = get_historical_data(client, history_start, history_end)
+        if historical_df.empty: raise SystemExit("Aborting: Failed to get recent history for prediction.")
+    finally:
+        client.close()
+
+    # 2. Process all data ONCE
+    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
+    
+    # Get the union of all features required by the models we're running
+    all_feature_cols = set()
+    for model_name in models_to_run:
+        all_feature_cols.update(CONFIG['models'][model_name]['feature_cols'])
+    
+    historical_covariates_df = historical_df[list(all_feature_cols)]
+    combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
+    combined_covariates_df = combined_covariates_df[~combined_covariates_df.index.duplicated(keep='last')].sort_index()
+
+    original_covariates_for_log = combined_covariates_df.copy()
+    adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
+
+    # Conditionally publish the adjusted covariates
+    if publish_covariates:
+        publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
+        publish_adjusted_covariates_to_hass(publish_df)
+
+    # Prepare a single, clean DataFrame for all model predictions
+    adjusted_covariates_for_prediction = adjusted_covariates_df.copy()
+    adjusted_covariates_for_prediction.ffill(inplace=True)
+    adjusted_covariates_for_prediction.bfill(inplace=True)
+
+    # 3. Loop and execute predictions for each model
+    for model_name in models_to_run:
+        # Pass the pre-fetched and pre-processed data to the worker function
+        _execute_single_prediction(
+            model_name=model_name,
+            historical_df=historical_df,
+            adjusted_covariates_for_prediction=adjusted_covariates_for_prediction,
+            original_covariates_for_log=original_covariates_for_log,
+            publish_to_hass=publish_hass,
+            use_dynamic_handoff=use_dynamic_handoff
+        )
+
+    logging.info("--- Prediction Orchestrator finished ---")
+
 
 def apply_tariffs_to_forecast(pred_df):
     # This function remains unchanged
@@ -1222,15 +1251,12 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
 # --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="Energy Price & Load Forecasting Pipeline")
-    # Add 'predict-all' to choices
     parser.add_argument('mode', choices=[
         'train-price', 'train-load', 'predict-price', 'predict-load', 'predict-all',
         'update-tariffs', 'backfill-actuals', 'update-adjusters'
     ], help="The mode to run the script in.")
     
-    # Add the new --publish-covariates flag
     parser.add_argument('--publish-covariates', action='store_true', help="Publish adjusted covariate forecasts to Home Assistant.")
-    
     parser.add_argument('--publish-hass', action='store_true', help="Publish FINAL forecasts to Home Assistant entities.")
     parser.add_argument('--dynamic-handoff', action='store_true', help="For 'predict-price' mode, use Amber's advanced forecast to seed the model.")
     parser.add_argument('--config', default='config.json', help="Path to the configuration file.")
@@ -1239,33 +1265,29 @@ def main():
     global CONFIG
     CONFIG = load_config(args.config)
 
-    if args.mode == 'train-price':
+    # --- REFACTORED PREDICTION LOGIC ---
+    # Centralize all prediction calls through the new orchestrator
+    if args.mode in ['predict-price', 'predict-load', 'predict-all']:
+        models = []
+        if args.mode == 'predict-price':
+            models = ['price']
+        elif args.mode == 'predict-load':
+            models = ['load']
+        elif args.mode == 'predict-all':
+            models = ['price', 'load']
+        
+        run_predictions(
+            models_to_run=models,
+            publish_hass=args.publish_hass,
+            use_dynamic_handoff=args.dynamic_handoff,
+            publish_covariates=args.publish_covariates
+        )
+    
+    # --- Other modes remain the same ---
+    elif args.mode == 'train-price':
         train_single_model('price')
     elif args.mode == 'train-load':
         train_single_model('load')
-    elif args.mode == 'predict-price':
-        predict_with_model('price', args.publish_hass, args.dynamic_handoff, args.publish_covariates)
-    elif args.mode == 'predict-load':
-        predict_with_model('load', args.publish_hass, False, args.publish_covariates)
-    
-    # --- NEW: Handle the 'predict-all' combined mode ---
-    elif args.mode == 'predict-all':
-        logging.info("--- Running combined 'predict-all' mode ---")
-        
-        # First, publish covariates if the flag is set. This happens only once.
-        if args.publish_covariates:
-            _publish_covariates_helper()
-        
-        # Then, run the price prediction, telling it NOT to publish covariates again.
-        logging.info("\n>>> Starting Price Prediction Run <<<")
-        predict_with_model('price', args.publish_hass, args.dynamic_handoff, publish_covariates=False)
-        
-        # Finally, run the load prediction, also not publishing covariates.
-        logging.info("\n>>> Starting Load Prediction Run <<<")
-        predict_with_model('load', args.publish_hass, False, publish_covariates=False)
-        
-        logging.info("--- Combined 'predict-all' mode complete ---")
-
     elif args.mode == 'update-tariffs':
         update_tariffs()
     elif args.mode == 'backfill-actuals':
