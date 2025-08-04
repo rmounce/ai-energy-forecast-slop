@@ -694,7 +694,7 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
         final_forecast_df = pd.concat([final_forecast_df, remaining_forecast_df])
     return final_forecast_df
 
-def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=False):
+def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=False, publish_covariates=False):
     """
     Loads a trained model and generates forecasts. It can generate and sort P10, P50,
     and P90 price forecasts, and publishes adjusted covariates.
@@ -747,10 +747,14 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     original_covariates_for_log = combined_covariates_df.copy()
     adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
     
-    if publish_to_hass:
-        # Publish only the future part of the adjusted data
+    if publish_covariates:
         publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
         publish_adjusted_covariates_to_hass(publish_df)
+
+    # Fill gaps for the model's input
+    adjusted_covariates_for_prediction = adjusted_covariates_df.copy()
+    adjusted_covariates_for_prediction.ffill(inplace=True)
+    adjusted_covariates_for_prediction.bfill(inplace=True)
 
     # 4. Generate all required forecasts with sorting logic
     all_forecasts = {}
@@ -1132,6 +1136,37 @@ def apply_covariate_adjustments(future_covariates_df):
 
     return adjusted_df.drop(columns=['time_of_day'])
 
+def _publish_covariates_helper():
+    """
+    A helper function that fetches all future covariate data sources, applies
+    adjustments, and publishes the results. Called by main() when needed.
+    """
+    logging.info("--- Publishing Adjusted Covariates ---")
+
+    # Fetch ALL future data sources to get the maximum possible horizon
+    logging.info("Fetching all future covariate data sources...")
+    future_sources = {
+        'solcast': get_solcast_forecast(),
+        'weather': get_weather_forecast(),
+        'aemo': get_aemo_forecast() # Include AEMO to ensure we use its 7-day index
+    }
+
+    # Combine them into a single DataFrame
+    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
+
+    # Apply the bias adjustments
+    adjusted_df = apply_covariate_adjustments(future_covariates_df)
+
+    # Filter to only future data before publishing
+    now = datetime.now(pytz.UTC)
+    minute = 30 if now.minute >= 30 else 0
+    forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
+    
+    publish_df = adjusted_df[adjusted_df.index >= forecast_start_time]
+
+    # Call the existing, robust publishing function
+    publish_adjusted_covariates_to_hass(publish_df)
+
 def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
     """
     Publishes adjusted covariate forecasts to specified Home Assistant entities.
@@ -1187,8 +1222,16 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
 # --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="Energy Price & Load Forecasting Pipeline")
-    parser.add_argument('mode', choices=['train-price', 'train-load', 'predict-price', 'predict-load', 'update-tariffs', 'backfill-actuals', 'update-adjusters'], help="The mode to run the script in.")
-    parser.add_argument('--publish-hass', action='store_true', help="Publish forecasts as attributes to Home Assistant entities.")
+    # Add 'predict-all' to choices
+    parser.add_argument('mode', choices=[
+        'train-price', 'train-load', 'predict-price', 'predict-load', 'predict-all',
+        'update-tariffs', 'backfill-actuals', 'update-adjusters'
+    ], help="The mode to run the script in.")
+    
+    # Add the new --publish-covariates flag
+    parser.add_argument('--publish-covariates', action='store_true', help="Publish adjusted covariate forecasts to Home Assistant.")
+    
+    parser.add_argument('--publish-hass', action='store_true', help="Publish FINAL forecasts to Home Assistant entities.")
     parser.add_argument('--dynamic-handoff', action='store_true', help="For 'predict-price' mode, use Amber's advanced forecast to seed the model.")
     parser.add_argument('--config', default='config.json', help="Path to the configuration file.")
     args = parser.parse_args()
@@ -1201,9 +1244,28 @@ def main():
     elif args.mode == 'train-load':
         train_single_model('load')
     elif args.mode == 'predict-price':
-        predict_with_model('price', args.publish_hass, args.dynamic_handoff)
+        predict_with_model('price', args.publish_hass, args.dynamic_handoff, args.publish_covariates)
     elif args.mode == 'predict-load':
-        predict_with_model('load', args.publish_hass)
+        predict_with_model('load', args.publish_hass, False, args.publish_covariates)
+    
+    # --- NEW: Handle the 'predict-all' combined mode ---
+    elif args.mode == 'predict-all':
+        logging.info("--- Running combined 'predict-all' mode ---")
+        
+        # First, publish covariates if the flag is set. This happens only once.
+        if args.publish_covariates:
+            _publish_covariates_helper()
+        
+        # Then, run the price prediction, telling it NOT to publish covariates again.
+        logging.info("\n>>> Starting Price Prediction Run <<<")
+        predict_with_model('price', args.publish_hass, args.dynamic_handoff, publish_covariates=False)
+        
+        # Finally, run the load prediction, also not publishing covariates.
+        logging.info("\n>>> Starting Load Prediction Run <<<")
+        predict_with_model('load', args.publish_hass, False, publish_covariates=False)
+        
+        logging.info("--- Combined 'predict-all' mode complete ---")
+
     elif args.mode == 'update-tariffs':
         update_tariffs()
     elif args.mode == 'backfill-actuals':
