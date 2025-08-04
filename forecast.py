@@ -162,9 +162,16 @@ def remove_gst(price):
     else:
         return price
 
-def get_amber_advanced_forecast():
-    # This function remains unchanged
-    logging.info("Retrieving Amber Electric ADVANCED price forecast (mixed intervals)...")
+def get_amber_advanced_forecast(price_key='advanced_price_predicted'):
+    """
+    Retrieves Amber Electric ADVANCED price forecast (mixed intervals).
+
+    Args:
+        price_key (str): The attribute key for the price forecast. 
+                         Defaults to 'advanced_price_predicted'.
+                         Can be 'advanced_price_low' (p10) or 'advanced_price_high' (p90).
+    """
+    logging.info(f"Retrieving Amber Electric ADVANCED forecast using price key: '{price_key}'...")
     entity_id = CONFIG['home_assistant']['amber_billing_entity']
     entity_state = get_entity_state(entity_id)
     if not entity_state:
@@ -179,13 +186,15 @@ def get_amber_advanced_forecast():
     thirty_minute_intervals = []
 
     for f in forecasts:
-        if (f.get('advanced_price_predicted') is not None and
+        # Check if the requested price_key and other essential keys exist
+        if (f.get(price_key) is not None and
             f.get('per_kwh') is not None and
             f.get('spot_per_kwh') is not None):
 
             per_kwh = float(f['per_kwh'])
             spot_per_kwh = float(f['spot_per_kwh'])
-            advanced_price_incl_gst = float(f['advanced_price_predicted'])
+            # Use the specified price_key to get the value
+            advanced_price_incl_gst = float(f[price_key])
             duration = f.get('duration', 30)
 
             tariff = remove_gst(per_kwh) - spot_per_kwh
@@ -202,6 +211,8 @@ def get_amber_advanced_forecast():
                 five_minute_intervals.append(interval_data)
             else:
                 thirty_minute_intervals.append(interval_data)
+    
+    # ... (the rest of the function remains unchanged) ...
 
     if five_minute_intervals:
         grouped_5min = {}
@@ -239,7 +250,6 @@ def get_amber_advanced_forecast():
         processed.insert(0, backfill_entry)
 
     return pd.DataFrame(processed).set_index('datetime')
-
 
 def get_solcast_forecast():
     # This function is unchanged
@@ -636,15 +646,18 @@ def _predict_simple(model, params, historical_df, future_covariates_ts, model_co
     pred_df[target_col] = np.exp(pred_df[target_col]) - params['shift_value']
     return pred_df
 
-def _predict_with_dynamic_handoff(model, params, historical_df, future_covariates_df, model_config):
-    # This function is unchanged until the TimeSeries creation
+def _predict_with_dynamic_handoff(model, params, historical_df, future_covariates_df, model_config, amber_advanced_df):
+    """
+    Generates a forecast using the 'dynamic handoff' method, seeded with a provided
+    advanced forecast dataframe.
+    """
     logging.info("Generating forecast using 'dynamic handoff' method.")
     target_col = model_config['target_column']
     shift_value = params['shift_value']
-    amber_advanced_df = get_amber_advanced_forecast()
+    
+    # The function now receives the amber_advanced_df instead of fetching it.
     if amber_advanced_df.empty:
-        logging.warning("No advanced Amber data available. Falling back to simple prediction.")
-        # CORRECTED: Use only feature_cols here as well
+        logging.warning("No advanced Amber data provided. Falling back to simple prediction.")
         future_covariates_ts = TimeSeries.from_dataframe(
             future_covariates_df, 
             value_cols=model_config['feature_cols'], 
@@ -653,7 +666,7 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
         return _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
         
     last_good_amber_index = amber_advanced_df.index.max()
-    logging.info(f"Using Amber advanced forecast for {len(amber_advanced_df) / 2} hours (up to {last_good_amber_index}).")
+    logging.info(f"Using provided advanced forecast for {len(amber_advanced_df) / 2} hours (up to {last_good_amber_index}).")
     hist_df_log = historical_df[[target_col] + model_config['feature_cols']].copy().ffill().dropna()
     hist_df_log[target_col] = np.log(hist_df_log[target_col] + shift_value)
     amber_seed_data = future_covariates_df.loc[amber_advanced_df.index].copy()
@@ -661,7 +674,6 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     pseudo_history_df = pd.concat([hist_df_log, amber_seed_data.dropna()])
     pseudo_history_ts = TimeSeries.from_series(pseudo_history_df[target_col], freq='30min')
     
-    # CORRECTED: And again here, only use the real feature_cols
     future_covariates_ts = TimeSeries.from_dataframe(
         future_covariates_df, 
         value_cols=model_config['feature_cols'], 
@@ -746,21 +758,21 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
         publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
         publish_adjusted_covariates_to_hass(publish_df)
 
-    # 4. Perform prediction using the correctly prepared data
+    # 4. Perform prediction for the MAIN (P50) forecast
     if prediction_type == 'dynamic_handoff':
-        # The helper function receives the full combined dataframe
-        final_pred_df = _predict_with_dynamic_handoff(model, params, historical_df, adjusted_covariates_df, model_config)
+        # Fetch the standard 'p50' forecast data
+        amber_p50_df = get_amber_advanced_forecast(price_key='advanced_price_predicted')
+        # Pass it to the modified prediction function
+        final_pred_df = _predict_with_dynamic_handoff(model, params, historical_df, adjusted_covariates_df, model_config, amber_p50_df)
     else:
-        # Create the TimeSeries from the combined dataframe. Darts will handle the slicing.
-        # This TimeSeries now correctly contains data BEFORE forecast_start_time.
         future_covariates_ts = TimeSeries.from_dataframe(
-            adjusted_covariates_df.ffill().bfill(), # Fill any gaps just in case
+            adjusted_covariates_df.ffill().bfill(),
             value_cols=model_config['feature_cols'],
             freq='30min'
         )
         final_pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
 
-    # 5. Log and save the results (this part of the function is unchanged)
+    # 5. Log and save the results for the MAIN (P50) forecast
     log_forecast_data(
         model_name=model_name,
         model_version=model_version,
@@ -775,7 +787,7 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
             final_pred_df.update(future_sources['amber_spot'])
         apply_tariffs_to_forecast(final_pred_df)
 
-    logging.info(f"--- Prediction complete for {model_name} ---")
+    logging.info(f"--- Main (P50) Prediction complete for {model_name} ---")
 
     final_pred_df.index.name = 'timestamp'
     output_df = final_pred_df.reset_index()
@@ -789,45 +801,46 @@ def predict_with_model(model_name, publish_to_hass=False, use_dynamic_handoff=Fa
     all_predictions[f'{model_name}_forecast'] = output_data
     all_predictions[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
     with open(CONFIG['paths']['prediction_output_file'], 'w') as f: json.dump(all_predictions, f, indent=4)
-    logging.info(f"Saved {model_name} forecast to {CONFIG['paths']['prediction_output_file']}.")
+    logging.info(f"Saved main {model_name} forecast to {CONFIG['paths']['prediction_output_file']}.")
     print("\nForecast Head:")
     print(final_pred_df.head())
     if publish_to_hass:
         publish_forecast_to_hass(model_name, final_pred_df)
 
-    log_forecast_data(
-        model_name=model_name,
-        model_version=model_version,
-        prediction_type=prediction_type,
-        final_pred_df=final_pred_df,
-        future_covariates_df=original_covariates_for_log # Use the preserved original data
-    )
+    # --- NEW: Generate and publish P10 and P90 forecasts ---
+    if prediction_type == 'dynamic_handoff' and model_name == 'price':
+        logging.info("--- Generating P10 and P90 percentile forecasts ---")
+        percentiles = {
+            'p10': 'advanced_price_low',
+            'p90': 'advanced_price_high'
+        }
 
-    if model_name == 'price':
-        final_pred_df.rename(columns={model_config['target_column']: 'wholesale_price'}, inplace=True)
-        if not use_dynamic_handoff and 'amber_spot' in future_sources and not future_sources['amber_spot'].empty:
-            final_pred_df.update(future_sources['amber_spot'])
-        apply_tariffs_to_forecast(final_pred_df)
+        for key, price_attribute in percentiles.items():
+            logging.info(f"Generating forecast for {key} using '{price_attribute}'...")
+            
+            # 1. Get the specific Amber data for the percentile
+            amber_percentile_df = get_amber_advanced_forecast(price_key=price_attribute)
 
-    logging.info(f"--- Prediction complete for {model_name} ---")
+            if amber_percentile_df.empty:
+                logging.warning(f"No advanced Amber data for {key}. Skipping this forecast.")
+                continue
 
-    final_pred_df.index.name = 'timestamp'
-    output_df = final_pred_df.reset_index()
-    if output_df['timestamp'].dt.tz is None:
-        output_df['timestamp'] = output_df['timestamp'].dt.tz_localize('UTC')
-    output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
-    output_data = output_df.to_dict('records')
-    try:
-        with open(CONFIG['paths']['prediction_output_file'], 'r') as f: all_predictions = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError): all_predictions = {}
-    all_predictions[f'{model_name}_forecast'] = output_data
-    all_predictions[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
-    with open(CONFIG['paths']['prediction_output_file'], 'w') as f: json.dump(all_predictions, f, indent=4)
-    logging.info(f"Saved {model_name} forecast to {CONFIG['paths']['prediction_output_file']}.")
-    print("\nForecast Head:")
-    print(final_pred_df.head())
-    if publish_to_hass:
-        publish_forecast_to_hass(model_name, final_pred_df)
+            # 2. Generate the forecast using the same model and data, but new seed
+            percentile_pred_df = _predict_with_dynamic_handoff(
+                model, params, historical_df, adjusted_covariates_df, model_config, amber_percentile_df
+            )
+
+            # 3. Apply tariffs to the percentile forecast
+            percentile_pred_df.rename(columns={model_config['target_column']: 'wholesale_price'}, inplace=True)
+            apply_tariffs_to_forecast(percentile_pred_df)
+
+            # 4. Publish if requested, but DO NOT log or save to the main JSON
+            if publish_to_hass:
+                publish_model_name = f"{model_name}_{key}" # e.g., "price_p10"
+                logging.info(f"Publishing {key} forecast to Home Assistant.")
+                publish_forecast_to_hass(publish_model_name, percentile_pred_df)
+    
+    logging.info(f"--- All processing for {model_name} complete ---")
 
 def apply_tariffs_to_forecast(pred_df):
     # This function remains unchanged
