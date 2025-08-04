@@ -1135,6 +1135,8 @@ def apply_covariate_adjustments(future_covariates_df):
 def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
     """
     Publishes adjusted covariate forecasts to specified Home Assistant entities.
+    For each covariate, it individually truncates any trailing NaN values to
+    publish only the valid forecast horizon, ensuring data is JSON compliant.
     """
     logging.info("Publishing adjusted covariates to Home Assistant...")
     if 'adjusters' not in CONFIG:
@@ -1143,26 +1145,27 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
     for cov_name, adjuster_config in CONFIG['adjusters'].items():
         entity_id = adjuster_config.get('publish_entity_id')
         
-        # Skip if no entity_id is configured or if the column doesn't exist
         if not entity_id or cov_name not in adjusted_covariates_df.columns:
             continue
 
-        logging.info(f"Publishing adjusted '{cov_name}' to {entity_id}")
-        
-        # Prepare the data for this specific covariate
-        forecast_df = adjusted_covariates_df[[cov_name]].copy()
-        forecast_df.index.name = 'timestamp'
-        output_df = forecast_df.reset_index()
-        
-        if output_df.empty:
-            logging.warning(f"No data to publish for {cov_name}.")
+        forecast_df = adjusted_covariates_df[[cov_name]].dropna()
+
+        if forecast_df.empty:
+            logging.warning(f"No valid data available for '{cov_name}' after dropping NaNs. Skipping publish.")
             continue
+            
+        logging.info(f"Publishing {len(forecast_df)} valid records for adjusted '{cov_name}' to {entity_id}")
+        
+        # --- FIX: Explicitly name the index before resetting it ---
+        forecast_df.index.name = 'timestamp'
+        
+        # Now, reset_index() will correctly create a 'timestamp' column
+        output_df = forecast_df.reset_index()
             
         if output_df['timestamp'].dt.tz is None:
             output_df['timestamp'] = output_df['timestamp'].dt.tz_localize('UTC')
         output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
         
-        # Create the state and attributes payload
         state = round(forecast_df.iloc[0][cov_name], 2)
         friendly_name = f"AI Adjusted {cov_name.replace('_', ' ').title()} Forecast"
         attributes = {
@@ -1173,8 +1176,11 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
         }
         
         payload = {"state": state, "attributes": attributes}
-        call_ha_api('POST', f"states/{entity_id}", payload=payload)
-        logging.info(f"Successfully published state '{state}' and attributes to {entity_id}.")
+        
+        response = call_ha_api('POST', f"states/{entity_id}", payload=payload)
+        
+        if response:
+            logging.info(f"Successfully published state '{state}' and attributes to {entity_id}.")
 
 # --------------------------------------------------------------------------- #
 # 6. MAIN EXECUTION BLOCK
