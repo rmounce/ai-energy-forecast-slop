@@ -423,7 +423,7 @@ actions:
             action: number.set_value
       - conditions:
           - condition: template
-            value_template: "{{ p_batt > 0 and p_grid < 0 }}"
+            value_template: "{{ p_grid < 0 }}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
