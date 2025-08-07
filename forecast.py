@@ -169,7 +169,7 @@ def get_amber_advanced_forecast(price_key='advanced_price_predicted'):
     Args:
         price_key (str): The attribute key for the price forecast. 
                          Defaults to 'advanced_price_predicted'.
-                         Can be 'advanced_price_low' (p10) or 'advanced_price_high' (p90).
+                         Can be 'advanced_price_low' (p30) or 'advanced_price_high' (p70).
     """
     logging.info(f"Retrieving Amber Electric ADVANCED forecast using price key: '{price_key}'...")
     entity_id = CONFIG['home_assistant']['amber_billing_entity']
@@ -550,7 +550,7 @@ def train_single_model(model_name, quantile_info=None):
     """
     logging.info(f"--- Running in TRAIN mode for model: {model_name} ---")
     
-    # For a quantile model like 'price_p10', use the base 'price' config
+    # For a quantile model like 'price_p30', use the base 'price' config
     base_model_name = model_name.split('_')[0]
     model_config = CONFIG['models'][base_model_name]
     
@@ -639,18 +639,18 @@ def train_single_model(model_name, quantile_info=None):
 
 def train_price_models():
     """
-    Orchestrator to train the three separate price models for P10, P50, and P90.
+    Orchestrator to train the three separate price models for p30, P50, and p70.
     """
     logging.info("--- Starting training for all price quantile models ---")
     
-    # Train the P10 model
-    train_single_model(model_name='price_p10', quantile_info={'objective': 'quantile', 'alpha': 0.10})
+    # Train the p30 model
+    #train_single_model(model_name='price_p30', quantile_info={'objective': 'quantile', 'alpha': 0.30})
     
     # Train the P50 model (standard regression)
-    train_single_model(model_name='price_p50', quantile_info={'objective': 'regression_l1', 'alpha': 0.5})
+    train_single_model(model_name='price_p50', quantile_info={'objective': 'quantile', 'alpha': 0.50})
     
-    # Train the P90 model
-    train_single_model(model_name='price_p90', quantile_info={'objective': 'quantile', 'alpha': 0.90})
+    # Train the p70 model
+    #train_single_model(model_name='price_p70', quantile_info={'objective': 'quantile', 'alpha': 0.70})
     
     logging.info("--- All price quantile models trained successfully ---")
 
@@ -717,16 +717,16 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
 # --- ADD THIS NEW HELPER FUNCTION ---
 def _execute_price_prediction(historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
-    Handles the specific logic for generating P10, P50, and P90 price forecasts
+    Handles the specific logic for generating p30, P50, and p70 price forecasts
     by loading three separate models and performing a handoff for each.
     """
-    logging.info("--- Generating and sorting P10, P50, and P90 percentile forecasts ---")
+    logging.info("--- Generating and sorting p30, P50, and p70 percentile forecasts ---")
 
     # This map defines which model and Amber forecast to use for each quantile
     quantile_map = {
-        'p10': {'model_name': 'price_p10', 'price_key': 'advanced_price_low'},
+        'p30': {'model_name': 'price_p30', 'price_key': 'advanced_price_low'},
         'p50': {'model_name': 'price_p50', 'price_key': 'advanced_price_predicted'},
-        'p90': {'model_name': 'price_p90', 'price_key': 'advanced_price_high'}
+        'p70': {'model_name': 'price_p70', 'price_key': 'advanced_price_high'}
     }
 
     raw_forecasts = {}
@@ -769,7 +769,7 @@ def _execute_price_prediction(historical_df, adjusted_covariates_for_prediction,
     if len(raw_forecasts) == 3:
         logging.info("Applying sorting to prevent quantile crossing...")
         combined_raw_df = pd.concat(raw_forecasts.values(), axis=1)
-        price_cols = ['p10', 'p50', 'p90']
+        price_cols = ['p30', 'p50', 'p70']
         sorted_prices = np.sort(combined_raw_df[price_cols].values, axis=1)
         sorted_df = pd.DataFrame(sorted_prices, index=combined_raw_df.index, columns=price_cols)
         for key in price_cols:
@@ -781,125 +781,56 @@ def _execute_price_prediction(historical_df, adjusted_covariates_for_prediction,
     # Return the dictionary of forecast DataFrames
     return all_forecasts
 
-# --- REPLACE the old function with this new one ---
-def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, original_covariates_for_log, publish_to_hass, use_dynamic_handoff):
+# --- REPLACE your _execute_single_prediction with this ---
+def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
-    WORKER FUNCTION: A high-level dispatcher that executes the prediction for a given model.
+    WORKER FUNCTION (REFACTORED): Executes prediction for a single model and RETURNS the results.
+    It performs no file I/O or publishing.
     """
     logging.info(f"\n>>> Executing prediction for model: {model_name} <<<")
 
     all_forecasts = {}
-    prediction_type = 'simple' # Default
+    prediction_type = 'simple'
 
     if model_name == 'price':
-        # Delegate all complex price logic to the new helper function
         prediction_type = 'dynamic_handoff' if use_dynamic_handoff else 'simple'
         all_forecasts = _execute_price_prediction(historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff)
 
     elif model_name == 'load':
-        # Handle the 'load' model with the simple, original logic
         model_config = CONFIG['models']['load']
         try:
             model = joblib.load(CONFIG['paths']['load_model_file'])
             with open(CONFIG['paths']['load_params_file'], 'r') as f:
                 params = json.load(f)
+            
+            future_covariates_ts = TimeSeries.from_dataframe(
+                adjusted_covariates_for_prediction, value_cols=model_config['feature_cols'], freq='30min'
+            )
+            pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
+            all_forecasts['load'] = pred_df
         except FileNotFoundError:
             logging.error("Model for 'load' not found. Cannot run prediction.")
-            return
+            # Return an empty dict on failure
+            return {}, prediction_type
 
-        future_covariates_ts = TimeSeries.from_dataframe(
-            adjusted_covariates_for_prediction, value_cols=model_config['feature_cols'], freq='30min'
-        )
-        pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
-        all_forecasts['load'] = pred_df
-    
     else:
         logging.error(f"Unknown model name '{model_name}' passed to prediction worker.")
-        return
 
-    # --- The rest of the function for logging, saving, and publishing remains almost identical ---
-    
-    # Check if any forecasts were generated before proceeding
-    if not all_forecasts:
-        logging.warning(f"No forecasts were generated for model '{model_name}'. Aborting further processing.")
-        return
-
-    # Determine primary forecast key (p50 for price, load for load)
-    primary_key = 'p50' if model_name == 'price' else model_name
-
-    # Log the primary forecast
-    if primary_key in all_forecasts:
-        # We need a dummy model version for logging, we'll get it from the p50 model
-        model_version = "N/A"
-        if model_name == 'price':
-            try:
-                mod_time = os.path.getmtime(CONFIG['paths']['price_p50_model_file'])
-                model_version = datetime.fromtimestamp(mod_time, tz=pytz.UTC).isoformat()
-            except FileNotFoundError: pass # Will remain N/A
-        
-        primary_pred_df_for_log = all_forecasts[primary_key].copy()
-        log_forecast_data(model_name, model_version, prediction_type, primary_pred_df_for_log, original_covariates_for_log)
-    else:
-        logging.warning(f"Primary forecast key '{primary_key}' not found in generated forecasts. Skipping logging and saving.")
-        return
-
-    # Save the primary forecast to the main JSON file
-    primary_pred_df_for_save = all_forecasts[primary_key].copy()
-    if model_name == 'price':
-        primary_pred_df_for_save.rename(columns={primary_pred_df_for_save.columns[0]: 'wholesale_price'}, inplace=True)
-        if not use_dynamic_handoff:
-            amber_spot_df = get_amber_spot_price_forecast()
-            if not amber_spot_df.empty:
-                primary_pred_df_for_save.update(amber_spot_df)
-        apply_tariffs_to_forecast(primary_pred_df_for_save)
-    
-    primary_pred_df_for_save.index.name = 'timestamp'
-    output_df = primary_pred_df_for_save.reset_index()
-    output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
-    output_data = output_df.to_dict('records')
-    try:
-        with open(CONFIG['paths']['prediction_output_file'], 'r') as f: all_predictions = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError): all_predictions = {}
-    all_predictions[f'{model_name}_forecast'] = output_data
-    all_predictions[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
-    with open(CONFIG['paths']['prediction_output_file'], 'w') as f: json.dump(all_predictions, f, indent=4)
-    logging.info(f"Saved primary {model_name} forecast to {CONFIG['paths']['prediction_output_file']}.")
-    print(f"\nPrimary Forecast Head for {model_name}:"); print(primary_pred_df_for_save.head())
-
-    # Publish all relevant forecasts to Home Assistant
-    if publish_to_hass:
-        logging.info(f"--- Publishing all generated forecasts for {model_name} to Home Assistant ---")
-        publish_map = {'p50': 'price', 'p10': 'price_p10', 'p90': 'price_p90', 'load': 'load'}
-        for key, forecast_df in all_forecasts.items():
-            # Use the publish name defined in your Hass config
-            publish_entity_name = CONFIG['home_assistant']['publish_entities'].get(publish_map.get(key))
-            if not publish_entity_name: continue
-            
-            logging.info(f"Processing and publishing '{key}' to '{publish_entity_name}'...")
-            publish_df = forecast_df.copy()
-            if 'price' in publish_map.get(key, ''):
-                publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
-                apply_tariffs_to_forecast(publish_df)
-            
-            # The function now needs the entity_id, not the friendly name
-            publish_forecast_to_hass(publish_entity_name, publish_df)
+    return all_forecasts, prediction_type
 
 def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_covariates):
     """
-    ORCHESTRATOR: Fetches and processes data once, then runs predictions
-    for a list of specified models to improve efficiency.
+    ORCHESTRATOR (REFACTORED): Fetches data, runs predictions for all specified models,
+    and then handles all logging, saving, and publishing.
     """
     logging.info(f"--- Prediction Orchestrator started for models: {models_to_run} ---")
 
-    # 1. Fetch all data sources ONCE
+    # 1. Fetch and process data ONCE (This part is unchanged)
     logging.info("Fetching all future covariate and recent historical data...")
-    # Fetch all possible sources needed by any model
     future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast(), 'aemo': get_aemo_forecast()}
-
     now = datetime.now(pytz.UTC)
     minute = 30 if now.minute >= 30 else 0
     forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
-    
     client = InfluxDBClient(**CONFIG['influxdb'])
     try:
         history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
@@ -908,43 +839,118 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         if historical_df.empty: raise SystemExit("Aborting: Failed to get recent history for prediction.")
     finally:
         client.close()
-
-    # 2. Process all data ONCE
-    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
     
-    # Get the union of all features required by the models we're running
+    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
     all_feature_cols = set()
     for model_name in models_to_run:
-        all_feature_cols.update(CONFIG['models'][model_name]['feature_cols'])
+        # Handle cases where model_name might not be in config (e.g. price_p30)
+        base_model_name = model_name.split('_')[0]
+        if base_model_name in CONFIG['models']:
+            all_feature_cols.update(CONFIG['models'][base_model_name]['feature_cols'])
     
-    historical_covariates_df = historical_df[list(all_feature_cols)]
+    # Ensure all required columns exist in historical_df before selection
+    available_cols = [col for col in all_feature_cols if col in historical_df.columns]
+    historical_covariates_df = historical_df[available_cols]
+
     combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
     combined_covariates_df = combined_covariates_df[~combined_covariates_df.index.duplicated(keep='last')].sort_index()
-
     original_covariates_for_log = combined_covariates_df.copy()
     adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
-
-    # Conditionally publish the adjusted covariates
     if publish_covariates:
         publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
         publish_adjusted_covariates_to_hass(publish_df)
-
-    # Prepare a single, clean DataFrame for all model predictions
     adjusted_covariates_for_prediction = adjusted_covariates_df.copy()
     adjusted_covariates_for_prediction.ffill(inplace=True)
     adjusted_covariates_for_prediction.bfill(inplace=True)
 
-    # 3. Loop and execute predictions for each model
+    # 2. Loop, execute predictions, and COLLECT results
+    all_results = {}
     for model_name in models_to_run:
-        # Pass the pre-fetched and pre-processed data to the worker function
-        _execute_single_prediction(
+        forecasts, prediction_type = _execute_single_prediction(
             model_name=model_name,
             historical_df=historical_df,
             adjusted_covariates_for_prediction=adjusted_covariates_for_prediction,
-            original_covariates_for_log=original_covariates_for_log,
-            publish_to_hass=publish_hass,
             use_dynamic_handoff=use_dynamic_handoff
         )
+        if forecasts:
+            all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
+
+    # 3. Process and SAVE all collected results
+    try:
+        with open(CONFIG['paths']['prediction_output_file'], 'r') as f:
+            final_output_json = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        final_output_json = {}
+
+    for model_name, result_data in all_results.items():
+        primary_key = 'p50' if model_name == 'price' else model_name
+        if primary_key not in result_data['forecasts']:
+            logging.warning(f"Primary key '{primary_key}' not found for model '{model_name}'. Skipping save.")
+            continue
+
+        primary_pred_df_for_save = result_data['forecasts'][primary_key].copy()
+        logging.info(f"Preparing to save primary forecast for '{model_name}'...")
+        print(f"\nPrimary Forecast Head for {model_name}:"); print(primary_pred_df_for_save.head())
+        
+        if model_name == 'price':
+            primary_pred_df_for_save.rename(columns={primary_pred_df_for_save.columns[0]: 'wholesale_price'}, inplace=True)
+            if not use_dynamic_handoff:
+                amber_spot_df = get_amber_spot_price_forecast()
+                if not amber_spot_df.empty:
+                    primary_pred_df_for_save.update(amber_spot_df)
+            apply_tariffs_to_forecast(primary_pred_df_for_save)
+        
+        primary_pred_df_for_save.index.name = 'timestamp'
+        output_df = primary_pred_df_for_save.reset_index()
+        output_df['timestamp'] = output_df['timestamp'].apply(lambda x: x.isoformat())
+        
+        final_output_json[f'{model_name}_forecast'] = output_df.to_dict('records')
+        final_output_json[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
+
+    with open(CONFIG['paths']['prediction_output_file'], 'w') as f:
+        json.dump(final_output_json, f, indent=4)
+    logging.info(f"All forecasts saved to {CONFIG['paths']['prediction_output_file']}.")
+
+    # 4. PUBLISH all forecasts to Home Assistant
+    if publish_hass:
+        logging.info("--- Publishing all generated forecasts to Home Assistant ---")
+        for model_name, result_data in all_results.items():
+            publish_map = {'p50': 'price', 'p30': 'price_p30', 'p70': 'price_p70', 'load': 'load'}
+            for key, forecast_df in result_data['forecasts'].items():
+                publish_entity_key = publish_map.get(key)
+                if not publish_entity_key: continue
+
+                # We look up the entity_id here just to check that it exists in the config
+                entity_id_check = CONFIG['home_assistant']['publish_entities'].get(publish_entity_key)
+                if not entity_id_check: continue
+
+                logging.info(f"Processing and publishing '{key}' to '{entity_id_check}'...")
+                publish_df = forecast_df.copy()
+                
+                # We check against the KEY ('price', 'price_p30'), not the entity ID
+                if 'price' in publish_entity_key:
+                    publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
+                    apply_tariffs_to_forecast(publish_df)
+
+                # --- THIS IS THE FIX ---
+                # Pass the friendly name ('load' or 'price'), not the full entity ID
+                publish_forecast_to_hass(publish_entity_key, publish_df)
+                # --- END OF FIX ---
+    
+    # 5. LOG all forecasts
+    for model_name, result_data in all_results.items():
+        primary_key = 'p50' if model_name == 'price' else model_name
+        if primary_key in result_data['forecasts']:
+            model_version = "N/A"
+            # Get model version from the correct model file
+            log_model_name = 'price_p50' if model_name == 'price' else model_name
+            try:
+                mod_time = os.path.getmtime(CONFIG['paths'][f'{log_model_name}_model_file'])
+                model_version = datetime.fromtimestamp(mod_time, tz=pytz.UTC).isoformat()
+            except (FileNotFoundError, KeyError): pass
+            
+            primary_pred_df_for_log = result_data['forecasts'][primary_key].copy()
+            log_forecast_data(model_name, model_version, result_data['type'], primary_pred_df_for_log, original_covariates_for_log)
 
     logging.info("--- Prediction Orchestrator finished ---")
 
