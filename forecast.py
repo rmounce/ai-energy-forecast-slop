@@ -779,7 +779,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     """
     logging.info(f"--- Prediction Orchestrator started for models: {models_to_run} ---")
 
-    # 1. Fetch and process data ONCE
+    # 1. Fetch and process data ONCE (This part is unchanged)
     logging.info("Fetching all future covariate and recent historical data...")
     future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast(), 'aemo': get_aemo_forecast()}
     now = datetime.now(pytz.UTC)
@@ -814,7 +814,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     adjusted_covariates_for_prediction.ffill(inplace=True)
     adjusted_covariates_for_prediction.bfill(inplace=True)
 
-    # 2. Loop, execute predictions, and COLLECT results
+    # 2. Loop, execute predictions, and COLLECT results (This part is unchanged)
     all_results = {}
     for model_name in models_to_run:
         forecasts, prediction_type = _execute_single_prediction(
@@ -826,7 +826,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         if forecasts:
             all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
 
-    # 3. Process and SAVE all collected results
+    # 3. Process and SAVE all collected results (This part is unchanged)
     try:
         with open(CONFIG['paths']['prediction_output_file'], 'r') as f:
             final_output_json = json.load(f)
@@ -864,7 +864,11 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     # 4. PUBLISH all forecasts to Home Assistant
     if publish_hass:
         logging.info("--- Publishing all generated forecasts to Home Assistant ---")
-        for model_name, result_data in all_results.items():
+        for base_model_name, result_data in all_results.items():
+            # --- FIX STARTS HERE ---
+            model_config = CONFIG['models'][base_model_name]
+            target_col = model_config['target_column'] 
+
             for key, forecast_df in result_data['forecasts'].items():
                 entity_id_check = CONFIG['home_assistant']['publish_entities'].get(key)
                 if not entity_id_check: continue
@@ -872,13 +876,19 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 logging.info(f"Processing and publishing '{key}' to '{entity_id_check}'...")
                 publish_df = forecast_df.copy()
                 
-                if 'price' in key:
+                if base_model_name == 'price':
+                    # Price models are renamed to 'wholesale_price' for the tariff function
                     publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
                     apply_tariffs_to_forecast(publish_df)
+                else:
+                    # All other models (e.g., load) are renamed to their generic target column
+                    publish_df.rename(columns={publish_df.columns[0]: target_col}, inplace=True)
+                # --- FIX ENDS HERE ---
 
                 publish_forecast_to_hass(key, publish_df)
 
-    # 5. LOG all forecasts
+    
+    # 5. LOG all forecasts (This part is unchanged)
     for model_name, result_data in all_results.items():
         primary_key = CONFIG['models'][model_name].get('primary_model_key')
         if primary_key and primary_key in result_data['forecasts']:
