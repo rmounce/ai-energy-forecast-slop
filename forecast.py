@@ -463,8 +463,10 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
     Logs data to a model-specific CSV, intelligently matching the column order
     of the existing file to prevent misalignment.
     """
-    logging.info(f"Logging forecast data for '{model_name}' model...")
-    log_file_path = Path(CONFIG['paths'][f'{model_name}_forecast_log_file'])
+    # Determine the base name for finding the log file (e.g., 'price' from 'price_p30')
+    base_model_name = model_name.split('_')[0]
+    logging.info(f"Logging forecast data for '{model_name}' model to '{base_model_name}' log file...")
+    log_file_path = Path(CONFIG['paths'][f'{base_model_name}_forecast_log_file'])
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Prepare the new data in memory ---
@@ -477,6 +479,8 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
     log_df['actual'] = np.nan
     log_df = log_df.join(future_covariates_df, how='left')
     log_df['forecast_creation_time'] = datetime.now(pytz.UTC).isoformat()
+    # --- FIX: Log the specific model name (e.g., 'load_p75') ---
+    log_df['model_name'] = model_name
     log_df['model_version'] = model_version
     log_df['prediction_type'] = prediction_type
     log_df.index.name = 'forecast_target_time'
@@ -510,36 +514,12 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
     
     # Reorder the new data to precisely match the target order (from file or default)
     # and filter out any columns in the new data that aren't in the target order.
-    log_df = log_df[final_column_order]
+    log_df = log_df[[col for col in final_column_order if col in log_df.columns]]
 
     # Append to the CSV. 'header=False' is crucial for appending.
     # If the file is new, we write the header; otherwise, we don't.
     log_df.to_csv(log_file_path, mode='a', header=(not file_exists), index=False)
     logging.info(f"Successfully logged {len(log_df)} records to {log_file_path} with consistent column order.")
-
-    # --- MODIFICATION: Add covariate actuals to the canonical schema ---
-    CANONICAL_COLUMN_ORDER = [
-        'forecast_creation_time', 'forecast_target_time', 'model_name',
-        'model_version', 'prediction_type', 'prediction', 'actual',
-        'power_pv', 'power_pv_actual',
-        'temperature_adelaide', 'temperature_adelaide_actual',
-        'humidity_adelaide', 'humidity_adelaide_actual',
-        'wind_speed_adelaide', 'wind_speed_adelaide_actual',
-        'aemo_price_sa1', # This is a covariate for the load model
-        'hour', 'day_of_week', 'day_of_year', 'month'
-    ]
-
-    for col in CANONICAL_COLUMN_ORDER:
-        if col not in log_df.columns:
-            log_df[col] = np.nan
-
-    final_cols = [col for col in CANONICAL_COLUMN_ORDER if col in log_df.columns]
-    log_df = log_df[final_cols]
-    
-    header = not log_file_path.exists() or os.path.getsize(log_file_path) == 0
-    log_df.to_csv(log_file_path, mode='a', header=header, index=False)
-    logging.info(f"Successfully logged {len(log_df)} records to {log_file_path} with consistent column order.")
-
 
 # --- Corrected train_single_model function ---
 
@@ -714,7 +694,6 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
         final_forecast_df = pd.concat([final_forecast_df, remaining_forecast_df])
     return final_forecast_df
 
-# --- ADD THIS NEW HELPER FUNCTION ---
 def _execute_price_prediction(historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
     Handles the specific logic for generating p30, P50, and p70 price forecasts
@@ -781,7 +760,6 @@ def _execute_price_prediction(historical_df, adjusted_covariates_for_prediction,
     # Return the dictionary of forecast DataFrames
     return all_forecasts
 
-# --- REPLACE your _execute_single_prediction with this ---
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
     WORKER FUNCTION (REFACTORED): Executes prediction for a single model and RETURNS the results.
@@ -796,20 +774,23 @@ def _execute_single_prediction(model_name, historical_df, adjusted_covariates_fo
         prediction_type = 'dynamic_handoff' if use_dynamic_handoff else 'simple'
         all_forecasts = _execute_price_prediction(historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff)
 
-    elif model_name == 'load':
+    # --- MODIFICATION: Handle both 'load' and 'load_p75' ---
+    elif 'load' in model_name:
+        # Use the base 'load' config but the specific model file
         model_config = CONFIG['models']['load']
         try:
-            model = joblib.load(CONFIG['paths']['load_model_file'])
-            with open(CONFIG['paths']['load_params_file'], 'r') as f:
+            model = joblib.load(CONFIG['paths'][f'{model_name}_model_file'])
+            with open(CONFIG['paths'][f'{model_name}_params_file'], 'r') as f:
                 params = json.load(f)
             
             future_covariates_ts = TimeSeries.from_dataframe(
                 adjusted_covariates_for_prediction, value_cols=model_config['feature_cols'], freq='30min'
             )
             pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
-            all_forecasts['load'] = pred_df
+            # Return the forecast keyed by its specific name (e.g., 'load_p75')
+            all_forecasts[model_name] = pred_df
         except FileNotFoundError:
-            logging.error("Model for 'load' not found. Cannot run prediction.")
+            logging.error(f"Model for '{model_name}' not found. Cannot run prediction.")
             # Return an empty dict on failure
             return {}, prediction_type
 
@@ -911,11 +892,13 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         json.dump(final_output_json, f, indent=4)
     logging.info(f"All forecasts saved to {CONFIG['paths']['prediction_output_file']}.")
 
+
     # 4. PUBLISH all forecasts to Home Assistant
     if publish_hass:
         logging.info("--- Publishing all generated forecasts to Home Assistant ---")
         for model_name, result_data in all_results.items():
-            publish_map = {'p50': 'price', 'p30': 'price_p30', 'p70': 'price_p70', 'load': 'load'}
+            # --- MODIFICATION: Add load_p75 to the map ---
+            publish_map = {'p50': 'price', 'p30': 'price_p30', 'p70': 'price_p70', 'load': 'load', 'load_p75': 'load_p75'}
             for key, forecast_df in result_data['forecasts'].items():
                 publish_entity_key = publish_map.get(key)
                 if not publish_entity_key: continue
@@ -927,15 +910,12 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 logging.info(f"Processing and publishing '{key}' to '{entity_id_check}'...")
                 publish_df = forecast_df.copy()
                 
-                # We check against the KEY ('price', 'price_p30'), not the entity ID
                 if 'price' in publish_entity_key:
                     publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
                     apply_tariffs_to_forecast(publish_df)
 
-                # --- THIS IS THE FIX ---
-                # Pass the friendly name ('load' or 'price'), not the full entity ID
                 publish_forecast_to_hass(publish_entity_key, publish_df)
-                # --- END OF FIX ---
+
     
     # 5. LOG all forecasts
     for model_name, result_data in all_results.items():
@@ -1340,7 +1320,8 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
 def main():
     parser = argparse.ArgumentParser(description="Energy Price & Load Forecasting Pipeline")
     parser.add_argument('mode', choices=[
-        'train-price', 'train-load', 'predict-price', 'predict-load', 'predict-all',
+        'train-price', 'train-load', 'train-load-p75', 
+        'predict-price', 'predict-load', 'predict-load-p75', 'predict-all',
         'update-tariffs', 'backfill-actuals', 'update-adjusters'
     ], help="The mode to run the script in.")
     
@@ -1354,28 +1335,32 @@ def main():
     CONFIG = load_config(args.config)
 
     # --- REFACTORED PREDICTION LOGIC ---
-    # Centralize all prediction calls through the new orchestrator
-    if args.mode in ['predict-price', 'predict-load', 'predict-all']:
+    if args.mode.startswith('predict-'):
         models = []
         if args.mode == 'predict-price':
             models = ['price']
         elif args.mode == 'predict-load':
             models = ['load']
+        elif args.mode == 'predict-load-p75':
+            models = ['load_p75']
         elif args.mode == 'predict-all':
-            models = ['price', 'load']
+            models = ['price', 'load', 'load_p75']
         
-        run_predictions(
-            models_to_run=models,
-            publish_hass=args.publish_hass,
-            use_dynamic_handoff=args.dynamic_handoff,
-            publish_covariates=args.publish_covariates
-        )
+        if models:
+            run_predictions(
+                models_to_run=models,
+                publish_hass=args.publish_hass,
+                use_dynamic_handoff=args.dynamic_handoff,
+                publish_covariates=args.publish_covariates
+            )
     
-    # --- Other modes remain the same ---
+    # --- Other modes ---
     elif args.mode == 'train-price':
         train_price_models()
     elif args.mode == 'train-load':
         train_single_model('load')
+    elif args.mode == 'train-load-p75':
+        train_single_model(model_name='load_p75', quantile_info={'objective': 'quantile', 'alpha': 0.75})
     elif args.mode == 'update-tariffs':
         update_tariffs()
     elif args.mode == 'backfill-actuals':
