@@ -55,6 +55,8 @@ actions:
             {% set ns.value = item.mpc_p_pv_curtailment %}
           {%- endif %}
         {%- endfor %} {{ ns.value | float('unknown') }}
+      soc: >
+        {{ states('sensor.sigen_plant_battery_state_of_charge') | float('unknown') }}
       max_grid_import: 11000
       max_grid_export: -10000
       max_battery_discharge: 11000
@@ -85,6 +87,11 @@ actions:
               value: "{{ default_charge_limit }}"
             action: number.set_value
           - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
+          - target:
               entity_id: number.sigen_plant_grid_export_limitation
             data:
               value: 0
@@ -109,6 +116,11 @@ actions:
             data:
               value: "{{ default_charge_limit }}"
             action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
       - conditions:
           - condition: template
             value_template: >-
@@ -128,6 +140,11 @@ actions:
               entity_id: number.sigen_plant_ess_max_charging_limit
             data:
               value: "{{ default_charge_limit }}"
+            action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
             action: number.set_value
           - target:
               entity_id: number.sigen_plant_grid_export_limitation
@@ -157,6 +174,11 @@ actions:
               value: "{{ default_charge_limit }}"
             action: number.set_value
           - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
+          - target:
               entity_id: number.sigen_plant_grid_export_limitation
             data:
               value: 0
@@ -179,6 +201,11 @@ actions:
             data:
               value: "{{ default_charge_limit }}"
             action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
       - conditions:
           - condition: template
             value_template: "{{ p_grid > 0 and p_batt < 0 }}"
@@ -198,6 +225,11 @@ actions:
               value: "{{ (-p_batt / 1000) | round(3) }}"
             action: number.set_value
           - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
+          - target:
               entity_id: number.sigen_plant_grid_export_limitation
             data:
               value: 0
@@ -205,8 +237,7 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ (states('sensor.sigen_plant_battery_state_of_charge') | float
-              >= 99.8) and p_batt == 0 and p_pv_curtailment > 0 }}
+              {{ soc >= 99.8 and p_batt == 0 and p_pv_curtailment > 0 }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
@@ -218,6 +249,11 @@ actions:
               option: Maximum Self Consumption
             action: select.select_option
           - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
+          - target:
               entity_id: number.sigen_plant_grid_export_limitation
             data:
               value: 0
@@ -225,8 +261,7 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ (states('sensor.sigen_plant_battery_state_of_charge') | float
-              >= 99.8) and p_batt == 0 and p_pv > 0 and p_grid < 0 }}
+              {{ soc >= 99.8 and p_batt == 0 and p_pv > 0 and p_grid < 0 }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
@@ -237,6 +272,11 @@ actions:
             data:
               option: Maximum Self Consumption
             action: select.select_option
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
           - target:
               entity_id: number.sigen_plant_grid_export_limitation
             data:
@@ -271,7 +311,7 @@ actions:
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
-              value: Consume from PV, then grid, prevent discharging battery
+              value: Consume from PV, then grid, prevent discharging, allow charge
             action: input_text.set_value
           - target:
               entity_id: select.sigen_plant_remote_ems_control_mode
@@ -288,6 +328,11 @@ actions:
             data:
               value: 0
             action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
       - conditions:
           - condition: template
             value_template: "{{ p_pv_curtailment > 0 }}"
@@ -301,6 +346,11 @@ actions:
             data:
               option: Maximum Self Consumption
             action: select.select_option
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
           - target:
               entity_id: number.sigen_plant_grid_export_limitation
             data:
@@ -321,6 +371,11 @@ actions:
             data:
               option: Maximum Self Consumption
             action: select.select_option
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
           - target:
               entity_id: number.sigen_plant_grid_export_limitation
             data:
@@ -375,6 +430,11 @@ actions:
             data:
               option: Maximum Self Consumption
             action: select.select_option
+          - target:
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+            data:
+              value: 100
+            action: number.set_value
       - conditions:
           - condition: template
             value_template: "{{ p_batt == 0 and p_pv > 0 and p_grid < 0 }}"
@@ -386,12 +446,12 @@ actions:
           - target:
               entity_id: select.sigen_plant_remote_ems_control_mode
             data:
-              option: Command Discharging (PV First)
+              option: Maximum Self Consumption
             action: select.select_option
           - target:
-              entity_id: number.sigen_plant_ess_max_discharging_limit
+              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
             data:
-              value: 0
+              value: "{{ soc - 1.0 }}"
             action: number.set_value
           - target:
               entity_id: number.sigen_plant_grid_export_limitation
@@ -454,6 +514,11 @@ actions:
         data:
           option: Maximum Self Consumption
         action: select.select_option
+      - target:
+          entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+        data:
+          value: 100
+        action: number.set_value
       - target:
           entity_id: number.sigen_plant_ess_max_charging_limit
         data:
