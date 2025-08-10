@@ -378,7 +378,7 @@ def _get_aemo_7_day_outlook_forecast():
             return pd.DataFrame()
             
         latest_file_timestamp = sorted(files, reverse=True)[0]
-        full_filename_match = re.search(f'PUBLIC_SEVENDAYOUTLOOK_FULL_{latest_file_timestamp}.*?\.zip', response.text)
+        full_filename_match = re.search(f'PUBLIC_SEVENDAYOUTLOOK_FULL_{latest_file_timestamp}.*?\\.zip', response.text)
         if not full_filename_match:
              logging.error("Could not reconstruct full filename for the 7-Day Outlook.")
              return pd.DataFrame()
