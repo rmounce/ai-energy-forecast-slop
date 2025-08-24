@@ -46,6 +46,14 @@ actions:
             {% set ns.value = item.mpc_p_pv_forecast %}
           {%- endif %}
         {%- endfor %} {{ ns.value | float('unknown') }}
+      p_hybrid_inverter: >
+        {%- set ns = namespace(value=states('sensor.mpc_p_hybrid_inverter')) %}
+        {%- for item in state_attr('sensor.mpc_p_hybrid_inverter', 'forecasts')
+        %}
+          {%- if as_datetime(item.date) <= utcnow() %}
+            {% set ns.value = item.mpc_p_hybrid_inverter %}
+          {%- endif %}
+        {%- endfor %} {{ ns.value | float('unknown') }}
       p_pv_curtailment: >
         {%- set ns = namespace(value=states('sensor.mpc_p_pv_curtailment')) %}
         {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts')
@@ -57,9 +65,10 @@ actions:
       soc: >
         {{ states('sensor.sigen_plant_battery_state_of_charge') |
         float('unknown') }}
-      max_grid_import: 11000
-      max_grid_export: -10000
-      max_battery_discharge: 11000
+      max_grid_import: 14999
+      max_grid_export: -9999
+      max_inverter_discharge: 10999
+      max_inverter_charge: -10999
       max_grid_export_kw: 10
   - choose:
       - conditions:
@@ -96,7 +105,8 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ p_grid >= max_grid_import and p_pv_curtailment > 0 and p_pv ==
+              {{ (p_grid >= max_grid_import or p_hybrid_inverter <=
+              max_inverter_charge) and p_pv_curtailment > 0 and p_pv ==
               p_pv_curtailment }}
         sequence:
           - data_template:
@@ -111,22 +121,24 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ p_grid > 0 and p_pv_curtailment > 0 and p_pv ==
+              {{ p_grid > 0 and p_batt < 0 and p_pv_curtailment > 0 and p_pv ==
               p_pv_curtailment }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
-              value: >-
-                Full PV curtailment and grid charge at partial rate (negative
-                buy)
+              value: Full PV curtailment and grid charge at partial rate
             action: input_text.set_value
           - data:
-              control_mode: Command Charging (Grid First)
+              control_mode: Command Charging (PV First)
               export_limit_kw: 0
+              pv_max_power_limit_kw: 0.05
+              charge_limit_kw: "{{ (-p_batt / 1000) | round(3) }}"
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: "{{ p_grid >= max_grid_import }}"
+            value_template: >-
+              {{ p_grid >= max_grid_import or p_hybrid_inverter <=
+              max_inverter_charge }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
@@ -277,7 +289,9 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: "{{ p_batt >= max_battery_discharge or p_grid == max_grid_export }}"
+            value_template: >-
+              {{ p_hybrid_inverter >= max_inverter_discharge or p_grid >=
+              max_grid_export }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
