@@ -150,6 +150,20 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
+            value_template: >-
+              {{ p_hybrid_inverter == 0 and p_load == p_grid and p_pv == -p_batt
+              and p_batt < 0 }}
+        sequence:
+          - data_template:
+              entity_id: input_text.emhass_battery_action
+              value: DC-coupled PV charging, grid powers home
+            action: input_text.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              pcs_export_limit_kw: 0
+            action: script.configure_sigen_ems_state
+      - conditions:
+          - condition: template
             value_template: "{{ p_grid > 0 and p_batt < 0 }}"
         sequence:
           - data_template:

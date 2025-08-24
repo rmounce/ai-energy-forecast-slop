@@ -1,0 +1,151 @@
+alias: Configure Sigen EMS State
+description: Sets all key Sigen EMS parameters with safe defaults.
+fields:
+  control_mode:
+    name: Control Mode
+    description: The remote EMS control mode.
+    selector:
+      select:
+        options:
+          - Maximum Self Consumption
+          - Command Charging (PV First)
+          - Command Charging (Grid First)
+          - Command Discharging (PV First)
+          - Standby
+    default: Maximum Self Consumption
+  export_limit_kw:
+    name: Grid Export Limit (kW)
+    description: The maximum power to export to the grid.
+    selector:
+      number:
+        min: 0
+        max: 10
+  import_limit_kw:
+    name: Grid Import Limit (kW)
+    description: The maximum power to import from the grid.
+    selector:
+      number:
+        min: 0
+        max: 15
+    default: 15
+  pv_max_power_limit_kw:
+    name: PV Max Power Limit (kW)
+    description: The maximum power to generate from PV.
+    selector:
+      number:
+        min: 0
+        max: 100
+    default: 100
+  charge_limit_kw:
+    name: Max Charging Limit (kW)
+    description: The maximum power to charge the battery.
+    selector:
+      number:
+        min: 0
+        max: 21
+    default: 21
+  discharge_limit_kw:
+    name: Max Discharging Limit (kW)
+    description: The maximum power to discharge the battery.
+    selector:
+      number:
+        min: 0
+        max: 24
+    default: 24
+  charge_cutoff_soc:
+    name: Charge Cutoff SoC (%)
+    description: The SoC at which to stop charging.
+    selector:
+      number:
+        min: 0
+        max: 100
+    default: 100
+  pcs_export_limit_kw:
+    name: PCS Export Limit (kW)
+    description: The maximum AC power the PCS can export from the battery.
+    selector:
+      number:
+        min: 0
+        max: 100
+    default: 100
+sequence:
+  - variables:
+      v_control_mode: >-
+        {{ control_mode if control_mode is defined and control_mode not in
+        [none, ''] else 'Maximum Self Consumption' }}
+      v_import_limit: >-
+        {{ import_limit_kw if import_limit_kw is defined and import_limit_kw not
+        in [none, ''] else 15 }}
+      v_pv_max_power_limit: >-
+        {{ pv_max_power_limit_kw if pv_max_power_limit_kw is defined and
+        pv_max_power_limit_kw not in [none, ''] else 100 }}
+      v_charge_limit: >-
+        {{ charge_limit_kw if charge_limit_kw is defined and charge_limit_kw not
+        in [none, ''] else 21 }}
+      v_discharge_limit: >-
+        {{ discharge_limit_kw if discharge_limit_kw is defined and
+        discharge_limit_kw not in [none, ''] else 24 }}
+      v_charge_cutoff: >-
+        {{ charge_cutoff_soc if charge_cutoff_soc is defined and
+        charge_cutoff_soc not in [none, ''] else 100 }}
+      v_pcs_export_limit: >-
+        {{ pcs_export_limit_kw if pcs_export_limit_kw is defined and
+        pcs_export_limit_kw not in [none, ''] else 100 }}
+  - if:
+      - condition: template
+        value_template: >-
+          {{ export_limit_kw is defined and export_limit_kw is not none and
+          (states('number.sigen_plant_grid_export_limitation') | float(0) -
+          export_limit_kw) | abs > 0.001 }}
+    then:
+      - target:
+          entity_id: number.sigen_plant_grid_export_limitation
+        data:
+          value: "{{ export_limit_kw }}"
+        action: number.set_value
+  - target:
+      entity_id: number.sigen_plant_grid_import_limitation
+    data:
+      value: "{{ v_import_limit }}"
+    action: number.set_value
+  - target:
+      entity_id: select.sigen_plant_remote_ems_control_mode
+    data:
+      option: "{{ v_control_mode }}"
+    action: select.select_option
+  - if:
+      - condition: template
+        value_template: >-
+          {{ v_control_mode in ['Command Charging (PV First)', 'Command Charging
+          (Grid First)'] }}
+    then:
+      - target:
+          entity_id: number.sigen_plant_ess_max_charging_limit
+        data:
+          value: "{{ v_charge_limit }}"
+        action: number.set_value
+  - if:
+      - condition: template
+        value_template: "{{ v_control_mode == 'Command Discharging (PV First)' }}"
+    then:
+      - target:
+          entity_id: number.sigen_plant_ess_max_discharging_limit
+        data:
+          value: "{{ v_discharge_limit }}"
+        action: number.set_value
+  - target:
+      entity_id: number.sigen_plant_pv_max_power_limit
+    data:
+      value: "{{ v_pv_max_power_limit }}"
+    action: number.set_value
+  - target:
+      entity_id: number.sigen_plant_pcs_export_limitation
+    data:
+      value: "{{ v_pcs_export_limit }}"
+    action: number.set_value
+  - target:
+      entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+    data:
+      value: "{{ v_charge_cutoff }}"
+    action: number.set_value
+mode: single
