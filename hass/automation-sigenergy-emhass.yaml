@@ -5,7 +5,6 @@ triggers:
     trigger: time_pattern
   - entity_id:
       - number.sigen_plant_grid_export_limitation
-      - number.sigen_0_plant_grid_max_export_limit
       - sensor.amber_effective_general_price
       - sensor.amber_effective_feed_in_price
     trigger: state
@@ -56,13 +55,12 @@ actions:
           {%- endif %}
         {%- endfor %} {{ ns.value | float('unknown') }}
       soc: >
-        {{ states('sensor.sigen_plant_battery_state_of_charge') | float('unknown') }}
+        {{ states('sensor.sigen_plant_battery_state_of_charge') |
+        float('unknown') }}
       max_grid_import: 11000
       max_grid_export: -10000
       max_battery_discharge: 11000
-      default_charge_limit: 21
-      default_discharge_limit: 24
-      default_export_limit: 10
+      max_grid_export_kw: 10
   - choose:
       - conditions:
           - condition: template
@@ -76,26 +74,11 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Full PV curtailment and grid charge at full rate (negative buy)
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Charging (Grid First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_charging_limit
-            data:
-              value: "{{ default_charge_limit }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              export_limit_kw: 0
+              pv_max_power_limit_kw: 0.05
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: >-
@@ -106,21 +89,10 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Grid charge at full rate (negative buy)
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Charging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_charging_limit
-            data:
-              value: "{{ default_charge_limit }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: >-
@@ -131,26 +103,11 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Full PV curtailment and grid charge at full rate
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Charging (Grid First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_charging_limit
-            data:
-              value: "{{ default_charge_limit }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              export_limit_kw: 0
+              pv_max_power_limit_kw: 0.05
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: >-
@@ -163,26 +120,10 @@ actions:
                 Full PV curtailment and grid charge at partial rate (negative
                 buy)
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Charging (Grid First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_charging_limit
-            data:
-              value: "{{ default_charge_limit }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Command Charging (Grid First)
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_grid >= max_grid_import }}"
@@ -191,21 +132,10 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Grid charge at full rate
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Charging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_charging_limit
-            data:
-              value: "{{ default_charge_limit }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_grid > 0 and p_batt < 0 }}"
@@ -214,97 +144,50 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Grid charge at partial rate
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Charging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_charging_limit
-            data:
-              value: "{{ (-p_batt / 1000) | round(3) }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              charge_limit_kw: "{{ (-p_batt / 1000) | round(3) }}"
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: >-
-              {{ soc >= 99.8 and p_batt == 0 and p_pv_curtailment > 0 }}
+            value_template: "{{ soc >= 99.8 and p_batt == 0 and p_pv_curtailment > 0 }}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
               value: Battery full, curtail PV export
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Maximum Self Consumption
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: >-
-              {{ soc >= 99.8 and p_batt == 0 and p_pv > 0 and p_grid < 0 }}
+            value_template: "{{ soc >= 99.8 and p_batt == 0 and p_pv > 0 and p_grid < 0 }}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
               value: Battery full, export PV to grid
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Maximum Self Consumption
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: "{{ default_export_limit }}"
-            action: number.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              export_limit_kw: "{{ max_grid_export_kw }}"
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_pv_curtailment > 0 and p_batt == 0 }}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
-              value: Partial PV curtailment, prevent charging and export
+              value: >-
+                Partial PV curtailment, prevent charging and export, permit
+                discharge
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Charging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_charging_limit
-            data:
-              value: 0
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              charge_cutoff_soc: "{{ soc - 1.0 }}"
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_pv > 0 and p_grid > 0 and p_batt == 0 }}"
@@ -313,26 +196,11 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Consume from PV, then grid, prevent discharging, allow charge
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Discharging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_discharging_limit
-            data:
-              value: 0
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
+          - data:
+              control_mode: Command Discharging (PV First)
+              discharge_limit_kw: 0
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_pv_curtailment > 0 }}"
@@ -341,21 +209,10 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Partial PV curtailment, prevent export
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Maximum Self Consumption
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: >-
@@ -366,21 +223,10 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Partial PV curtailment, prevent export (fallback)
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Maximum Self Consumption
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_grid == p_load and p_batt == 0 and p_pv == 0 }}"
@@ -389,11 +235,9 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Consume from grid, battery idle
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Standby
-            action: select.select_option
+          - data:
+              control_mode: Standby
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_batt > 0 and p_grid > 0 }}"
@@ -402,21 +246,11 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Partial self-consume from battery, then grid
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Discharging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_discharging_limit
-            data:
-              value: "{{ (p_batt / 1000) | round(3) }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: 0
-            action: number.set_value
+          - data:
+              control_mode: Command Discharging (PV First)
+              discharge_limit_kw: "{{ (p_batt / 1000) | round(3) }}"
+              export_limit_kw: 0
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_grid == 0 }}"
@@ -425,39 +259,22 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Self-consume from battery
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Maximum Self Consumption
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: 100
-            action: number.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_batt == 0 and p_pv > 0 and p_grid < 0 }}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
-              value: Export PV to grid, prevent charging
+              value: Export PV to grid, prevent charging, allow discharge
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Maximum Self Consumption
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-            data:
-              value: "{{ soc - 1.0 }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: "{{ default_export_limit }}"
-            action: number.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              charge_cutoff_soc: "{{ soc - 1.0 }}"
+              export_limit_kw: "{{ max_grid_export_kw }}"
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_batt >= max_battery_discharge or p_grid == max_grid_export }}"
@@ -466,21 +283,10 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Force discharge to grid at full rate
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Discharging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_discharging_limit
-            data:
-              value: "{{ default_discharge_limit }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: "{{ default_export_limit }}"
-            action: number.set_value
+          - data:
+              control_mode: Command Discharging (PV First)
+              export_limit_kw: "{{ max_grid_export_kw }}"
+            action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
             value_template: "{{ p_grid < 0 }}"
@@ -489,41 +295,18 @@ actions:
               entity_id: input_text.emhass_battery_action
               value: Force discharge to grid at partial rate
             action: input_text.set_value
-          - target:
-              entity_id: select.sigen_plant_remote_ems_control_mode
-            data:
-              option: Command Discharging (PV First)
-            action: select.select_option
-          - target:
-              entity_id: number.sigen_plant_ess_max_discharging_limit
-            data:
-              value: "{{ default_discharge_limit }}"
-            action: number.set_value
-          - target:
-              entity_id: number.sigen_plant_grid_export_limitation
-            data:
-              value: "{{ (-p_grid / 1000) | round(3) }}"
-            action: number.set_value
+          - data:
+              control_mode: Command Discharging (PV First)
+              export_limit_kw: "{{ (-p_grid / 1000) | round(3) }}"
+            action: script.configure_sigen_ems_state
     default:
       - data_template:
           entity_id: input_text.emhass_battery_action
           value: DEFAULT Self-consume from battery
         action: input_text.set_value
-      - target:
-          entity_id: select.sigen_plant_remote_ems_control_mode
-        data:
-          option: Maximum Self Consumption
-        action: select.select_option
-      - target:
-          entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
-        data:
-          value: 100
-        action: number.set_value
-      - target:
-          entity_id: number.sigen_plant_ess_max_charging_limit
-        data:
-          value: "{{ default_charge_limit }}"
-        action: number.set_value
+      - data:
+          control_mode: Maximum Self Consumption
+        action: script.configure_sigen_ems_state
 trace:
   stored_traces: 10
 mode: single
