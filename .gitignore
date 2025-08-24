@@ -11,5 +11,8 @@ __pycache__/
 .venv/
 .env
 
+# price-history.ipynb NEMOSIS
+nemosis_cache/
+
 # Explicitly include
 !config.example.json
