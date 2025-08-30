@@ -10,10 +10,10 @@ template:
         {%- else %}
           {%- for item in state_attr('sensor.amber_5min_forecasts_general_price', 'Forecasts') %}
             {%- if ns.value == 'unknown' and as_datetime(item.end_time) > utcnow() %}
-              {%- set k = states('input_number.emhass_weight_forecast_probability') | float(0.5) %}
+              {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0.5) %}
               {%- set p50_buy = item.advanced_price_predicted %}
-              {%- set p90_buy = item.advanced_price_high %}
-              {%- set adjusted_buy_price = p50_buy + (p90_buy - p50_buy) * k %}
+              {%- set high_buy = item.advanced_price_high %}
+              {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
               {%- set ns.value = [adjusted_buy_price, item.per_kwh] | max %}
             {%- endif %}
           {%- endfor %}
@@ -25,24 +25,39 @@ template:
       device_class: monetary
       state: >
         {% set ns = namespace(value='unknown') %}
+        {# First, get the base price from either the current sensor or the next forecast #}
         {%- if as_datetime(state_attr('sensor.amber_5min_current_feed_in_price', 'end_time')) > utcnow() %}
-          {%- set ns.value = states('sensor.amber_5min_current_feed_in_price') %}
+          {%- set ns.value = states('sensor.amber_5min_current_feed_in_price') | float(0) %}
         {%- else %}
           {%- for item in state_attr('sensor.amber_5min_forecasts_feed_in_price', 'Forecasts') %}
             {%- if ns.value == 'unknown' and as_datetime(item.end_time) > utcnow() %}
-              {#- Get the risk aversion factor 'k' #}
-              {%- set k = states('input_number.emhass_weight_forecast_probability') | float(0.5) %}
-              {#- Input numbers are negated, fix them: #}
-              {%- set p10_sell = -item.advanced_price_low %}
+              {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0.5) %}
+              {%- set low_sell = -item.advanced_price_low %}
               {%- set p50_sell = -item.advanced_price_predicted %}
               {%- set per_kwh_sell = -item.per_kwh %}
-              {#- Calculate the adjusted price (moves from p50 towards p10) #}
-              {%- set adjusted_sell_price = p50_sell + (p10_sell - p50_sell) * k %}
+              {%- set adjusted_sell_price = p50_sell + (low_sell - p50_sell) * k_sell %}
               {%- set ns.value = [adjusted_sell_price, per_kwh_sell] | min %}
             {%- endif %}
           {%- endfor %}
         {%- endif %}
-        {{ ns.value }}
+
+        {# ================================================================= #}
+        {#               START: NEW DNSP FREE TIER ADJUSTMENT                #}
+        {# ================================================================= #}
+        {% set base_price = ns.value | float(0) %}
+        {% set allowance = states('input_number.sapn_free_exports') | float(0) %}
+        {% set current_hour = now().hour %}
+
+        {# If we are in the 10am-4pm window AND have allowance, add 1c ($0.01) #}
+        {% if 10 <= current_hour < 16 and allowance > 0 %}
+          {{ base_price + 0.01 }}
+        {% else %}
+          {{ base_price }}
+        {% endif %}
+        {# ================================================================= #}
+        {#                END: NEW DNSP FREE TIER ADJUSTMENT                 #}
+        {# ================================================================= #}
+
 
 rest_command:
   emhass_dayahead_optim:
@@ -55,20 +70,16 @@ rest_command:
       {
         "entity_save": true,
         "publish_prefix":"dh_",
-        {#-
-          {%- set current_pv_interval = utcnow() - timedelta(minutes=30) %}
-          
-          ['sensor.solcast_pv_forecast_forecast_today', 'sensor.solcast_pv_forecast_forecast_tomorrow', 'sensor.solcast_pv_forecast_forecast_day_3', 'sensor.solcast_pv_forecast_forecast_day_4']
+        {%- set current_pv_interval = utcnow() - timedelta(minutes=30) %}
+        {%- set pv_forecast = namespace(values=[]) %}
+        {#- Subtract 100W from PV forecast to prevent overestimating sunset / sunrise #}
+        {%- for v in ['sensor.solcast_pv_forecast_forecast_today', 'sensor.solcast_pv_forecast_forecast_tomorrow', 'sensor.solcast_pv_forecast_forecast_day_3', 'sensor.solcast_pv_forecast_forecast_day_4']
           | map('state_attr', 'detailedForecast')
           | map('selectattr', 'period_start', 'gt', current_pv_interval)
           | map('list') | sum(start=[])
           | map(attribute='pv_estimate')
           | map('multiply', 1000)
-          #}
-        {%- set pv_forecast = namespace(values=[]) %}
-        {#- Subtract 100W from PV forecast to prevent overestimating sunset / sunrise #}
-        {%- for v in state_attr('sensor.ai_pv_forecast', 'forecasts')| map(attribute='power_pv')
-          | map('add', -100)
+          | map('add', -150)
           | map('int') %}
           {%- if v > 0 %}
             {%- set pv_forecast.values = pv_forecast.values + [v] %}
@@ -78,14 +89,15 @@ rest_command:
         {%- endfor %}
         "pv_power_forecast": {{ pv_forecast.values | tojson }},
         {#- Correction factor for load power forecast #}
-        "load_power_forecast": {{ state_attr('sensor.ai_load_forecast', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list|tojson }},
+        "load_power_forecast": {{ state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list|tojson }},
 
         {#- ========================================================================================= #}
         {#-            START: DAY-AHEAD TWO-KNOB DYNAMIC PRICING LOGIC                    -#}
         {#- ========================================================================================= #}
 
         {#- Knob 1: Get the risk aversion factor 'k' from your input helper. #}
-        {%- set k = states('input_number.emhass_weight_forecast_probability') | float(0.5) %}
+        {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0.5) %}
+        {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0.5) %}
 
         {#- Knob 2: Get the profitability hurdle from your input helper. #}
         {%- set discharge_weight = states('input_number.emhass_weight_battery_discharge') | float(0.02) %}
@@ -95,22 +107,31 @@ rest_command:
 
         {#- Pre-load all forecast data sources into variables. #}
         {%- set p50_forecasts = state_attr('sensor.ai_price_forecast', 'forecasts') %}
-        {%- set p10_forecasts = state_attr('sensor.ai_price_forecast_p10', 'forecasts') %}
-        {%- set p90_forecasts = state_attr('sensor.ai_price_forecast_p90', 'forecasts') %}
+        {%- set low_forecasts = state_attr('sensor.ai_price_forecast_low', 'forecasts') %}
+        {%- set high_forecasts = state_attr('sensor.ai_price_forecast_high', 'forecasts') %}
+
+        {#- Get the current allowance state ONCE before the loop. #}
+        {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
 
         {#- Loop through the forecasts by index to process them in parallel. #}
         {%- for i in range(p50_forecasts | length) %}
 
           {#- --- Process BUY Price (load_cost) --- #}
           {%- set p50_buy = p50_forecasts[i].general_price %}
-          {%- set p90_buy = p90_forecasts[i].general_price %}
-          {%- set adjusted_buy_price = p50_buy + (p90_buy - p50_buy) * k %}
+          {%- set high_buy = high_forecasts[i].general_price %}
+          {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
           {%- set data.load_cost_list = data.load_cost_list + [adjusted_buy_price | round(4)] %}
 
           {#- --- Process SELL Price (prod_price) --- #}
-          {%- set p10_sell = p10_forecasts[i].feed_in_price %}
+          {%- set low_sell = low_forecasts[i].feed_in_price %}
           {%- set p50_sell = p50_forecasts[i].feed_in_price %}
-          {%- set adjusted_sell_price = p50_sell + (p10_sell - p50_sell) * k %}
+          {%- set adjusted_sell_price = p50_sell + (low_sell - p50_sell) * k_sell %}
+
+          {%- set forecast_time_local = as_local(as_datetime(p50_forecasts[i].timestamp)) %}
+          {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
+            {%- set adjusted_sell_price = adjusted_sell_price + 0.01 %}
+          {%- endif %}
+
           {#- Step 3: Negate the final price before appending for EMHASS. #}
           {%- set data.prod_price_list = data.prod_price_list + [adjusted_sell_price | round(4)] %}
 
@@ -133,18 +154,16 @@ rest_command:
         "sensor_power_photovoltaics": "sensor.sigen_plant_pv_power",
         {#- END UNSURE #}
         "battery_minimum_state_of_charge": 0.15, 
-        "soc_init": {{ ((states('sensor.sigen_plant_battery_state_of_charge') | float) / 100) | round(4) }},
-        {#- "soc_final": 1.0 #}
-        {# bias charging by taking max(Current, T+24h, T+48h)+5% as the target for T+74h #}
-        {#-
-        {%- set max_forecast_soc = ([ states('sensor.sigen_plant_battery_state_of_charge') | float,
-          state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc')[48].dh_soc_batt_forecast | float,
-          state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc')[96].dh_soc_batt_forecast | float
-        ] | sort)[-1] %}
-        #}
-        {#- "soc_final": {{ (([max_forecast_soc + 5, 100] | sort)[0] / 100) | round(4) }} #}
-        {#- Current plus 20%, min 15%, max 100% #}
-        "soc_final": {{ ([15, (states('sensor.sigen_plant_battery_state_of_charge') | float) + 20, 100] | sort)[1]/100 | round(4) }}
+        "soc_init": {{ ((states('input_number.battery_soc_30_minute') | float) / 100) | round(4) }},
+        {#- Step 1: Get the current SOC and the stored offset. #}
+        {%- set current_soc = states('input_number.battery_soc_30_minute') | float %}
+        {%- set target_soc_offset = states('input_number.emhass_target_soc_offset') | float(0) %}
+        
+        {#- Step 2: Calculate the target SOC by adding the offset. #}
+        {%- set final_soc_percentage = current_soc + target_soc_offset %}
+
+        {#- Step 3: Clamp the final SOC to a maximum of 100% and set it. #}
+        "soc_final": {{ ([final_soc_percentage, 100] | min / 100) | round(4) }}
       }
 
   emhass_publish_data_dh:
@@ -167,81 +186,74 @@ rest_command:
       {
         "entity_save": true,
         "publish_prefix":"mpc_",
-        "soc_init": {{ ((states('input_number.battery_soc_5_minute') | float) / 100) | round(4) }},
-        {#- Interpolate target SOC based on current time within 30-minute intervals #}
-        {%- set now = utcnow() %}
-        {%- set endtime = (now + timedelta(hours=12) - timedelta(minutes=30)) %}
-        {%- set soc_forecasts = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') %}
-        {%- set ns = namespace(end_soc1='unknown',end_soc2='unknown') %}
-        {%- for item in state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') %}
-          {%- if as_datetime(item.date) < endtime %}
-            {%- set ns.end_soc1 = item.dh_soc_batt_forecast | float %}
-          {%- elif as_datetime(item.date) >= endtime and ns.end_soc2=='unknown' %}
-            {%- set ns.end_soc2 = item.dh_soc_batt_forecast | float %}
-          {%- endif %}
+        "soc_init": {{ (states('input_number.battery_soc_5_minute') | float / 100) | round(4) }},
+
+        {# ========================================================================================= #}
+        {#               1. INITIAL VARIABLE SETUP & ASYMMETRICAL FLOATING TARGET                    #}
+        {# ========================================================================================= #}
+        {%- set utc_now = utcnow() %}
+        {%- set dayahead_forecasts = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') %}
+        {%- set actual_soc_now = states('input_number.battery_soc_5_minute') | float %}
+        {%- set quantized_now = utc_now.replace(minute = (utc_now.minute // 5) * 5, second=0, microsecond=0) %}
+        {%- set initial_soc_value = states('input_number.battery_soc_30_minute') | float %}
+        {%- set plan_start_time = as_datetime(dayahead_forecasts[0].date) %}
+        {%- set initial_soc_point = {'date': plan_start_time.isoformat(), 'dh_soc_batt_forecast': initial_soc_value} %}
+        {%- set corrected_forecast_builder = namespace(points=[]) %}
+        {%- for item in dayahead_forecasts %}
+          {%- set value_time = as_datetime(item.date) + timedelta(minutes=30) %}
+          {%- set corrected_point = {'date': value_time.isoformat(), 'dh_soc_batt_forecast': item.dh_soc_batt_forecast} %}
+          {%- set corrected_forecast_builder.points = corrected_forecast_builder.points + [corrected_point] %}
         {%- endfor %}
-
-        {#- Calculate minutes into current 30-minute period #}
-        {#- set minutes_into_period = (now.minute % 30) + (now.second / 60) #}
-        {#- Round down to nearest 5 #}
-        {%- set minutes_into_period = utcnow().minute % 30 // 5 * 5 %}
-        {%- set interpolation_factor = minutes_into_period / 30 %}
-        {#- Calculate the base interpolated SOC from the 3-day forecast #}
-        {%- set base_soc = ns.end_soc1 * (1 - interpolation_factor) + ns.end_soc2 * interpolation_factor %}
-        {#- Add 1% margin to avoid "bleeding" to grid, then clamp the result to a maximum of 100 #}
-        {%- set clamped_soc_percent = [base_soc + 1, 100.0] | min %}
-        {#- Final output, converted to a decimal and rounded #}
-        "soc_final": {{ (clamped_soc_percent / 100) | round(4) }},
-
-        "battery_minimum_state_of_charge": {{ ([5, (states('sensor.sigen_plant_battery_state_of_charge') | float) - 5, 15] | sort)[1]/100 | round(4) }},
-        {#- "battery_minimum_state_of_charge": 0.05, #}
-        {%- set pv_curtailment = namespace(value=(states('sensor.mpc_p_pv_curtailment') | float(0))) %}
-        {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts') or [] %}
-          {%- if as_datetime(item.date) <= utcnow() %}
-            {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
+        {%- set complete_soc_forecasts = [initial_soc_point] + corrected_forecast_builder.points %}
+        {%- macro get_planned_soc(target_time, forecasts, fallback_soc) -%}
+          {%- set p = namespace(start=none, end=none, start_time=none, end_time=none) %}
+          {%- for item in forecasts %}
+            {%- set item_time = as_datetime(item.date) %}
+            {%- if item_time <= target_time -%}
+              {%- set p.start = item.dh_soc_batt_forecast | float %}
+              {%- set p.start_time = item_time %}
+            {%- elif p.end == none -%}
+              {%- set p.end = item.dh_soc_batt_forecast | float %}
+              {%- set p.end_time = item_time %}
+            {%- endif %}
+          {%- endfor %}
+          {%- if p.start == none and p.end == none %}{{ fallback_soc }}
+          {%- elif p.start == none %}{{ p.end }}
+          {%- elif p.end == none %}{{ p.start }}
+          {%- else %}
+            {%- set total_seconds = (p.end_time - p.start_time).total_seconds() %}
+            {%- if total_seconds > 0 %}
+              {%- set elapsed_seconds = (target_time - p.start_time).total_seconds() %}
+              {%- set factor = elapsed_seconds / total_seconds %}
+              {{ p.start * (1 - factor) + p.end * factor }}
+            {%- else %}
+              {{ p.start }}
+            {%- endif %}
           {%- endif %}
-        {%- endfor %}
-        {%- set pv_curtailment_now = pv_curtailment.value | int(0) %}
-        {%- set pv_power_now = states('sensor.sigen_plant_pv_power') | int(0) %}
+        {%- endmacro -%}
+        {%- set future_target_time = quantized_now + timedelta(hours=12) %}
+        {%- set planned_soc_future = get_planned_soc(future_target_time, complete_soc_forecasts, actual_soc_now) | float %}
+        {%- set planned_soc_now = get_planned_soc(quantized_now, complete_soc_forecasts, actual_soc_now) | float %}
+        {%- set deviation = actual_soc_now - planned_soc_now %}
+        {%- set positive_deviation_only = [deviation, 0] | max %}
+        {%- set final_soc_percent = planned_soc_future + positive_deviation_only %}
+        "soc_final": {{ ([([final_soc_percent, 100.0] | min), 0.0] | max / 100) | round(4) }},
+        "battery_minimum_state_of_charge": {{ ([5, (states('input_number.battery_soc_5_minute') | float) - 2, 15] | sort)[1]/100 | round(4) }},
 
-        {%- set load_power_now = states('sensor.power_load_without_losses') | int(0) %}
-        {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float %}
-        {%- set prod_price_now = states('sensor.amber_5min_current_feed_in_price') | float %}
-        {#- Initialize with current values #}
-        {%- set data = namespace(
-          load_power_list=[],
-          pv_power_list=[],
-          load_cost_list=[load_cost_now], 
-          prod_price_list=[prod_price_now]
-        ) %}
+        {# ========================================================================================= #}
+        {#               2. ADVANCED ENERGY CONSERVATION SCALING (Corrected)                         #}
+        {# ========================================================================================= #}
+        {%- set start_of_this_30min_block = utc_now.replace(minute=(utc_now.minute // 30) * 30, second=0, microsecond=0) %}
 
-
-        {#- --------------------------------------------------------------------------------- #}
-        {#-            REUSABLE POWER INTERPOLATION MACRO FOR HOME ASSISTANT            -#}
-        {#- --------------------------------------------------------------------------------- #}
-
-        {#- A macro is a reusable function in Jinja2. This macro encapsulates the entire #}
-        {#- two-stage interpolation logic. It takes the sensor entity, the attribute name,#}
-        {#- and the key for the power value as arguments, and returns a final list of     #}
-        {#- interpolated 5-minute power values.                                         -#}
-
-        {%- macro interpolate_power_data(entity_id, attribute_name, value_key) -%}
-          {#- Create a namespace to hold the lists we build inside the macro. #}
+        {%- macro interpolate_power_data(entity_id, attribute_name, value_key, start_time) -%}
           {%- set d = namespace(thirty_min_values=[], initial_smooth_values=[], final_power_list=[]) %}
-
-          {#- Step 0: Extract just the power values from the specified entity attribute. #}
           {%- for item in state_attr(entity_id, attribute_name) | default([]) %}
-            {%- if as_datetime(item.date) > (utcnow() - timedelta(minutes=30)) %}
+            {%- if as_datetime(item.date) >= start_time %}
               {%- set d.thirty_min_values = d.thirty_min_values + [item[value_key] | int(0)] %}
             {%- endif %}
           {%- endfor %}
           {%- set num_periods = d.thirty_min_values | length %}
-
-          {#- If there is no data, return an empty list. #}
-          {%- if num_periods == 0 -%}
-            {{ [] }}
-          {%- else -%}
-            {#- STAGE 1: Create an initial list of smoothly interpolated values. #}
+          {%- if num_periods > 0 -%}
             {%- for period_idx in range(num_periods) %}
               {%- set current_power = d.thirty_min_values[period_idx] %}
               {%- set prev_power = d.thirty_min_values[period_idx - 1] if period_idx > 0 else current_power %}
@@ -254,8 +266,6 @@ rest_command:
                 {%- set d.initial_smooth_values = d.initial_smooth_values + [interpolated_point] %}
               {%- endfor %}
             {%- endfor %}
-
-            {#- STAGE 2: Correct the averages to generate the final list. #}
             {%- for period_idx in range(num_periods) %}
               {%- set target_average = d.thirty_min_values[period_idx] %}
               {%- set current_block = d.initial_smooth_values[period_idx*6:(period_idx+1)*6] %}
@@ -266,52 +276,107 @@ rest_command:
                 {%- set d.final_power_list = d.final_power_list + [final_value] %}
               {%- endfor %}
             {%- endfor %}
-
-            {#- Return the final, calculated list. #}
-            {{- d.final_power_list | tojson }}
           {%- endif -%}
+          {{- d.final_power_list | tojson }}
+        {%- endmacro -%}
+        {%- macro simple_interpolate_power_data(entity_id, attribute_name, value_key, start_time, periods_passed) -%}
+          {%- set d = namespace(final_list=[], is_first_block=true) %}
+          {%- for item in state_attr(entity_id, attribute_name) | default([]) %}
+            {%- if as_datetime(item.date) >= start_time %}
+              {%- set value = item[value_key] | int(0) %}
+              {%- if d.is_first_block %}
+                {%- for i in range(periods_passed, 6) %}
+                  {%- set d.final_list = d.final_list + [value] %}
+                {%- endfor %}
+                {%- set d.is_first_block = false %}
+              {%- else %}
+                {%- for i in range(6) %}
+                  {%- set d.final_list = d.final_list + [value] %}
+                {%- endfor %}
+              {%- endif %}
+            {%- endif %}
+          {%- endfor %}
+          {{- d.final_list | tojson }}
+        {%- endmacro -%}
+        {%- macro scale_and_clamp_forecast(mpc_list, dh_entity, dh_value_key, periods_passed, start_time) -%}
+          {%- set aligned_dh_list = simple_interpolate_power_data(dh_entity, 'forecasts', dh_value_key, start_time, periods_passed) | from_json %}
+          {%- set target_total_energy = (aligned_dh_list[:144] | sum) %}
+          {%- set current_total_energy = (mpc_list | sum) %}
+          {%- set energy_error = target_total_energy - current_total_energy %}
+          {%- set forecast_part_list = mpc_list[2:] %}
+          {%- set forecast_part_energy = (forecast_part_list | sum) %}
+          {%- set data = namespace(adjusted_part=[], rounding_residual=0.0) %}
+          {%- for value in forecast_part_list %}
+            {%- set new_value = value %}
+            {%- if forecast_part_energy > 0 %}
+              {%- set proportional_adjustment = energy_error * (value / forecast_part_energy) %}
+              {%- set total_adjustment_needed = proportional_adjustment + data.rounding_residual %}
+              {%- set rounded_adjustment = total_adjustment_needed | round(0) | int %}
+              {%- set new_value = value + rounded_adjustment %}
+              {%- set data.rounding_residual = total_adjustment_needed - rounded_adjustment %}
+            {%- endif %}
+            {%- set data.adjusted_part = data.adjusted_part + [[0, new_value | int] | max] %}
+          {%- endfor %}
+          {{ (mpc_list[:2] + data.adjusted_part) | tojson }}
         {%- endmacro -%}
 
+        {%- set load_power_now = states('sensor.power_load_without_losses') | int(0) %}
+        {%- set pv_power_now = states('sensor.sigen_plant_pv_power') | int(0) %}
+        {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
+        
+        {%- set initial_mpc_load_full = interpolate_power_data('sensor.dh_p_load_forecast', 'forecasts', 'dh_p_load_forecast', start_of_this_30min_block) | from_json %}
+        {%- set initial_mpc_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
 
-        {#- Call the macro for the PV forecast. #}
-        {%- set data.pv_power_list = interpolate_power_data(
-            entity_id='sensor.dh_p_pv_forecast',
-            attribute_name='forecasts',
-            value_key='dh_p_pv_forecast'
-        ) | from_json %}
-        {#- Call the exact same macro for the Load forecast. #}
-        {#-    NOTE: Adjust the 'value_key' if your load forecast uses a different name. #}
-        {%- set data.load_power_list = interpolate_power_data(
-            entity_id='sensor.dh_p_load_forecast',
-            attribute_name='forecasts',
-            value_key='dh_p_load_forecast'
-        ) | from_json %}
+        {%- set initial_mpc_load = initial_mpc_load_full[periods_into_30min:][:144] %}
+        {%- set initial_mpc_pv = initial_mpc_pv_full[periods_into_30min:][:144] %}
+        
+        {%- set pv_curtailment = namespace(value=(states('sensor.mpc_p_pv_curtailment') | float(0))) %}
+        {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts') or [] %}
+          {%- if as_datetime(item.date) <= utc_now %}
+            {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
+          {%- endif %}
+        {%- endfor %}
+        {%- set pv_curtailment_now = pv_curtailment.value | int(0) %}
+        {%- if pv_curtailment_now > 0 and initial_mpc_pv[0] > pv_power_now %}
+          {%- set pv_power_now = initial_mpc_pv[0] %}
+        {%- endif %}
+        
+        {%- set initial_mpc_load = [load_power_now]*2 + initial_mpc_load[2:] %}
+        {%- set initial_mpc_pv = [pv_power_now]*2 + initial_mpc_pv[2:] %}
 
+        {%- set final_load_forecast = scale_and_clamp_forecast(initial_mpc_load, 'sensor.dh_p_load_forecast', 'dh_p_load_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
+        {%- set final_pv_forecast = scale_and_clamp_forecast(initial_mpc_pv, 'sensor.dh_p_pv_forecast', 'dh_p_pv_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
+        "load_power_forecast": {{ final_load_forecast | tojson }},
+        "pv_power_forecast": {{ final_pv_forecast | tojson }},
+        
+        {# ========================================================================================= #}
+        {#               3. DYNAMIC PRICE FORECASTING & FINAL PARAMETERS                           #}
+        {# ========================================================================================= #}
+        {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float %}
+        {%- set prod_price_now = states('sensor.amber_5min_current_feed_in_price') | float %}
+        
+        {#- Get the current allowance and time to adjust the CURRENT price #}
+        {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
+        {%- set current_time_local = now() %} {# now() is already in local time in HA templates #}
 
+        {%- if 10 <= current_time_local.hour < 16 and current_allowance > 0 %}
+          {%- set adjusted_prod_price_now = prod_price_now + 0.01 %}
+        {%- else %}
+          {%- set adjusted_prod_price_now = prod_price_now %}
+        {%- endif %}
+        
+        {#- Initialize the lists with the correctly adjusted CURRENT price #}
+        {%- set data = namespace(load_cost_list=[load_cost_now], prod_price_list=[adjusted_prod_price_now]) %}
 
-        {#- Discard periods that have passed #}
-        {%- set periods_into_30min = (utcnow().minute % 30)//5 %}
-        {%- set data.load_power_list = data.load_power_list[periods_into_30min:] %}
-        {%- set data.pv_power_list = data.pv_power_list[periods_into_30min:] %}
-        {#- Set first 2 elements to current value #}
-        {%- set data.load_power_list = [load_power_now]*2 + data.load_power_list[2:] %}
-        {#- If PV is presently being curtailed, take the maximum of the forecast or the currently produced + curtailed power #}
-        {%- if pv_curtailment_now > 0 and data.pv_power_list[0] > pv_power_now %}
-          {%- set pv_power_now = data.pv_power_list[0] %}
-        {%- endif %} 
-        {%- set data.pv_power_list = [pv_power_now]*2 + data.pv_power_list[2:] %}
+        {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0.5) %}
+        {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0.5) %}
 
-        {#- ========================================================================================= #}
-        {#-                  START: TWO-KNOB DYNAMIC PRICING LOGIC                        -#}
-        {#- ========================================================================================= #}
-        {%- set k = states('input_number.emhass_weight_forecast_probability') | float(0.5) %}
-        {#- Process BUY price forecasts (load_cost) #}
         {%- for item in state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') %}
-          {%- if as_datetime(item.start_time) > now %}
+          {%- if as_datetime(item.start_time) > utc_now %}
             {%- set p50_buy = item.advanced_price_predicted %}
-            {%- set p90_buy = item.advanced_price_high %}
-            {%- set adjusted_buy_price = p50_buy + (p90_buy - p50_buy) * k %}
-            {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
+            {%- set high_buy = item.advanced_price_high %}
+            {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
+            {%- if (as_datetime(item.start_time) - utc_now) < timedelta(minutes=5) %}
               {%- set final_buy_price = [adjusted_buy_price, item.per_kwh] | max %}
             {%- else %}
               {%- set final_buy_price = adjusted_buy_price %}
@@ -319,35 +384,32 @@ rest_command:
             {%- set data.load_cost_list = data.load_cost_list + [final_buy_price | round(4)] %}
           {%- endif %}
         {%- endfor %}
-        {#- Process SELL price forecasts (prod_price) using corrected logic #}
-        {%- for item in state_attr('sensor.amber_5min_forecasts_extended_feed_in_price', 'Forecasts') %}
-          {%- if as_datetime(item.start_time) > now %}
-            {#- Step 1: Normalize feed-in prices to positive numbers to make logic clearer. #}
-            {%- set p10_sell = -item.advanced_price_low %}
-            {%- set p50_sell = -item.advanced_price_predicted %}
 
-            {#- Step 2: Calculate the adjusted price on positive numbers. #}
-            {#- This moves the price from p50 towards p10 (the more pessimistic value). #}
-            {%- set adjusted_sell_price = p50_sell + (p10_sell - p50_sell) * k %}
-            
-            {#- Step 3: For the next interval, find the most conservative (minimum) positive price. #}
-            {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
+        {#- Get the current allowance state ONCE before the loop. #}
+        {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
+
+        {%- for item in state_attr('sensor.amber_5min_forecasts_extended_feed_in_price', 'Forecasts') %}
+          {%- if as_datetime(item.start_time) > utc_now %}
+            {%- set low_sell = -item.advanced_price_low %}
+            {%- set p50_sell = -item.advanced_price_predicted %}
+            {%- set adjusted_sell_price = p50_sell + (low_sell - p50_sell) * k_sell %}
+            {%- if (as_datetime(item.start_time) - utc_now) < timedelta(minutes=5) %}
               {%- set per_kwh_sell = -item.per_kwh %}
               {%- set final_sell_price = [adjusted_sell_price, per_kwh_sell] | min %}
             {%- else %}
               {%- set final_sell_price = adjusted_sell_price %}
             {%- endif %}
 
+            {#- CORRECTED LOGIC: Convert to LOCAL time before checking hour #}
+            {%- set forecast_time_local = as_local(as_datetime(item.start_time)) %}
+            {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
+              {%- set final_sell_price = final_sell_price + 0.01 %}
+            {%- endif %}
+
             {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
           {%- endif %}
         {%- endfor %}
-        {#- ========================================================================================= #}
-        {#-                    END: TWO-KNOB DYNAMIC PRICING LOGIC                        -#}
-        {#- ========================================================================================= #}
-
         
-        "load_power_forecast": {{ data.load_power_list[:144] | tojson }},
-        "pv_power_forecast": {{ data.pv_power_list[:144] | tojson }},
         "load_cost_forecast": {{ data.load_cost_list[:144] | tojson }},
         "prod_price_forecast": {{ data.prod_price_list[:144] | tojson }},
         "weight_battery_discharge": {{ states('input_number.emhass_weight_battery_discharge') | float }},
@@ -364,6 +426,7 @@ rest_command:
       {
         "publish_prefix":"mpc"
       }
+
 
   emhass_publish_data_all:
     url: http://emhass.REDACTED/action/publish-data
