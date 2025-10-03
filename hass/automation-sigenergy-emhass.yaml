@@ -3,11 +3,6 @@ description: ""
 triggers:
   - minutes: /5
     trigger: time_pattern
-  - entity_id:
-      - number.sigen_plant_grid_export_limitation
-      - sensor.amber_effective_general_price
-      - sensor.amber_effective_feed_in_price
-    trigger: state
 actions:
   - variables:
       p_load_timestamp: >
@@ -65,6 +60,11 @@ actions:
       soc: >
         {{ states('sensor.sigen_plant_battery_state_of_charge') |
         float('unknown') }}
+      soc_full_threshold: 99.8
+      planned_pv_curtailment_kwh: >
+        {{ state_attr('sensor.mpc_p_pv_curtailment',
+        'forecasts')|map(attribute='mpc_p_pv_curtailment')|map('float')|sum /
+        12000 }}
       max_grid_import: 14999
       max_grid_export: -9999
       max_inverter_discharge: 10999
@@ -74,33 +74,15 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ (states('sensor.amber_effective_general_price') | float) <= 0
-              and
-                 (state_attr('sensor.mpc_p_pv_curtailment', 'forecasts')|map(attribute='mpc_p_pv_curtailment')|map('float')|max) > 0
-              }}
+              {{ states('sensor.sigen_plant_grid_connection_status') != 'On
+              Grid' }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
-              value: Full PV curtailment and grid charge at full rate (negative buy)
+              value: DEFAULT (Backup Power) Self-consume from battery
             action: input_text.set_value
           - data:
-              control_mode: Command Charging (PV First)
-              export_limit_kw: 0
-              pv_max_power_limit_kw: 0.05
-            action: script.configure_sigen_ems_state
-      - conditions:
-          - condition: template
-            value_template: >-
-              {{ (states('sensor.amber_effective_general_price') | float) <= 0
-              }}
-        sequence:
-          - data_template:
-              entity_id: input_text.emhass_battery_action
-              value: Grid charge at full rate (negative buy)
-            action: input_text.set_value
-          - data:
-              control_mode: Command Charging (PV First)
-              export_limit_kw: 0
+              control_mode: Maximum Self Consumption
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
@@ -115,8 +97,8 @@ actions:
             action: input_text.set_value
           - data:
               control_mode: Command Charging (PV First)
-              export_limit_kw: 0
               pv_max_power_limit_kw: 0.05
+              export_limit_kw: 0
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
@@ -130,9 +112,25 @@ actions:
             action: input_text.set_value
           - data:
               control_mode: Command Charging (PV First)
-              export_limit_kw: 0
               pv_max_power_limit_kw: 0.05
+              export_limit_kw: 0
               charge_limit_kw: "{{ (-p_batt / 1000) | round(3) }}"
+            action: script.configure_sigen_ems_state
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ p_grid == p_load and p_batt == 0 and p_pv_curtailment > 0 and
+              p_pv == p_pv_curtailment }}
+        sequence:
+          - data_template:
+              entity_id: input_text.emhass_battery_action
+              value: Full PV curtailment, grid powers home
+            action: input_text.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              pv_max_power_limit_kw: 0.05
+              export_limit_kw: 0
+              charge_limit_kw: 0
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
@@ -177,7 +175,9 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: "{{ soc >= 99.8 and p_batt == 0 and p_pv_curtailment > 0 }}"
+            value_template: >-
+              {{ soc >= soc_full_threshold and p_pv_curtailment > 0 and p_grid
+              == 0 and p_batt <= 0 }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
@@ -189,7 +189,9 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: "{{ soc >= 99.8 and p_batt == 0 and p_pv > 0 and p_grid < 0 }}"
+            value_template: >-
+              {{ soc >= soc_full_threshold and p_pv > 0 and p_grid < 0 and
+              p_batt <= 0 }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
@@ -201,7 +203,7 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: "{{ p_pv_curtailment > 0 and p_batt == 0 }}"
+            value_template: "{{ p_pv_curtailment > 0 and p_batt == 0 and p_grid == 0 }}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
@@ -229,25 +231,11 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: "{{ p_pv_curtailment > 0 }}"
+            value_template: "{{ p_pv_curtailment > 0 and p_grid == 0 }}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
               value: Partial PV curtailment, prevent export
-            action: input_text.set_value
-          - data:
-              control_mode: Maximum Self Consumption
-              export_limit_kw: 0
-            action: script.configure_sigen_ems_state
-      - conditions:
-          - condition: template
-            value_template: >-
-              {{ (states('sensor.amber_effective_feed_in_price') | float) <= 0
-              }}
-        sequence:
-          - data_template:
-              entity_id: input_text.emhass_battery_action
-              value: Partial PV curtailment, prevent export (fallback)
             action: input_text.set_value
           - data:
               control_mode: Maximum Self Consumption
@@ -304,7 +292,7 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ p_hybrid_inverter >= max_inverter_discharge or p_grid >=
+              {{ p_hybrid_inverter >= max_inverter_discharge or p_grid <=
               max_grid_export }}
         sequence:
           - data_template:
@@ -314,6 +302,18 @@ actions:
           - data:
               control_mode: Command Discharging (PV First)
               export_limit_kw: "{{ max_grid_export_kw }}"
+            action: script.configure_sigen_ems_state
+      - conditions:
+          - condition: template
+            value_template: "{{ p_batt < 0 and p_grid < 0 }}"
+        sequence:
+          - data_template:
+              entity_id: input_text.emhass_battery_action
+              value: Partial charge, then export PV to grid
+            action: input_text.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              charge_limit_kw: "{{ (-p_batt / 1000) | round(3) }}"
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template

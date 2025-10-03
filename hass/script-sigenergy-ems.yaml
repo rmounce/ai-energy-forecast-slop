@@ -1,5 +1,5 @@
 alias: Configure Sigen EMS State
-description: Sets all key Sigen EMS parameters with safe defaults.
+description: Sets desired state helpers and other key Sigen EMS parameters.
 fields:
   control_mode:
     name: Control Mode
@@ -20,6 +20,7 @@ fields:
       number:
         min: 0
         max: 10
+    default: 10
   import_limit_kw:
     name: Grid Import Limit (kW)
     description: The maximum power to import from the grid.
@@ -70,12 +71,15 @@ fields:
     default: 100
 sequence:
   - variables:
-      v_control_mode: >-
-        {{ control_mode if control_mode is defined and control_mode not in
-        [none, ''] else 'Maximum Self Consumption' }}
+      v_export_limit: >-
+        {{ export_limit_kw if export_limit_kw is defined and export_limit_kw not
+        in [none, ''] else 10 }}
       v_import_limit: >-
         {{ import_limit_kw if import_limit_kw is defined and import_limit_kw not
         in [none, ''] else 15 }}
+      v_control_mode: >-
+        {{ control_mode if control_mode is defined and control_mode not in
+        [none, ''] else 'Maximum Self Consumption' }}
       v_pv_max_power_limit: >-
         {{ pv_max_power_limit_kw if pv_max_power_limit_kw is defined and
         pv_max_power_limit_kw not in [none, ''] else 100 }}
@@ -91,23 +95,16 @@ sequence:
       v_pcs_export_limit: >-
         {{ pcs_export_limit_kw if pcs_export_limit_kw is defined and
         pcs_export_limit_kw not in [none, ''] else 100 }}
-  - if:
-      - condition: template
-        value_template: >-
-          {{ export_limit_kw is defined and export_limit_kw is not none and
-          (states('number.sigen_plant_grid_export_limitation') | float(0) -
-          export_limit_kw) | abs > 0.001 }}
-    then:
-      - target:
-          entity_id: number.sigen_plant_grid_export_limitation
-        data:
-          value: "{{ export_limit_kw }}"
-        action: number.set_value
   - target:
-      entity_id: number.sigen_plant_grid_import_limitation
+      entity_id: input_number.desired_export_limit
+    data:
+      value: "{{ v_export_limit }}"
+    action: input_number.set_value
+  - target:
+      entity_id: input_number.desired_import_limit
     data:
       value: "{{ v_import_limit }}"
-    action: number.set_value
+    action: input_number.set_value
   - target:
       entity_id: select.sigen_plant_remote_ems_control_mode
     data:

@@ -5,57 +5,79 @@ template:
       device_class: monetary
       state: >
         {% set ns = namespace(value='unknown') %}
-        {%- if as_datetime(state_attr('sensor.amber_5min_current_general_price', 'end_time')) > utcnow() %}
-          {%- set ns.value = states('sensor.amber_5min_current_general_price') %}
-        {%- else %}
-          {%- for item in state_attr('sensor.amber_5min_forecasts_general_price', 'Forecasts') %}
-            {%- if ns.value == 'unknown' and as_datetime(item.end_time) > utcnow() %}
-              {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0.5) %}
-              {%- set p50_buy = item.advanced_price_predicted %}
-              {%- set high_buy = item.advanced_price_high %}
-              {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
-              {%- set ns.value = [adjusted_buy_price, item.per_kwh] | max %}
-            {%- endif %}
-          {%- endfor %}
-        {%- endif %}
-        {{ ns.value }}
+        {% if as_datetime(state_attr('sensor.amber_5min_current_general_price', 'end_time')) > utcnow() %}
+          {% set ns.value = states('sensor.amber_5min_current_general_price') %}
+        {% else %}
+          {% for item in state_attr('sensor.amber_5min_forecasts_general_price', 'Forecasts') %}
+            {% if ns.value == 'unknown' and as_datetime(item.end_time) > utcnow() %}
+              {% set weight = states('input_number.emhass_weight_buy_forecast') | float(0) %}
+              {% set p50 = item.advanced_price_predicted %}
+              {% set high = item.advanced_price_high %}
+              {% set low = item.advanced_price_low %}
+
+              {% if weight > 0 %}
+                {% set adjusted_price = p50 + (high - p50) * weight %}
+              {% else %}
+                {% set adjusted_price = p50 - (p50 - low) * (weight | abs) %}
+              {% endif %}
+              
+              {# Safeguard: Use the higher of the blended price or the raw per_kwh forecast #}
+              {% set ns.value = [adjusted_price, item.per_kwh] | max %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+        {{ ns.value | round(6) }}
 
     - name: 'Amber Effective Feed In Price'
       unit_of_measurement: "$/kWh"
       device_class: monetary
       state: >
         {% set ns = namespace(value='unknown') %}
+        {% set base_price = 0 %}
+
         {# First, get the base price from either the current sensor or the next forecast #}
-        {%- if as_datetime(state_attr('sensor.amber_5min_current_feed_in_price', 'end_time')) > utcnow() %}
-          {%- set ns.value = states('sensor.amber_5min_current_feed_in_price') | float(0) %}
-        {%- else %}
-          {%- for item in state_attr('sensor.amber_5min_forecasts_feed_in_price', 'Forecasts') %}
-            {%- if ns.value == 'unknown' and as_datetime(item.end_time) > utcnow() %}
-              {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0.5) %}
-              {%- set low_sell = -item.advanced_price_low %}
-              {%- set p50_sell = -item.advanced_price_predicted %}
-              {%- set per_kwh_sell = -item.per_kwh %}
-              {%- set adjusted_sell_price = p50_sell + (low_sell - p50_sell) * k_sell %}
-              {%- set ns.value = [adjusted_sell_price, per_kwh_sell] | min %}
-            {%- endif %}
-          {%- endfor %}
-        {%- endif %}
+        {% if as_datetime(state_attr('sensor.amber_5min_current_feed_in_price', 'end_time')) > utcnow() %}
+          {% set base_price = states('sensor.amber_5min_current_feed_in_price') | float(0) %}
+        {% else %}
+          {% for item in state_attr('sensor.amber_5min_forecasts_feed_in_price', 'Forecasts') %}
+            {% if ns.value == 'unknown' and as_datetime(item.end_time) > utcnow() %}
+              {% set weight = states('input_number.emhass_weight_sell_forecast') | float(0) %}
+
+              {# Amber's feed-in prices are negative. We negate them to work with positive numbers. #}
+              {% set p50  = -item.advanced_price_predicted %}
+              {% set high = -item.advanced_price_high %}
+              {% set low  = -item.advanced_price_low %}
+
+              {% if weight > 0 %}
+                {# Positive weight blends towards a more optimistic (higher) feed-in price #}
+                {% set adjusted_price = p50 + (high - p50) * weight %}
+              {% else %}
+                {# Negative weight blends towards a more pessimistic (lower) feed-in price #}
+                {% set adjusted_price = p50 - (p50 - low) * (weight | abs) %}
+              {% endif %}
+              
+              {# Safeguard: Use the lower (more pessimistic) of the blended price or the raw per_kwh forecast #}
+              {% set ns.value = [adjusted_price, -item.per_kwh] | min %}
+            {% endif %}
+          {% endfor %}
+          {% set base_price = ns.value %}
+        {% endif %}
 
         {# ================================================================= #}
-        {#               START: NEW DNSP FREE TIER ADJUSTMENT                #}
+        {#               START: DNSP FREE TIER ADJUSTMENT                    #}
         {# ================================================================= #}
-        {% set base_price = ns.value | float(0) %}
+        {% set final_base_price = base_price | float(0) %}
         {% set allowance = states('input_number.sapn_free_exports') | float(0) %}
         {% set current_hour = now().hour %}
 
         {# If we are in the 10am-4pm window AND have allowance, add 1c ($0.01) #}
         {% if 10 <= current_hour < 16 and allowance > 0 %}
-          {{ base_price + 0.01 }}
+          {{ (final_base_price + 0.01) | round(6) }}
         {% else %}
-          {{ base_price }}
+          {{ final_base_price | round(6) }}
         {% endif %}
         {# ================================================================= #}
-        {#                END: NEW DNSP FREE TIER ADJUSTMENT                 #}
+        {#                END: DNSP FREE TIER ADJUSTMENT                     #}
         {# ================================================================= #}
 
 
@@ -95,11 +117,11 @@ rest_command:
         {#-            START: DAY-AHEAD TWO-KNOB DYNAMIC PRICING LOGIC                    -#}
         {#- ========================================================================================= #}
 
-        {#- Knob 1: Get the risk aversion factor 'k' from your input helper. #}
-        {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0.5) %}
-        {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0.5) %}
+        {#- Knob 1: Get the risk aversion factor 'k' from your input helper (-1.0 to 1.0) #}
+        {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0) %}
+        {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0) %}
 
-        {#- Knob 2: Get the profitability hurdle from your input helper. #}
+        {#- Knob 2 is not used in this section but left for context #}
         {%- set discharge_weight = states('input_number.emhass_weight_battery_discharge') | float(0.02) %}
 
         {#- Prepare empty lists to store the new forecasts. #}
@@ -119,21 +141,37 @@ rest_command:
           {#- --- Process BUY Price (load_cost) --- #}
           {%- set p50_buy = p50_forecasts[i].general_price %}
           {%- set high_buy = high_forecasts[i].general_price %}
-          {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
+          {%- set low_buy = low_forecasts[i].general_price %}
+          
+          {%- if k_buy > 0 %}
+            {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
+          {%- else %}
+            {%- set adjusted_buy_price = p50_buy - (p50_buy - low_buy) * (k_buy | abs) %}
+          {%- endif %}
           {%- set data.load_cost_list = data.load_cost_list + [adjusted_buy_price | round(4)] %}
 
           {#- --- Process SELL Price (prod_price) --- #}
-          {%- set low_sell = low_forecasts[i].feed_in_price %}
           {%- set p50_sell = p50_forecasts[i].feed_in_price %}
-          {%- set adjusted_sell_price = p50_sell + (low_sell - p50_sell) * k_sell %}
+          {%- set high_sell = high_forecasts[i].feed_in_price %}
+          {%- set low_sell = low_forecasts[i].feed_in_price %}
 
+          {%- if k_sell > 0 %}
+            {#- Positive weight blends towards optimistic (higher) feed-in price #}
+            {%- set adjusted_sell_price = p50_sell + (high_sell - p50_sell) * k_sell %}
+          {%- else %}
+            {#- Negative weight blends towards pessimistic (lower) feed-in price #}
+            {%- set adjusted_sell_price = p50_sell - (p50_sell - low_sell) * (k_sell | abs) %}
+          {%- endif %}
+          
+          {#- Adjust for DNSP free tier #}
           {%- set forecast_time_local = as_local(as_datetime(p50_forecasts[i].timestamp)) %}
           {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
-            {%- set adjusted_sell_price = adjusted_sell_price + 0.01 %}
+            {%- set final_sell_price = adjusted_sell_price + 0.01 %}
+          {%- else %}
+            {%- set final_sell_price = adjusted_sell_price %}
           {%- endif %}
 
-          {#- Step 3: Negate the final price before appending for EMHASS. #}
-          {%- set data.prod_price_list = data.prod_price_list + [adjusted_sell_price | round(4)] %}
+          {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
 
         {%- endfor %}
 
@@ -145,14 +183,10 @@ rest_command:
         {#-             END: DAY-AHEAD TWO-KNOB DYNAMIC PRICING LOGIC                     -#}
         {#- ========================================================================================= #}
         
+        {#- 72h #}
+        "delta_forecast_daily": 3,
         "optimization_time_step": 30,
         "prediction_horizon": 144,
-        {#- UNSURE WHY THESE ARE NEEDED #}
-        "delta_forecast": 3,
-        "alpha": 1,
-        "beta": 0,
-        "sensor_power_photovoltaics": "sensor.sigen_plant_pv_power",
-        {#- END UNSURE #}
         "battery_minimum_state_of_charge": 0.15, 
         "soc_init": {{ ((states('input_number.battery_soc_30_minute') | float) / 100) | round(4) }},
         {#- Step 1: Get the current SOC and the stored offset. #}
@@ -238,7 +272,7 @@ rest_command:
         {%- set positive_deviation_only = [deviation, 0] | max %}
         {%- set final_soc_percent = planned_soc_future + positive_deviation_only %}
         "soc_final": {{ ([([final_soc_percent, 100.0] | min), 0.0] | max / 100) | round(4) }},
-        "battery_minimum_state_of_charge": {{ ([5, (states('input_number.battery_soc_5_minute') | float) - 2, 15] | sort)[1]/100 | round(4) }},
+        "battery_minimum_state_of_charge": {{ ([5, (states('input_number.battery_soc_5_minute') | float) - 1, 15] | sort)[1]/100 | round(4) }},
 
         {# ========================================================================================= #}
         {#               2. ADVANCED ENERGY CONSERVATION SCALING (Corrected)                         #}
@@ -320,44 +354,15 @@ rest_command:
           {{ (mpc_list[:2] + data.adjusted_part) | tojson }}
         {%- endmacro -%}
 
-        {%- set load_power_now = states('sensor.power_load_without_losses') | int(0) %}
-        {%- set pv_power_now = states('sensor.sigen_plant_pv_power') | int(0) %}
-        {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
-        
-        {%- set initial_mpc_load_full = interpolate_power_data('sensor.dh_p_load_forecast', 'forecasts', 'dh_p_load_forecast', start_of_this_30min_block) | from_json %}
-        {%- set initial_mpc_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
-
-        {%- set initial_mpc_load = initial_mpc_load_full[periods_into_30min:][:144] %}
-        {%- set initial_mpc_pv = initial_mpc_pv_full[periods_into_30min:][:144] %}
-        
-        {%- set pv_curtailment = namespace(value=(states('sensor.mpc_p_pv_curtailment') | float(0))) %}
-        {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts') or [] %}
-          {%- if as_datetime(item.date) <= utc_now %}
-            {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
-          {%- endif %}
-        {%- endfor %}
-        {%- set pv_curtailment_now = pv_curtailment.value | int(0) %}
-        {%- if pv_curtailment_now > 0 and initial_mpc_pv[0] > pv_power_now %}
-          {%- set pv_power_now = initial_mpc_pv[0] %}
-        {%- endif %}
-        
-        {%- set initial_mpc_load = [load_power_now]*2 + initial_mpc_load[2:] %}
-        {%- set initial_mpc_pv = [pv_power_now]*2 + initial_mpc_pv[2:] %}
-
-        {%- set final_load_forecast = scale_and_clamp_forecast(initial_mpc_load, 'sensor.dh_p_load_forecast', 'dh_p_load_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
-        {%- set final_pv_forecast = scale_and_clamp_forecast(initial_mpc_pv, 'sensor.dh_p_pv_forecast', 'dh_p_pv_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
-        "load_power_forecast": {{ final_load_forecast | tojson }},
-        "pv_power_forecast": {{ final_pv_forecast | tojson }},
-        
         {# ========================================================================================= #}
         {#               3. DYNAMIC PRICE FORECASTING & FINAL PARAMETERS                           #}
         {# ========================================================================================= #}
-        {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float %}
-        {%- set prod_price_now = states('sensor.amber_5min_current_feed_in_price') | float %}
+        {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float(0) %}
+        {%- set prod_price_now = states('sensor.amber_5min_current_feed_in_price') | float(0) %}
         
-        {#- Get the current allowance and time to adjust the CURRENT price #}
+        {#- Adjust CURRENT price for DNSP allowance #}
         {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
-        {%- set current_time_local = now() %} {# now() is already in local time in HA templates #}
+        {%- set current_time_local = now() %}
 
         {%- if 10 <= current_time_local.hour < 16 and current_allowance > 0 %}
           {%- set adjusted_prod_price_now = prod_price_now + 0.01 %}
@@ -368,42 +373,63 @@ rest_command:
         {#- Initialize the lists with the correctly adjusted CURRENT price #}
         {%- set data = namespace(load_cost_list=[load_cost_now], prod_price_list=[adjusted_prod_price_now]) %}
 
-        {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0.5) %}
-        {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0.5) %}
+        {#- Get the weights which now range from -1.0 to 1.0 #}
+        {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0) %}
+        {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0) %}
 
+        {#- Loop for BUY price forecast #}
         {%- for item in state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') %}
-          {%- if as_datetime(item.start_time) > utc_now %}
-            {%- set p50_buy = item.advanced_price_predicted %}
-            {%- set high_buy = item.advanced_price_high %}
-            {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
-            {%- if (as_datetime(item.start_time) - utc_now) < timedelta(minutes=5) %}
+          {%- if as_datetime(item.start_time) > utcnow() %}
+            {#- 1. Calculate the blended price using the new -1 to +1 logic #}
+            {%- set p50 = item.advanced_price_predicted %}
+            {%- set high = item.advanced_price_high %}
+            {%- set low = item.advanced_price_low %}
+
+            {%- if k_buy > 0 %}
+              {%- set adjusted_buy_price = p50 + (high - p50) * k_buy %}
+            {%- else %}
+              {%- set adjusted_buy_price = p50 - (p50 - low) * (k_buy | abs) %}
+            {%- endif %}
+
+            {#- 2. For the immediate next interval, apply the per_kwh safeguard #}
+            {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
               {%- set final_buy_price = [adjusted_buy_price, item.per_kwh] | max %}
             {%- else %}
               {%- set final_buy_price = adjusted_buy_price %}
             {%- endif %}
+
             {%- set data.load_cost_list = data.load_cost_list + [final_buy_price | round(4)] %}
           {%- endif %}
         {%- endfor %}
 
-        {#- Get the current allowance state ONCE before the loop. #}
+        {#- Loop for SELL price forecast #}
         {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
-
         {%- for item in state_attr('sensor.amber_5min_forecasts_extended_feed_in_price', 'Forecasts') %}
-          {%- if as_datetime(item.start_time) > utc_now %}
-            {%- set low_sell = -item.advanced_price_low %}
-            {%- set p50_sell = -item.advanced_price_predicted %}
-            {%- set adjusted_sell_price = p50_sell + (low_sell - p50_sell) * k_sell %}
-            {%- if (as_datetime(item.start_time) - utc_now) < timedelta(minutes=5) %}
-              {%- set per_kwh_sell = -item.per_kwh %}
-              {%- set final_sell_price = [adjusted_sell_price, per_kwh_sell] | min %}
+          {%- if as_datetime(item.start_time) > utcnow() %}
+            {#- 1. Calculate the blended price using the new -1 to +1 logic (with negated values) #}
+            {%- set p50  = -item.advanced_price_predicted %}
+            {%- set high = -item.advanced_price_high %}
+            {%- set low  = -item.advanced_price_low %}
+
+            {%- if k_sell > 0 %}
+              {%- set adjusted_sell_price = p50 + (high - p50) * k_sell %}
             {%- else %}
-              {%- set final_sell_price = adjusted_sell_price %}
+              {%- set adjusted_sell_price = p50 - (p50 - low) * (k_sell | abs) %}
+            {%- endif %}
+            
+            {#- 2. For the immediate next interval, apply the per_kwh safeguard #}
+            {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
+              {%- set final_sell_price_before_dnsp = [adjusted_sell_price, -item.per_kwh] | min %}
+            {%- else %}
+              {%- set final_sell_price_before_dnsp = adjusted_sell_price %}
             {%- endif %}
 
-            {#- CORRECTED LOGIC: Convert to LOCAL time before checking hour #}
+            {#- 3. Adjust for DNSP free tier #}
             {%- set forecast_time_local = as_local(as_datetime(item.start_time)) %}
             {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
-              {%- set final_sell_price = final_sell_price + 0.01 %}
+              {%- set final_sell_price = final_sell_price_before_dnsp + 0.01 %}
+            {%- else %}
+              {%- set final_sell_price = final_sell_price_before_dnsp %}
             {%- endif %}
 
             {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
@@ -412,7 +438,54 @@ rest_command:
         
         "load_cost_forecast": {{ data.load_cost_list[:144] | tojson }},
         "prod_price_forecast": {{ data.prod_price_list[:144] | tojson }},
+
+        {# ========================================================================================= #}
+        {#      START: DERIVE PV & LOAD POWER, ACCOUNTING FOR UP TO 135W FIXED INVERTER LOSS         #}
+        {# ========================================================================================= #}
+        {# 1. Get the current, uncapped values from your sensors. #}
+        {%- set gross_pv = states('sensor.sigen_power_pv_gross') | int(0) %}
+        {%- set base_load = states('sensor.power_load_without_losses') | int(0) %}
+        {%- set total_inverter_losses = states('sensor.sigen_inverter_conversion_loss') | int(0) %}
+        {# 2. Determine the fixed loss to account for, capped at 135W and ensuring it's not negative. #}
+        {%- set max_fixed_loss = 135 %}
+        {%- set fixed_loss_to_account = [0, [total_inverter_losses, max_fixed_loss] | min] | max %}
+        {# 3. The "PV pays first" logic. Subtract the fixed loss from gross PV. Result cannot be negative. #}
+        {%- set pv_power_now = [0, gross_pv - fixed_loss_to_account] | max %}
+        {# 4. The "Load pays the rest" logic. Calculate any loss not covered by PV. #}
+        {%- set uncovered_loss = [0, fixed_loss_to_account - gross_pv] | max %}
+        {# 5. Add the uncovered loss to the base household load to get the final load value for EMHASS. #}
+        {%- set load_power_now = base_load + uncovered_loss %}
+
+        {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
+
+        {%- set initial_mpc_load_full = interpolate_power_data('sensor.dh_p_load_forecast', 'forecasts', 'dh_p_load_forecast', start_of_this_30min_block) | from_json %}
+        {%- set initial_mpc_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
+
+        {%- set initial_mpc_load = initial_mpc_load_full[periods_into_30min:][:144] %}
+        {%- set initial_mpc_pv = initial_mpc_pv_full[periods_into_30min:][:144] %}
+
+        {%- set pv_curtailment = namespace(value=(states('sensor.mpc_p_pv_curtailment') | float(0))) %}
+        {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts') or [] %}
+          {%- if as_datetime(item.date) <= utc_now %}
+            {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
+          {%- endif %}
+        {%- endfor %}
+        {%- set pv_currently_curtailed = pv_curtailment.value | int(0) > 0 %}
+        {%- if pv_currently_curtailed %}
+          {%- set pv_power_now = [pv_power_now, states('sensor.solcast_pv_forecast_power_now') | float] | max %}
+        {%- endif %}
+        
+        {%- set initial_mpc_load = [load_power_now]*2 + initial_mpc_load[2:] %}
+        {%- set initial_mpc_pv = [pv_power_now]*2 + initial_mpc_pv[2:] %}
+
+        {%- set final_load_forecast = scale_and_clamp_forecast(initial_mpc_load, 'sensor.dh_p_load_forecast', 'dh_p_load_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
+        {%- set final_pv_forecast = scale_and_clamp_forecast(initial_mpc_pv, 'sensor.dh_p_pv_forecast', 'dh_p_pv_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
+        "load_power_forecast": {{ final_load_forecast | tojson }},
+        "pv_power_forecast": {{ final_pv_forecast | tojson }},
+        
         "weight_battery_discharge": {{ states('input_number.emhass_weight_battery_discharge') | float }},
+        {#- up to 24h, actually 12h #}
+        "delta_forecast_daily": 1,
         "optimization_time_step": 5,
         "prediction_horizon": 144
       }
