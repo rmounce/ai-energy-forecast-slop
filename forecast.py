@@ -803,9 +803,25 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     available_cols = [col for col in all_feature_cols if col in historical_df.columns]
     historical_covariates_df = historical_df[available_cols]
 
+    # Combine history and future
     combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
+
+    # ----------------------------------------------------------------------- #
+    # --- DST FIX START ----------------------------------------------------- #
+    # During DST transitions, pd.concat might degrade the index from
+    # DatetimeIndex to a generic object Index if inputs aren't perfectly
+    # aligned timezone-wise. We must force it back to UTC DatetimeIndex
+    # so that .index.time works later.
+    logging.info("Enforcing UTC DatetimeIndex on combined covariates (DST safety).")
+    combined_covariates_df.index = pd.to_datetime(combined_covariates_df.index, utc=True)
+    # --- DST FIX END ------------------------------------------------------- #
+    # ----------------------------------------------------------------------- #
+
+    # Deduplicate and sort
     combined_covariates_df = combined_covariates_df[~combined_covariates_df.index.duplicated(keep='last')].sort_index()
+    
     original_covariates_for_log = combined_covariates_df.copy()
+
     adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
     if publish_covariates:
         publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
@@ -990,7 +1006,6 @@ def _get_tariff_data(entity_id, is_feed_in=False):
     return pd.DataFrame(processed).set_index('datetime')
 
 def update_tariffs():
-    # This function is unchanged
     logging.info("--- Running in UPDATE-TARIFFS mode ---")
     local_tz = pytz.timezone(CONFIG['timezone'])
     general_tariff_df = _get_tariff_data(CONFIG['home_assistant']['amber_entity'], is_feed_in=False)
@@ -1000,12 +1015,38 @@ def update_tariffs():
     final_profile = {}
     if not general_tariff_df.empty:
         general_tariff_df.index = general_tariff_df.index.tz_convert(local_tz)
+
+        # --- DST FIX START ---
+        # Create a full 24-hour index for the day to handle the DST gap.
+        # This ensures the profile has an entry for every 30-min interval.
+        full_day_index = pd.date_range(
+            start=general_tariff_df.index.normalize().min(),
+            periods=48, # 48 intervals of 30 mins
+            freq='30min',
+            tz=local_tz
+        )
+        # Reindex and forward-fill the gap created by the DST transition.
+        general_tariff_df = general_tariff_df.reindex(full_day_index).ffill()
+        # --- DST FIX END ---
+
         general_tariff_df['time'] = general_tariff_df.index.time
         general_profile = general_tariff_df.groupby('time')['tariff'].mean().to_dict()
         final_profile['general_tariff'] = {str(k): v for k, v in general_profile.items()}
         logging.info(f"Generated 24h general tariff profile with {len(general_profile)} entries.")
     if not feed_in_tariff_df.empty:
         feed_in_tariff_df.index = feed_in_tariff_df.index.tz_convert(local_tz)
+
+        # --- DST FIX START ---
+        # Repeat the same logic for the feed-in tariff data.
+        full_day_index = pd.date_range(
+            start=feed_in_tariff_df.index.normalize().min(),
+            periods=48,
+            freq='30min',
+            tz=local_tz
+        )
+        feed_in_tariff_df = feed_in_tariff_df.reindex(full_day_index).ffill()
+        # --- DST FIX END ---
+
         feed_in_tariff_df['time'] = feed_in_tariff_df.index.time
         feed_in_profile = feed_in_tariff_df.groupby('time')['tariff'].mean().to_dict()
         final_profile['feed_in_tariff'] = {str(k): v for k, v in feed_in_profile.items()}
