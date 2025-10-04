@@ -1005,52 +1005,91 @@ def _get_tariff_data(entity_id, is_feed_in=False):
             processed.append({'datetime': pd.to_datetime(f['start_time']).round('min'), 'tariff': tariff})
     return pd.DataFrame(processed).set_index('datetime')
 
+def _create_complete_profile(tariff_df, local_tz, tariff_type_for_logging):
+    """
+    WORKER: Takes a DataFrame of future tariff data and creates a complete,
+    robust 24-hour (48-interval) time-of-day profile.
+
+    This is achieved by:
+    1. Using the next available 48 data points (24 hours).
+    2. Creating a full, generic 48-point time index (00:00 to 23:30).
+    3. Re-indexing the tariff data against this complete index.
+    4. Filling any gaps (like from a DST transition) to ensure a full profile.
+    """
+    # Convert index to the local timezone
+    tariff_df.index = tariff_df.index.tz_convert(local_tz)
+
+    # Take the next 24 hours (48 points) of available data
+    profile_source_df = tariff_df.sort_index().head(48).copy()
+    
+    num_points = len(profile_source_df)
+    if num_points < 48:
+        logging.warning(
+            f"Using an incomplete forecast for {tariff_type_for_logging} tariff profile ({num_points}/48 points available). "
+            "The profile will be generated but may be less accurate."
+        )
+
+    if profile_source_df.empty:
+        logging.error(f"No source data available to build {tariff_type_for_logging} tariff profile.")
+        return {}
+
+    # Create a profile mapping time-of-day to the tariff value.
+    # .mean() correctly handles the "fall back" DST hour by averaging the duplicates.
+    profile_source_df['time'] = profile_source_df.index.time
+    tariff_by_time = profile_source_df.groupby('time')['tariff'].mean()
+
+    # --- DST ROBUSTNESS ---
+    # Create a complete, generic time index for a full 24-hour day (48 intervals)
+    full_time_index = pd.Index(
+        pd.date_range(start='2000-01-01', periods=48, freq='30min').time,
+        name='time'
+    )
+
+    # Reindex our potentially gappy profile against the complete index.
+    # This creates NaNs for any missing times (e.g., during a DST jump).
+    complete_tariff_series = tariff_by_time.reindex(full_time_index)
+
+    # Use back-fill then forward-fill to robustly patch any gaps.
+    # This is the safest way to ensure the entire series is filled.
+    complete_tariff_series = complete_tariff_series.bfill().ffill()
+    
+    logging.info(f"Generated complete 24h {tariff_type_for_logging} tariff profile with {len(complete_tariff_series)} entries.")
+    
+    # Convert to the final dictionary format
+    final_profile = complete_tariff_series.to_dict()
+    return {str(k): v for k, v in final_profile.items()}
+
+
 def update_tariffs():
+    """
+    ORCHESTRATOR: Fetches future tariff data and uses a helper function
+    to generate robust, complete 24-hour profiles for general and feed-in rates.
+    """
     logging.info("--- Running in UPDATE-TARIFFS mode ---")
     local_tz = pytz.timezone(CONFIG['timezone'])
+    
+    # 1. Fetch all available future tariff data
     general_tariff_df = _get_tariff_data(CONFIG['home_assistant']['amber_entity'], is_feed_in=False)
     feed_in_tariff_df = _get_tariff_data(CONFIG['home_assistant']['amber_feed_in_entity'], is_feed_in=True)
+
     if general_tariff_df.empty and feed_in_tariff_df.empty:
         raise SystemExit("Could not retrieve any tariff information from Amber entities.")
+
     final_profile = {}
+
+    # 2. Generate profile for general tariff, if data exists
     if not general_tariff_df.empty:
-        general_tariff_df.index = general_tariff_df.index.tz_convert(local_tz)
-
-        # --- DST FIX START ---
-        # Create a full 24-hour index for the day to handle the DST gap.
-        # This ensures the profile has an entry for every 30-min interval.
-        full_day_index = pd.date_range(
-            start=general_tariff_df.index.normalize().min(),
-            periods=48, # 48 intervals of 30 mins
-            freq='30min',
-            tz=local_tz
+        final_profile['general_tariff'] = _create_complete_profile(
+            general_tariff_df, local_tz, "general"
         )
-        # Reindex and forward-fill the gap created by the DST transition.
-        general_tariff_df = general_tariff_df.reindex(full_day_index).ffill()
-        # --- DST FIX END ---
 
-        general_tariff_df['time'] = general_tariff_df.index.time
-        general_profile = general_tariff_df.groupby('time')['tariff'].mean().to_dict()
-        final_profile['general_tariff'] = {str(k): v for k, v in general_profile.items()}
-        logging.info(f"Generated 24h general tariff profile with {len(general_profile)} entries.")
+    # 3. Generate profile for feed-in tariff, if data exists
     if not feed_in_tariff_df.empty:
-        feed_in_tariff_df.index = feed_in_tariff_df.index.tz_convert(local_tz)
-
-        # --- DST FIX START ---
-        # Repeat the same logic for the feed-in tariff data.
-        full_day_index = pd.date_range(
-            start=feed_in_tariff_df.index.normalize().min(),
-            periods=48,
-            freq='30min',
-            tz=local_tz
+        final_profile['feed_in_tariff'] = _create_complete_profile(
+            feed_in_tariff_df, local_tz, "feed-in"
         )
-        feed_in_tariff_df = feed_in_tariff_df.reindex(full_day_index).ffill()
-        # --- DST FIX END ---
 
-        feed_in_tariff_df['time'] = feed_in_tariff_df.index.time
-        feed_in_profile = feed_in_tariff_df.groupby('time')['tariff'].mean().to_dict()
-        final_profile['feed_in_tariff'] = {str(k): v for k, v in feed_in_profile.items()}
-        logging.info(f"Generated 24h feed-in tariff profile with {len(feed_in_profile)} entries.")
+    # 4. Save the combined profile to disk
     try:
         with open(CONFIG['paths']['tariff_file'], 'w') as f:
             json.dump(final_profile, f, indent=4)
