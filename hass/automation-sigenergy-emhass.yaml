@@ -135,6 +135,24 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
+              {{ (states('sensor.amber_effective_general_price') | float) < 0
+              and planned_pv_curtailment_kwh > 0 and (p_grid >= max_grid_import
+              or p_hybrid_inverter <= max_inverter_charge) }}
+        sequence:
+          - data_template:
+              entity_id: input_text.emhass_battery_action
+              value: >-
+                Proactive full PV curtailment and grid charge at full rate
+                (negative buy)
+            action: input_text.set_value
+          - data:
+              control_mode: Command Charging (PV First)
+              export_limit_kw: 0
+              pv_max_power_limit_kw: 0.05
+            action: script.configure_sigen_ems_state
+      - conditions:
+          - condition: template
+            value_template: >-
               {{ p_grid >= max_grid_import or p_hybrid_inverter <=
               max_inverter_charge }}
         sequence:

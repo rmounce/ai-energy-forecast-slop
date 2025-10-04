@@ -470,7 +470,7 @@ rest_command:
             {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
           {%- endif %}
         {%- endfor %}
-        {%- set pv_currently_curtailed = pv_curtailment.value | int(0) > 0 %}
+        {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) %}
         {%- if pv_currently_curtailed %}
           {%- set pv_power_now = [pv_power_now, states('sensor.solcast_pv_forecast_power_now') | float] | max %}
         {%- endif %}
