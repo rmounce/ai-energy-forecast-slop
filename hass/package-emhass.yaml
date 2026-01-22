@@ -125,7 +125,7 @@ rest_command:
         {%- set discharge_weight = states('input_number.emhass_weight_battery_discharge') | float(0.02) %}
 
         {#- Prepare empty lists to store the new forecasts. #}
-        {%- set data = namespace(load_cost_list=[], prod_price_list=[]) %}
+        {%- set data = namespace(load_cost_list=[], prod_price_list=[], weight_charge_list=[]) %}
 
         {#- Pre-load all forecast data sources into variables. #}
         {%- set p50_forecasts = state_attr('sensor.ai_price_forecast', 'forecasts') %}
@@ -173,11 +173,28 @@ rest_command:
 
           {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
 
+          {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
+          {#- 00:00-15:59 = 0.0 | 16:00-20:59 = Ramp 0->0.006 | 21:00-23:59 = 0.0 #}
+          {#- Use END of period time. Add 30 minutes to start time. #}
+          {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
+          {%- set m = end_time.hour * 60 + end_time.minute %}
+          
+          {#- 16:00 is 960. 21:00 is 1260. #}
+          {#- We use > 960 because 16:00 exactly (end of 15:30-16:00) should be 0. #}
+          {#- We use <= 1260 because 21:00 exactly (end of 20:30-21:00) is the peak of the ramp. #}
+          {%- if 960 < m <= 1260 %}
+             {%- set w_charge = 0.0060 * ((m - 960) / 300) %}
+          {%- else %}
+             {%- set w_charge = 0.0 %}
+          {%- endif %}
+          {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+
         {%- endfor %}
 
         "load_cost_forecast": {{ data.load_cost_list | tojson }},
         "prod_price_forecast": {{ data.prod_price_list | tojson }},
         "weight_battery_discharge": {{ discharge_weight }},
+        "weight_battery_charge": {{ data.weight_charge_list | tojson }},
 
         {#- ========================================================================================= #}
         {#-             END: DAY-AHEAD TWO-KNOB DYNAMIC PRICING LOGIC                     -#}
@@ -187,7 +204,7 @@ rest_command:
         "delta_forecast_daily": 3,
         "optimization_time_step": 30,
         "prediction_horizon": 144,
-        "battery_minimum_state_of_charge": 0.15, 
+        "battery_minimum_state_of_charge": {{ (states('input_number.battery_soc_min_target') | float)/100 }}, 
         "soc_init": {{ ((states('input_number.battery_soc_30_minute') | float) / 100) | round(4) }},
         {#- Step 1: Get the current SOC and the stored offset. #}
         {%- set current_soc = states('input_number.battery_soc_30_minute') | float %}
@@ -220,14 +237,20 @@ rest_command:
       {
         "entity_save": true,
         "publish_prefix":"mpc_",
-        "soc_init": {{ (states('input_number.battery_soc_5_minute') | float / 100) | round(4) }},
+        
+        {#- Modded soc_init: If 100%, report 1.0. Else, subtract 0.1% offset to force charging. #}
+        {%- set real_soc = states('input_number.battery_soc_5_minute') | float(0) %}
+        "soc_init": {{ (1.0 if real_soc >= 100 else ([0, real_soc - 0.1] | max / 100)) | round(4) }},
 
         {# ========================================================================================= #}
         {#               1. INITIAL VARIABLE SETUP & ASYMMETRICAL FLOATING TARGET                    #}
         {# ========================================================================================= #}
         {%- set utc_now = utcnow() %}
         {%- set dayahead_forecasts = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') %}
+        
+        {#- Note: We keep the raw actual SOC here for accurate deviation calculations #}
         {%- set actual_soc_now = states('input_number.battery_soc_5_minute') | float %}
+        
         {%- set quantized_now = utc_now.replace(minute = (utc_now.minute // 5) * 5, second=0, microsecond=0) %}
         {%- set initial_soc_value = states('input_number.battery_soc_30_minute') | float %}
         {%- set plan_start_time = as_datetime(dayahead_forecasts[0].date) %}
@@ -265,14 +288,15 @@ rest_command:
             {%- endif %}
           {%- endif %}
         {%- endmacro -%}
-        {%- set future_target_time = quantized_now + timedelta(hours=12) %}
+        {%- set future_target_time = quantized_now + timedelta(hours=14) %}
         {%- set planned_soc_future = get_planned_soc(future_target_time, complete_soc_forecasts, actual_soc_now) | float %}
         {%- set planned_soc_now = get_planned_soc(quantized_now, complete_soc_forecasts, actual_soc_now) | float %}
         {%- set deviation = actual_soc_now - planned_soc_now %}
         {%- set positive_deviation_only = [deviation, 0] | max %}
         {%- set final_soc_percent = planned_soc_future + positive_deviation_only %}
         "soc_final": {{ ([([final_soc_percent, 100.0] | min), 0.0] | max / 100) | round(4) }},
-        "battery_minimum_state_of_charge": {{ ([5, (states('input_number.battery_soc_5_minute') | float) - 1, 15] | sort)[1]/100 | round(4) }},
+        "battery_minimum_state_of_charge": {{ ([5, (states('input_number.battery_soc_5_minute') | float) - (states('input_number.battery_soc_min_buffer') | float), (states('input_number.battery_soc_min_target') | float)] | sort)[1]/100 | round(4) }},
+        {#- "set_nodischarge_to_grid": {{ 'false' if actual_soc_now < (states('input_number.battery_soc_min_export') | float) else 'false' }}, #}
 
         {# ========================================================================================= #}
         {#               2. ADVANCED ENERGY CONSERVATION SCALING (Corrected)                         #}
@@ -334,7 +358,7 @@ rest_command:
         {%- endmacro -%}
         {%- macro scale_and_clamp_forecast(mpc_list, dh_entity, dh_value_key, periods_passed, start_time) -%}
           {%- set aligned_dh_list = simple_interpolate_power_data(dh_entity, 'forecasts', dh_value_key, start_time, periods_passed) | from_json %}
-          {%- set target_total_energy = (aligned_dh_list[:144] | sum) %}
+          {%- set target_total_energy = (aligned_dh_list[:168] | sum) %}
           {%- set current_total_energy = (mpc_list | sum) %}
           {%- set energy_error = target_total_energy - current_total_energy %}
           {%- set forecast_part_list = mpc_list[2:] %}
@@ -370,14 +394,27 @@ rest_command:
           {%- set adjusted_prod_price_now = prod_price_now %}
         {%- endif %}
         
-        {#- Initialize the lists with the correctly adjusted CURRENT price #}
-        {%- set data = namespace(load_cost_list=[load_cost_now], prod_price_list=[adjusted_prod_price_now]) %}
+        {#- Calculate CURRENT Weight Charge (16:00-21:00 ramp) based on END of 5-min period #}
+        {%- set snapped_minute = (current_time_local.minute // 5) * 5 %}
+        {%- set start_of_period = current_time_local.replace(minute=snapped_minute, second=0, microsecond=0) %}
+        {%- set end_of_period = start_of_period + timedelta(minutes=5) %}
+        {%- set m_now = end_of_period.hour * 60 + end_of_period.minute %}
+        
+        {#- Check end time. 16:05 (965) is the first non-zero interval. 21:00 (1260) is the max. #}
+        {%- if 960 < m_now <= 1260 %}
+           {%- set w_charge_now = 0.0060 * ((m_now - 960) / 300) %}
+        {%- else %}
+           {%- set w_charge_now = 0.0 %}
+        {%- endif %}
+        
+        {#- Initialize the lists with the correctly adjusted CURRENT price and CURRENT weight #}
+        {%- set data = namespace(load_cost_list=[load_cost_now], prod_price_list=[adjusted_prod_price_now], weight_charge_list=[w_charge_now]) %}
 
         {#- Get the weights which now range from -1.0 to 1.0 #}
         {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0) %}
         {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0) %}
 
-        {#- Loop for BUY price forecast #}
+        {#- Loop for BUY price forecast AND Battery Charge Weight #}
         {%- for item in state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') %}
           {%- if as_datetime(item.start_time) > utcnow() %}
             {#- 1. Calculate the blended price using the new -1 to +1 logic #}
@@ -399,6 +436,19 @@ rest_command:
             {%- endif %}
 
             {%- set data.load_cost_list = data.load_cost_list + [final_buy_price | round(4)] %}
+            
+            {#- 3. Calculate Battery Charge Weight (16:00-21:00 ramp) using END time #}
+            {%- set forecast_start = as_local(as_datetime(item.start_time)) %}
+            {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
+            {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
+            
+            {%- if 960 < m <= 1260 %}
+               {%- set w_charge = 0.0060 * ((m - 960) / 300) %}
+            {%- else %}
+               {%- set w_charge = 0.0 %}
+            {%- endif %}
+            {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+
           {%- endif %}
         {%- endfor %}
 
@@ -436,8 +486,9 @@ rest_command:
           {%- endif %}
         {%- endfor %}
         
-        "load_cost_forecast": {{ data.load_cost_list[:144] | tojson }},
-        "prod_price_forecast": {{ data.prod_price_list[:144] | tojson }},
+        "load_cost_forecast": {{ data.load_cost_list[:168] | tojson }},
+        "prod_price_forecast": {{ data.prod_price_list[:168] | tojson }},
+        "weight_battery_charge": {{ data.weight_charge_list[:168] | tojson }},
 
         {# ========================================================================================= #}
         {#      START: DERIVE PV & LOAD POWER, ACCOUNTING FOR UP TO 135W FIXED INVERTER LOSS         #}
@@ -461,8 +512,8 @@ rest_command:
         {%- set initial_mpc_load_full = interpolate_power_data('sensor.dh_p_load_forecast', 'forecasts', 'dh_p_load_forecast', start_of_this_30min_block) | from_json %}
         {%- set initial_mpc_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
 
-        {%- set initial_mpc_load = initial_mpc_load_full[periods_into_30min:][:144] %}
-        {%- set initial_mpc_pv = initial_mpc_pv_full[periods_into_30min:][:144] %}
+        {%- set initial_mpc_load = initial_mpc_load_full[periods_into_30min:][:168] %}
+        {%- set initial_mpc_pv = initial_mpc_pv_full[periods_into_30min:][:168] %}
 
         {%- set pv_curtailment = namespace(value=(states('sensor.mpc_p_pv_curtailment') | float(0))) %}
         {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts') or [] %}
@@ -470,7 +521,7 @@ rest_command:
             {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
           {%- endif %}
         {%- endfor %}
-        {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) %}
+        {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) or (actual_soc_now >= 99.9) %}
         {%- if pv_currently_curtailed %}
           {%- set pv_power_now = [pv_power_now, states('sensor.solcast_pv_forecast_power_now') | float] | max %}
         {%- endif %}
@@ -484,10 +535,10 @@ rest_command:
         "pv_power_forecast": {{ final_pv_forecast | tojson }},
         
         "weight_battery_discharge": {{ states('input_number.emhass_weight_battery_discharge') | float }},
-        {#- up to 24h, actually 12h #}
+        {#- up to 24h, actually 14h #}
         "delta_forecast_daily": 1,
         "optimization_time_step": 5,
-        "prediction_horizon": 144
+        "prediction_horizon": 168
       }
 
   emhass_publish_data_mpc:
