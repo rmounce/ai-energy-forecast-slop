@@ -661,6 +661,7 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     amber_seed_data = future_covariates_df.loc[amber_advanced_df.index].copy()
     amber_seed_data[target_col] = np.log(amber_advanced_df[target_col] + shift_value)
     pseudo_history_df = pd.concat([hist_df_log, amber_seed_data.dropna()])
+    pseudo_history_df = pseudo_history_df[~pseudo_history_df.index.duplicated(keep='last')]
     pseudo_history_ts = TimeSeries.from_series(pseudo_history_df[target_col], freq='30min')
     
     future_covariates_ts = TimeSeries.from_dataframe(
