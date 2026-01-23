@@ -124,7 +124,7 @@ CREATE CONTINUOUS QUERY cq_weather_temp_30m ON hass BEGIN SELECT mean(value) AS 
 CREATE CONTINUOUS QUERY cq_weather_humidity_30m ON hass BEGIN SELECT mean(value) AS mean_value INTO hass.rp_30m.humidity_adelaide FROM hass.rp_raw.sensor__humidity WHERE entity_id = 'adelaide_west_terrace_ngayirdapira_humidity' GROUP BY time(30m), entity_id END
 CREATE CONTINUOUS QUERY cq_weather_wind_30m ON hass BEGIN SELECT mean(value) AS mean_value INTO hass.rp_30m.wind_speed_adelaide FROM hass.rp_raw.sensor__wind_speed WHERE entity_id = 'adelaide_west_terrace_ngayirdapira_wind_speed_kilometre' GROUP BY time(30m), entity_id END
 CREATE CONTINUOUS QUERY cq_pv_5m_to_30m ON hass BEGIN SELECT mean(mean_value) AS mean_value, min(min_value) AS min_value, max(max_value) AS max_value INTO hass.rp_30m.power_pv_30m FROM hass.rp_5m.power_pv_5m GROUP BY time(30m), source_metadata_id, entity_id END
-CREATE CONTINUOUS QUERY cq_pv_raw_to_5m ON hass RESAMPLE FOR 1d BEGIN SELECT mean(value) AS mean_value, min(value) AS min_value, max(value) AS max_value INTO hass.rp_5m.power_pv_5m FROM hass.rp_raw.sensor__power WHERE entity_id = 'sigen_plant_pv_power' GROUP BY time(5m), entity_id fill(0) END
+CREATE CONTINUOUS QUERY cq_pv_raw_to_5m ON hass RESAMPLE FOR 1d BEGIN SELECT mean(value) AS mean_value, min(value) AS min_value, max(value) AS max_value INTO hass.rp_5m.power_pv_5m FROM hass.rp_raw.sensor__power WHERE entity_id = 'sensor.solcast_pv_forecast_power_now' GROUP BY time(5m), entity_id fill(0) END
 CREATE CONTINUOUS QUERY cq_aemo_raw_sa1_to_5m ON hass BEGIN SELECT mean(value) * 1000 AS price INTO hass.rp_5m.aemo_dispatch_sa1_5m FROM hass.rp_raw.sensor__monetary WHERE entity_id = 'aemo_5min_current_price_sa' GROUP BY time(5m) END
 ```
 
