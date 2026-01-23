@@ -627,7 +627,10 @@ def _predict_simple(model, params, historical_df, future_covariates_ts, model_co
     # This function is unchanged
     logging.info("Generating forecast using 'simple' method.")
     target_col = model_config['target_column']
-    hist_df = historical_df[[target_col] + model_config['feature_cols']].copy().ffill().dropna()
+    hist_df = historical_df[[target_col] + model_config['feature_cols']].copy()
+    if 'power_pv' in hist_df.columns:
+        hist_df['power_pv'] = hist_df['power_pv'].fillna(0)
+    hist_df = hist_df.ffill().dropna()
     hist_df[target_col] = np.log(hist_df[target_col] + params['shift_value'])
     target_series = TimeSeries.from_series(hist_df[target_col], freq='30min')
     predictions = model.predict(n=model_config['forecast_horizon'], series=target_series, future_covariates=future_covariates_ts)
@@ -656,7 +659,10 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
         
     last_good_amber_index = amber_advanced_df.index.max()
     logging.info(f"Using provided advanced forecast for {len(amber_advanced_df) / 2} hours (up to {last_good_amber_index}).")
-    hist_df_log = historical_df[[target_col] + model_config['feature_cols']].copy().ffill().dropna()
+    hist_df_log = historical_df[[target_col] + model_config['feature_cols']].copy()
+    if 'power_pv' in hist_df_log.columns:
+        hist_df_log['power_pv'] = hist_df_log['power_pv'].fillna(0)
+    hist_df_log = hist_df_log.ffill().dropna()
     hist_df_log[target_col] = np.log(hist_df_log[target_col] + shift_value)
     amber_seed_data = future_covariates_df.loc[amber_advanced_df.index].copy()
     amber_seed_data[target_col] = np.log(amber_advanced_df[target_col] + shift_value)
