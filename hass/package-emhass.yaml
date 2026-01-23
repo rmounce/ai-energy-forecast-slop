@@ -92,26 +92,51 @@ rest_command:
       {
         "entity_save": true,
         "publish_prefix":"dh_",
+        {# 1. Calculate GROSS PV Forecast (removing the old -150W flat subtraction) #}
         {%- set current_pv_interval = utcnow() - timedelta(minutes=30) %}
-        {%- set pv_forecast = namespace(values=[]) %}
-        {#- Subtract 100W from PV forecast to prevent overestimating sunset / sunrise #}
+        {%- set pv_forecast_gross = namespace(values=[]) %}
         {%- for v in ['sensor.solcast_pv_forecast_forecast_today', 'sensor.solcast_pv_forecast_forecast_tomorrow', 'sensor.solcast_pv_forecast_forecast_day_3', 'sensor.solcast_pv_forecast_forecast_day_4']
           | map('state_attr', 'detailedForecast')
           | map('selectattr', 'period_start', 'gt', current_pv_interval)
           | map('list') | sum(start=[])
           | map(attribute='pv_estimate')
           | map('multiply', 1000)
-          | map('add', -150)
           | map('int') %}
           {%- if v > 0 %}
-            {%- set pv_forecast.values = pv_forecast.values + [v] %}
+            {%- set pv_forecast_gross.values = pv_forecast_gross.values + [v] %}
           {%- else %}
-            {%- set pv_forecast.values = pv_forecast.values + [0] %}
+            {%- set pv_forecast_gross.values = pv_forecast_gross.values + [0] %}
           {%- endif %}
         {%- endfor %}
-        "pv_power_forecast": {{ pv_forecast.values | tojson }},
-        {#- Correction factor for load power forecast #}
-        "load_power_forecast": {{ state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list|tojson }},
+
+        {# 2. Get GROSS Load Forecast #}
+        {%- set load_forecast_gross = state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list %}
+
+        {# 3. Apply the "135W Logic" to create NET Forecasts #}
+        {#    PV pays 135W first. If PV < 135, the remainder is added to Load. #}
+        {%- set data = namespace(pv_net=[], load_net=[]) %}
+        {%- set fixed_loss = 135 %}
+        
+        {#- Ensure we iterate only up to the length of the shortest list (usually matched, but safe to check) #}
+        {%- set loop_len = [pv_forecast_gross.values | length, load_forecast_gross | length] | min %}
+        
+        {%- for i in range(loop_len) %}
+            {%- set p_gross = pv_forecast_gross.values[i] %}
+            {%- set l_gross = load_forecast_gross[i] %}
+            
+            {# Logic: Subtract Loss from PV. #}
+            {%- set p_net = [0, p_gross - fixed_loss] | max %}
+            
+            {# Logic: If PV couldn't pay the full tax, add the remainder to Load #}
+            {%- set uncovered_loss = [0, fixed_loss - p_gross] | max %}
+            {%- set l_net = l_gross + uncovered_loss %}
+            
+            {%- set data.pv_net = data.pv_net + [p_net | int] %}
+            {%- set data.load_net = data.load_net + [l_net | int] %}
+        {%- endfor %}
+
+        "pv_power_forecast": {{ data.pv_net | tojson }},
+        "load_power_forecast": {{ data.load_net | tojson }},
 
         {#- ========================================================================================= #}
         {#-            START: DAY-AHEAD TWO-KNOB DYNAMIC PRICING LOGIC                    -#}
@@ -491,44 +516,61 @@ rest_command:
         "weight_battery_charge": {{ data.weight_charge_list[:168] | tojson }},
 
         {# ========================================================================================= #}
-        {#      START: DERIVE PV & LOAD POWER, ACCOUNTING FOR UP TO 135W FIXED INVERTER LOSS         #}
+        {#      START: PREPARE NET CURRENT VALUES & COMBINE WITH NET FORECAST                        #}
         {# ========================================================================================= #}
-        {# 1. Get the current, uncapped values from your sensors. #}
-        {%- set gross_pv = states('sensor.sigen_power_pv_gross') | int(0) %}
-        {%- set base_load = states('sensor.power_load_without_losses') | int(0) %}
+        
+        {# 1. Get current GROSS values from sensors. #}
+        {%- set gross_pv_now = states('sensor.sigen_power_pv_gross') | int(0) %}
+        {%- set gross_load_now = states('sensor.power_load_without_losses') | int(0) %}
         {%- set total_inverter_losses = states('sensor.sigen_inverter_conversion_loss') | int(0) %}
-        {# 2. Determine the fixed loss to account for, capped at 135W and ensuring it's not negative. #}
+
+        {# 2. Apply "135W Logic" to the Current timestep. #}
+        {#    We use the logic max(135) to match the forecast logic, or you can use real sensor loss if preferred. #}
+        {#    Using the fixed 135 logic ensures consistency with the forecast logic we added to DH. #}
         {%- set max_fixed_loss = 135 %}
         {%- set fixed_loss_to_account = [0, [total_inverter_losses, max_fixed_loss] | min] | max %}
-        {# 3. The "PV pays first" logic. Subtract the fixed loss from gross PV. Result cannot be negative. #}
-        {%- set pv_power_now = [0, gross_pv - fixed_loss_to_account] | max %}
-        {# 4. The "Load pays the rest" logic. Calculate any loss not covered by PV. #}
-        {%- set uncovered_loss = [0, fixed_loss_to_account - gross_pv] | max %}
-        {# 5. Add the uncovered loss to the base household load to get the final load value for EMHASS. #}
-        {%- set load_power_now = base_load + uncovered_loss %}
+        
+        {%- set net_pv_now = [0, gross_pv_now - fixed_loss_to_account] | max %}
+        {%- set uncovered_loss = [0, fixed_loss_to_account - gross_pv_now] | max %}
+        {%- set net_load_now = gross_load_now + uncovered_loss %}
 
-        {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
-
-        {%- set initial_mpc_load_full = interpolate_power_data('sensor.dh_p_load_forecast', 'forecasts', 'dh_p_load_forecast', start_of_this_30min_block) | from_json %}
-        {%- set initial_mpc_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
-
-        {%- set initial_mpc_load = initial_mpc_load_full[periods_into_30min:][:168] %}
-        {%- set initial_mpc_pv = initial_mpc_pv_full[periods_into_30min:][:168] %}
-
+        {# 3. Handle Curtailment Override (on the Net PV value) #}
         {%- set pv_curtailment = namespace(value=(states('sensor.mpc_p_pv_curtailment') | float(0))) %}
         {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts') or [] %}
           {%- if as_datetime(item.date) <= utc_now %}
             {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
           {%- endif %}
         {%- endfor %}
+        
+        {# Check curtailment conditions #}
+        {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float(0) %}
+        {%- set actual_soc_now = states('input_number.battery_soc_5_minute') | float %}
         {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) or (actual_soc_now >= 99.9) %}
+        
         {%- if pv_currently_curtailed %}
-          {%- set pv_power_now = [pv_power_now, states('sensor.solcast_pv_forecast_power_now') | float] | max %}
+          {# Solcast provides Gross, so we must apply the 135W subtraction to the Solcast Now estimate too #}
+          {%- set solcast_now_gross = states('sensor.solcast_pv_forecast_power_now') | float %}
+          {%- set solcast_now_net = [0, solcast_now_gross - fixed_loss_to_account] | max %}
+          {%- set net_pv_now = [net_pv_now, solcast_now_net] | max %}
         {%- endif %}
         
-        {%- set initial_mpc_load = [load_power_now]*2 + initial_mpc_load[2:] %}
-        {%- set initial_mpc_pv = [pv_power_now]*2 + initial_mpc_pv[2:] %}
+        {# 4. Interpolate the Day-Ahead Forecasts (Which are ALREADY Net) #}
+        {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
+        {%- set start_of_this_30min_block = utc_now.replace(minute=(utc_now.minute // 30) * 30, second=0, microsecond=0) %}
 
+        {%- set dh_net_load_full = interpolate_power_data('sensor.dh_p_load_forecast', 'forecasts', 'dh_p_load_forecast', start_of_this_30min_block) | from_json %}
+        {%- set dh_net_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
+
+        {# Slice to match MPC horizon #}
+        {%- set dh_net_load_future = dh_net_load_full[periods_into_30min:][:168] %}
+        {%- set dh_net_pv_future = dh_net_pv_full[periods_into_30min:][:168] %}
+
+        {# 5. Construct the list: [Current Net] + [Future Net] #}
+        {# Note: We duplicate 'now' for the first 2 steps as per your original template logic #}
+        {%- set initial_mpc_load = [net_load_now]*2 + dh_net_load_future[2:] %}
+        {%- set initial_mpc_pv = [net_pv_now]*2 + dh_net_pv_future[2:] %}
+
+        {# 6. Run scaling (Net vs Net) #}
         {%- set final_load_forecast = scale_and_clamp_forecast(initial_mpc_load, 'sensor.dh_p_load_forecast', 'dh_p_load_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
         {%- set final_pv_forecast = scale_and_clamp_forecast(initial_mpc_pv, 'sensor.dh_p_pv_forecast', 'dh_p_pv_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
         "load_power_forecast": {{ final_load_forecast | tojson }},
