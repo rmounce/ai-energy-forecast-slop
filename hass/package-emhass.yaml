@@ -99,7 +99,7 @@ rest_command:
           | map('state_attr', 'detailedForecast')
           | map('selectattr', 'period_start', 'gt', current_pv_interval)
           | map('list') | sum(start=[])
-          | map(attribute='pv_estimate')
+          | map(attribute='pv_estimate10')
           | map('multiply', 1000)
           | map('int') %}
           {%- if v > 0 %}
@@ -112,10 +112,10 @@ rest_command:
         {# 2. Get GROSS Load Forecast #}
         {%- set load_forecast_gross = state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list %}
 
-        {# 3. Apply the "135W Logic" to create NET Forecasts #}
-        {#    PV pays 135W first. If PV < 135, the remainder is added to Load. #}
+        {# 3. Apply the "140W Logic" to create NET Forecasts #}
+        {#    PV pays 140W first. If PV < 140, the remainder is added to Load. #}
         {%- set data = namespace(pv_net=[], load_net=[]) %}
-        {%- set fixed_loss = 135 %}
+        {%- set fixed_loss = 140 %}
         
         {#- Ensure we iterate only up to the length of the shortest list (usually matched, but safe to check) #}
         {%- set loop_len = [pv_forecast_gross.values | length, load_forecast_gross | length] | min %}
@@ -524,10 +524,10 @@ rest_command:
         {%- set gross_load_now = states('sensor.power_load_without_losses') | int(0) %}
         {%- set total_inverter_losses = states('sensor.sigen_inverter_conversion_loss') | int(0) %}
 
-        {# 2. Apply "135W Logic" to the Current timestep. #}
-        {#    We use the logic max(135) to match the forecast logic, or you can use real sensor loss if preferred. #}
-        {#    Using the fixed 135 logic ensures consistency with the forecast logic we added to DH. #}
-        {%- set max_fixed_loss = 135 %}
+        {# 2. Apply "140W Logic" to the Current timestep. #}
+        {#    We use the logic max(140) to match the forecast logic, or you can use real sensor loss if preferred. #}
+        {#    Using the fixed 140 logic ensures consistency with the forecast logic we added to DH. #}
+        {%- set max_fixed_loss = 140 %}
         {%- set fixed_loss_to_account = [0, [total_inverter_losses, max_fixed_loss] | min] | max %}
         
         {%- set net_pv_now = [0, gross_pv_now - fixed_loss_to_account] | max %}
@@ -548,7 +548,7 @@ rest_command:
         {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) or (actual_soc_now >= 99.9) %}
         
         {%- if pv_currently_curtailed %}
-          {# Solcast provides Gross, so we must apply the 135W subtraction to the Solcast Now estimate too #}
+          {# Solcast provides Gross, so we must apply the 140W subtraction to the Solcast Now estimate too #}
           {%- set solcast_now_gross = states('sensor.solcast_pv_forecast_power_now') | float %}
           {%- set solcast_now_net = [0, solcast_now_gross - fixed_loss_to_account] | max %}
           {%- set net_pv_now = [net_pv_now, solcast_now_net] | max %}
