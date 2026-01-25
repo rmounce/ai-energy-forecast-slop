@@ -419,15 +419,25 @@ rest_command:
           {%- set adjusted_prod_price_now = prod_price_now %}
         {%- endif %}
         
-        {#- Calculate CURRENT Weight Charge (16:00-21:00 ramp) based on END of 5-min period #}
+        {#- --- CONFIGURATION: Relative Panic Curve --- #}
+        {%- set slope = 0.0060 / 300 %}   {# Max cost / Duration in mins #}
+        {%- set win_start = 960 %}        {# 16:00 #}
+        {%- set win_end = 1260 %}         {# 21:00 #}
+        
+        {#- Calculate NOW (minutes from midnight, end of current 5min block) #}
         {%- set snapped_minute = (current_time_local.minute // 5) * 5 %}
         {%- set start_of_period = current_time_local.replace(minute=snapped_minute, second=0, microsecond=0) %}
         {%- set end_of_period = start_of_period + timedelta(minutes=5) %}
         {%- set m_now = end_of_period.hour * 60 + end_of_period.minute %}
         
-        {#- Check end time. 16:05 (965) is the first non-zero interval. 21:00 (1260) is the max. #}
-        {%- if 960 < m_now <= 1260 %}
-           {%- set w_charge_now = 0.0060 * ((m_now - 960) / 300) %}
+        {#- Dynamic Start: The ramp starts at 16:00 OR Now, whichever is later. #}
+        {#- This ensures the cost at 'Now' is always 0, preventing disincentive to charge immediately. #}
+        {%- set ramp_start = [win_start, m_now] | max %}
+        
+        {#- Calculate Weight for NOW (Always 0 based on logic above) #}
+        {#- But we keep the check for safety to ensure we don't return negative numbers #}
+        {%- if ramp_start < m_now <= win_end %}
+           {%- set w_charge_now = (m_now - ramp_start) * slope %}
         {%- else %}
            {%- set w_charge_now = 0.0 %}
         {%- endif %}
@@ -439,7 +449,7 @@ rest_command:
         {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0) %}
         {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0) %}
 
-        {#- Loop for BUY price forecast AND Battery Charge Weight #}
+        {#- Loop for forecasts #}
         {%- for item in state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') %}
           {%- if as_datetime(item.start_time) > utcnow() %}
             {#- 1. Calculate the blended price using the new -1 to +1 logic #}
@@ -462,13 +472,14 @@ rest_command:
 
             {%- set data.load_cost_list = data.load_cost_list + [final_buy_price | round(4)] %}
             
-            {#- 3. Calculate Battery Charge Weight (16:00-21:00 ramp) using END time #}
+            {#- 2. Battery Charge Weight (Relative Curve) #}
             {%- set forecast_start = as_local(as_datetime(item.start_time)) %}
             {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
             {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
             
-            {%- if 960 < m <= 1260 %}
-               {%- set w_charge = 0.0060 * ((m - 960) / 300) %}
+            {%- if ramp_start < m <= win_end %}
+               {#- Cost increases as we get further from the ramp_start #}
+               {%- set w_charge = (m - ramp_start) * slope %}
             {%- else %}
                {%- set w_charge = 0.0 %}
             {%- endif %}
