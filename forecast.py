@@ -22,6 +22,7 @@ from darts import TimeSeries
 from darts.models import LightGBMModel
 from influxdb import InfluxDBClient
 from sklearn.multioutput import MultiOutputRegressor
+import time
 
 import io
 import re
@@ -329,15 +330,29 @@ def get_aemo_forecast():
 def _get_aemo_short_term_forecast():
     """Helper to fetch the ~24h JSON API forecast."""
     logging.info("Fetching AEMO short-term forecast (JSON API)...")
-    try:
-        url = "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN"
-        payload = {"timeScale": ["30MIN"]}
-        response = requests.post(url, json=payload, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Could not fetch short-term AEMO forecast: {e}")
-        return pd.DataFrame()
+    url = "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN"
+    payload = {"timeScale": ["30MIN"]}
+    
+    max_attempts = 5
+    timeout_seconds = 10
+    
+    data = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if attempt > 1:
+                backoff = 2 ** (attempt - 2) # 1s, 2s, 4s, 8s
+                logging.info(f"Retry attempt {attempt}/{max_attempts} for AEMO forecast (backoff: {backoff}s)...")
+                time.sleep(backoff)
+            
+            response = requests.post(url, json=payload, timeout=timeout_seconds)
+            response.raise_for_status()
+            data = response.json()
+            break # Success
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Attempt {attempt}/{max_attempts} failed to fetch AEMO forecast: {e}")
+            if attempt == max_attempts:
+                logging.error(f"Final attempt failed. Could not fetch short-term AEMO forecast: {e}")
+                return pd.DataFrame()
 
     if "5MIN" not in data or not data["5MIN"]:
         return pd.DataFrame()
