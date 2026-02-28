@@ -1175,57 +1175,60 @@ def _calculate_amber_api_scaling_factor():
         logging.warning(f"Calculated Amber API scaling factor {median_ratio:.4f} is outside reasonable bounds [0.95, 1.25]. Ignoring.")
         return None
 
-def _calculate_historical_loss_factor():
-    logging.info("Calculating historical network loss factor from InfluxDB...")
+def _calculate_forecasted_network_loss_factor():
+    logging.info("Calculating network loss factor from forward feed-in forecast...")
     try:
-        client = InfluxDBClient(**CONFIG['influxdb'])
-        now = datetime.now(pytz.UTC)
-        start = now - timedelta(days=14)
-        start_str = start.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-        q_aemo = f"SELECT last(value) as aemo_price FROM hass.rp_raw.sensor__monetary WHERE entity_id = 'aemo_5min_current_price_sa' AND time >= '{start_str}' GROUP BY time(5m) fill(none)"
-        q_amber_fi = f"SELECT last(value) as amber_fi_price FROM hass.rp_raw.sensor__monetary WHERE entity_id = 'amber_5min_current_feed_in_price' AND time >= '{start_str}' GROUP BY time(5m) fill(none)"
-
-        res_aemo = client.query(q_aemo)
-        res_amber = client.query(q_amber_fi)
-
-        df_aemo = pd.DataFrame(res_aemo.get_points()).set_index('time') if res_aemo else pd.DataFrame()
-        df_amber = pd.DataFrame(res_amber.get_points()).set_index('time') if res_amber else pd.DataFrame()
-
-        if df_aemo.empty or df_amber.empty:
-            logging.warning("No historical data found for loss factor calculation.")
-            return None
-
-        df = df_aemo.join(df_amber).dropna()
-        if df.empty:
-            logging.warning("No intersecting historical data found.")
-            return None
-
-        df['aemo_price'] = pd.to_numeric(df['aemo_price'])
-        df['amber_fi_price'] = pd.to_numeric(df['amber_fi_price'])
-
-        df.index = pd.to_datetime(df.index).tz_convert(CONFIG['timezone'])
+        api_scaling = get_amber_api_scaling_factor()
+        entity_id = CONFIG['home_assistant']['amber_feed_in_entity']
+        entity_state = get_entity_state(entity_id)
         
-        # Zero-tariff hours: 00:00-09:59, 16:00-16:59, 21:00-23:59
-        mask_zero_tariff = (df.index.hour < 10) | (df.index.hour == 16) | (df.index.hour >= 21)
-        df_zero = df[mask_zero_tariff].copy()
-
-        df_valid = df_zero[df_zero['aemo_price'].abs() > 0.01].copy()
-        if df_valid.empty:
-            logging.warning("No valid historical data points for loss factor calculation.")
+        if not entity_state:
+            logging.warning(f"Could not retrieve state for {entity_id}")
             return None
-
-        df_valid['ratio'] = df_valid['amber_fi_price'] / df_valid['aemo_price']
-        median_ratio = df_valid['ratio'].median()
-
-        if 0.95 <= median_ratio <= 1.25:
-            logging.info(f"Successfully calculated historical network loss factor: {median_ratio:.4f}")
-            return float(median_ratio)
+            
+        forecasts = entity_state.get("attributes", {}).get("Forecasts", [])
+        if not forecasts:
+            logging.warning("No forecasts found in entity attributes")
+            return None
+            
+        records = []
+        for f in forecasts:
+            if f.get('per_kwh') is not None and f.get('spot_per_kwh') is not None:
+                per_kwh_dollars = float(f['per_kwh'])
+                spot_per_kwh_dollars = float(f['spot_per_kwh'])
+                raw_spot = spot_per_kwh_dollars / api_scaling
+                
+                if abs(raw_spot) > 0.01:
+                    derived_nlf = -remove_gst(per_kwh_dollars) / raw_spot
+                    start_time = pd.to_datetime(f['start_time']).tz_convert(CONFIG['timezone'])
+                    records.append({
+                        'hour': start_time.hour,
+                        'derived_nlf': derived_nlf
+                    })
+                    
+        df = pd.DataFrame(records)
+        if df.empty:
+            logging.warning("No valid forecast points found for loss factor calculation")
+            return None
+            
+        # Zero tariff hours: 0-9, 16, 21-23
+        mask_zero_tariff = (df['hour'] < 10) | (df['hour'] == 16) | (df['hour'] >= 21)
+        df_zero = df[mask_zero_tariff]
+        
+        if df_zero.empty:
+            logging.warning("No zero-tariff forecast points found for loss factor calculation")
+            return None
+            
+        median_nlf = df_zero['derived_nlf'].median()
+        
+        if 0.95 <= median_nlf <= 1.25:
+            logging.info(f"Successfully calculated network loss factor from forecast: {median_nlf:.4f}")
+            return float(median_nlf)
         else:
-            logging.warning(f"Historical network loss factor {median_ratio:.4f} is outside reasonable bounds. Ignoring.")
+            logging.warning(f"Forecast-derived network loss factor {median_nlf:.4f} is outside reasonable bounds. Ignoring.")
             return None
     except Exception as e:
-        logging.error(f"Error calculating historical loss factor: {e}")
+        logging.error(f"Error calculating forecasted loss factor: {e}")
         return None
 
 def update_tariffs():
@@ -1260,7 +1263,7 @@ def update_tariffs():
     if new_api_scaling is not None:
         final_profile['amber_api_scaling_factor'] = new_api_scaling
         
-    new_network_loss = _calculate_historical_loss_factor()
+    new_network_loss = _calculate_forecasted_network_loss_factor()
     if new_network_loss is not None:
         final_profile['network_loss_factor'] = new_network_loss
 
