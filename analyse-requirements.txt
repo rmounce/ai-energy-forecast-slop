@@ -1,2 +1,3 @@
 ipykernel
 nbformat
+nbstripout
