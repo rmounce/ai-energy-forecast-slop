@@ -61,6 +61,15 @@ CONFIG = load_config()
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
 # --------------------------------------------------------------------------- #
 
+def get_loss_factor():
+    """Reads tariff_profile.json to extract loss_factor. Defaults to 1.05."""
+    try:
+        with open(CONFIG['paths']['tariff_file'], 'r') as f:
+            tariffs = json.load(f)
+            return tariffs.get('loss_factor', 1.05)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 1.05
+
 def get_historical_data(client, start_time, end_time):
     # This function is REFINED based on your InfluxDB schema
     logging.info(f"Querying historical data from {start_time.date()} to {end_time.date()}")
@@ -135,7 +144,7 @@ def get_entity_state(entity_id):
     # This function remains unchanged
     return call_ha_api('GET', f"states/{entity_id}")
 
-def get_amber_spot_price_forecast():
+def get_amber_spot_price_forecast(apply_loss_factor=True):
     # This function remains unchanged
     logging.info("Retrieving Amber Electric spot price forecast...")
     entity_id = CONFIG['home_assistant']['amber_entity']
@@ -145,7 +154,10 @@ def get_amber_spot_price_forecast():
     if not forecasts: return pd.DataFrame()
     processed = [{'datetime': pd.to_datetime(f['start_time']).round('min'), 'aemo_price_sa1': float(f['spot_per_kwh'])} for f in forecasts if 'start_time' in f and f.get('spot_per_kwh') is not None]
     if not processed: return pd.DataFrame()
-    return pd.DataFrame(processed).set_index('datetime')
+    df = pd.DataFrame(processed).set_index('datetime')
+    if apply_loss_factor:
+        df['aemo_price_sa1'] /= get_loss_factor()
+    return df
 
 def add_gst(price):
     if price > 0:
@@ -159,7 +171,7 @@ def remove_gst(price):
     else:
         return price
 
-def get_amber_advanced_forecast(price_key='advanced_price_predicted'):
+def get_amber_advanced_forecast(price_key='advanced_price_predicted', apply_loss_factor=True):
     """
     Retrieves Amber Electric ADVANCED price forecast (mixed intervals).
 
@@ -246,7 +258,10 @@ def get_amber_advanced_forecast(price_key='advanced_price_predicted'):
         }
         processed.insert(0, backfill_entry)
 
-    return pd.DataFrame(processed).set_index('datetime')
+    df = pd.DataFrame(processed).set_index('datetime')
+    if apply_loss_factor:
+        df['aemo_price_sa1'] /= get_loss_factor()
+    return df
 
 def get_solcast_forecast():
     # This function is unchanged
@@ -376,6 +391,30 @@ def _get_aemo_short_term_forecast():
     }
     pivot_df.rename(columns=rename_map, inplace=True)
     return pivot_df.resample('30min').mean()
+
+def _get_aemo_short_term_price_sa1():
+    logging.info("Fetching AEMO short-term price forecast for loss factor calculation...")
+    url = "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN"
+    payload = {"timeScale": ["30MIN"]}
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if "5MIN" not in data or not data["5MIN"]:
+            return pd.DataFrame()
+        df = pd.DataFrame(data['5MIN'])
+        df = df[df['REGIONID'] == 'SA1']
+        if df.empty:
+            return pd.DataFrame()
+        nem_tz = pytz.timezone('Etc/GMT-10')
+        df['timestamp'] = (pd.to_datetime(df['SETTLEMENTDATE']).dt.tz_localize(nem_tz) - pd.Timedelta(minutes=30)).dt.tz_convert('UTC')
+        df.set_index('timestamp', inplace=True)
+        df['aemo_price_sa1'] = pd.to_numeric(df['RRP'], errors='coerce') / 1000.0
+        return df[['aemo_price_sa1']].resample('30min').mean().dropna()
+    except Exception as e:
+        logging.error(f"Failed to fetch AEMO short term price: {e}")
+        return pd.DataFrame()
 
 def _get_aemo_7_day_outlook_forecast():
     """Helper to fetch and parse the latest 7-Day Outlook report from NEMWeb."""
@@ -969,8 +1008,10 @@ def apply_tariffs_to_forecast(pred_df):
     pred_df['general_tariff'] = pred_df['local_time'].map(general_tariff_map).fillna(0)
     pred_df['feed_in_tariff'] = pred_df['local_time'].map(feed_in_tariff_map).fillna(0)
 
-    general_price_ex_gst = pred_df['wholesale_price'] + pred_df['general_tariff']
-    feed_in_price_ex_gst = pred_df['wholesale_price'] + pred_df['feed_in_tariff']
+    loss_factor = get_loss_factor()
+
+    general_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['general_tariff']
+    feed_in_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['feed_in_tariff']
 
     pred_df['general_price'] = np.where(general_price_ex_gst > 0, general_price_ex_gst * CONFIG['gst_rate'], general_price_ex_gst)
     pred_df['feed_in_price'] = np.where(feed_in_price_ex_gst < 0, feed_in_price_ex_gst * CONFIG['gst_rate'], feed_in_price_ex_gst)
@@ -1082,6 +1123,39 @@ def _create_complete_profile(tariff_df, local_tz, tariff_type_for_logging):
     return {str(k): v for k, v in final_profile.items()}
 
 
+def _calculate_current_loss_factor():
+    logging.info("Calculating current network loss factor from live forecasts...")
+    
+    amber_df = get_amber_spot_price_forecast(apply_loss_factor=False)
+    if amber_df.empty:
+        logging.warning("No Amber spot forecast available for loss factor calculation.")
+        return None
+        
+    aemo_df = _get_aemo_short_term_price_sa1()
+    if aemo_df.empty:
+        logging.warning("No AEMO price forecast available for loss factor calculation.")
+        return None
+        
+    joined_df = amber_df.join(aemo_df, rsuffix='_aemo').dropna()
+    if joined_df.empty:
+        logging.warning("No overlapping intervals between Amber and AEMO price forecasts.")
+        return None
+        
+    valid_df = joined_df[joined_df['aemo_price_sa1_aemo'].abs() > 0.01].copy()
+    if valid_df.empty:
+        logging.warning("No valid AEMO prices > $0.01 available for loss factor calculation.")
+        return None
+        
+    valid_df['ratio'] = valid_df['aemo_price_sa1'] / valid_df['aemo_price_sa1_aemo']
+    median_ratio = valid_df['ratio'].median()
+    
+    if 0.95 <= median_ratio <= 1.20:
+        logging.info(f"Successfully calculated network loss factor: {median_ratio:.4f}")
+        return float(median_ratio)
+    else:
+        logging.warning(f"Calculated loss factor {median_ratio:.4f} is outside reasonable bounds [0.95, 1.20]. Ignoring.")
+        return None
+
 def update_tariffs():
     """
     ORCHESTRATOR: Fetches future tariff data and uses a helper function
@@ -1098,6 +1172,18 @@ def update_tariffs():
         raise SystemExit("Could not retrieve any tariff information from Amber entities.")
 
     final_profile = {}
+
+    try:
+        with open(CONFIG['paths']['tariff_file'], 'r') as f:
+            old_profile = json.load(f)
+            if 'loss_factor' in old_profile:
+                final_profile['loss_factor'] = old_profile['loss_factor']
+    except (FileNotFoundError, json.JSONDecodeError):
+        final_profile['loss_factor'] = 1.05
+
+    new_lf = _calculate_current_loss_factor()
+    if new_lf is not None:
+        final_profile['loss_factor'] = new_lf
 
     # 2. Generate profile for general tariff, if data exists
     if not general_tariff_df.empty:
