@@ -1060,20 +1060,30 @@ def publish_forecast_to_hass(model_key, forecast_df):
 
 
 def _get_tariff_data(entity_id, is_feed_in=False):
-    # This function remains unchanged
+    # This function extracts pure network tariffs
     entity_state = get_entity_state(entity_id)
     if not entity_state: return pd.DataFrame()
     forecasts = entity_state.get("attributes", {}).get("Forecasts", [])
     if not forecasts: return pd.DataFrame()
     processed = []
+    
+    api_scaling = get_amber_api_scaling_factor()
+    net_loss = get_network_loss_factor()
+    
     for f in forecasts:
         if f.get('per_kwh') is not None and f.get('spot_per_kwh') is not None:
             per_kwh_dollars = float(f['per_kwh'])
             spot_per_kwh_dollars = float(f['spot_per_kwh'])
+            
+            # Strip the 1.10 API inflation down to Raw AEMO scale
+            raw_spot = spot_per_kwh_dollars / api_scaling
+            # Scale it up to the True Network Loss scale (1.08)
+            true_loss_spot = raw_spot * net_loss
+            
             if is_feed_in:
-                tariff = -remove_gst(per_kwh_dollars) - spot_per_kwh_dollars
+                tariff = -remove_gst(per_kwh_dollars) - true_loss_spot
             else:
-                tariff = remove_gst(per_kwh_dollars) - spot_per_kwh_dollars
+                tariff = remove_gst(per_kwh_dollars) - true_loss_spot
             processed.append({'datetime': pd.to_datetime(f['start_time']).round('min'), 'tariff': tariff})
     return pd.DataFrame(processed).set_index('datetime')
 
