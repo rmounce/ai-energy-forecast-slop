@@ -61,12 +61,21 @@ CONFIG = load_config()
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
 # --------------------------------------------------------------------------- #
 
-def get_loss_factor():
-    """Reads tariff_profile.json to extract loss_factor. Defaults to 1.05."""
+def get_amber_api_scaling_factor():
+    """Reads tariff_profile.json to extract amber_api_scaling_factor. Defaults to 1.10."""
     try:
         with open(CONFIG['paths']['tariff_file'], 'r') as f:
             tariffs = json.load(f)
-            return tariffs.get('loss_factor', 1.05)
+            return tariffs.get('amber_api_scaling_factor', 1.10)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 1.10
+
+def get_network_loss_factor():
+    """Reads tariff_profile.json to extract network_loss_factor. Defaults to 1.05."""
+    try:
+        with open(CONFIG['paths']['tariff_file'], 'r') as f:
+            tariffs = json.load(f)
+            return tariffs.get('network_loss_factor', 1.05)
     except (FileNotFoundError, json.JSONDecodeError):
         return 1.05
 
@@ -156,7 +165,7 @@ def get_amber_spot_price_forecast(apply_loss_factor=True):
     if not processed: return pd.DataFrame()
     df = pd.DataFrame(processed).set_index('datetime')
     if apply_loss_factor:
-        df['aemo_price_sa1'] /= get_loss_factor()
+        df['aemo_price_sa1'] /= get_amber_api_scaling_factor()
     return df
 
 def add_gst(price):
@@ -260,7 +269,7 @@ def get_amber_advanced_forecast(price_key='advanced_price_predicted', apply_loss
 
     df = pd.DataFrame(processed).set_index('datetime')
     if apply_loss_factor:
-        df['aemo_price_sa1'] /= get_loss_factor()
+        df['aemo_price_sa1'] /= get_amber_api_scaling_factor()
     return df
 
 def get_solcast_forecast():
@@ -1008,7 +1017,7 @@ def apply_tariffs_to_forecast(pred_df):
     pred_df['general_tariff'] = pred_df['local_time'].map(general_tariff_map).fillna(0)
     pred_df['feed_in_tariff'] = pred_df['local_time'].map(feed_in_tariff_map).fillna(0)
 
-    loss_factor = get_loss_factor()
+    loss_factor = get_network_loss_factor()
 
     general_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['general_tariff']
     feed_in_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['feed_in_tariff']
@@ -1123,17 +1132,17 @@ def _create_complete_profile(tariff_df, local_tz, tariff_type_for_logging):
     return {str(k): v for k, v in final_profile.items()}
 
 
-def _calculate_current_loss_factor():
-    logging.info("Calculating current network loss factor from live forecasts...")
+def _calculate_amber_api_scaling_factor():
+    logging.info("Calculating Amber API scaling factor from live forecasts...")
     
     amber_df = get_amber_spot_price_forecast(apply_loss_factor=False)
     if amber_df.empty:
-        logging.warning("No Amber spot forecast available for loss factor calculation.")
+        logging.warning("No Amber spot forecast available for scaling factor calculation.")
         return None
         
     aemo_df = _get_aemo_short_term_price_sa1()
     if aemo_df.empty:
-        logging.warning("No AEMO price forecast available for loss factor calculation.")
+        logging.warning("No AEMO price forecast available for scaling factor calculation.")
         return None
         
     joined_df = amber_df.join(aemo_df, rsuffix='_aemo').dropna()
@@ -1143,17 +1152,70 @@ def _calculate_current_loss_factor():
         
     valid_df = joined_df[joined_df['aemo_price_sa1_aemo'].abs() > 0.01].copy()
     if valid_df.empty:
-        logging.warning("No valid AEMO prices > $0.01 available for loss factor calculation.")
+        logging.warning("No valid AEMO prices > $0.01 available for scaling factor calculation.")
         return None
         
     valid_df['ratio'] = valid_df['aemo_price_sa1'] / valid_df['aemo_price_sa1_aemo']
     median_ratio = valid_df['ratio'].median()
     
-    if 0.95 <= median_ratio <= 1.20:
-        logging.info(f"Successfully calculated network loss factor: {median_ratio:.4f}")
+    if 0.95 <= median_ratio <= 1.25:
+        logging.info(f"Successfully calculated Amber API scaling factor: {median_ratio:.4f}")
         return float(median_ratio)
     else:
-        logging.warning(f"Calculated loss factor {median_ratio:.4f} is outside reasonable bounds [0.95, 1.20]. Ignoring.")
+        logging.warning(f"Calculated Amber API scaling factor {median_ratio:.4f} is outside reasonable bounds [0.95, 1.25]. Ignoring.")
+        return None
+
+def _calculate_historical_loss_factor():
+    logging.info("Calculating historical network loss factor from InfluxDB...")
+    try:
+        client = InfluxDBClient(**CONFIG['influxdb'])
+        now = datetime.now(pytz.UTC)
+        start = now - timedelta(days=14)
+        start_str = start.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        q_aemo = f"SELECT last(value) as aemo_price FROM hass.rp_raw.sensor__monetary WHERE entity_id = 'aemo_5min_current_price_sa' AND time >= '{start_str}' GROUP BY time(5m) fill(none)"
+        q_amber_fi = f"SELECT last(value) as amber_fi_price FROM hass.rp_raw.sensor__monetary WHERE entity_id = 'amber_5min_current_feed_in_price' AND time >= '{start_str}' GROUP BY time(5m) fill(none)"
+
+        res_aemo = client.query(q_aemo)
+        res_amber = client.query(q_amber_fi)
+
+        df_aemo = pd.DataFrame(res_aemo.get_points()).set_index('time') if res_aemo else pd.DataFrame()
+        df_amber = pd.DataFrame(res_amber.get_points()).set_index('time') if res_amber else pd.DataFrame()
+
+        if df_aemo.empty or df_amber.empty:
+            logging.warning("No historical data found for loss factor calculation.")
+            return None
+
+        df = df_aemo.join(df_amber).dropna()
+        if df.empty:
+            logging.warning("No intersecting historical data found.")
+            return None
+
+        df['aemo_price'] = pd.to_numeric(df['aemo_price'])
+        df['amber_fi_price'] = pd.to_numeric(df['amber_fi_price'])
+
+        df.index = pd.to_datetime(df.index).tz_convert(CONFIG['timezone'])
+        
+        # Zero-tariff hours: 00:00-09:59, 16:00-16:59, 21:00-23:59
+        mask_zero_tariff = (df.index.hour < 10) | (df.index.hour == 16) | (df.index.hour >= 21)
+        df_zero = df[mask_zero_tariff].copy()
+
+        df_valid = df_zero[df_zero['aemo_price'].abs() > 0.01].copy()
+        if df_valid.empty:
+            logging.warning("No valid historical data points for loss factor calculation.")
+            return None
+
+        df_valid['ratio'] = df_valid['amber_fi_price'] / df_valid['aemo_price']
+        median_ratio = df_valid['ratio'].median()
+
+        if 0.95 <= median_ratio <= 1.25:
+            logging.info(f"Successfully calculated historical network loss factor: {median_ratio:.4f}")
+            return float(median_ratio)
+        else:
+            logging.warning(f"Historical network loss factor {median_ratio:.4f} is outside reasonable bounds. Ignoring.")
+            return None
+    except Exception as e:
+        logging.error(f"Error calculating historical loss factor: {e}")
         return None
 
 def update_tariffs():
@@ -1176,14 +1238,21 @@ def update_tariffs():
     try:
         with open(CONFIG['paths']['tariff_file'], 'r') as f:
             old_profile = json.load(f)
-            if 'loss_factor' in old_profile:
-                final_profile['loss_factor'] = old_profile['loss_factor']
+            if 'amber_api_scaling_factor' in old_profile:
+                final_profile['amber_api_scaling_factor'] = old_profile['amber_api_scaling_factor']
+            if 'network_loss_factor' in old_profile:
+                final_profile['network_loss_factor'] = old_profile['network_loss_factor']
     except (FileNotFoundError, json.JSONDecodeError):
-        final_profile['loss_factor'] = 1.05
+        final_profile['amber_api_scaling_factor'] = 1.10
+        final_profile['network_loss_factor'] = 1.05
 
-    new_lf = _calculate_current_loss_factor()
-    if new_lf is not None:
-        final_profile['loss_factor'] = new_lf
+    new_api_scaling = _calculate_amber_api_scaling_factor()
+    if new_api_scaling is not None:
+        final_profile['amber_api_scaling_factor'] = new_api_scaling
+        
+    new_network_loss = _calculate_historical_loss_factor()
+    if new_network_loss is not None:
+        final_profile['network_loss_factor'] = new_network_loss
 
     # 2. Generate profile for general tariff, if data exists
     if not general_tariff_df.empty:
