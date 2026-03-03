@@ -198,13 +198,24 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
-            value_template: >-
-              {{ p_grid > 0 and p_batt < 0 and p_hybrid_inverter < 0 and p_pv >
-              0 }}
+            value_template: "{{ p_grid > 0 and p_batt < 0 and p_hybrid_inverter > 0}}"
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
-              value: Grid charge at partial rate (day)
+              value: DC-coupled PV charging, partial self-consume, then grid powers home
+            action: input_text.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              pcs_export_limit_kw: "{{ (p_hybrid_inverter / 1000) | round(3) }}"
+            action: script.configure_sigen_ems_state
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ p_grid > 0 and p_batt < 0 and p_hybrid_inverter < 0 }}
+        sequence:
+          - data_template:
+              entity_id: input_text.emhass_battery_action
+              value: Grid charge at partial rate
             action: input_text.set_value
           - data:
               control_mode: Command Charging (PV First)
@@ -216,7 +227,7 @@ actions:
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
-              value: Grid charge at partial rate (night)
+              value: Grid charge at partial rate (fallback, should not occur)
             action: input_text.set_value
           - data:
               control_mode: Command Charging (PV First)
