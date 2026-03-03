@@ -63,7 +63,15 @@ fields:
     default: 100
   pcs_export_limit_kw:
     name: PCS Export Limit (kW)
-    description: The maximum AC power the PCS can export from the battery.
+    description: The maximum AC power the PCS can output.
+    selector:
+      number:
+        min: 0
+        max: 100
+    default: 100
+  pcs_import_limit_kw:
+    name: PCS Import Limit (kW)
+    description: The maximum AC power the PCS can input.
     selector:
       number:
         min: 0
@@ -95,6 +103,9 @@ sequence:
       v_pcs_export_limit: >-
         {{ pcs_export_limit_kw if pcs_export_limit_kw is defined and
         pcs_export_limit_kw not in [none, ''] else 100 }}
+      v_pcs_import_limit: >-
+        {{ pcs_import_limit_kw if pcs_import_limit_kw is defined and
+        pcs_import_limit_kw not in [none, ''] else 100 }}
   - target:
       entity_id: input_number.desired_export_limit
     data:
@@ -110,26 +121,16 @@ sequence:
     data:
       option: "{{ v_control_mode }}"
     action: select.select_option
-  - if:
-      - condition: template
-        value_template: >-
-          {{ v_control_mode in ['Command Charging (PV First)', 'Command Charging
-          (Grid First)'] }}
-    then:
-      - target:
-          entity_id: number.sigen_plant_ess_max_charging_limit
-        data:
-          value: "{{ v_charge_limit }}"
-        action: number.set_value
-  - if:
-      - condition: template
-        value_template: "{{ v_control_mode == 'Command Discharging (PV First)' }}"
-    then:
-      - target:
-          entity_id: number.sigen_plant_ess_max_discharging_limit
-        data:
-          value: "{{ v_discharge_limit }}"
-        action: number.set_value
+  - target:
+      entity_id: number.sigen_plant_ess_max_charging_limit
+    data:
+      value: "{{ v_charge_limit }}"
+    action: number.set_value
+  - target:
+      entity_id: number.sigen_plant_ess_max_discharging_limit
+    data:
+      value: "{{ v_discharge_limit }}"
+    action: number.set_value
   - target:
       entity_id: number.sigen_plant_pv_max_power_limit
     data:
@@ -141,8 +142,14 @@ sequence:
       value: "{{ v_pcs_export_limit }}"
     action: number.set_value
   - target:
+      entity_id: number.sigen_plant_pcs_import_limitation
+    data:
+      value: "{{ v_pcs_import_limit }}"
+    action: number.set_value
+  - target:
       entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
     data:
       value: "{{ v_charge_cutoff }}"
     action: number.set_value
 mode: single
+

@@ -64,9 +64,9 @@ def smooth_tariff_profile(file_path: str = "tariff_profile.json"):
                 off_peak_values.append(value)
 
         # 4. Calculate the median for each bucket
-        median_peak = statistics.median(peak_values) if peak_values else 0
-        median_solar = statistics.median(solar_sponge_values) if solar_sponge_values else 0
-        median_off_peak = statistics.median(off_peak_values) if off_peak_values else 0
+        median_peak = round(statistics.median(peak_values), 4) if peak_values else 0
+        median_solar = round(statistics.median(solar_sponge_values), 4) if solar_sponge_values else 0
+        median_off_peak = round(statistics.median(off_peak_values), 4) if off_peak_values else 0
         
         # 5. Create the new tariff profile with median values
         smoothed_tariff = {}
