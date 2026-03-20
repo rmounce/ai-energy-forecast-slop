@@ -13,6 +13,7 @@ import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import holidays
 import joblib
 import numpy as np
 import pandas as pd
@@ -60,6 +61,29 @@ CONFIG = load_config()
 # --------------------------------------------------------------------------- #
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
 # --------------------------------------------------------------------------- #
+
+def add_time_features(df):
+    """
+    Adds custom boolean features `is_daylight_saving_time` and `is_public_holiday`
+    to a timezone-aware DataFrame based on its index.
+    """
+    if df.empty:
+        return df
+    
+    local_tz = pytz.timezone(CONFIG['timezone'])
+    # Convert index to local time to check DST/Holidays
+    if df.index.tz is None:
+        local_df_index = df.index.tz_localize('UTC').tz_convert(local_tz)
+    else:
+        local_df_index = df.index.tz_convert(local_tz)
+
+    df['is_daylight_saving_time'] = local_df_index.map(lambda x: x.dst() > pd.Timedelta(seconds=0)).astype(int)
+
+    sa_holidays = holidays.AU(subdiv='SA')
+    dates = pd.Series(local_df_index.date)
+    df['is_public_holiday'] = dates.apply(lambda d: d in sa_holidays).values.astype(int)
+
+    return df
 
 def get_amber_api_scaling_factor():
     """Reads tariff_profile.json to extract amber_api_scaling_factor. Defaults to 1.10."""
@@ -128,7 +152,8 @@ def get_historical_data(client, start_time, end_time):
         
     # Using 'outer' join correctly handles missing data, like your 2-week interchange gap, by creating NaNs.
     # The ffill().dropna() in the training function will handle these.
-    return pd.concat(dataframes.values(), axis=1, join='outer')
+    df_combined = pd.concat(dataframes.values(), axis=1, join='outer')
+    return add_time_features(df_combined)
 
 
 def call_ha_api(method, endpoint, payload=None):
@@ -562,6 +587,7 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
             'humidity_adelaide', 'humidity_adelaide_actual',
             'wind_speed_adelaide', 'wind_speed_adelaide_actual',
             'aemo_price_sa1',
+            'is_daylight_saving_time', 'is_public_holiday',
             'hour', 'day_of_week', 'day_of_year', 'month'
         ]
 
@@ -890,6 +916,8 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     # Deduplicate and sort
     combined_covariates_df = combined_covariates_df[~combined_covariates_df.index.duplicated(keep='last')].sort_index()
     
+    combined_covariates_df = add_time_features(combined_covariates_df)
+
     original_covariates_for_log = combined_covariates_df.copy()
 
     adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)

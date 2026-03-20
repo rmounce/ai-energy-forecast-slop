@@ -6,3 +6,4 @@ influxdb
 u8darts[notorch]
 joblib
 matplotlib
+holidays

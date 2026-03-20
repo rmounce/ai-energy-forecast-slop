@@ -92,16 +92,31 @@ rest_command:
       {
         "entity_save": true,
         "publish_prefix":"dh_",
+        
         {# 1. Calculate GROSS PV Forecast (removing the old -150W flat subtraction) #}
         {%- set current_pv_interval = utcnow() - timedelta(minutes=30) %}
         {%- set pv_forecast_gross = namespace(values=[]) %}
-        {%- for v in ['sensor.solcast_pv_forecast_forecast_today', 'sensor.solcast_pv_forecast_forecast_tomorrow', 'sensor.solcast_pv_forecast_forecast_day_3', 'sensor.solcast_pv_forecast_forecast_day_4']
+        
+        {#- Get the PV risk aversion factor 'k_pv' from your input helper (-1.0 to 1.0) #}
+        {%- set k_pv = states('input_number.emhass_weight_pv_forecast') | float(0) %}
+        
+        {%- set solcast_forecasts =['sensor.solcast_pv_forecast_forecast_today', 'sensor.solcast_pv_forecast_forecast_tomorrow', 'sensor.solcast_pv_forecast_forecast_day_3', 'sensor.solcast_pv_forecast_forecast_day_4']
           | map('state_attr', 'detailedForecast')
           | map('selectattr', 'period_start', 'gt', current_pv_interval)
-          | map('list') | sum(start=[])
-          | map(attribute='pv_estimate10')
-          | map('multiply', 1000)
-          | map('int') %}
+          | map('list') | sum(start=[]) %}
+
+        {%- for item in solcast_forecasts %}
+          {%- set p50 = item.pv_estimate | float(0) %}
+          {%- set p10 = item.pv_estimate10 | float(0) %}
+          {%- set p90 = item.pv_estimate90 | float(0) %}
+
+          {%- if k_pv > 0 %}
+            {%- set adjusted_pv = p50 + (p90 - p50) * k_pv %}
+          {%- else %}
+            {%- set adjusted_pv = p50 - (p50 - p10) * (k_pv | abs) %}
+          {%- endif %}
+          
+          {%- set v = (adjusted_pv * 1000) | int %}
           {%- if v > 0 %}
             {%- set pv_forecast_gross.values = pv_forecast_gross.values + [v] %}
           {%- else %}
@@ -112,10 +127,10 @@ rest_command:
         {# 2. Get GROSS Load Forecast #}
         {%- set load_forecast_gross = state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list %}
 
-        {# 3. Apply the "140W Logic" to create NET Forecasts #}
-        {#    PV pays 140W first. If PV < 140, the remainder is added to Load. #}
+        {# 3. Apply the "65W Logic" to create NET Forecasts #}
+        {#    PV pays 65W first. If PV < 65, the remainder is added to Load. #}
         {%- set data = namespace(pv_net=[], load_net=[]) %}
-        {%- set fixed_loss = 140 %}
+        {%- set fixed_loss = 65 %}
         
         {#- Ensure we iterate only up to the length of the shortest list (usually matched, but safe to check) #}
         {%- set loop_len = [pv_forecast_gross.values | length, load_forecast_gross | length] | min %}
@@ -229,6 +244,7 @@ rest_command:
         "delta_forecast_daily": 3,
         "optimization_time_step": 30,
         "prediction_horizon": 144,
+        "battery_nominal_energy_capacity": {{ (1000.0*(states('sensor.sigen_plant_rated_energy_capacity')|float(0) * (states('sensor.sigen_plant_battery_state_of_health')|float()/100.0))) | int() }},
         "battery_minimum_state_of_charge": {{ (states('input_number.battery_soc_min_target') | float)/100 }}, 
         "soc_init": {{ ((states('input_number.battery_soc_30_minute') | float) / 100) | round(4) }},
         {#- Step 1: Get the current SOC and the stored offset. #}
@@ -263,9 +279,9 @@ rest_command:
         "entity_save": true,
         "publish_prefix":"mpc_",
         
-        {#- Modded soc_init: If 100%, report 1.0. Else, subtract 0.1% offset to force charging. #}
+        {#- Modded soc_init: If 100%, report 1.0. Else, subtract 0.05% offset to force charging. #}
         {%- set real_soc = states('input_number.battery_soc_5_minute') | float(0) %}
-        "soc_init": {{ (1.0 if real_soc >= 100 else ([0, real_soc - 0.1] | max / 100)) | round(4) }},
+        "soc_init": {{ (1.0 if real_soc >= 100 else ([0, real_soc - 0.05] | max / 100)) | round(4) }},
 
         {# ========================================================================================= #}
         {#               1. INITIAL VARIABLE SETUP & ASYMMETRICAL FLOATING TARGET                    #}
@@ -320,7 +336,8 @@ rest_command:
         {%- set positive_deviation_only = [deviation, 0] | max %}
         {%- set final_soc_percent = planned_soc_future + positive_deviation_only %}
         "soc_final": {{ ([([final_soc_percent, 100.0] | min), 0.0] | max / 100) | round(4) }},
-        "battery_minimum_state_of_charge": {{ ([5, (states('input_number.battery_soc_5_minute') | float) - (states('input_number.battery_soc_min_buffer') | float), (states('input_number.battery_soc_min_target') | float)] | sort)[1]/100 | round(4) }},
+        "battery_nominal_energy_capacity": {{ (1000.0*(states('sensor.sigen_plant_rated_energy_capacity')|float(0) * (states('sensor.sigen_plant_battery_state_of_health')|float()/100.0))) | int() }},
+        "battery_minimum_state_of_charge": {{ ([0, (states('input_number.battery_soc_5_minute') | float) - (states('input_number.battery_soc_min_buffer') | float), (states('input_number.battery_soc_min_target') | float)] | sort)[1]/100 | round(4) }},
         {#- "set_nodischarge_to_grid": {{ 'false' if actual_soc_now < (states('input_number.battery_soc_min_export') | float) else 'false' }}, #}
 
         {# ========================================================================================= #}
@@ -532,13 +549,13 @@ rest_command:
         
         {# 1. Get current GROSS values from sensors. #}
         {%- set gross_pv_now = states('sensor.sigen_power_pv_gross') | int(0) %}
-        {%- set gross_load_now = states('sensor.power_load_without_losses') | int(0) %}
+        {%- set gross_load_now = states('sensor.sigen_plant_consumed_power') | int(0) %}
         {%- set total_inverter_losses = states('sensor.sigen_inverter_conversion_loss') | int(0) %}
 
-        {# 2. Apply "140W Logic" to the Current timestep. #}
-        {#    We use the logic max(140) to match the forecast logic, or you can use real sensor loss if preferred. #}
-        {#    Using the fixed 140 logic ensures consistency with the forecast logic we added to DH. #}
-        {%- set max_fixed_loss = 140 %}
+        {# 2. Apply "65W Logic" to the Current timestep. #}
+        {#    We use the logic max(65) to match the forecast logic, or you can use real sensor loss if preferred. #}
+        {#    Using the fixed 65 logic ensures consistency with the forecast logic we added to DH. #}
+        {%- set max_fixed_loss = 65 %}
         {%- set fixed_loss_to_account = [0, [total_inverter_losses, max_fixed_loss] | min] | max %}
         
         {%- set net_pv_now = [0, gross_pv_now - fixed_loss_to_account] | max %}
@@ -559,10 +576,20 @@ rest_command:
         {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) or (actual_soc_now >= 99.9) %}
         
         {%- if pv_currently_curtailed %}
-          {# Solcast provides Gross, so we must apply the 140W subtraction to the Solcast Now estimate too #}
-          {%- set solcast_now_gross = states('sensor.solcast_pv_forecast_power_now') | float %}
+          {# Solcast provides Gross, so we must apply the 65W subtraction to the Solcast Now estimate too #}
+          {%- set k_pv = states('input_number.emhass_weight_pv_forecast') | float(0) %}
+          {%- set p50_now = state_attr('sensor.solcast_pv_forecast_power_now', 'estimate') | float(0) %}
+          {%- set p10_now = state_attr('sensor.solcast_pv_forecast_power_now', 'estimate10') | float(0) %}
+          {%- set p90_now = state_attr('sensor.solcast_pv_forecast_power_now', 'estimate90') | float(0) %}
+
+          {%- if k_pv > 0 %}
+            {%- set solcast_now_gross = p50_now + (p90_now - p50_now) * k_pv %}
+          {%- else %}
+            {%- set solcast_now_gross = p50_now - (p50_now - p10_now) * (k_pv | abs) %}
+          {%- endif %}
+
           {%- set solcast_now_net = [0, solcast_now_gross - fixed_loss_to_account] | max %}
-          {%- set net_pv_now = [net_pv_now, solcast_now_net] | max %}
+          {%- set net_pv_now =[net_pv_now, solcast_now_net] | max %}
         {%- endif %}
         
         {# 4. Interpolate the Day-Ahead Forecasts (Which are ALREADY Net) #}
@@ -614,3 +641,17 @@ rest_command:
       {
         "publish_prefix":"all"
       }
+
+  emhass_action_naive_mpc_optim:
+    url: http://emhass.REDACTED/action/naive-mpc-optim
+    method: POST
+    content_type: "application/json"
+    timeout: 240
+    payload: "{{ payload }}"
+
+  emhass_action_publish_data:
+    url: http://emhass.REDACTED/action/publish-data
+    method: POST
+    content_type: "application/json"
+    timeout: 240
+    payload: "{{ payload }}"
