@@ -2,4 +2,5 @@
 User=saltspork
 Type=oneshot
 WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
-ExecStart=/bin/bash -c 'source .venv/bin/activate && ./forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates'
+EnvironmentFile=/home/saltspork/src/ai-energy-forecast-slop/.env
+ExecStart=/bin/bash -c 'source .venv/bin/activate && ./forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates && curl -fsS --retry 3 ${HC_PREDICT_URL}'
