@@ -77,8 +77,8 @@ The core script. All behaviour is driven by subcommands:
 
 | Subcommand | When | What it does |
 |---|---|---|
-| `train-price` | Weekly | Trains p30/p50/p70 LightGBM price models on 2 years of 30-min InfluxDB data |
-| `train-load` | Weekly | Trains p50/p65/p75 LightGBM load models |
+| `train-price` | Weekly | Trains price quantile models on 2 years of 30-min InfluxDB data |
+| `train-load` | Weekly | Trains load quantile models |
 | `predict-all` | Every 30 min | Fetches covariates, runs all models, applies tariffs/GST, saves JSON, publishes to HA |
 | `predict-price` | (manual) | Price only |
 | `predict-load` | (manual) | Load only |
@@ -88,17 +88,39 @@ The core script. All behaviour is driven by subcommands:
 
 Key flags: `--dynamic-handoff`, `--publish-hass`, `--publish-covariates`, `--config`
 
+#### Internal Module Boundaries
+
+The file contains ~28 functions that fall naturally into these logical groups:
+
+| Group | Functions | Responsibility |
+|---|---|---|
+| **Config / utilities** | `load_config`, `add_time_features`, `add_gst`, `remove_gst` | Shared utilities |
+| **InfluxDB** | `get_historical_data` | Historical data for training and backfill |
+| **HA API** | `call_ha_api`, `get_entity_state` | Generic HA HTTP wrappers |
+| **Data fetching** | `get_amber_spot_price_forecast`, `get_amber_advanced_forecast`, `get_solcast_forecast`, `get_weather_forecast`, `get_aemo_forecast`, `_get_aemo_short_term_forecast`, `_get_aemo_short_term_price_sa1`, `_get_aemo_7_day_outlook_forecast` | Future covariate data from external sources |
+| **Training** | `train_single_model`, `train_models` | Model fitting and serialisation |
+| **Prediction** | `_predict_simple`, `_predict_with_dynamic_handoff`, `_execute_quantile_prediction`, `_execute_single_prediction` | Inference |
+| **Tariffs** | `get_amber_api_scaling_factor`, `get_network_loss_factor`, `_get_tariff_data`, `_create_complete_profile`, `_calculate_amber_api_scaling_factor`, `_calculate_forecasted_network_loss_factor`, `update_tariffs`, `apply_tariffs_to_forecast` | Tariff profile construction and application |
+| **Adjusters** | `update_adjusters`, `apply_covariate_adjustments` | Weather covariate bias correction |
+| **Logging** | `log_forecast_data`, `backfill_actuals`, `_backfill_single_log` | Forecast log CSVs |
+| **Publishing** | `publish_forecast_to_hass`, `publish_adjusted_covariates_to_hass` | Push results to HA |
+| **Orchestrators** | `run_predictions`, `main` | Top-level entry points |
+
+One function — `_publish_covariates_helper` — is defined but never called (orphaned).
+
 #### Model Details
 
 - **Framework:** Darts (time series library) + LightGBM quantile regression
 - **Horizon:** 144 steps = 72 hours at 30-minute resolution
-- **Price quantiles:** p30, p50 (median), p70
-- **Load quantiles:** p50, p65, p75
+- **Active price quantiles:** p30, p50 (median), p70 — configured in `config.json`
+- **Active load quantiles:** p50, p65, p75 — configured in `config.json`
 - **Target lags:** 1–6, 12, 24, 48–49, 96–97, 336–337 (1h to 14 days)
 - **Future covariate window:** ±4 lags around each step
 - **Recency weighting:** exponential decay (price: 180-day half-life; load: 90-day half-life)
 - **Log transform:** applied to price targets to handle negative/volatile prices
 - **Anti-crossing:** quantile outputs are sorted to prevent p30 > p50
+
+Several older model files exist on disk (price: p10, p20, p50, p80, p90; load: p60) from past experiments — these are not referenced by the current `config.json` and can be deleted.
 
 #### Dynamic Handoff (price only)
 
@@ -168,12 +190,38 @@ Continuous queries in InfluxDB downsample raw → 5m → 30m automatically for o
 
 ### `smooth_tariffs.py`
 
-Standalone utility that smooths the tariff profile to remove day-to-day volatility:
+Standalone utility called by the nightly `ai-energy-update-tariffs` service. Smooths the tariff profile to remove day-to-day volatility:
 
 1. Loads `tariff_profile.json`
 2. Classifies each 30-min slot: Peak (17:00–20:59), Solar Sponge (10:00–15:59), Off-Peak (all others)
 3. Replaces all slots in each bucket with the bucket median
 4. Saves smoothed to `tariff_profile.json`, original backed up to `tariff_profile_raw.json`
+
+---
+
+### `model/` — Offline Training Scripts (exploratory, not part of automated pipeline)
+
+These scripts were used to develop and validate the ML approach before it was integrated into `forecast.py`. They are **not called by any systemd service** and are not kept in sync with the main script.
+
+| Script | Purpose |
+|---|---|
+| `01-load-historical.py` | Load and explore historical data from InfluxDB |
+| `02-load-forecasts.py` | Fetch and combine future covariates (has its own implementations, different from `forecast.py`) |
+| `03-train-model.py` | Train a single model with hardcoded parameters |
+| `04-predict.py` | Run predictions and visualise with matplotlib |
+
+These scripts duplicate logic from `forecast.py` (especially the prediction and training code) but are not config-driven and would need manual synchronisation if the pipeline changes. Consider them as reference material rather than active code.
+
+---
+
+### Jupyter Notebooks (exploratory, not part of automated pipeline)
+
+| Notebook | Purpose |
+|---|---|
+| `analyse.ipynb` (36MB) | Post-hoc analysis of forecast accuracy; loads `load_forecast_log.csv` and re-implements covariate adjustment logic inline. Large due to embedded output data. |
+| `price-history.ipynb` (184KB) | Historical AEMO price distribution analysis via `nemosis`. Fully independent of `forecast.py`. |
+
+Neither notebook imports from `forecast.py`. They are standalone exploratory tools.
 
 ---
 
@@ -232,11 +280,18 @@ Note: several older model files exist (`price_p10`, `price_p20`, `price_p50`, `p
 
 **Credential management:** `config.json` is git-ignored. The ingest scripts have credentials hardcoded (historical — they predate `config.json`). The HA YAML files need URL redaction before committing.
 
+The systemd services load secrets from `.env` in the repo root (git-ignored). This file must be created manually:
+
+```ini
+# .env
+HC_PREDICT_URL=https://hc-ping.com/<your-uuid>
+```
+
 ---
 
 ## Known Pain Points
 
-1. **`forecast.py` is a monolith.** At ~2,300 lines it handles training, prediction, tariff management, logging, bias correction, and HA publishing. Hard to navigate and test.
+1. **`forecast.py` is a monolith.** At ~2,300 lines it handles training, prediction, tariff management, logging, bias correction, and HA publishing. The natural module boundaries are clear (see table above) but the code is not yet split. Hard to navigate and test.
 
 2. **`hass/package-emhass.yaml` Jinja complexity.** The EMHASS REST command payload is built entirely in Jinja2 template syntax inside a YAML string. It's ~350 lines of logic that is hard to debug, diff, and maintain.
 
@@ -244,13 +299,15 @@ Note: several older model files exist (`price_p10`, `price_p20`, `price_p50`, `p
 
 4. **HA backups require manual redaction.** Every time `hass/` files are committed, URLs must be manually redacted. This creates friction and risk.
 
-5. **Forecast log CSVs are very large.** `price_forecast_log.csv` and `load_forecast_log.csv` are each ~330–340MB and growing. They are not git-ignored (or if they are, they live outside the repo). This could become a problem.
+5. **Forecast log CSVs are very large.** `price_forecast_log.csv` and `load_forecast_log.csv` are each ~330–340MB and growing. They live outside the repo (git-ignored) but are depended on by `backfill-actuals` and `update-adjusters`.
 
-6. **Multiple stale model files.** Experimental quantile variants (p10, p20, p50, p80, p90 for price; p60 for load) remain on disk, consuming ~1.3GB that isn't actively used.
+6. **Stale model files on disk.** Experimental quantile variants (price: p10, p20, p50, p80, p90; load: p60) are no longer referenced by `config.json` and consume ~1.3GB.
 
-7. **No error alerting.** If a systemd timer fails silently, the forecasts go stale and EMHASS gets no updated inputs. There is no notification mechanism.
+7. **`analyse.ipynb`** is a 36MB notebook with embedded output data committed to the repo. Should either have outputs stripped or be moved outside the repo.
 
-8. **`analyse.ipynb`** is a 35MB notebook committed to the repo — likely containing output data.
+8. **`_publish_covariates_helper()`** is defined in `forecast.py` but never called — orphaned dead code.
+
+9. **`model/` scripts are out of sync.** The four scripts in `model/` duplicate logic from `forecast.py` with hardcoded parameters. They are useful as reference but misleading as "current" code.
 
 ---
 
