@@ -1,0 +1,8 @@
+[Timer]
+# Run every midnight
+OnCalendar=00:00:00
+# Don't run on boot if system was off at midnight
+Persistent=false
+
+[Install]
+WantedBy=timers.target

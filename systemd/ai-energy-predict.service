@@ -1,0 +1,5 @@
+[Service]
+User=energy-user
+Type=oneshot
+WorkingDirectory=%h/src/ai-energy-forecast-slop
+ExecStart=/bin/bash -c 'source .venv/bin/activate && ./forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates'
