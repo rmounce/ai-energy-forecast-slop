@@ -1,0 +1,11 @@
+[Unit]
+Description=Run energy model training weekly on Monday
+
+[Timer]
+# Run every Monday at 12:00 PM (midday)
+OnCalendar=Mon 12:00:00
+# If the machine was off at noon on Monday, run the job as soon as it can
+Persistent=true
+
+[Install]
+WantedBy=timers.target

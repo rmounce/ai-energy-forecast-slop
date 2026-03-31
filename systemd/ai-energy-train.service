@@ -1,0 +1,6 @@
+[Service]
+User=saltspork
+Type=oneshot
+Nice=19
+WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
+ExecStart=/bin/bash -c 'source .venv/bin/activate && ./forecast.py train-load && ./forecast.py train-price'

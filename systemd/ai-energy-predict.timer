@@ -1,0 +1,13 @@
+[Unit]
+Description=Run energy predictions every 30 minutes
+
+[Timer]
+# This syntax means run at minute 01 and 31 of every hour
+OnCalendar=*:01,31:00
+# Ensures the job runs immediately after boot if a scheduled run was missed
+Persistent=true
+
+[Install]
+# This ensures the timer is activated when you log in
+WantedBy=timers.target
+
