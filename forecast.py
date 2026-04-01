@@ -324,7 +324,20 @@ def get_weather_forecast():
     weather_df['datetime'] = pd.to_datetime(weather_df['datetime'])
     if weather_df['datetime'].dt.tz is None:
         local_tz = pytz.timezone(CONFIG['timezone'])
-        weather_df['datetime'] = weather_df['datetime'].dt.tz_localize(local_tz)
+        # BOM returns naive local-time strings. During DST fall-back, the same wall-clock
+        # time appears twice (e.g. 02:30 ACDT then 02:30 ACST). Build an explicit ambiguous
+        # array so pandas doesn't have to guess: first occurrence = DST (True),
+        # second occurrence = standard time (False). Non-ambiguous times ignore the flag.
+        # nonexistent='shift_forward' handles spring-forward (October) where BOM may include
+        # a time that doesn't exist in local time.
+        seen: set = set()
+        ambiguous = []
+        for dt in weather_df['datetime']:
+            ambiguous.append(dt not in seen)
+            seen.add(dt)
+        weather_df['datetime'] = weather_df['datetime'].dt.tz_localize(
+            local_tz, ambiguous=ambiguous, nonexistent='shift_forward'
+        )
     weather_df['datetime'] = weather_df['datetime'].dt.tz_convert('UTC').dt.round('min')
     weather_df.set_index('datetime', inplace=True)
     weather_cols = {'temperature': 'temperature_adelaide', 'humidity': 'humidity_adelaide', 'wind_speed': 'wind_speed_adelaide'}
