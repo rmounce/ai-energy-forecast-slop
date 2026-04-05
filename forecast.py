@@ -130,6 +130,11 @@ def get_historical_data(client, start_time, end_time):
         # NSW1 Data (VERIFY aemo_dispatch_nsw1_30m measurement name)
         'total_demand_nsw1': f'SELECT mean("total_demand") FROM "rp_30m"."aemo_dispatch_nsw1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'net_interchange_nsw1': f'SELECT mean("net_interchange") FROM "rp_30m"."aemo_dispatch_nsw1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+
+        # Estimated dump load (2x2000W heaters on smart switches, active during
+        # negative price periods). Subtracted from power_load before training/
+        # prediction so the model learns base load, not dump-load-inflated load.
+        'power_dump_load': f'SELECT mean("mean_value") FROM "rp_30m"."power_dump_load_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
     }
     
     dataframes = {}
@@ -153,6 +158,13 @@ def get_historical_data(client, start_time, end_time):
     # Using 'outer' join correctly handles missing data, like your 2-week interchange gap, by creating NaNs.
     # The ffill().dropna() in the training function will handle these.
     df_combined = pd.concat(dataframes.values(), axis=1, join='outer')
+
+    if 'power_dump_load' in df_combined.columns:
+        df_combined['power_load'] = (
+            df_combined['power_load'].fillna(0) - df_combined['power_dump_load'].fillna(0)
+        ).clip(lower=0)
+        df_combined.drop(columns=['power_dump_load'], inplace=True)
+
     return add_time_features(df_combined)
 
 

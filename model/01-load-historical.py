@@ -98,6 +98,10 @@ data_sources = {
     'aemo_net_interchange_vic1': {
         'query': f'SELECT net_interchange FROM "rp_30m"."aemo_dispatch_vic1_30m" WHERE time >= \'{start_time_str}\' AND time <= \'{end_time_str}\'',
         'value_column': 'net_interchange'
+    },
+    'power_dump_load': {
+        'query': f'SELECT mean_value FROM "rp_30m"."power_dump_load_30m" WHERE time >= \'{start_time_str}\' AND time <= \'{end_time_str}\'',
+        'value_column': 'mean_value'
     }
 }
 
@@ -170,6 +174,17 @@ if dataframes:
     for df in list(dataframes.values())[1:]:
         combined_df = combined_df.join(df, how='outer')
     
+    # Subtract estimated dump load from measured load, clamped to 0.
+    # Dump load (2x2000W heaters on smart switches) runs during negative price
+    # periods and is controlled by a separate HA automation; it should not
+    # be treated as base load for forecasting purposes.
+    if 'power_dump_load' in combined_df.columns:
+        combined_df['power_load'] = (
+            combined_df['power_load'].fillna(0) - combined_df['power_dump_load'].fillna(0)
+        ).clip(lower=0)
+        combined_df.drop(columns=['power_dump_load'], inplace=True)
+        print("  Subtracted dump load from power_load")
+
     print(f"Combined DataFrame shape: {combined_df.shape}")
     print(f"Date range: {combined_df.index.min()} to {combined_df.index.max()}")
     print(f"Columns: {combined_df.columns.tolist()}")
