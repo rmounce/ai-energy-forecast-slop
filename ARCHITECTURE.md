@@ -176,6 +176,8 @@ Database: `hass`, InfluxDB v1.x
 | Measurement | Fields |
 |---|---|
 | `power_load_30m` | `mean_value`, `min_value`, `max_value` |
+| `power_dump_load_30m` | `mean_value`, `min_value`, `max_value` — estimated dump load (2×2000W heaters on smart switches, no power monitoring); subtracted from `power_load_30m` before model training/prediction |
+| `power_dump_load_5m` | `mean_value`, `min_value`, `max_value` — intermediate 5m aggregation fed by CQ |
 | `power_pv_30m` | `mean_value`, `min_value`, `max_value` |
 | `temperature_adelaide` | `mean_value` |
 | `humidity_adelaide` | `mean_value` |
