@@ -1,0 +1,13 @@
+[Unit]
+Description=Fetch AEMO PD7Day forecast 3x daily (after ~7:10am, ~12:45pm, ~5:50pm AEST updates)
+
+[Timer]
+# AEST = UTC+10. Target times: 07:20, 12:55, 18:05 AEST = 21:20, 02:55, 08:05 UTC
+OnCalendar=*-*-* 21:20:00 UTC
+OnCalendar=*-*-* 02:55:00 UTC
+OnCalendar=*-*-* 08:05:00 UTC
+# Run at next opportunity if a scheduled run was missed (e.g. machine was off)
+Persistent=true
+
+[Install]
+WantedBy=timers.target
