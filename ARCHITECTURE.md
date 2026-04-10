@@ -57,13 +57,23 @@ sudo cp systemd/ai-energy-*.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
-Three pairs of `.service` + `.timer` units drive the pipeline:
+Six pairs of `.service` + `.timer` units drive the pipeline:
+
+**Forecast pipeline:**
 
 | Timer | Schedule | What it runs |
 |---|---|---|
 | `ai-energy-predict.timer` | Every 30 min (`:01` and `:31`) | `forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates` |
 | `ai-energy-train.timer` | Monday 12:00 | `forecast.py train-load && forecast.py train-price` |
 | `ai-energy-update-tariffs.timer` | Daily 00:00 | `forecast.py update-tariffs && smooth_tariffs.py && forecast.py backfill-actuals && forecast.py update-adjusters` |
+
+**AEMO data collection (added 2026-04-10):**
+
+| Timer | Schedule | What it runs |
+|---|---|---|
+| `ai-energy-pd7day.timer` | 3×/day (07:20, 12:55, 18:05 AEST) | `ingest/ingest-pd7day.py --fetch` |
+| `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch` |
+| `ai-energy-sevendayoutlook.timer` | Every 30 min (`:15` and `:45`) | `ingest/ingest-sevendayoutlook.py --fetch` |
 
 All services run as user `saltspork`, `WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority).
 
@@ -143,7 +153,17 @@ At prediction time, `apply_tariffs_to_forecast()` adds network loss factor and c
 
 ### `ingest/` — Data Ingestion Scripts
 
-These are run manually or ad-hoc (no systemd timer). They populate InfluxDB from historical sources.
+**Active automated scripts** (have systemd timers, use `config.json`):
+
+| Script | Schedule | Source | InfluxDB destination |
+|---|---|---|---|
+| `ingest-pd7day.py --fetch` | 3×/day | AEMO NEMWeb `PD7DAY/PRICESOLUTION` | `rp_30m.aemo_pd7day_forecast` (tags: region, run_time; fields: rrp $/MWh) |
+| `ingest-predispatch.py --fetch` | Every 30 min | AEMO NEMWeb `Predispatch_Reports` | `rp_30m.aemo_predispatch_forecast` (tags: region, run_time; fields: rrp, total_demand, net_interchange) |
+| `ingest-sevendayoutlook.py --fetch` | Every 30 min | AEMO NEMWeb `SEVENDAYOUTLOOK_FULL` | `rp_30m.aemo_sevendayoutlook` (tags: region, run_time; fields: scheduled_demand, scheduled_capacity, net_interchange, scheduled_reserve) |
+
+Each script also has a `--backfill-archive` mode that imports historical weekly ZIPs from NEMWeb. Backfills were completed 2026-04-10 covering March 2025–April 2026 for PREDISPATCH and SEVENDAYOUTLOOK, and February–April 2026 for PD7Day (no older archive exists).
+
+**Manual/ad-hoc scripts** (hardcoded credentials, run once or occasionally):
 
 | Script | Source | InfluxDB destination |
 |---|---|---|
@@ -156,8 +176,6 @@ These are run manually or ad-hoc (no systemd timer). They populate InfluxDB from
 | `backfill_pv_solcast.py` | Solcast historical | `power_pv_30m` |
 | `patch_pv_gaps.py` | Interpolation | Fills gaps in `power_pv_30m` |
 | `update_solcast.py` | HA history of EMHASS curtailment events | Updates `solcast-generation.json` export-limiting flags |
-
-**Note:** The ingest scripts contain hardcoded credentials and are not in active automated use — they are one-time or occasional tools.
 
 ---
 
@@ -182,9 +200,12 @@ Database: `hass`, InfluxDB v1.x
 | `temperature_adelaide` | `mean_value` |
 | `humidity_adelaide` | `mean_value` |
 | `wind_speed_adelaide` | `mean_value` |
-| `aemo_dispatch_sa1_30m` | `price`, `total_demand`, `net_interchange` |
+| `aemo_dispatch_sa1_30m` | `price` ($/MWh), `total_demand`, `net_interchange` |
 | `aemo_dispatch_vic1_30m` | same |
 | `aemo_dispatch_nsw1_30m` | same |
+| `aemo_pd7day_forecast` | `rrp` ($/MWh) — tags: `region`, `run_time` |
+| `aemo_predispatch_forecast` | `rrp` ($/MWh), `total_demand`, `net_interchange` — tags: `region`, `run_time` |
+| `aemo_sevendayoutlook` | `scheduled_demand`, `scheduled_capacity`, `net_interchange`, `scheduled_reserve` — tags: `region`, `run_time` |
 
 Continuous queries in InfluxDB downsample raw → 5m → 30m automatically for ongoing data. See `README.md` for the CQ definitions.
 
