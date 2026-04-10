@@ -234,6 +234,7 @@ def main():
         zip_path = fetch_latest_zip(fetch_dir)
         n, status = ingest_zip(zip_path, client, existing, regions, dry_run=args.dry_run)
         print(f"{zip_path.name}: {n} points — {status}")
+        zip_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
