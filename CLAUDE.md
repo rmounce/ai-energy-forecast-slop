@@ -1,0 +1,2 @@
+- Be aware of `README.md` and `ARCHITECTURE.md`, updating them when making more substantial changes.
+- Commit changes regularly (but not excessively), giving yourself credit.
