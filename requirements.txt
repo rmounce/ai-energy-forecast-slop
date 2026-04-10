@@ -4,6 +4,10 @@ requests
 pytz
 influxdb
 u8darts[notorch]
+# torch and lightning are installed separately to get CPU-only wheels (~200MB vs ~2.5GB CUDA)
+# Install with: uv pip install torch lightning --extra-index-url https://download.pytorch.org/whl/cpu
+torch
+lightning
 joblib
 matplotlib
 holidays
