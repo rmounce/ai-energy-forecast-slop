@@ -1,0 +1,11 @@
+[Unit]
+Description=Fetch AEMO SEVENDAYOUTLOOK_FULL demand forecast every 30 minutes
+
+[Timer]
+# SEVENDAYOUTLOOK updates every 30 min alongside PREDISPATCH.
+# Run at minute 15 and 45 (staggered from PREDISPATCH fetch at :12/:42).
+OnCalendar=*:15,45:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

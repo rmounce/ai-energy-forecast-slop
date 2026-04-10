@@ -1,0 +1,11 @@
+[Unit]
+Description=Fetch AEMO PREDISPATCH forecast every 30 minutes
+
+[Timer]
+# PREDISPATCH updates every 30 min. Run at minute 12 and 42 to allow
+# publication lag (~10 min after each half-hour boundary).
+OnCalendar=*:12,42:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
