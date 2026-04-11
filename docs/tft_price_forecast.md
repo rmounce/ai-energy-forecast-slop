@@ -12,6 +12,8 @@ SHAP feature importance (Sinclair et al. Table 3): AEMO PREDISPATCH F_RRP alone 
 
 SA1 (Adelaide/South Australia) is the most volatile NEM region; expect nMAPE ~38–48% (vs 33–40% for NSW1) due to higher price spike frequency.
 
+**Metric Integrity:** Evaluation uses a custom `nMAPE` computed against raw price targets. Point-wise nMAPE (dividing each error by specific price) is avoided to prevent explosive metrics during $0 or negative prices. Instead, a global normalization is used: `sum(|error|) / sum(|actual|)`.
+
 ---
 
 ## Data Sources
@@ -60,6 +62,8 @@ AEMO PREDISPATCH runs every 30 min and forecasts up to "the end of the next trad
 **Consequence for training dataset construction:** Using a hard cutoff of `output_length=56` (28h) would include only 47.9% of runs AND would systematically exclude all runs issued between ~UTC 15:00–02:00 (AEST 01:00–12:00). This creates severe time-of-day bias: the model would never see morning forecasts during training.
 
 **Solution adopted:** Masked loss with `output_length=144` (72h). Each sample has a per-step mask indicating which steps have valid covariates. Steps 1–32 train from ~15K samples (97.9% of runs); steps 33–56 from ~8.5K (47.9%); steps 57–144 from ~1K initially (PD7Day backfill). No time-of-day bias.
+
+**Missing Data Handling:** Non-present covariates are padded with `0.0`. However, since features are normalized via `QuantileTransformer` (Gaussian distribution), `0.0` maps to the median price (~$50-60/MWh). To prevent the model from hallucinating median prices for missing horizons (especially the 72h tail), a `covar_missing` boolean feature is provided. The LSTM learns to ignore median-mapped inputs when `covar_missing=1.0`.
 
 ---
 
