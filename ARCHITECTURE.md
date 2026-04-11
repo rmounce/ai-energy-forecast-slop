@@ -222,6 +222,28 @@ Standalone utility called by the nightly `ai-energy-update-tariffs` service. Smo
 
 ---
 
+### `data/` and `train/` — TFT Price Model (in development)
+
+A new price forecasting model is being developed to replace the LightGBM+Amber APF approach. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**.
+
+**Summary:**
+- Model type: LSTM encoder-decoder with cross-attention (simplified TFT, Lim et al. 2021)
+- Encoder: 96 steps (2 days) of actual historical price, demand, load, PV, weather
+- Decoder: 144 steps (72h) of PREDISPATCH forecasts (h=1–56) + PD7Day (h=57–144)
+- Covariate construction: Option B (run-aligned) — each training sample uses the PREDISPATCH run issued at the encoder/decoder boundary, exactly matching inference
+- Masked loss: each decoder step independently masked; handles variable PREDISPATCH horizon and growing PD7Day history
+- Key insight from Sinclair et al. 2026 (SHAP): PREDISPATCH RRP alone is >60% of predictive importance
+
+**Data pipeline:**
+1. `ingest/ingest-predispatch.py` and `ingest/ingest-pd7day.py` → InfluxDB (ongoing, systemd timers)
+2. `data/export_parquet.py` → Parquet cache (run on demand)
+3. `data/build_training_dataset.py` → numpy arrays for training
+4. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
+
+**Status (2026-04-11):** Training pipeline complete, first training run underway.
+
+---
+
 ### `model/` — Offline Training Scripts (exploratory, not part of automated pipeline)
 
 These scripts were used to develop and validate the ML approach before it was integrated into `forecast.py`. They are **not called by any systemd service** and are not kept in sync with the main script.
@@ -338,7 +360,7 @@ HC_PREDICT_URL=https://hc-ping.com/<your-uuid>
 
 | Layer | Technology |
 |---|---|
-| ML framework | [Darts](https://unit8co.github.io/darts/) + LightGBM |
+| ML framework | [Darts](https://unit8co.github.io/darts/) + LightGBM (existing); PyTorch LSTM encoder-decoder (TFT, in development) |
 | Time series DB | InfluxDB v1.x |
 | Home automation | Home Assistant |
 | Energy optimiser | EMHASS (MPC mode) |
