@@ -223,7 +223,7 @@ def export_actuals(client):
 
     # 1. AEMO dispatch actuals (price, demand, interchange)
     # Start 2 days before first PREDISPATCH run (needed for encoder context)
-    ACTUALS_START = "2025-03-20T00:00:00Z"
+    ACTUALS_START = "2024-03-29T00:00:00Z"
     print("  Fetching dispatch actuals...")
     dispatch = query_batched(
         client,
@@ -280,6 +280,12 @@ def export_actuals(client):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Export InfluxDB data to Parquet")
+    parser.add_argument("--actuals-only", action="store_true",
+                        help="Re-export only actuals_sa1.parquet (preserves backfilled PREDISPATCH)")
+    args = parser.parse_args()
+
     print("=== Parquet export from InfluxDB ===")
     print(f"Output directory: {OUT_DIR}")
 
@@ -287,10 +293,14 @@ def main():
     client = influx_client(cfg)
     print(f"Connected to InfluxDB: {cfg['influxdb']['host']}:{cfg['influxdb'].get('port', 8086)}")
 
-    export_predispatch(client)
-    export_pd7day(client)
-    export_sevendayoutlook(client)
-    export_actuals(client)
+    if args.actuals_only:
+        print("(--actuals-only: skipping PREDISPATCH, PD7Day, SevenDayOutlook)")
+        export_actuals(client)
+    else:
+        export_predispatch(client)
+        export_pd7day(client)
+        export_sevendayoutlook(client)
+        export_actuals(client)
 
     print("\n=== Export complete ===")
     print("Files:")
