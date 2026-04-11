@@ -163,6 +163,12 @@ At prediction time, `apply_tariffs_to_forecast()` adds network loss factor and c
 
 Each script also has a `--backfill-archive` mode that imports historical weekly ZIPs from NEMWeb. Backfills were completed 2026-04-10 covering March 2025–April 2026 for PREDISPATCH and SEVENDAYOUTLOOK, and February–April 2026 for PD7Day (no older archive exists).
 
+**NEMSEER/NEMWeb historical backfill** (writes directly to Parquet, not InfluxDB):
+
+| Script | Coverage | Notes |
+|---|---|---|
+| `ingest/backfill_predispatch_nemseer.py` | April 2024 – February 2025 | Uses NEMSEER library for pre-Aug 2024 (MMSDM archive); direct HTTP for Aug 2024+ (AEMO restructured the archive format). Output merged into `data/parquet/aemo_predispatch_sa1.parquet`. Cache in `data/nemseer_cache/` (~0.5GB). |
+
 **Manual/ad-hoc scripts** (hardcoded credentials, run once or occasionally):
 
 | Script | Source | InfluxDB destination |
@@ -236,11 +242,13 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 
 **Data pipeline:**
 1. `ingest/ingest-predispatch.py` and `ingest/ingest-pd7day.py` → InfluxDB (ongoing, systemd timers)
-2. `data/export_parquet.py` → Parquet cache (run on demand)
-3. `data/build_training_dataset.py` → numpy arrays for training
-4. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
+2. `ingest/backfill_predispatch_nemseer.py` → extends PREDISPATCH parquet back to 2024-04 (run once; ~2 min from cache)
+3. `data/export_parquet.py --actuals-only` → refreshes actuals Parquet from InfluxDB without overwriting the NEMSEER-backfilled PREDISPATCH
+4. `data/build_training_dataset.py` → numpy arrays for training
+5. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
+6. `train/evaluate_tft.py` → nMAPE comparison vs LightGBM at 2h/4h/8h/16h/28h horizons
 
-**Status (2026-04-11):** Training pipeline complete, first training run underway.
+**Status (2026-04-12):** First training run complete. NEMSEER backfill extends PREDISPATCH to 2024-04; actuals extended to 2024-03-29 — expanding training from ~17K to ~33K samples. Second training run in progress.
 
 ---
 

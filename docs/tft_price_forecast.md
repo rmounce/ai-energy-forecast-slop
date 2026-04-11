@@ -26,7 +26,8 @@ All data ingested to InfluxDB (`hass` database, `rp_30m` retention policy) by sc
 - **Horizon:** Variable, ~28h into the future (see "PREDISPATCH horizon cycle" below)
 - **Tags:** `region` (SA1, VIC1, NSW1), `run_time` (ISO UTC, when run was issued)
 - **Fields:** `rrp` ($/MWh), `total_demand` (MW), `net_interchange` (MW)
-- **Backfill:** March 2025 – April 2026 (13 months, ~990K rows for SA1)
+- **Backfill (InfluxDB):** March 2025 – April 2026 (13 months, ~990K rows for SA1)
+- **Backfill (NEMSEER/NEMWeb):** April 2024 – February 2025 via `ingest/backfill_predispatch_nemseer.py` — extends parquet to ~1.87M rows, 33K runs. Uses NEMSEER for pre-Aug 2024 (MMSDM archive) and direct NEMWeb HTTP for Aug 2024+ (AEMO restructured the archive format).
 - **Bias note:** Structurally biased upward due to strategic generator rebidding. TFT learns this bias correction via horizon-dependent attention.
 
 ### PD7Day (`aemo_pd7day_forecast`)
@@ -45,6 +46,8 @@ All data ingested to InfluxDB (`hass` database, `rp_30m` retention policy) by sc
 ### Actuals (`aemo_dispatch_sa1_30m`)
 - Historical SA1 dispatch price and demand, updated via `ingest/ingest-nem-data.py`
 - `price` field = RRP in $/MWh; `total_demand` and `net_interchange` in MW
+- InfluxDB data goes back to 2021-12-31; local sensor data (power_load, power_pv) from 2021-12-29; weather (temp, humidity, wind_speed) from 2023-04-19
+- `data/export_parquet.py --actuals-only` re-exports actuals without overwriting the NEMSEER-backfilled PREDISPATCH parquet
 
 ---
 
@@ -168,7 +171,7 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 - CosineAnnealingLR (T_max=n_epochs, eta_min=0.01×lr)
 - Early stopping on val loss, patience=7
 - Gradient clipping, max_norm=1.0
-- Default: 50 epochs; use 100+ for production runs
+- Default: 100 epochs
 
 ---
 
@@ -206,18 +209,20 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 
 ---
 
-## Dataset Stats (as of 2026-04-11)
+## Dataset Stats (as of 2026-04-12)
 
 | Metric | Value |
 |---|---|
-| PREDISPATCH SA1 rows | 990,683 (17,851 runs, March 2025 – April 2026) |
+| PREDISPATCH SA1 rows | ~1,878,000 (33,844 runs, April 2024 – April 2026) |
 | PD7Day SA1 rows | 64,294 (183 runs, Feb 2026 – April 2026) |
-| Training samples total | ~15,500 |
-| Train / Val split | ~15,200 / ~260 (last 30 days = val) |
-| Steps 1–16h mask coverage | ~100% |
-| Steps 1–28h mask coverage | ~53% |
-| Steps 28–72h mask coverage | ~5–7% (growing as PD7Day accumulates) |
-| Target RRP stats ($/MWh) | mean=95.5, p50=59.6, p99=433, max=20,300 |
+| Training samples total | ~33,500 (previously ~17K before NEMSEER backfill + actuals extension) |
+| Train / Val split | ~32,700 / ~820 (last 30 days = val) |
+| Steps 1–16h mask coverage | ~98% |
+| Steps 1–28h mask coverage | ~87% |
+| Steps 28–72h mask coverage | ~11% (growing as PD7Day accumulates) |
+| Target RRP stats ($/MWh) | mean=87.8, p50=58.7, p99=~220, max=20,300 |
+
+**Key constraint:** encoder requires 2 days of actuals before each run_time. Actuals go back to 2024-03-29 in InfluxDB (weather only to 2023-04-19, which still covers the full backfill window). PREDISPATCH runs before 2024-04-01 cannot be used as training samples.
 
 ---
 
@@ -254,29 +259,37 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 
 ## Current Status and Next Steps
 
-### Complete (as of 2026-04-11)
+### Complete (as of 2026-04-12)
 1. ✅ AEMO ingest infrastructure: PREDISPATCH, PD7Day, SevenDayOutlook → InfluxDB
-2. ✅ Parquet ML cache layer: `data/export_parquet.py`
+2. ✅ Parquet ML cache layer: `data/export_parquet.py` (with `--actuals-only` flag)
 3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py`
-4. ✅ Training script: `train/train_tft_price.py` (masked QuantileLoss, 50-epoch default)
+4. ✅ Training script: `train/train_tft_price.py` (masked QuantileLoss, 100-epoch default)
+5. ✅ First training run and rolling-origin evaluation: `train/evaluate_tft.py`
+6. ✅ NEMSEER/NEMWeb backfill: `ingest/backfill_predispatch_nemseer.py` (2024-04 → 2025-02)
+7. ✅ Actuals extended to 2024-03-29; ~33K training samples now available
 
-### Immediate next steps
-5. **First training run:** `python train/train_tft_price.py` (~30–60 min on CPU)
-   - Output: `models/tft_price/checkpoint_best.pt` + `training_log.csv`
-   - Review per-horizon nMAPE: 16h / 28h / 72h breakdowns in training log
-6. **Rolling-origin evaluation:** `train/evaluate_tft.py` (not yet written)
-   - For each week W in last 3 months: train on pre-W data, predict week W, compute nMAPE
-   - Compare vs LightGBM nMAPE at 2h/4h/8h/16h horizons
-7. **Wire into forecast.py:** add TFT prediction path alongside LightGBM
-   - At inference time: query latest PREDISPATCH and PD7Day runs from InfluxDB
-   - Apply `scalers.pkl` to normalise decoder inputs
-   - Inverse-transform outputs to $/MWh
+### Baseline evaluation results (17K samples, epoch 1 best)
+| Horizon | TFT | LightGBM | Delta |
+|---|---|---|---|
+| 2h | 29.6% | 26.4% | +3.2% (TFT loses) |
+| 4h | 31.4% | 29.2% | +2.2% (TFT loses) |
+| 8h | 32.9% | 34.6% | **-1.6%** ✓ |
+| 16h | 34.2% | 40.6% | **-6.4%** ✓ |
+| 28h | 34.7% | 42.6% | **-7.9%** ✓ |
+
+**Performance requirement:** TFT must outperform LightGBM at ALL horizons including 2–4h. Training is currently data-starved (early stopping at epoch 1). Re-training with ~33K samples in progress.
+
+### Next steps
+8. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
+   - At inference time: read latest PREDISPATCH and PD7Day from InfluxDB (single source of truth)
+   - Apply `scalers.pkl` to normalise decoder inputs; inverse-transform outputs to $/MWh
    - A/B compare for several weeks before switching
+9. **Retailer switch:** remove Amber APF calls after TFT validated in production
+10. **P5MIN integration (later):** 0–2h near-term improvement via 5-min resolution
 
 ### Longer-term
-8. As PD7Day accumulates, rebuild dataset and retrain monthly (systemd timer, same as LightGBM)
-9. Extend to 144 full steps once 6+ months of PD7Day provides adequate long-horizon training signal
-10. Retailer switch (remove Amber dependency) after TFT is validated in production
+11. Rebuild dataset and retrain monthly (systemd timer) as PD7Day accumulates
+12. If 2–4h gap persists after ~33K samples, next lever is P5MIN decoder input (steps 1–2) and/or explicit price-spike/regime encoder features
 
 ---
 
@@ -284,38 +297,51 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 
 | File | Purpose |
 |---|---|
-| `data/export_parquet.py` | Export InfluxDB → Parquet (run once; re-run to refresh) |
+| `data/export_parquet.py` | Export InfluxDB → Parquet. `--actuals-only` skips PREDISPATCH/PD7Day (preserves backfill) |
 | `data/build_training_dataset.py` | Build run-aligned numpy arrays from Parquet |
-| `data/parquet/aemo_predispatch_sa1.parquet` | PREDISPATCH export |
-| `data/parquet/actuals_sa1.parquet` | Actuals (dispatch + local sensors) |
+| `data/parquet/aemo_predispatch_sa1.parquet` | PREDISPATCH: InfluxDB (2025-03+) merged with NEMSEER backfill (2024-04 to 2025-02) |
+| `data/parquet/aemo_pd7day_sa1.parquet` | PD7Day (Feb 2026+) |
+| `data/parquet/actuals_sa1.parquet` | Actuals (dispatch + local sensors, 2024-03-29+) |
 | `data/parquet/X_encoder.npy` | Built training encoder arrays [N, 96, 14] |
 | `data/parquet/X_decoder.npy` | Built training decoder arrays [N, 144, 11] |
 | `data/parquet/y_targets.npy` | Normalised target RRP [N, 144] |
+| `data/parquet/y_targets_raw.npy` | Raw target RRP in $/MWh [N, 144] |
 | `data/parquet/y_mask.npy` | Valid-step mask [N, 144] bool |
 | `data/parquet/scalers.pkl` | Fitted QuantileTransformer per feature |
 | `data/parquet/dataset_meta.json` | Shape/coverage metadata |
 | `train/train_tft_price.py` | Training script |
-| `train/train_tft_price.log` | Last training stdout |
+| `train/evaluate_tft.py` | Rolling-origin evaluation: TFT vs LightGBM nMAPE at 2h/4h/8h/16h/28h |
 | `models/tft_price/checkpoint_best.pt` | Best trained model |
 | `models/tft_price/training_log.csv` | Epoch-level metrics |
+| `models/tft_price/evaluation_results.csv` | nMAPE comparison table (written by evaluate_tft.py) |
 | `ingest/ingest-predispatch.py` | PREDISPATCH ingestion (--fetch / --backfill-archive) |
 | `ingest/ingest-pd7day.py` | PD7Day ingestion (--fetch / backfill) |
+| `ingest/backfill_predispatch_nemseer.py` | Historical PREDISPATCH backfill via NEMSEER (pre-Aug 2024) + direct NEMWeb (Aug 2024+) |
 
 ---
 
 ## Rebuilding the Dataset
 
-When new data has accumulated (e.g., more PD7Day runs):
+When new data has accumulated (e.g., more PD7Day runs, or after NEMSEER backfill):
 
 ```bash
-# 1. Refresh Parquet cache from InfluxDB
+# 1a. Refresh Parquet cache from InfluxDB (actuals only — preserves NEMSEER-backfilled PREDISPATCH)
+python data/export_parquet.py --actuals-only
+
+# 1b. Or full refresh (overwrites PREDISPATCH parquet from InfluxDB — requires re-running backfill after)
 python data/export_parquet.py
+python ingest/backfill_predispatch_nemseer.py --start 2024-04 --end 2025-02
 
 # 2. Rebuild training arrays
 python data/build_training_dataset.py
 
 # 3. Retrain
-python train/train_tft_price.py
+python train/train_tft_price.py --epochs 100
+
+# 4. Evaluate
+python train/evaluate_tft.py
 ```
 
-All three steps are idempotent (overwrite outputs). Typical runtime: export ~10 min, build ~5 min, train ~30–60 min on CPU.
+All steps are idempotent (overwrite outputs). Typical runtime: actuals export ~5 min, backfill ~2 min (cached), build ~3 min, train ~70 min on CPU (100 epochs), evaluate ~2 min.
+
+**Important:** `data/export_parquet.py` (without `--actuals-only`) overwrites `aemo_predispatch_sa1.parquet` with InfluxDB data only (2025-03+), losing the NEMSEER backfill. Always use `--actuals-only` for routine refreshes. The backfill cache in `data/nemseer_cache/` is gitignored but safe to keep; re-running the backfill is fast (~2 min) because all ZIPs are cached locally.
