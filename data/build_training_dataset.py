@@ -150,7 +150,7 @@ def build_samples(actuals: pd.DataFrame,
     all_steps = pd.RangeIndex(output_length)     # 0..143
 
     (enc_list, dec_list, target_list,
-     mask_list, run_time_list) = [], [], [], [], []
+     mask_list, covar_mask_list, run_time_list) = [], [], [], [], [], []
     stats = dict(skipped_encoder=0, skipped_min_valid=0, total=0)
 
     for i, run_t in enumerate(all_run_times):
@@ -216,6 +216,8 @@ def build_samples(actuals: pd.DataFrame,
             except KeyError:
                 pass
 
+        covar_mask = mask_arr.copy()
+
         # -- Targets: actual RRP (sets mask to False where actuals unavailable)
         target_actual = actuals.loc[
             run_t + dt30 : run_t + output_length * dt30, "rrp"
@@ -237,6 +239,7 @@ def build_samples(actuals: pd.DataFrame,
         dec_list.append(dec_arr)
         target_list.append(targ_arr)
         mask_list.append(mask_arr)
+        covar_mask_list.append(covar_mask)
         run_time_list.append(run_t)
 
     print(f"  Valid samples:  {len(enc_list):,}")
@@ -247,6 +250,7 @@ def build_samples(actuals: pd.DataFrame,
     X_dec  = np.stack(dec_list)     # [N, 144, N_DEC]
     y_raw  = np.stack(target_list)  # [N, 144]
     y_mask = np.stack(mask_list)    # [N, 144] bool
+    y_covar_mask = np.stack(covar_mask_list) # [N, 144] bool
 
     # Print coverage stats
     cov_by_step = y_mask.mean(axis=0)
@@ -259,20 +263,22 @@ def build_samples(actuals: pd.DataFrame,
             X_dec,
             y_raw,
             y_mask,
+            y_covar_mask,
             np.array(run_time_list, dtype="datetime64[ns]"))
 
 
 # ─── Train/val split ─────────────────────────────────────────────────────────
 
-def split_by_time(run_times: np.ndarray, val_days: int = VAL_DAYS):
+def split_by_time(run_times: np.ndarray, val_days: int = VAL_DAYS, train_gap_hours: int = 72):
     rts = pd.DatetimeIndex(run_times)
-    cutoff = rts.max() - pd.Timedelta(days=val_days)
-    return rts < cutoff, rts >= cutoff
+    cutoff_val = rts.max() - pd.Timedelta(days=val_days)
+    cutoff_train = cutoff_val - pd.Timedelta(hours=train_gap_hours)
+    return rts < cutoff_train, rts >= cutoff_val
 
 
 # ─── Normalisation ───────────────────────────────────────────────────────────
 
-def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train):
+def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_train):
     """
     Fit QuantileTransformer per continuous feature on train split only.
     Time encoding and horizon_norm features are NOT normalised (already bounded).
@@ -291,7 +297,8 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train):
     for j, feat in enumerate(ENC_CONTINUOUS):
         fit_one(feat, X_enc_train[:, :, j])
     for j, feat in enumerate(DEC_CONTINUOUS):
-        fit_one(feat, X_dec_train[:, :, j])
+        valid_covars = X_dec_train[:, :, j][y_covar_mask_train]
+        fit_one(feat, valid_covars)
 
     # Target: fit on VALID train steps only to avoid fitting on zero-padded values
     valid_targets = y_train[y_mask_train]
@@ -300,7 +307,7 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train):
     return scalers
 
 
-def apply_scalers(X_enc, X_dec, y_raw, y_mask, scalers):
+def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers):
     """Apply fitted scalers. Non-continuous features pass through unchanged."""
     X_enc_n = X_enc.copy()
     X_dec_n = X_dec.copy()
@@ -311,8 +318,9 @@ def apply_scalers(X_enc, X_dec, y_raw, y_mask, scalers):
         X_enc_n[:, :, j] = scalers[feat].transform(flat).reshape(X_enc_n[:, :, j].shape)
 
     for j, feat in enumerate(DEC_CONTINUOUS):
-        flat = X_dec_n[:, :, j].reshape(-1, 1)
-        X_dec_n[:, :, j] = scalers[feat].transform(flat).reshape(X_dec_n[:, :, j].shape)
+        view = X_dec_n[:, :, j]
+        valid_flat = view[y_covar_mask].reshape(-1, 1)
+        view[y_covar_mask] = scalers[feat].transform(valid_flat).reshape(-1)
 
     qt = scalers["target_rrp"]
     # Only transform valid targets; leave zero-padded positions as 0
@@ -373,7 +381,7 @@ def main():
 
     # ── Build samples
     print("\nBuilding run-aligned samples...")
-    X_enc, X_dec, y_raw, y_mask, run_times = build_samples(
+    X_enc, X_dec, y_raw, y_mask, y_covar_mask, run_times = build_samples(
         actuals, predispatch, pd7day,
         dry_run=args.dry_run,
         output_length=out_len,
@@ -400,9 +408,9 @@ def main():
     if not args.no_normalise:
         print("\nFitting scalers on train split...")
         scalers = fit_scalers(X_enc[train_mask], X_dec[train_mask],
-                              y_raw[train_mask], y_mask[train_mask])
+                              y_raw[train_mask], y_mask[train_mask], y_covar_mask[train_mask])
         print("\nApplying scalers...")
-        X_enc_n, X_dec_n, y_norm = apply_scalers(X_enc, X_dec, y_raw, y_mask, scalers)
+        X_enc_n, X_dec_n, y_norm = apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers)
         with open(PARQUET_DIR / "scalers.pkl", "wb") as f:
             pickle.dump(scalers, f)
         print(f"  Scalers saved: {PARQUET_DIR}/scalers.pkl")
@@ -417,6 +425,7 @@ def main():
     np.save(PARQUET_DIR / "y_targets.npy",    y_norm)
     np.save(PARQUET_DIR / "y_targets_raw.npy", y_raw)
     np.save(PARQUET_DIR / "y_mask.npy",       y_mask)
+    np.save(PARQUET_DIR / "y_covar_mask.npy", y_covar_mask)
     np.save(PARQUET_DIR / "run_times.npy",    run_times)
     train_idx = np.where(train_mask)[0]
     val_idx   = np.where(val_mask)[0]
