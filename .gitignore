@@ -17,5 +17,15 @@ nemosis_cache/
 # Scratch/working data
 scratch/
 
+# ML data files (rebuilt from InfluxDB via data/export_parquet.py)
+data/parquet/
+*.npy
+*.npz
+*.parquet
+
+# Trained model checkpoints (large binaries)
+models/
+*.pt
+
 # Explicitly include
 !config.example.json
