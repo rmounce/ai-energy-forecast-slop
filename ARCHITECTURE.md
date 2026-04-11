@@ -229,7 +229,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 **Summary:**
 - Model type: LSTM encoder-decoder with cross-attention (simplified TFT, Lim et al. 2021)
 - Encoder: 96 steps (2 days) of actual historical price, demand, load, PV, weather
-- Decoder: 144 steps (72h) of PREDISPATCH forecasts (h=1–56) + PD7Day (h=57–144)
+- Decoder: 144 steps (72h) of PREDISPATCH forecasts (h=1–56) + PD7Day (h=57–144) + `covar_missing` flag (prevents 0-padding from being interpreted as median price)
 - Covariate construction: Option B (run-aligned) — each training sample uses the PREDISPATCH run issued at the encoder/decoder boundary, exactly matching inference
 - Masked loss: each decoder step independently masked; handles variable PREDISPATCH horizon and growing PD7Day history
 - Key insight from Sinclair et al. 2026 (SHAP): PREDISPATCH RRP alone is >60% of predictive importance

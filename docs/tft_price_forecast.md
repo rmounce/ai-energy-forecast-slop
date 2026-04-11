@@ -190,7 +190,7 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 | `dow_sin/cos` | computed | Weekly cycle encoding |
 | `month_sin/cos` | computed | Annual seasonality encoding |
 
-### Decoder (10 features, future 144 × 30min = 72h)
+### Decoder (11 features, future 144 × 30min = 72h)
 
 | Feature | Source | Steps | Notes |
 |---|---|---|---|
@@ -202,6 +202,7 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 | `dow_sin/cos` | computed | 1–144 | |
 | `month_sin/cos` | computed | 1–144 | |
 | `horizon_norm` | computed | 1–144 | (h-1)/143; "hours to delivery" |
+| `covar_missing` | computed | 1–144 | 1.0 where no valid covariate exists; prevents model treating 0-padded steps as median price |
 
 ---
 
@@ -288,7 +289,7 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 | `data/parquet/aemo_predispatch_sa1.parquet` | PREDISPATCH export |
 | `data/parquet/actuals_sa1.parquet` | Actuals (dispatch + local sensors) |
 | `data/parquet/X_encoder.npy` | Built training encoder arrays [N, 96, 14] |
-| `data/parquet/X_decoder.npy` | Built training decoder arrays [N, 144, 10] |
+| `data/parquet/X_decoder.npy` | Built training decoder arrays [N, 144, 11] |
 | `data/parquet/y_targets.npy` | Normalised target RRP [N, 144] |
 | `data/parquet/y_mask.npy` | Valid-step mask [N, 144] bool |
 | `data/parquet/scalers.pkl` | Fitted QuantileTransformer per feature |
