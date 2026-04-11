@@ -96,7 +96,7 @@ ENC_FEATURES   = ENC_CONTINUOUS + TIME_FEATURES          # 14 features
 
 # Decoder: forecast covariates (PREDISPATCH/PD7Day) + time + horizon
 DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange"]
-DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + ["horizon_norm"]  # 10 features
+DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + ["horizon_norm", "covar_missing"]  # 11 features
 
 
 # ─── Time encoding helpers ──────────────────────────────────────────────────
@@ -217,6 +217,7 @@ def build_samples(actuals: pd.DataFrame,
                 pass
 
         covar_mask = mask_arr.copy()
+        dec_arr[:, n_cont + 7] = (~covar_mask).astype(np.float32)
 
         # -- Targets: actual RRP (sets mask to False where actuals unavailable)
         target_actual = actuals.loc[

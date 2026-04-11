@@ -4,10 +4,14 @@
 
 # Trained model
 *.pkl
+*.log
+TransformerApplicationNEM/
 
 # Python
 __pycache__/
 *.pyc
+scratch.py
+test.py
 .venv/
 .env
 

@@ -58,17 +58,18 @@ QUANTILES = [0.1, 0.5, 0.9]
 # ─── Dataset ─────────────────────────────────────────────────────────────────
 
 class PREDISPATCHDataset(Dataset):
-    def __init__(self, X_enc, X_dec, y, mask):
+    def __init__(self, X_enc, X_dec, y, y_raw, mask):
         self.X_enc = torch.tensor(X_enc, dtype=torch.float32)
         self.X_dec = torch.tensor(X_dec, dtype=torch.float32)
         self.y     = torch.tensor(y,     dtype=torch.float32)
+        self.y_raw = torch.tensor(y_raw, dtype=torch.float32)
         self.mask  = torch.tensor(mask,  dtype=torch.bool)
 
     def __len__(self):
         return len(self.y)
 
     def __getitem__(self, i):
-        return self.X_enc[i], self.X_dec[i], self.y[i], self.mask[i]
+        return self.X_enc[i], self.X_dec[i], self.y[i], self.y_raw[i], self.mask[i]
 
 
 # ─── Model ───────────────────────────────────────────────────────────────────
@@ -187,7 +188,7 @@ def run_epoch(model, loader, criterion, optimiser=None):
     n_batches = 0
 
     with torch.set_grad_enabled(training):
-        for X_enc, X_dec, y, mask in loader:
+        for X_enc, X_dec, y, y_raw, mask in loader:
             preds = model(X_enc, X_dec)
             loss = criterion(preds, y, mask)
 
@@ -211,25 +212,26 @@ def evaluate_nmape(model, loader, scalers):
     all_pred_raw, all_targ_raw, all_masks = [], [], []
 
     with torch.no_grad():
-        for X_enc, X_dec, y_norm, mask in loader:
+        for X_enc, X_dec, y_norm, y_batch_raw, mask in loader:
             preds_norm = model(X_enc, X_dec)           # [B, T, 3]
             preds_norm, _ = torch.sort(preds_norm, dim=-1) # Prevent quantile crossing
             p50_norm   = preds_norm[:, :, 1].numpy()   # median quantile
             p50_raw = qt.inverse_transform(p50_norm.reshape(-1, 1)).reshape(p50_norm.shape)
-            y_raw   = qt.inverse_transform(y_norm.numpy().reshape(-1, 1)).reshape(y_norm.numpy().shape)
+            
             all_pred_raw.append(p50_raw)
-            all_targ_raw.append(y_raw)
+            all_targ_raw.append(y_batch_raw.numpy())
             all_masks.append(mask.numpy())
 
     pred  = np.concatenate(all_pred_raw, axis=0)    # [N, T]
     targ  = np.concatenate(all_targ_raw, axis=0)
     masks = np.concatenate(all_masks,    axis=0)
 
-    # nMAPE over valid steps only: mean(|pred - actual| / max(|actual|, 1)) × 100
+    # nMAPE over valid steps only: mean(|pred - actual|) / mean(|actual|) × 100
     p_valid = pred[masks]
     t_valid = targ[masks]
-    denom   = np.maximum(np.abs(t_valid), 1.0)
-    nmape   = np.mean(np.abs(p_valid - t_valid) / denom) * 100
+    mae     = np.mean(np.abs(p_valid - t_valid))
+    denom   = np.mean(np.abs(t_valid))
+    nmape   = (mae / denom) * 100 if denom > 0 else 0.0
 
     # Also compute per-horizon-bucket nMAPE
     def bucket_nmape(lo, hi):
@@ -238,7 +240,9 @@ def evaluate_nmape(model, loader, scalers):
         bt = targ[:, lo:hi][bm]
         if len(bt) == 0:
             return float("nan")
-        return np.mean(np.abs(bp - bt) / np.maximum(np.abs(bt), 1.0)) * 100
+        b_mae   = np.mean(np.abs(bp - bt))
+        b_denom = np.mean(np.abs(bt))
+        return (b_mae / b_denom) * 100 if b_denom > 0 else 0.0
 
     return nmape, {
         "1-16h":  bucket_nmape(0, 32),
@@ -278,6 +282,7 @@ def main():
     X_enc  = np.load(PARQUET_DIR / "X_encoder.npy")
     X_dec  = np.load(PARQUET_DIR / "X_decoder.npy")
     y      = np.load(PARQUET_DIR / "y_targets.npy")
+    y_raw  = np.load(PARQUET_DIR / "y_targets_raw.npy")
     y_mask = np.load(PARQUET_DIR / "y_mask.npy")
     split  = np.load(PARQUET_DIR / "split_indices.npz")
     train_idx = split["train"]
@@ -303,9 +308,9 @@ def main():
 
     # ── DataLoaders
     train_ds = PREDISPATCHDataset(X_enc[train_idx], X_dec[train_idx],
-                                  y[train_idx],     y_mask[train_idx])
+                                  y[train_idx],     y_raw[train_idx], y_mask[train_idx])
     val_ds   = PREDISPATCHDataset(X_enc[val_idx],   X_dec[val_idx],
-                                  y[val_idx],        y_mask[val_idx])
+                                  y[val_idx],       y_raw[val_idx],   y_mask[val_idx])
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
