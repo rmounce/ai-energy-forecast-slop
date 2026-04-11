@@ -164,11 +164,16 @@ class MaskedQuantileLoss(nn.Module):
         mask:    [B, T] bool — 1 where loss should be computed
         """
         loss = torch.tensor(0.0, device=preds.device)
-        n_valid = mask.float().sum().clamp(min=1.0)
+        n_valid_per_seq = mask.float().sum(dim=1).clamp(min=1.0)
+        
         for i, q in enumerate(self.quantiles):
             e = targets - preds[:, :, i]
             step_loss = torch.max(q * e, (q - 1) * e)         # [B, T]
-            loss = loss + (step_loss * mask.float()).sum() / n_valid
+            
+            # Mean loss per sequence, then mean over batch
+            seq_loss = (step_loss * mask.float()).sum(dim=1) / n_valid_per_seq
+            loss = loss + seq_loss.mean()
+            
         return loss / len(self.quantiles)
 
 
@@ -208,6 +213,7 @@ def evaluate_nmape(model, loader, scalers):
     with torch.no_grad():
         for X_enc, X_dec, y_norm, mask in loader:
             preds_norm = model(X_enc, X_dec)           # [B, T, 3]
+            preds_norm, _ = torch.sort(preds_norm, dim=-1) # Prevent quantile crossing
             p50_norm   = preds_norm[:, :, 1].numpy()   # median quantile
             p50_raw = qt.inverse_transform(p50_norm.reshape(-1, 1)).reshape(p50_norm.shape)
             y_raw   = qt.inverse_transform(y_norm.numpy().reshape(-1, 1)).reshape(y_norm.numpy().shape)
