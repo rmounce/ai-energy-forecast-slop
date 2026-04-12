@@ -36,7 +36,10 @@ Usage:
   python train/train_tft_price.py --dry-run   # 5 epochs, small batch, check shapes
 
 Optimizer: AdamW (lr=2e-4, weight_decay=1e-4) + ReduceLROnPlateau(factor=0.5, patience=2).
-Early stopping: monitors nMAPE_28h (lower is better); falls back to val_loss when NaN.
+Loss: horizon-weighted quantile loss — weight_h = exp(-h/tau), default tau=14 (7h).
+  Short-horizon steps dominate gradients; long-horizon steps still contribute but less.
+Early stopping: monitors wMAPE (horizon-weighted nMAPE, same weights as loss);
+  falls back to val_loss when NaN.
 """
 
 import argparse
@@ -155,10 +158,20 @@ class MaskedQuantileLoss(nn.Module):
       - Steps 1–32 (~15K samples): all unmasked
       - Steps 33–56 (~8.5K samples): PREDISPATCH coverage
       - Steps 57–144 (~1K samples): PD7Day coverage, growing over time
+
+    Optional horizon_weights [T]: per-step multipliers applied before averaging.
+    Normalisation uses the sum of effective weights (mask * horizon_weight) so
+    the loss scale stays stable regardless of the weight profile.
+    Use exponential decay (exp(-step / tau)) to upweight short-horizon steps.
     """
-    def __init__(self, quantiles: list = QUANTILES):
+    def __init__(self, quantiles: list = QUANTILES,
+                 horizon_weights: torch.Tensor = None):
         super().__init__()
         self.quantiles = quantiles
+        if horizon_weights is not None:
+            self.register_buffer("horizon_weights", horizon_weights)
+        else:
+            self.horizon_weights = None
 
     def forward(self, preds: torch.Tensor, targets: torch.Tensor,
                 mask: torch.Tensor) -> torch.Tensor:
@@ -168,16 +181,20 @@ class MaskedQuantileLoss(nn.Module):
         mask:    [B, T] bool — 1 where loss should be computed
         """
         loss = torch.tensor(0.0, device=preds.device)
-        n_valid_per_seq = mask.float().sum(dim=1).clamp(min=1.0)
-        
+
+        # Effective per-step weight: horizon_weight * mask (zero where masked)
+        if self.horizon_weights is not None:
+            eff_w = self.horizon_weights.unsqueeze(0) * mask.float()  # [B, T]
+        else:
+            eff_w = mask.float()
+        w_sum = eff_w.sum(dim=1).clamp(min=1e-8)  # [B]
+
         for i, q in enumerate(self.quantiles):
             e = targets - preds[:, :, i]
             step_loss = torch.max(q * e, (q - 1) * e)         # [B, T]
-            
-            # Mean loss per sequence, then mean over batch
-            seq_loss = (step_loss * mask.float()).sum(dim=1) / n_valid_per_seq
+            seq_loss = (step_loss * eff_w).sum(dim=1) / w_sum
             loss = loss + seq_loss.mean()
-            
+
         return loss / len(self.quantiles)
 
 
@@ -207,8 +224,19 @@ def run_epoch(model, loader, criterion, optimiser=None):
     return total_loss / n_batches if n_batches else float("nan")
 
 
-def evaluate_nmape(model, loader, scalers):
-    """Compute nMAPE on raw (denormalised) predictions vs raw targets (valid steps only)."""
+def evaluate_nmape(model, loader, scalers, horizon_weights=None):
+    """Compute nMAPE on raw (denormalised) predictions vs raw targets (valid steps only).
+
+    Returns (nmape_global, buckets) where:
+      nmape_global:        unweighted nMAPE over all valid steps (informative)
+      buckets["weighted"]: horizon-weighted nMAPE — sum(w_h*|e_h|)/sum(w_h*|y_h|) across
+                           valid steps using the same exp(-h/tau) weights as the training
+                           loss. Primary early stopping metric when horizon_weights active.
+                           Equals nmape_global when horizon_weights is None.
+      buckets["1-4h/16h/28h/72h"]: unweighted per-bucket nMAPEs for monitoring.
+
+    horizon_weights: optional numpy [T] array matching the training loss weights.
+    """
     model.eval()
     qt = scalers["target_rrp"]
 
@@ -220,7 +248,7 @@ def evaluate_nmape(model, loader, scalers):
             preds_norm, _ = torch.sort(preds_norm, dim=-1) # Prevent quantile crossing
             p50_norm   = preds_norm[:, :, 1].numpy()   # median quantile
             p50_raw = qt.inverse_transform(p50_norm.reshape(-1, 1)).reshape(p50_norm.shape)
-            
+
             all_pred_raw.append(p50_raw)
             all_targ_raw.append(y_batch_raw.numpy())
             all_masks.append(mask.numpy())
@@ -229,28 +257,37 @@ def evaluate_nmape(model, loader, scalers):
     targ  = np.concatenate(all_targ_raw, axis=0)
     masks = np.concatenate(all_masks,    axis=0)
 
-    # nMAPE over valid steps only: mean(|pred - actual|) / mean(|actual|) × 100
+    # Global unweighted nMAPE (all valid steps) — informative
     p_valid = pred[masks]
     t_valid = targ[masks]
-    mae     = np.mean(np.abs(p_valid - t_valid))
-    denom   = np.mean(np.abs(t_valid))
-    nmape   = (mae / denom) * 100 if denom > 0 else 0.0
+    nmape_global = np.abs(p_valid - t_valid).sum() / np.abs(t_valid).sum() * 100
 
-    # Also compute per-horizon-bucket nMAPE
+    # Horizon-weighted nMAPE: sum(w_h * |e_h|) / sum(w_h * |y_h|) across valid steps.
+    # Consistent with training loss — short horizons dominate when tau is small.
+    if horizon_weights is not None:
+        hw = horizon_weights[np.newaxis, :]          # [1, T]
+        w_eff   = hw * masks                         # [N, T]  zero where invalid
+        w_numer = (w_eff * np.abs(pred - targ)).sum()
+        w_denom = (w_eff * np.abs(targ)).sum()
+        nmape_weighted = w_numer / w_denom * 100 if w_denom > 0 else float("nan")
+    else:
+        nmape_weighted = nmape_global
+
+    # Unweighted per-bucket nMAPEs (monitoring only)
     def bucket_nmape(lo, hi):
         bm = masks[:, lo:hi]
         bp = pred[:, lo:hi][bm]
         bt = targ[:, lo:hi][bm]
         if len(bt) == 0:
             return float("nan")
-        b_mae   = np.mean(np.abs(bp - bt))
-        b_denom = np.mean(np.abs(bt))
-        return (b_mae / b_denom) * 100 if b_denom > 0 else 0.0
+        return np.abs(bp - bt).sum() / np.abs(bt).sum() * 100
 
-    return nmape, {
-        "1-16h":  bucket_nmape(0, 32),
-        "1-28h":  bucket_nmape(0, 56),
-        "28-72h": bucket_nmape(56, 144),
+    return nmape_global, {
+        "weighted": nmape_weighted,
+        "1-4h":     bucket_nmape(0,   8),
+        "1-16h":    bucket_nmape(0,  32),
+        "1-28h":    bucket_nmape(0,  56),
+        "28-72h":   bucket_nmape(56, 144),
     }
 
 
@@ -268,6 +305,10 @@ def main():
     parser.add_argument("--n-layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--horizon-decay", type=float, default=14.0,
+                        help="Exponential decay tau for horizon loss weighting (steps). "
+                             "weight_h = exp(-h/tau). Default 14 (7h half-weight at step 14). "
+                             "Set to 0 to disable (uniform loss).")
     parser.add_argument("--weight-decay", type=float, default=1e-4,
                         help="AdamW weight decay (default 1e-4)")
     parser.add_argument("--patience", type=int, default=7,
@@ -335,7 +376,12 @@ def main():
     print(f"\nModel: d_model={args.d_model}, heads={args.n_heads}, layers={args.n_layers}")
     print(f"  Parameters: {n_params:,}")
 
-    criterion = MaskedQuantileLoss(QUANTILES)
+    if args.horizon_decay > 0:
+        steps = torch.arange(meta["output_length"], dtype=torch.float32)
+        horizon_weights = torch.exp(-steps / args.horizon_decay)
+    else:
+        horizon_weights = None
+    criterion = MaskedQuantileLoss(QUANTILES, horizon_weights=horizon_weights)
     optimiser = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                   weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -350,38 +396,55 @@ def main():
     print(f"\nTraining for up to {args.epochs} epochs (patience={args.patience})...")
     print(f"  Optimizer: AdamW  lr={args.lr:.1e}  weight_decay={args.weight_decay:.1e}")
     print(f"  Scheduler: ReduceLROnPlateau  factor=0.5  patience=2")
-    print(f"  Early stopping on: nMAPE_28h (fallback: val_loss when NaN)")
-    print(f"{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'nMAPE%':>8}  {'LR':>10}  {'Time':>6}")
+    if args.horizon_decay > 0:
+        w4h = float(torch.exp(torch.tensor(-8.0 / args.horizon_decay)))
+        w16h = float(torch.exp(torch.tensor(-32.0 / args.horizon_decay)))
+        w28h = float(torch.exp(torch.tensor(-56.0 / args.horizon_decay)))
+        print(f"  Horizon weights: tau={args.horizon_decay:.0f}steps  "
+              f"4h={w4h:.2f}  16h={w16h:.2f}  28h={w28h:.2f}")
+    else:
+        print(f"  Horizon weights: uniform (disabled)")
+    print(f"  Early stopping on: wMAPE (horizon-weighted, fallback: val_loss when NaN)")
+    print(f"{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'wMAPE%':>8}  {'LR':>10}  {'Time':>6}")
     print("-" * 60)
+
+    # numpy version of horizon_weights for evaluate_nmape
+    hw_numpy = horizon_weights.numpy() if horizon_weights is not None else None
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
         prev_lr = optimiser.param_groups[0]["lr"]
         train_loss = run_epoch(model, train_loader, criterion, optimiser)
         val_loss   = run_epoch(model, val_loader,   criterion)
-        nmape, buckets = evaluate_nmape(model, val_loader, scalers)
+        nmape_global, buckets = evaluate_nmape(model, val_loader, scalers, hw_numpy)
         elapsed    = time.time() - t0
 
-        # Primary metric: nMAPE_28h; fall back to val_loss if NaN (e.g. early epochs)
-        nmape_28h = buckets["1-28h"]
-        target_metric = nmape_28h if not np.isnan(nmape_28h) else val_loss
+        # Primary metric: horizon-weighted nMAPE; fall back to val_loss if NaN
+        nmape_weighted = buckets["weighted"]
+        target_metric = nmape_weighted if not np.isnan(nmape_weighted) else val_loss
 
         scheduler.step(target_metric)
         lr_now = optimiser.param_groups[0]["lr"]
 
-        bucket_str = (f"  16h={buckets['1-16h']:.1f}%"
+        bucket_str = (f"  unw={nmape_global:.1f}%"
+                      f"  4h={buckets['1-4h']:.1f}%"
+                      f"  16h={buckets['1-16h']:.1f}%"
                       f"  28h={buckets['1-28h']:.1f}%"
-                      f"  72h={buckets['28-72h']:.1f}%")
+                      + (f"  72h={buckets['28-72h']:.1f}%" if not np.isnan(buckets['28-72h']) else ""))
+        wmape_s = f"{nmape_weighted:.2f}" if not np.isnan(nmape_weighted) else "   nan"
         print(f"{epoch:>6}  {train_loss:>10.4f}  {val_loss:>10.4f}  "
-              f"{nmape:>8.2f}  {lr_now:>10.2e}  {elapsed:>5.1f}s"
-              + (f"  [{bucket_str.strip()}]" if not np.isnan(buckets['28-72h']) else ""))
+              f"{wmape_s:>8}  {lr_now:>10.2e}  {elapsed:>5.1f}s"
+              f"  [{bucket_str.strip()}]")
 
         log_rows.append({
             "epoch": epoch, "train_loss": round(train_loss, 6),
-            "val_loss": round(val_loss, 6), "nmape_all": round(nmape, 4),
-            "nmape_16h": round(buckets["1-16h"], 4),
-            "nmape_28h": round(buckets["1-28h"], 4),
-            "nmape_72h": round(buckets["28-72h"], 4) if not np.isnan(buckets["28-72h"]) else None,
+            "val_loss": round(val_loss, 6),
+            "nmape_weighted": round(nmape_weighted, 4) if not np.isnan(nmape_weighted) else None,
+            "nmape_all":  round(nmape_global, 4),
+            "nmape_4h":   round(buckets["1-4h"],   4),
+            "nmape_16h":  round(buckets["1-16h"],  4),
+            "nmape_28h":  round(buckets["1-28h"],  4),
+            "nmape_72h":  round(buckets["28-72h"], 4) if not np.isnan(buckets["28-72h"]) else None,
             "lr": lr_now, "time_s": round(elapsed, 1),
         })
 
@@ -392,7 +455,8 @@ def main():
             ckpt = {
                 "epoch": epoch,
                 "val_loss": val_loss,
-                "nmape_all": nmape,
+                "nmape_all": nmape_global,
+                "nmape_weighted": nmape_weighted,
                 "nmape_buckets": buckets,
                 "primary_metric": target_metric,
                 "model_state": model.state_dict(),
@@ -405,7 +469,9 @@ def main():
                 "quantiles": QUANTILES,
             }
             torch.save(ckpt, MODELS_DIR / "checkpoint_best.pt")
-            metric_label = f"nMAPE_28h={target_metric:.2f}%" if not np.isnan(nmape_28h) else f"val_loss={target_metric:.4f}"
+            metric_label = (f"wMAPE={target_metric:.2f}%"
+                            if not np.isnan(nmape_weighted)
+                            else f"val_loss={target_metric:.4f}")
             print(f"         ↑ best {metric_label}")
         else:
             patience_counter += 1
@@ -424,18 +490,21 @@ def main():
         writer.writerows(log_rows)
     print(f"\nTraining log: {log_path}")
 
-    # ── Final summary — pick best epoch by nMAPE_28h (NaN-safe), fallback to val_loss
-    def _nmape_28h_key(r):
-        v = r["nmape_28h"]
+    # ── Final summary — pick best epoch by wMAPE (NaN-safe), fallback to val_loss
+    def _wmape_key(r):
+        v = r["nmape_weighted"]
         return v if (v is not None and not np.isnan(v)) else float("inf")
 
-    best_row = min(log_rows, key=_nmape_28h_key)
-    if _nmape_28h_key(best_row) == float("inf"):  # all NaN — fallback
+    best_row = min(log_rows, key=_wmape_key)
+    if _wmape_key(best_row) == float("inf"):  # all NaN — fallback
         best_row = min(log_rows, key=lambda r: r["val_loss"])
     print(f"\n=== Training complete ===")
     print(f"  Best epoch:    {best_row['epoch']}")
     print(f"  Best val loss: {best_row['val_loss']:.4f}")
+    if best_row.get("nmape_weighted") is not None:
+        print(f"  wMAPE (weighted): {best_row['nmape_weighted']:.2f}%")
     print(f"  nMAPE (all):   {best_row['nmape_all']:.2f}%")
+    print(f"  nMAPE (4h):    {best_row['nmape_4h']:.2f}%")
     print(f"  nMAPE (16h):   {best_row['nmape_16h']:.2f}%")
     print(f"  nMAPE (28h):   {best_row['nmape_28h']:.2f}%")
     if best_row.get("nmape_72h") is not None:
