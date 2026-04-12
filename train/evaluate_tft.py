@@ -10,12 +10,18 @@ Horizon buckets: 1h, 2h, 4h, 8h, 16h, 28h
   Each bucket is cumulative (1-step to Nh), masked to valid steps only.
   28–72h skipped: ~11% coverage makes that bucket noisy before NEMSEER backfill.
 
+Each bucket reports three nMAPE columns:
+  all      — all valid steps (existing metric)
+  base     — steps where actual RRP ≤ --spike-threshold (baseload)
+  spike    — steps where actual RRP >  --spike-threshold (spikes/high price events)
+
 Output:
   Printed comparison table + models/tft_price/evaluation_results.csv
 
 Usage:
     python train/evaluate_tft.py
-    python train/evaluate_tft.py --batch-size 512
+    python train/evaluate_tft.py --eval-set stratified
+    python train/evaluate_tft.py --batch-size 512 --spike-threshold 150
 """
 
 import argparse
@@ -104,13 +110,17 @@ def quantile_calibration(preds_all, targ, mask, quantiles=(0.1, 0.5, 0.9)):
     return results
 
 
-def bucket_nmape(pred, targ, mask, lo, hi):
+def bucket_nmape(pred, targ, mask, lo, hi, price_mask=None):
     """Global nMAPE for decoder steps [lo:hi], valid (masked) steps only.
 
     Uses sum(|e|)/sum(|y|) — scale-invariant, not distorted by near-zero prices.
+
+    price_mask: optional bool array [N, 144] — further restricts to a price band.
     Returns (nmape_pct, n_valid_steps).
     """
     bm = mask[:, lo:hi]
+    if price_mask is not None:
+        bm = bm & price_mask[:, lo:hi]
     bp = pred[:, lo:hi][bm]
     bt = targ[:, lo:hi][bm]
     if len(bt) == 0:
@@ -180,6 +190,12 @@ def main():
                         default=str(MODELS_DIR / "checkpoint_best.pt"))
     parser.add_argument("--log", type=str,
                         default=str(ROOT / "price_forecast_log.csv"))
+    parser.add_argument("--eval-set", choices=["val", "stratified"], default="val",
+                        help="Eval sample set: 'val' (default, last N days) or "
+                             "'stratified' (fixed benchmark from build_stratified_eval.py)")
+    parser.add_argument("--spike-threshold", type=float, default=150.0,
+                        help="RRP threshold ($/MWh) splitting baseload vs spike bands "
+                             "in the segmented nMAPE columns (default: 150)")
     args = parser.parse_args()
 
     ckpt_path = Path(args.checkpoint)
@@ -198,23 +214,42 @@ def main():
 
     # ── Load arrays
     print("Loading pre-built arrays...")
-    split = np.load(PARQUET_DIR / "split_indices.npz")
-    val_idx = split["val"]
 
-    X_enc  = np.load(PARQUET_DIR / "X_encoder.npy")[val_idx]
-    X_dec  = np.load(PARQUET_DIR / "X_decoder.npy")[val_idx]
-    y_norm = np.load(PARQUET_DIR / "y_targets.npy")[val_idx]
-    y_raw  = np.load(PARQUET_DIR / "y_targets_raw.npy")[val_idx]
-    y_mask = np.load(PARQUET_DIR / "y_mask.npy")[val_idx]
+    if args.eval_set == "stratified":
+        strat_path = PARQUET_DIR / "stratified_eval_run_times.npy"
+        if not strat_path.exists():
+            print("ERROR: stratified_eval_run_times.npy not found.")
+            print("  Run: python data/build_stratified_eval.py")
+            sys.exit(1)
+        strat_rt = np.load(strat_path)                         # datetime64[ns]
+        all_rt   = np.load(PARQUET_DIR / "run_times.npy")      # datetime64[ns]
+        strat_int64 = set(strat_rt.view(np.int64).tolist())
+        eval_idx = np.array(
+            [i for i, rt in enumerate(all_rt.view(np.int64)) if rt in strat_int64],
+            dtype=np.intp,
+        )
+        eval_label = "stratified"
+        print(f"  Stratified eval: {len(eval_idx):,} samples matched "
+              f"(requested {len(strat_rt):,})")
+    else:
+        split = np.load(PARQUET_DIR / "split_indices.npz")
+        eval_idx = split["val"]
+        eval_label = "val"
+        print(f"  Val samples: {len(eval_idx):,}")
 
-    run_times_raw = np.load(PARQUET_DIR / "run_times.npy")[val_idx]
+    X_enc  = np.load(PARQUET_DIR / "X_encoder.npy")[eval_idx]
+    X_dec  = np.load(PARQUET_DIR / "X_decoder.npy")[eval_idx]
+    y_norm = np.load(PARQUET_DIR / "y_targets.npy")[eval_idx]
+    y_raw  = np.load(PARQUET_DIR / "y_targets_raw.npy")[eval_idx]
+    y_mask = np.load(PARQUET_DIR / "y_mask.npy")[eval_idx]
+
+    run_times_raw = np.load(PARQUET_DIR / "run_times.npy")[eval_idx]
     run_times = pd.DatetimeIndex(run_times_raw).tz_localize("UTC")
 
     with open(PARQUET_DIR / "scalers.pkl", "rb") as f:
         scalers = pickle.load(f)
 
-    print(f"  Val samples: {len(val_idx)}")
-    print(f"  Val window:  {run_times.min()} → {run_times.max()}\n")
+    print(f"  Eval window:  {run_times.min()} → {run_times.max()}\n")
 
     # ── TFT inference
     val_ds = PREDISPATCHDataset(X_enc, X_dec, y_norm, y_raw, y_mask)
@@ -222,11 +257,23 @@ def main():
     pred, targ, mask, preds_all = run_tft_inference(model, val_ds, scalers, args.batch_size)
     print(f"  Predictions: {pred.shape}  valid steps: {mask.sum():,}\n")
 
-    # ── TFT nMAPE per bucket
+    # ── Price band masks for segmented nMAPE
+    spike_thr = args.spike_threshold
+    base_pmask  = targ <= spike_thr    # [N, 144] bool — baseload steps
+    spike_pmask = targ >  spike_thr    # [N, 144] bool — spike steps
+    n_spike_steps = (mask & spike_pmask).sum()
+    n_base_steps  = (mask & base_pmask).sum()
+    print(f"Price band split (threshold={spike_thr:.0f} $/MWh):")
+    print(f"  Baseload steps (≤{spike_thr:.0f}): {n_base_steps:,}  "
+          f"Spike steps (>{spike_thr:.0f}): {n_spike_steps:,}\n")
+
+    # ── TFT nMAPE per bucket (all / baseload / spike)
     tft_results = {}
     for label, lo, hi in HORIZON_BUCKETS:
-        nmape, n = bucket_nmape(pred, targ, mask, lo, hi)
-        tft_results[label] = (nmape, n)
+        nmape_all,   n_all   = bucket_nmape(pred, targ, mask, lo, hi)
+        nmape_base,  n_base  = bucket_nmape(pred, targ, mask, lo, hi, base_pmask)
+        nmape_spike, n_spike = bucket_nmape(pred, targ, mask, lo, hi, spike_pmask)
+        tft_results[label] = (nmape_all, n_all, nmape_base, n_base, nmape_spike, n_spike)
 
     # ── LightGBM baseline
     lgbm_results = {}
@@ -252,33 +299,37 @@ def main():
         print(f"  WARNING: LightGBM log not found at {log_path}\n")
 
     # ── Print comparison table
-    print("─" * 68)
+    # Columns: Horizon | TFT(all) | LGBM(all) | Delta | TFT(base) | TFT(spike)
+    W = 100
+    print("─" * W)
+    print(f"  Eval set: {eval_label}  |  spike threshold: {spike_thr:.0f} $/MWh")
+    print("─" * W)
     if lgbm_available:
-        print(f"{'Horizon':>8}  {'TFT nMAPE':>10}  {'LGBM nMAPE':>11}  "
-              f"{'Delta':>7}  {'TFT steps':>10}  {'LGBM rows':>10}")
-        print("─" * 68)
+        print(f"{'Horizon':>8}  {'TFT all':>8}  {'LGBM all':>9}  {'Delta':>7}  "
+              f"{'TFT base':>9}  {'TFT spike':>10}  {'steps(all)':>11}")
+        print("─" * W)
         for label, lo, hi in HORIZON_BUCKETS:
-            tft_n, lgbm_n = tft_results[label][1], lgbm_results.get(label, (float("nan"), 0))[1]
-            tft_v  = tft_results[label][0]
-            lgbm_v = lgbm_results.get(label, (float("nan"), 0))[0]
-            delta  = tft_v - lgbm_v if not (np.isnan(tft_v) or np.isnan(lgbm_v)) else float("nan")
-            delta_s  = f"{delta:+.1f}%" if not np.isnan(delta) else "   N/A"
-            tft_s    = f"{tft_v:.1f}%"  if not np.isnan(tft_v)  else "  N/A"
-            lgbm_s   = f"{lgbm_v:.1f}%" if not np.isnan(lgbm_v) else "  N/A"
-            print(f"{label:>8}  {tft_s:>10}  {lgbm_s:>11}  "
-                  f"{delta_s:>7}  {tft_n:>10,}  {lgbm_n:>10,}")
+            tft_all, n_all, tft_base, _, tft_spike, n_spike_b = tft_results[label]
+            lgbm_v, lgbm_n = lgbm_results.get(label, (float("nan"), 0))
+            delta = tft_all - lgbm_v if not (np.isnan(tft_all) or np.isnan(lgbm_v)) else float("nan")
+
+            def fmt(v): return f"{v:.1f}%" if not np.isnan(v) else "  N/A"
+            def fmtd(v): return f"{v:+.1f}%" if not np.isnan(v) else "   N/A"
+            print(f"{label:>8}  {fmt(tft_all):>8}  {fmt(lgbm_v):>9}  {fmtd(delta):>7}  "
+                  f"{fmt(tft_base):>9}  {fmt(tft_spike):>10}  {n_all:>11,}")
     else:
-        print(f"{'Horizon':>8}  {'TFT nMAPE':>10}  {'Valid steps':>12}")
-        print("─" * 36)
+        print(f"{'Horizon':>8}  {'TFT all':>8}  {'TFT base':>9}  {'TFT spike':>10}  {'steps(all)':>11}")
+        print("─" * W)
         for label, lo, hi in HORIZON_BUCKETS:
-            tft_v, tft_n = tft_results[label]
-            tft_s = f"{tft_v:.1f}%" if not np.isnan(tft_v) else "  N/A"
-            print(f"{label:>8}  {tft_s:>10}  {tft_n:>12,}")
-    print("─" * 68)
+            tft_all, n_all, tft_base, _, tft_spike, _ = tft_results[label]
+            def fmt(v): return f"{v:.1f}%" if not np.isnan(v) else "  N/A"
+            print(f"{label:>8}  {fmt(tft_all):>8}  {fmt(tft_base):>9}  {fmt(tft_spike):>10}  {n_all:>11,}")
+    print("─" * W)
 
     # ── Note on buckets
     print("\nNote: all buckets are cumulative (1-step to Nh), valid steps only.")
     print("      28–72h omitted: 11% coverage pre-NEMSEER backfill.")
+    print(f"      base = actual RRP ≤ {spike_thr:.0f}, spike = actual RRP > {spike_thr:.0f} $/MWh")
 
     # ── Quantile calibration
     QUANTILES = (0.1, 0.5, 0.9)
@@ -299,15 +350,22 @@ def main():
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
     for label, lo, hi in HORIZON_BUCKETS:
-        tft_v, tft_n = tft_results[label]
+        tft_all, n_all, tft_base, n_base, tft_spike, n_spike_b = tft_results[label]
         lgbm_v, lgbm_n = lgbm_results.get(label, (float("nan"), 0))
-        delta = tft_v - lgbm_v if not (np.isnan(tft_v) or np.isnan(lgbm_v)) else None
+        delta = tft_all - lgbm_v if not (np.isnan(tft_all) or np.isnan(lgbm_v)) else None
+        def r(v): return round(float(v), 4) if not np.isnan(v) else None
         rows.append({
             "horizon": label,
-            "tft_nmape": round(tft_v, 4) if not np.isnan(tft_v) else None,
-            "lgbm_nmape": round(lgbm_v, 4) if not np.isnan(lgbm_v) else None,
+            "eval_set": eval_label,
+            "spike_threshold": spike_thr,
+            "tft_nmape_all": r(tft_all),
+            "tft_nmape_base": r(tft_base),
+            "tft_nmape_spike": r(tft_spike),
+            "lgbm_nmape": r(lgbm_v),
             "delta": round(delta, 4) if delta is not None else None,
-            "tft_n_valid_steps": tft_n,
+            "tft_n_valid_steps": n_all,
+            "tft_n_base_steps": n_base,
+            "tft_n_spike_steps": n_spike_b,
             "lgbm_n_rows": lgbm_n,
         })
 
