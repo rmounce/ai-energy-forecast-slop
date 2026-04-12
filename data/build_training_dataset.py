@@ -401,6 +401,31 @@ def main():
 
     # ── Train/val split
     train_mask, val_mask = split_by_time(run_times)
+
+    # ── Stratified eval hold-out (test split)
+    # If build_stratified_eval.py has been run, those run_times are excluded
+    # from both train and val and saved as a separate test split.
+    test_mask = np.zeros(len(run_times), dtype=bool)
+    strat_path = PARQUET_DIR / "stratified_eval_run_times.npy"
+    if strat_path.exists():
+        strat_rt = np.load(strat_path)                     # datetime64[ns]
+        strat_int64 = set(strat_rt.view(np.int64).tolist())
+        rt_int64 = run_times.view(np.int64)
+        for i, rt in enumerate(rt_int64):
+            if int(rt) in strat_int64:
+                test_mask[i]  = True
+                train_mask[i] = False
+                val_mask[i]   = False
+        n_test = test_mask.sum()
+        n_missing = len(strat_rt) - n_test
+        print(f"\nStratified eval hold-out: {n_test:,} samples excluded from train/val")
+        if n_missing:
+            print(f"  ({n_missing} stratified run_times not found in current dataset — "
+                  f"may be outside the build window)")
+    else:
+        print(f"\nNo stratified eval file found ({strat_path.name}) — skipping hold-out.")
+        print("  Run data/build_stratified_eval.py to create the benchmark set.")
+
     n_train, n_val = train_mask.sum(), val_mask.sum()
     print(f"\nTrain/val split (last {VAL_DAYS} days = val, with 72h gap):")
     print(f"  Train: {n_train:,}  Val: {n_val:,}")
@@ -430,7 +455,8 @@ def main():
     np.save(PARQUET_DIR / "run_times.npy",    run_times)
     train_idx = np.where(train_mask)[0]
     val_idx   = np.where(val_mask)[0]
-    np.savez(PARQUET_DIR / "split_indices.npz", train=train_idx, val=val_idx)
+    test_idx  = np.where(test_mask)[0]
+    np.savez(PARQUET_DIR / "split_indices.npz", train=train_idx, val=val_idx, test=test_idx)
 
     # ── Save metadata
     meta = {
@@ -446,6 +472,7 @@ def main():
         "n_samples": int(len(run_times)),
         "n_train": int(n_train),
         "n_val": int(n_val),
+        "n_test_stratified": int(test_mask.sum()),
         "val_days": VAL_DAYS,
         "normalised": not args.no_normalise,
         "mask_coverage": {
@@ -459,7 +486,9 @@ def main():
 
     valid_rrp = y_raw[y_mask]
     print(f"\n=== Dataset build complete ===")
-    print(f"  {len(run_times):,} samples ({n_train:,} train, {n_val:,} val)")
+    n_test = test_mask.sum()
+    test_s = f", {n_test:,} stratified eval" if n_test else ""
+    print(f"  {len(run_times):,} samples ({n_train:,} train, {n_val:,} val{test_s})")
     print(f"  Mask coverage: 1–32h {meta['mask_coverage']['steps_1_32']:.1%}, "
           f"1–28h {meta['mask_coverage']['steps_1_56']:.1%}, "
           f"28–72h {meta['mask_coverage']['steps_57_144']:.1%}")
