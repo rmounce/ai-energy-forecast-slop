@@ -35,6 +35,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 REGION = "SA1"
 RP = "rp_30m"
 
+ACTUALS_START = "2024-03-29T00:00:00Z"   # 2 days before first PREDISPATCH run
+PERSISTENCE_THRESHOLD = 150.0             # $/MWh — price level tracked by rrp_persistence
+
 
 def load_config(path=ROOT / "config.json"):
     with open(path) as f:
@@ -233,8 +236,6 @@ def export_actuals(client):
     print("\n[4/4] Exporting actuals SA1...")
 
     # 1. AEMO dispatch actuals (price, demand, interchange)
-    # Start 2 days before first PREDISPATCH run (needed for encoder context)
-    ACTUALS_START = "2024-03-29T00:00:00Z"
     print("  Fetching dispatch actuals...")
     dispatch = query_batched(
         client,
@@ -290,11 +291,70 @@ def export_actuals(client):
     return dispatch
 
 
+def export_actuals_5m_agg(client):
+    """
+    Compute 5-minute price volatility aggregates per 30-minute dispatch interval.
+
+    For each 30-min interval T, derived from 5-min sub-intervals:
+      rrp_5m_max:       max(price) over 6 intervals in (T-25min, T]  — intra-period spike peak
+      rrp_5m_std:       std(price) over same 6 intervals              — intra-period chaos
+      rrp_persistence:  count(price > $150) over 12 intervals in (T-55min, T] — 1h regime signal
+
+    Used as encoder features in build_training_dataset.py.
+    Output timestamps are 30-min aligned (matching actuals_sa1.parquet).
+    Rows before rp_5m data is available will be absent — build_training_dataset fills 0 + flag.
+    """
+    print(f"\nExporting 5-min price volatility aggregates (persistence threshold: ${PERSISTENCE_THRESHOLD:.0f})...")
+    df = query_batched(
+        client,
+        measurement="rp_5m.aemo_dispatch_sa1_5m",
+        fields=["price"],
+        start_time=ACTUALS_START,
+    )
+    if df.empty:
+        print("  SKIP: no 5m data")
+        return None
+
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    df = df.sort_values("time").set_index("time")
+
+    rrp = df["price"]
+
+    # 6-step rolling window (30 min): max and std within each 30-min dispatch slot
+    rrp_5m_max = rrp.rolling(6, min_periods=1).max()
+    rrp_5m_std = rrp.rolling(6, min_periods=1).std().fillna(0.0)
+
+    # 12-step rolling window (1 h): how many 5-min intervals were above the price threshold
+    rrp_persistence = ((rrp > PERSISTENCE_THRESHOLD).astype("float32")
+                       .rolling(12, min_periods=1).sum())
+
+    agg = pd.DataFrame({
+        "rrp_5m_max":      rrp_5m_max,
+        "rrp_5m_std":      rrp_5m_std,
+        "rrp_persistence": rrp_persistence,
+    })
+
+    # Select only 30-min boundary timestamps (:00 and :30) to align with actuals_sa1.parquet
+    agg_30m = agg[(agg.index.minute % 30 == 0)].copy()
+    agg_30m.index.name = "time"
+
+    out = OUT_DIR / "actuals_sa1_5m_agg.parquet"
+    agg_30m.to_parquet(out, compression="snappy")
+    size_kb = out.stat().st_size / 1024
+    print(f"  Written: {out} ({size_kb:.0f}KB)")
+    print(f"  time range: {agg_30m.index.min()} → {agg_30m.index.max()}")
+    print(f"  rows: {len(agg_30m):,} "
+          f"(coverage since {agg_30m.index.min().date()})")
+    return agg_30m
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Export InfluxDB data to Parquet")
     parser.add_argument("--actuals-only", action="store_true",
                         help="Re-export only actuals_sa1.parquet (preserves backfilled PREDISPATCH)")
+    parser.add_argument("--actuals-5m", action="store_true",
+                        help="Re-export actuals_sa1.parquet + actuals_sa1_5m_agg.parquet only")
     args = parser.parse_args()
 
     print("=== Parquet export from InfluxDB ===")
@@ -307,6 +367,10 @@ def main():
     if args.actuals_only:
         print("(--actuals-only: skipping PREDISPATCH, PD7Day, SevenDayOutlook)")
         export_actuals(client)
+    elif args.actuals_5m:
+        print("(--actuals-5m: exporting actuals + 5m aggregates only)")
+        export_actuals(client)
+        export_actuals_5m_agg(client)
     else:
         export_predispatch(client, region="SA1")
         export_predispatch(client, region="VIC1")
@@ -314,6 +378,7 @@ def main():
         export_pd7day(client)
         export_sevendayoutlook(client)
         export_actuals(client)
+        export_actuals_5m_agg(client)
 
     print("\n=== Export complete ===")
     print("Files:")

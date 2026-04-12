@@ -46,7 +46,7 @@ Normalisation:
   Time features (sin/cos, horizon_norm) are not normalised (already bounded).
 
 Outputs (data/parquet/):
-  X_encoder.npy        [N, 96,  N_ENC]  — normalised
+  X_encoder.npy        [N, 96,  N_ENC]  — normalised base(8) + 5m(3) + time(6) + missing_flag(1) = 18
   X_decoder.npy        [N, 144, N_DEC]  — normalised prices/demand (SA1+VIC1+NSW1) + raw time/horizon
   y_targets.npy        [N, 144]         — normalised actual RRP (zeros where mask=0)
   y_targets_raw.npy    [N, 144]         — raw actual RRP in $/MWh
@@ -88,11 +88,19 @@ VAL_DAYS        = 60    # last N days of run_times → validation split
 # ─── Feature definitions ────────────────────────────────────────────────────
 
 # Encoder: past actuals (available at T)
-ENC_CONTINUOUS = ["rrp", "total_demand", "net_interchange",
+ENC_CONT_BASE  = ["rrp", "total_demand", "net_interchange",
                   "power_load", "power_pv", "temp", "humidity", "wind_speed"]
+
+# 5-min volatility aggregates — only available from ~2025-03-30; NaN-filled earlier.
+# Steps where data is absent get rrp_5m_missing=1; the 3 values are 0-filled.
+ENC_5M_CONTINUOUS   = ["rrp_5m_max", "rrp_5m_std", "rrp_persistence"]
+ENC_5M_FEATURES_SET = set(ENC_5M_CONTINUOUS)
+
+ENC_CONTINUOUS = ENC_CONT_BASE + ENC_5M_CONTINUOUS       # 11 scaled features
 TIME_FEATURES  = ["hour_sin", "hour_cos", "dow_sin", "dow_cos",
                   "month_sin", "month_cos"]
-ENC_FEATURES   = ENC_CONTINUOUS + TIME_FEATURES          # 14 features
+ENC_FEATURES   = ENC_CONTINUOUS + TIME_FEATURES + ["rrp_5m_missing"]   # 18 features
+ENC_5M_MISSING_IDX = len(ENC_CONTINUOUS) + len(TIME_FEATURES)          # index of rrp_5m_missing = 17
 
 # Decoder: forecast covariates (PREDISPATCH/PD7Day) + time + horizon
 DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange",
@@ -180,17 +188,31 @@ def build_samples(actuals: pd.DataFrame,
 
         # ── Encoder: actuals[T-48h+30min : T] (96 steps)
         t_enc_start = run_t - pd.Timedelta(hours=48) + dt30
-        enc_actuals = actuals.loc[t_enc_start:run_t, ENC_CONTINUOUS]
-        enc_actuals = enc_actuals.reindex(
-            pd.date_range(t_enc_start, run_t, freq="30min", tz="UTC")
-        ).ffill().bfill()
+        enc_grid = pd.date_range(t_enc_start, run_t, freq="30min", tz="UTC")
 
-        if len(enc_actuals) < INPUT_LENGTH or enc_actuals.isna().any().any():
+        # Base actuals (ffill gaps — price/demand/weather)
+        enc_base = (actuals.loc[t_enc_start:run_t, ENC_CONT_BASE]
+                    .reindex(enc_grid).ffill().bfill())
+        if len(enc_base) < INPUT_LENGTH or enc_base.isna().any().any():
             stats["skipped_encoder"] += 1
             continue
-        enc_actuals = enc_actuals.iloc[-INPUT_LENGTH:]
-        enc_time = time_encodings(enc_actuals.index)
-        enc_full = pd.concat([enc_actuals, enc_time], axis=1)[ENC_FEATURES]
+        enc_base = enc_base.iloc[-INPUT_LENGTH:]
+
+        # 5m volatility features (NO ffill — absent before 5m era; flagged explicitly)
+        enc_5m = (actuals.loc[t_enc_start:run_t, ENC_5M_CONTINUOUS]
+                  .reindex(enc_grid))  # NaN where 5m data unavailable
+        missing_5m = enc_5m.isna().any(axis=1).values[-INPUT_LENGTH:]  # [96] bool
+        enc_5m = enc_5m.fillna(0.0).iloc[-INPUT_LENGTH:]
+
+        enc_time = time_encodings(enc_base.index)
+
+        # Assemble [96, 18]: base(8) + 5m(3) + time(6) + missing_flag(1)
+        enc_full = np.concatenate([
+            enc_base.values.astype(np.float32),                      # [96, 8]
+            enc_5m.values.astype(np.float32),                        # [96, 3]
+            enc_time.values.astype(np.float32),                      # [96, 6]
+            missing_5m.astype(np.float32).reshape(-1, 1),            # [96, 1]
+        ], axis=1)
 
         # ── Decoder: 144-step window with per-step mask
         dec_intervals = pd.date_range(run_t + dt30, periods=output_length,
@@ -270,7 +292,7 @@ def build_samples(actuals: pd.DataFrame,
             stats["skipped_min_valid"] += 1
             continue
 
-        enc_list.append(enc_full.values.astype(np.float32))
+        enc_list.append(enc_full)
         dec_list.append(dec_arr)
         target_list.append(targ_arr)
         mask_list.append(mask_arr)
@@ -329,8 +351,18 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_tr
         print(f"    {name}: p50={np.nanpercentile(v, 50):.2f}, "
               f"p95={np.nanpercentile(v, 95):.2f}, max={np.nanmax(v):.2f}")
 
+    # rrp_5m_missing flag (index ENC_5M_MISSING_IDX): 1 = no 5m data, 0 = data present
+    has_5m_train = (X_enc_train[:, :, ENC_5M_MISSING_IDX] == 0)  # [N, 96] bool
+
     for j, feat in enumerate(ENC_CONTINUOUS):
-        fit_one(feat, X_enc_train[:, :, j])
+        if feat in ENC_5M_FEATURES_SET:
+            valid_vals = X_enc_train[:, :, j][has_5m_train]
+            if len(valid_vals) == 0:
+                print(f"    WARNING: no 5m data in train split for {feat} — scaler fitted on zeros")
+                valid_vals = np.array([0.0])
+            fit_one(feat, valid_vals)
+        else:
+            fit_one(feat, X_enc_train[:, :, j])
     for j, feat in enumerate(DEC_CONTINUOUS):
         if feat in ADJ_REGION_FEATURES:
             # VIC1/NSW1 only valid in steps 0-55 (PREDISPATCH horizon);
@@ -354,9 +386,16 @@ def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers):
     X_dec_n = X_dec.copy()
     y_norm  = np.zeros_like(y_raw)
 
+    has_5m = (X_enc_n[:, :, ENC_5M_MISSING_IDX] == 0)  # [N, 96] bool
+
     for j, feat in enumerate(ENC_CONTINUOUS):
-        flat = X_enc_n[:, :, j].reshape(-1, 1)
-        X_enc_n[:, :, j] = scalers[feat].transform(flat).reshape(X_enc_n[:, :, j].shape)
+        if feat in ENC_5M_FEATURES_SET:
+            # Transform only non-missing steps; leave 0-filled missing steps as 0
+            flat = X_enc_n[:, :, j][has_5m].reshape(-1, 1)
+            X_enc_n[:, :, j][has_5m] = scalers[feat].transform(flat).reshape(-1)
+        else:
+            flat = X_enc_n[:, :, j].reshape(-1, 1)
+            X_enc_n[:, :, j] = scalers[feat].transform(flat).reshape(X_enc_n[:, :, j].shape)
 
     for j, feat in enumerate(DEC_CONTINUOUS):
         if feat in ADJ_REGION_FEATURES:
@@ -426,6 +465,26 @@ def main():
                 df[col] = pd.to_datetime(df[col], utc=True)
     actuals["time"] = pd.to_datetime(actuals["time"], utc=True)
 
+    # 5m volatility aggregates (optional; 0-filled + flagged in build_samples if absent)
+    fpath_5m = PARQUET_DIR / "actuals_sa1_5m_agg.parquet"
+    if fpath_5m.exists():
+        df_5m = pd.read_parquet(fpath_5m)
+        if df_5m.index.tz is None:
+            df_5m.index = df_5m.index.tz_localize("UTC")
+        else:
+            df_5m.index = df_5m.index.tz_convert("UTC")
+        actuals = (actuals.set_index("time")
+                   .join(df_5m[ENC_5M_CONTINUOUS], how="left")
+                   .reset_index())
+        n_5m = df_5m.notna().all(axis=1).sum()
+        print(f"  5m volatility agg: {n_5m:,} rows merged "
+              f"({df_5m.index.min().date()} → {df_5m.index.max().date()})")
+    else:
+        print(f"  WARNING: {fpath_5m.name} not found — run export_parquet.py first")
+        print(f"    rrp_5m features will be 0-filled with rrp_5m_missing=1")
+        for col in ENC_5M_CONTINUOUS:
+            actuals[col] = float("nan")
+
     print(f"  SA1 PREDISPATCH: {len(predispatch):,} rows, "
           f"{predispatch.run_time.nunique():,} unique run_times")
     print(f"  PD7Day:          {len(pd7day):,} rows, "
@@ -434,14 +493,17 @@ def main():
     print(f"  Actuals:         {len(actuals):,} rows, "
           f"{actuals.time.min()} → {actuals.time.max()}")
 
-    # Forward-fill minor actuals gaps
-    gap_counts = actuals[ENC_CONTINUOUS].isna().sum()
+    # Forward-fill minor actuals gaps (base features only — 5m NaNs are intentional)
+    gap_counts = actuals[ENC_CONT_BASE].isna().sum()
     if gap_counts.sum() > 0:
         print(f"  Actuals NaN counts (forward-filling): "
               f"{gap_counts[gap_counts > 0].to_dict()}")
-    for col in ENC_CONTINUOUS:
+    for col in ENC_CONT_BASE:
         if col in actuals.columns:
             actuals[col] = actuals[col].ffill().bfill()
+    n_5m_rows = actuals[ENC_5M_CONTINUOUS[0]].notna().sum()
+    print(f"  5m feature coverage: {n_5m_rows:,}/{len(actuals):,} rows "
+          f"({n_5m_rows / len(actuals):.1%})")
 
     # ── Build samples
     print("\nBuilding run-aligned samples...")
@@ -530,6 +592,8 @@ def main():
         "enc_features": ENC_FEATURES,
         "dec_features": DEC_FEATURES,
         "enc_continuous": ENC_CONTINUOUS,
+        "enc_cont_base": ENC_CONT_BASE,
+        "enc_5m_continuous": ENC_5M_CONTINUOUS,
         "dec_continuous": DEC_CONTINUOUS,
         "n_enc_features": len(ENC_FEATURES),
         "n_dec_features": len(DEC_FEATURES),
