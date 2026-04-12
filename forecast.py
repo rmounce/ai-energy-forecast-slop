@@ -9,6 +9,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,8 @@ from darts.models import LightGBMModel
 from influxdb import InfluxDBClient
 from sklearn.multioutput import MultiOutputRegressor
 import time
+import pickle
+import torch
 
 import io
 import re
@@ -57,6 +60,13 @@ def load_config(config_path='config.json'):
         raise
 
 CONFIG = load_config()
+
+# Import TFT Model class (must be same as trained)
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "train"))
+    from train_tft_price import TFTPriceModel
+except ImportError:
+    logging.warning("TFTPriceModel could not be imported from train.train_tft_price. TFT shadow mode will be disabled.")
 
 # --------------------------------------------------------------------------- #
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
@@ -166,6 +176,61 @@ def get_historical_data(client, start_time, end_time):
         df_combined.drop(columns=['power_dump_load'], inplace=True)
 
     return add_time_features(df_combined)
+
+
+def add_tft_regime_features(df, rrp_col='aemo_price_sa1'):
+    """
+    Real-time version of regime features used for TFT Run 010.
+    Calculates log-momentum and 30m volatility from historical RRP.
+    """
+    if df.empty or rrp_col not in df.columns:
+        return df
+
+    # ── Log Momentum (Rolling 2h slope of log-scaled RRP)
+    # Scale factor 60.0 matches Run 010 training
+    log_rrp = np.sign(df[rrp_col]) * np.log1p(np.abs(df[rrp_col]) / 60.0)
+    
+    # Simple rolling slope estimate (last 4 intervals = 2h)
+    # y = mx + c; we just want a rough 'direction' flag
+    df['rrp_log_momentum'] = log_rrp.diff(4).fillna(0) / 4.0
+
+    # ── 30m Volatility (Standard deviation from 5m aggregates if available)
+    # If 5m prices are available, they will be used in the calling function.
+    # Otherwise, we use this 30m proxy:
+    if 'rrp_volatility_30m' not in df.columns:
+        df['rrp_volatility_30m'] = log_rrp.rolling(window=6).std().fillna(0)
+
+    return df
+
+
+def get_5m_price_history(client, start_time, end_time):
+    """Fetches high-frequency 5m SA1 prices for regime features."""
+    start_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+    end_str = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+    query = f'SELECT "price" FROM "rp_5m"."aemo_dispatch_sa1_5m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\''
+    try:
+        result = client.query(query)
+        if result and result.get_points():
+            df = pd.DataFrame(result.get_points())
+            df['time'] = pd.to_datetime(df['time'])
+            df.set_index('time', inplace=True)
+            return df['price'] / 1000.0  # Raw $/MWh
+    except Exception as e:
+        logging.warning(f"Error querying 5m prices: {e}")
+    return pd.Series(dtype=float)
+
+
+def time_sin_cos(timestamps):
+    """Matches time_encodings in build_training_dataset.py."""
+    t = timestamps.tz_convert("Australia/Brisbane")
+    features = {}
+    features["hour_sin"]   = np.sin(2 * np.pi * t.hour / 24)
+    features["hour_cos"]   = np.cos(2 * np.pi * t.hour / 24)
+    features["dow_sin"]    = np.sin(2 * np.pi * t.dayofweek / 7)
+    features["dow_cos"]    = np.cos(2 * np.pi * t.dayofweek / 7)
+    features["month_sin"]  = np.sin(2 * np.pi * (t.month - 1) / 12)
+    features["month_cos"]  = np.cos(2 * np.pi * (t.month - 1) / 12)
+    return pd.DataFrame(features, index=timestamps)
 
 
 def call_ha_api(method, endpoint, payload=None):
@@ -451,8 +516,8 @@ def _get_aemo_short_term_forecast():
     pivot_df.rename(columns=rename_map, inplace=True)
     return pivot_df.resample('30min').mean()
 
-def _get_aemo_short_term_price_sa1():
-    logging.info("Fetching AEMO short-term price forecast for loss factor calculation...")
+def _get_aemo_short_term_price_forecast(regions=['SA1', 'VIC1', 'NSW1']):
+    logging.info(f"Fetching AEMO short-term price forecast for regions: {regions}...")
     url = "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN"
     payload = {"timeScale": ["30MIN"]}
     
@@ -462,17 +527,29 @@ def _get_aemo_short_term_price_sa1():
         data = response.json()
         if "5MIN" not in data or not data["5MIN"]:
             return pd.DataFrame()
+        
         df = pd.DataFrame(data['5MIN'])
-        df = df[df['REGIONID'] == 'SA1']
+        df = df[df['REGIONID'].isin(regions)]
         if df.empty:
             return pd.DataFrame()
+            
         nem_tz = pytz.timezone('Etc/GMT-10')
         df['timestamp'] = (pd.to_datetime(df['SETTLEMENTDATE']).dt.tz_localize(nem_tz) - pd.Timedelta(minutes=30)).dt.tz_convert('UTC')
-        df.set_index('timestamp', inplace=True)
-        df['aemo_price_sa1'] = pd.to_numeric(df['RRP'], errors='coerce') / 1000.0
-        return df[['aemo_price_sa1']].resample('30min').mean().dropna()
+        
+        pivot_df = df.pivot_table(index='timestamp', columns='REGIONID', values='RRP')
+        pivot_df = pivot_df.astype(float) / 1000.0  # Raw $/MWh
+        
+        # Rename columns to match model expectations
+        rename_map = {
+            'SA1': 'pd_rrp',
+            'VIC1': 'vic1_pd_rrp',
+            'NSW1': 'nsw1_pd_rrp'
+        }
+        pivot_df.rename(columns=rename_map, inplace=True)
+        
+        return pivot_df.resample('30min').mean().dropna(how='all')
     except Exception as e:
-        logging.error(f"Failed to fetch AEMO short term price: {e}")
+        logging.error(f"Failed to fetch AEMO multi-region price forecast: {e}")
         return pd.DataFrame()
 
 def _get_aemo_7_day_outlook_forecast():
@@ -573,9 +650,13 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
     of the existing file to prevent misalignment.
     """
     # Determine the base name for finding the log file (e.g., 'price' from 'price_p30')
-    base_model_name = model_name.split('_')[0]
-    logging.info(f"Logging forecast data for '{model_name}' model to '{base_model_name}' log file...")
-    log_file_path = Path(CONFIG['paths'][f'{base_model_name}_forecast_log_file'])
+    if model_name.startswith('tft_'):
+        log_file_path = Path(CONFIG['paths'].get('tft_price_forecast_log_file', 'tft_forecast_log.csv'))
+    else:
+        base_model_name = model_name.split('_')[0]
+        log_file_path = Path(CONFIG['paths'][f'{base_model_name}_forecast_log_file'])
+    
+    logging.info(f"Logging forecast data for '{model_name}' model to '{log_file_path.name}' log file...")
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Prepare the new data in memory ---
@@ -865,6 +946,173 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
     else:
         return raw_forecasts
 
+
+def _execute_tft_prediction(historical_df, future_covariates_df):
+    """
+    TFT Inference Worker: Parallel branch for Run 010.
+    """
+    logging.info("--- Executing TFT Parallel Inference (Run 010) ---")
+    
+    # ── 1. Load Model and Scalers
+    paths = CONFIG['paths']
+    try:
+        model_path = Path(paths['tft_price_model'])
+        if not model_path.exists():
+            logging.error(f"TFT Model not found at {model_path}. Shadow mode aborted.")
+            return {}
+
+        checkpoint = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
+        meta = checkpoint.get("meta", {})
+        m_cfg = checkpoint.get("model_config", {})
+        
+        # Load the model class with correct architecture from checkpoint
+        model = TFTPriceModel(
+            n_enc=m_cfg.get("n_enc", 20),
+            n_dec=m_cfg.get("n_dec", 13),
+            d_model=m_cfg.get("d_model", 64),
+            n_heads=m_cfg.get("n_heads", 4),
+            n_lstm_layers=m_cfg.get("n_layers", 2),
+            dropout=m_cfg.get("dropout", 0.1)
+        )
+        model.load_state_dict(checkpoint["model_state"])
+        model.eval()
+
+        with open(paths['tft_price_scalers'], 'rb') as f:
+            scalers = pickle.load(f)
+            # Unified scalers.pkl is a dict: feature_name -> (QuantileTransformer or "log")
+    except Exception as e:
+        logging.error(f"Failed to load TFT model or scalers: {e}")
+        return {}
+
+    # ── 2. Prepare Encoder Input (Last 96 steps = 48h)
+    hist = historical_df.tail(96).copy()
+    if len(hist) < 96:
+        logging.warning(f"Insufficient history for TFT (need 96 steps, got {len(hist)}). Bfilling.")
+        full_idx = pd.date_range(end=hist.index.max(), periods=96, freq='30min')
+        hist = hist.reindex(full_idx).bfill()
+
+    # Base features: rename to match build_training_dataset.py feature names
+    hist.rename(columns={
+        'aemo_price_sa1': 'rrp',
+        'temperature_adelaide': 'temp',
+        'humidity_adelaide': 'humidity',
+        'wind_speed_adelaide': 'wind_speed',
+        'net_interchange_sa1': 'net_interchange',
+        'total_demand_sa1': 'total_demand'
+    }, inplace=True)
+
+    # ── 3. High-Frequency Features (5m)
+    client = InfluxDBClient(**CONFIG['influxdb'])
+    hist_5m = get_5m_price_history(client, hist.index.min() - timedelta(minutes=60), hist.index.max())
+    client.close()
+
+    if not hist_5m.empty:
+        def get_agg(t):
+            win = hist_5m.loc[t - timedelta(minutes=25):t]
+            if win.empty: return 0.0, 0.0, 0.0, 0.0
+            return float(win.max()), float(win.std()), float((win > 150).sum()), float(win.std())
+
+        aggs = [get_agg(t) for t in hist.index]
+        hist['rrp_5m_max'] = [a[0] for a in aggs]
+        hist['rrp_5m_std'] = [a[1] for a in aggs]
+        hist['rrp_persistence'] = [a[2] for a in aggs]
+        hist['rrp_volatility_30m'] = [a[3] for a in aggs]
+        hist['rrp_5m_missing'] = 0
+    else:
+        for c in ['rrp_5m_max', 'rrp_5m_std', 'rrp_persistence', 'rrp_volatility_30m']: hist[c] = 0.0
+        hist['rrp_5m_missing'] = 1
+
+    hist = add_tft_regime_features(hist, rrp_col='rrp')
+    hist = pd.concat([hist, time_sin_cos(hist.index)], axis=1)
+
+    ENC_CONT = ["rrp", "total_demand", "net_interchange", "power_load", "power_pv", 
+                "temp", "humidity", "wind_speed", "rrp_5m_max", "rrp_5m_std", 
+                "rrp_persistence", "rrp_volatility_30m", "rrp_log_momentum"]
+    
+    # Scaling helper matching build_training_dataset.py
+    log_scale = meta.get("log_scale_factor", 60.0)
+    def transform_val(val, feat_name):
+        s = scalers.get(feat_name)
+        if s is None: return val
+        if s == "log":
+            return np.sign(val) * np.log1p(np.abs(val) / log_scale)
+        # Handle single float or array
+        if np.isscalar(val):
+            return float(s.transform(np.array([[val]]))[0, 0])
+        return s.transform(val.values.reshape(-1, 1)).flatten()
+
+    # Apply enc scalers
+    for feat in ENC_CONT:
+        hist[feat] = transform_val(hist[feat], feat)
+
+    TIME_COLS = ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos"]
+    X_enc = hist[ENC_CONT + TIME_COLS + ["rrp_5m_missing"]].values.astype(np.float32)
+
+    # ── 4. Prepare Decoder Input (Next 144 steps = 72h)
+    fut = future_covariates_df.head(144).copy()
+    
+    # TFT specifically needs PD price forecasts, which aren't in standard future_covariates_df
+    pd_prices = _get_aemo_short_term_price_forecast()
+    if not pd_prices.empty:
+        # Join price forecasts; missing steps are 0-filled (masked by covar_missing)
+        fut = fut.join(pd_prices)
+    else:
+        for c in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']: fut[c] = 0.0
+
+    fut.rename(columns={
+        'total_demand_sa1': 'pd_demand',
+        'net_interchange_sa1': 'pd_net_interchange'
+    }, inplace=True)
+    
+    # Ensure columns exist even if join failed
+    for c in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']:
+        if c not in fut.columns: fut[c] = 0.0
+
+    # Fill NaNs from AEMO gaps
+    fut['pd_rrp'] = fut['pd_rrp'].fillna(0.0)
+    fut['vic1_pd_rrp'] = fut['vic1_pd_rrp'].fillna(0.0)
+    fut['nsw1_pd_rrp'] = fut['nsw1_pd_rrp'].fillna(0.0)
+    
+    fut = pd.concat([fut, time_sin_cos(fut.index)], axis=1)
+    fut['horizon_norm'] = np.arange(len(fut)) / 144.0
+    fut['covar_missing'] = 0
+    
+    DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp"]
+    # Apply dec scalers
+    for feat in DEC_CONT:
+        fut[feat] = transform_val(fut[feat], feat)
+
+    X_dec = fut[DEC_CONT + TIME_COLS + ["horizon_norm", "covar_missing"]].values.astype(np.float32)
+
+    # ── 5. Inference
+    with torch.no_grad():
+        t_enc = torch.tensor(X_enc).unsqueeze(0)
+        t_dec = torch.tensor(X_dec).unsqueeze(0)
+        preds_norm = model(t_enc, t_dec).squeeze(0).numpy()
+    
+    preds_norm = np.sort(preds_norm, axis=-1)
+    
+    # Inverse scaling for 'target_rrp' (which is log-scaled in Run 010)
+    # qt_targ was the key in my previous code, now it's from scalers dictionary
+    s_targ = scalers.get("target_rrp", "log")
+    if s_targ == "log":
+        preds_raw = log_scale * (np.exp(preds_norm) - 1.0)
+    else:
+        # QuantileTransformer inverse
+        preds_raw = s_targ.inverse_transform(preds_norm)
+    
+    # ── 6. Format Return
+    # Return as { 'tft_price': df_q50, 'tft_price_q30': df_q30, 'tft_price_q70': df_q70 }
+    res = {}
+    quants = ['tft_price_q30', 'tft_price', 'tft_price_q70']
+    for i, q_name in enumerate(quants):
+        # Use [float(x) for x in ...] to ensure standard Python types for JSON serialization safety
+        df_q = pd.DataFrame({'forecast': [float(x) for x in preds_raw[:, i]]}, index=fut.index)
+        res[q_name] = df_q
+        
+    logging.info(f"TFT Parallel Inference complete. Steps: {len(preds_raw)}")
+    return res
+
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
     WORKER: Executes prediction for a model type (e.g. 'price' or 'load'),
@@ -964,6 +1212,16 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         )
         if forecasts:
             all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
+
+    # 2b. Execute TFT Shadow Model in parallel (Sandboxed)
+    if 'price' in models_to_run:
+        try:
+            tft_results = _execute_tft_prediction(historical_df, adjusted_covariates_for_prediction)
+            if tft_results:
+                # Merge into all_results so publishing/logging picks it up
+                all_results['tft_price'] = {'forecasts': tft_results, 'type': 'tft_pytorch'}
+        except Exception as e:
+            logging.error(f"FATAL ERROR in TFT Shadow Model execution (existing forecasts are SAFE): {e}", exc_info=True)
 
     # 3. Process and SAVE all collected results (This part is unchanged)
     try:
@@ -1203,7 +1461,9 @@ def _calculate_amber_api_scaling_factor():
         logging.warning("No Amber spot forecast available for scaling factor calculation.")
         return None
         
-    aemo_df = _get_aemo_short_term_price_sa1()
+    pd_df = _get_aemo_short_term_price_forecast(regions=['SA1'])
+    if pd_df.empty: return None
+    aemo_df = pd_df.rename(columns={'pd_rrp': 'aemo_price_sa1'})
     if aemo_df.empty:
         logging.warning("No AEMO price forecast available for scaling factor calculation.")
         return None

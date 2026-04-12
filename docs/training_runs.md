@@ -12,7 +12,7 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
-## Run 010 — 2026-04-12 — Log-Scaling & q30/50/70 + Extended Backfill
+## Run 010 — 2026-04-12 — Log-Scaling & q30/50/70 + Extended Backfill [PRODUCTION SHADOW]
 
 **Closing the Spike Gap: Addressing Normalization Squeeze.**
 Switched from `QuantileTransformer` (Normal) to Log-Scaling for `rrp` to prevent tail compression.

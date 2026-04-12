@@ -247,6 +247,24 @@ Motivation (Run 007): when a spike is building, 5-min prices jump from $50 → $
 
 **Key constraint:** encoder requires 2 days of actuals before each run_time. Actuals go back to 2024-03-29 in InfluxDB (weather only to 2023-04-19, which still covers the full backfill window). PREDISPATCH runs before 2024-04-01 cannot be used as training samples.
 
+## Production Integration (Shadow Mode)
+
+As of April 2026, the TFT model (Run 010) is running in **Shadow Mode** within the `forecast.py` pipeline.
+
+### Architecture
+- **Worker:** `_execute_tft_prediction` in `forecast.py`.
+- **Inputs:** 48h historical encoder (30m) + 72h future decoder (30m).
+- **Regime Features:** High-frequency (5m) price spikes, log-momentum, and 30m volatility are engineered in real-time.
+- **Safety:** Sandboxed execution via `try-except` to ensure zero impact on the primary LightGBM battery dispatch signal.
+
+### Entities (Home Assistant)
+- `sensor.ai_tft_price_forecast` (q50)
+- `sensor.ai_tft_price_forecast_low` (q30)
+- `sensor.ai_tft_price_forecast_high` (q70)
+
+### Logging
+Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benchmarking against the local actuals.
+
 ---
 
 ## Options Considered and Discarded
