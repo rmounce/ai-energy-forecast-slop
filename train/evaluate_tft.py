@@ -50,33 +50,58 @@ HORIZON_BUCKETS = [
 # ─── TFT inference ────────────────────────────────────────────────────────────
 
 def run_tft_inference(model, val_ds, scalers, batch_size=256):
-    """Run TFT inference on val set. Returns pred_raw, targ_raw, mask arrays."""
+    """Run TFT inference on val set.
+
+    Returns:
+        pred_raw:  [N, 144]    — p50 in raw $/MWh (for nMAPE)
+        targ_raw:  [N, 144]    — actuals in raw $/MWh
+        mask:      [N, 144]    — bool valid steps
+        preds_all: [N, 144, 3] — all quantiles (q10/q50/q90) in raw $/MWh (for calibration)
+    """
     qt = scalers["target_rrp"]
     loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
 
-    all_pred, all_targ, all_mask = [], [], []
+    all_pred, all_targ, all_mask, all_quants = [], [], [], []
 
     model.eval()
     with torch.no_grad():
         for X_enc, X_dec, _y_norm, y_raw, mask in loader:
             preds_norm = model(X_enc, X_dec)                     # [B, T, 3]
             preds_norm, _ = torch.sort(preds_norm, dim=-1)       # prevent quantile crossing
-            p50_norm = preds_norm[:, :, 1].numpy()               # median
+            preds_norm_np = preds_norm.numpy()                   # [B, T, 3]
 
-            B, T = p50_norm.shape
-            p50_raw = qt.inverse_transform(
-                p50_norm.reshape(-1, 1)
-            ).reshape(B, T)
+            B, T, Q = preds_norm_np.shape
+            preds_raw = qt.inverse_transform(
+                preds_norm_np.reshape(-1, 1)
+            ).reshape(B, T, Q)
 
-            all_pred.append(p50_raw)
+            all_pred.append(preds_raw[:, :, 1])   # p50
             all_targ.append(y_raw.numpy())
             all_mask.append(mask.numpy())
+            all_quants.append(preds_raw)
 
     return (
-        np.concatenate(all_pred, axis=0),   # [N_val, 144]
-        np.concatenate(all_targ, axis=0),   # [N_val, 144]
-        np.concatenate(all_mask, axis=0),   # [N_val, 144] bool
+        np.concatenate(all_pred,   axis=0),   # [N_val, 144]
+        np.concatenate(all_targ,   axis=0),   # [N_val, 144]
+        np.concatenate(all_mask,   axis=0),   # [N_val, 144] bool
+        np.concatenate(all_quants, axis=0),   # [N_val, 144, 3]
     )
+
+
+def quantile_calibration(preds_all, targ, mask, quantiles=(0.1, 0.5, 0.9)):
+    """Compute empirical coverage rates for each quantile.
+
+    For a well-calibrated model, P(actual <= pred_q) should equal q.
+    Returns list of (q, empirical_coverage) over all valid steps.
+    """
+    flat_mask = mask.reshape(-1)
+    flat_targ = targ.reshape(-1)[flat_mask]
+    results = []
+    for i, q in enumerate(quantiles):
+        flat_pred_q = preds_all[:, :, i].reshape(-1)[flat_mask]
+        coverage = (flat_targ <= flat_pred_q).mean()
+        results.append((q, float(coverage)))
+    return results
 
 
 def bucket_nmape(pred, targ, mask, lo, hi):
@@ -194,7 +219,7 @@ def main():
     # ── TFT inference
     val_ds = PREDISPATCHDataset(X_enc, X_dec, y_norm, y_raw, y_mask)
     print(f"Running TFT inference (batch_size={args.batch_size})...")
-    pred, targ, mask = run_tft_inference(model, val_ds, scalers, args.batch_size)
+    pred, targ, mask, preds_all = run_tft_inference(model, val_ds, scalers, args.batch_size)
     print(f"  Predictions: {pred.shape}  valid steps: {mask.sum():,}\n")
 
     # ── TFT nMAPE per bucket
@@ -254,6 +279,20 @@ def main():
     # ── Note on buckets
     print("\nNote: all buckets are cumulative (1-step to Nh), valid steps only.")
     print("      28–72h omitted: 11% coverage pre-NEMSEER backfill.")
+
+    # ── Quantile calibration
+    QUANTILES = (0.1, 0.5, 0.9)
+    cal = quantile_calibration(preds_all, targ, mask, QUANTILES)
+    print("\n── Quantile calibration (all valid steps) ──")
+    print(f"  {'Quantile':>10}  {'Expected':>10}  {'Actual':>10}  {'Bias':>8}")
+    print(f"  {'-'*44}")
+    for q, cov in cal:
+        bias = cov - q
+        bias_s = f"{bias:+.3f}"
+        flag = "  ✓" if abs(bias) < 0.03 else ("  ↑ over-covers" if bias > 0 else "  ↓ under-covers")
+        print(f"  {f'q{int(q*100):02d}':>10}  {q:>10.3f}  {cov:>10.3f}  {bias_s:>8}{flag}")
+    print(f"  {'-'*44}")
+    print("  Target: |bias| < 0.03 for reliable dispatch thresholds.")
 
     # ── Save CSV
     out_path = MODELS_DIR / "evaluation_results.csv"

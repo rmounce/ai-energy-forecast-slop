@@ -48,6 +48,16 @@ but TFT advantage over LightGBM widened significantly.
 | 16h | 41.6% | 47.1% | -5.4% |
 | 28h | 42.5% | 49.6% | -7.2% |
 
+### Quantile calibration (all valid steps, Feb 09 – Apr 10 window)
+| Quantile | Expected | Actual coverage | Bias | Status |
+|---|---|---|---|---|
+| q10 | 0.100 | 0.279 | +0.179 | ↑ over-covers — lower tail predicted too high |
+| q50 | 0.500 | 0.616 | +0.116 | ↑ over-covers — median biased upward |
+| q90 | 0.900 | 0.910 | +0.010 | ✓ well-calibrated |
+
+Model has an upward bias overall (consistent with PREDISPATCH itself biasing toward higher prices),
+but q90 lands correctly. **q90 sell threshold in dispatch is reliable.** q10 buy signal is not.
+
 ### Notes
 - Performance requirement met: TFT beats LightGBM at all horizons
 - ⚠️ Review point: 1h win may reflect LightGBM struggling on summer volatility rather than
