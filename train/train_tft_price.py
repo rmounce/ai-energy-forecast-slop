@@ -31,9 +31,10 @@ Output:
   models/tft_price/training_log.csv           — epoch-level metrics
 
 Usage:
-  python train/train_tft_price.py             # train with defaults (50 epochs)
+  python train/train_tft_price.py                            # train with defaults (100 epochs)
   python train/train_tft_price.py --epochs 100 --d-model 128
-  python train/train_tft_price.py --dry-run   # 5 epochs, small batch, check shapes
+  python train/train_tft_price.py --temporal-halflife 90     # down-weight old samples (90d half-life)
+  python train/train_tft_price.py --dry-run                  # 5 epochs, small batch, check shapes
 
 Optimizer: AdamW (lr=2e-4, weight_decay=1e-4) + ReduceLROnPlateau(factor=0.5, patience=2).
 Loss: horizon-weighted quantile loss — weight_h = exp(-h/tau), default tau=14 (7h).
@@ -51,7 +52,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 ROOT = Path(__file__).resolve().parent.parent
 PARQUET_DIR = ROOT / "data" / "parquet"
@@ -313,6 +314,10 @@ def main():
                         help="AdamW weight decay (default 1e-4)")
     parser.add_argument("--patience", type=int, default=7,
                         help="Early stopping patience (default 7)")
+    parser.add_argument("--temporal-halflife", type=float, default=0.0,
+                        help="Temporal sample weighting half-life in days (0 = disabled). "
+                             "Weights training samples by exp(-age_days / (halflife/ln2)). "
+                             "90–120 days recommended for SA1 evolving market dynamics.")
     parser.add_argument("--dry-run", action="store_true",
                         help="5 epochs, batch_size=64, validate shapes only")
     args = parser.parse_args()
@@ -358,8 +363,24 @@ def main():
     val_ds   = PREDISPATCHDataset(X_enc[val_idx],   X_dec[val_idx],
                                   y[val_idx],       y_raw[val_idx],   y_mask[val_idx])
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
+    if args.temporal_halflife > 0:
+        run_times = np.load(PARQUET_DIR / "run_times.npy", allow_pickle=True)
+        train_times = run_times[train_idx].astype("datetime64[s]").astype(np.int64)
+        age_days = (train_times.max() - train_times) / 86400.0
+        decay_rate = np.log(2) / args.temporal_halflife
+        sample_weights = np.exp(-decay_rate * age_days).astype(np.float64)
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True,
+        )
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size,
+                                  sampler=sampler, num_workers=0)
+        print(f"  Temporal weighting: half-life={args.temporal_halflife:.0f}d  "
+              f"oldest weight={sample_weights.min():.4f}  newest=1.0000")
+    else:
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     n_enc = X_enc.shape[2]
     n_dec = X_dec.shape[2]
@@ -469,6 +490,10 @@ def main():
                 "quantiles": QUANTILES,
             }
             torch.save(ckpt, MODELS_DIR / "checkpoint_best.pt")
+            # Also save a timestamped copy so previous bests are never overwritten
+            import datetime as _dt
+            _ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            torch.save(ckpt, MODELS_DIR / f"checkpoint_{_ts}_ep{epoch}.pt")
             metric_label = (f"wMAPE={target_metric:.2f}%"
                             if not np.isnan(nmape_weighted)
                             else f"val_loss={target_metric:.4f}")
