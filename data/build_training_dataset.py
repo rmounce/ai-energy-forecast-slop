@@ -72,7 +72,7 @@ PARQUET_DIR = ROOT / "data" / "parquet"
 INPUT_LENGTH    = 96    # encoder steps = 2 days at 30-min resolution
 OUTPUT_LENGTH   = 144   # decoder steps = 72h at 30-min resolution
 MIN_VALID_STEPS = 32    # minimum valid (masked) steps to include a sample
-VAL_DAYS        = 30    # last N days of run_times → validation split
+VAL_DAYS        = 60    # last N days of run_times → validation split
 
 # PREDISPATCH horizon coverage by OUTPUT_LENGTH:
 #   32  (16h) → 97.9% of runs — paper's choice (Sinclair et al.)
@@ -402,7 +402,7 @@ def main():
     # ── Train/val split
     train_mask, val_mask = split_by_time(run_times)
     n_train, n_val = train_mask.sum(), val_mask.sum()
-    print(f"\nTrain/val split (last {VAL_DAYS} days = val):")
+    print(f"\nTrain/val split (last {VAL_DAYS} days = val, with 72h gap):")
     print(f"  Train: {n_train:,}  Val: {n_val:,}")
 
     # ── Normalisation
