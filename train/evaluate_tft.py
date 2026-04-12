@@ -55,14 +55,15 @@ HORIZON_BUCKETS = [
 
 # ─── TFT inference ────────────────────────────────────────────────────────────
 
-def run_tft_inference(model, val_ds, scalers, batch_size=256):
+def run_tft_inference(model, val_ds, scalers, batch_size=256,
+                      target_scaling="quantile", log_scale_factor=60.0):
     """Run TFT inference on val set.
 
     Returns:
         pred_raw:  [N, 144]    — p50 in raw $/MWh (for nMAPE)
         targ_raw:  [N, 144]    — actuals in raw $/MWh
         mask:      [N, 144]    — bool valid steps
-        preds_all: [N, 144, 3] — all quantiles (q10/q50/q90) in raw $/MWh (for calibration)
+        preds_all: [N, 144, 3] — all quantiles (q30/q50/q70) in raw $/MWh
     """
     qt = scalers["target_rrp"]
     loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -77,9 +78,12 @@ def run_tft_inference(model, val_ds, scalers, batch_size=256):
             preds_norm_np = preds_norm.numpy()                   # [B, T, 3]
 
             B, T, Q = preds_norm_np.shape
-            preds_raw = qt.inverse_transform(
-                preds_norm_np.reshape(-1, 1)
-            ).reshape(B, T, Q)
+            if target_scaling == "log":
+                preds_raw = log_scale_factor * (np.exp(preds_norm_np) - 1.0)
+            else:
+                preds_raw = qt.inverse_transform(
+                    preds_norm_np.reshape(-1, 1)
+                ).reshape(B, T, Q)
 
             all_pred.append(preds_raw[:, :, 1])   # p50
             all_targ.append(y_raw.numpy())
@@ -253,8 +257,14 @@ def main():
 
     # ── TFT inference
     val_ds = PREDISPATCHDataset(X_enc, X_dec, y_norm, y_raw, y_mask)
-    print(f"Running TFT inference (batch_size={args.batch_size})...")
-    pred, targ, mask, preds_all = run_tft_inference(model, val_ds, scalers, args.batch_size)
+    print(f"Running TFT inference (batch_size={args.batch_size})...")    # ── Inference
+    target_scaling = ckpt.get("meta", {}).get("target_scaling", "quantile")
+    log_scale_factor = ckpt.get("meta", {}).get("log_scale_factor", 60.0)
+
+    pred, targ, mask, preds_all = run_tft_inference(
+        model, val_ds, scalers, args.batch_size,
+        target_scaling=target_scaling, log_scale_factor=log_scale_factor
+    )
     print(f"  Predictions: {pred.shape}  valid steps: {mask.sum():,}\n")
 
     # ── Price band masks for segmented nMAPE
@@ -332,8 +342,8 @@ def main():
     print(f"      base = actual RRP ≤ {spike_thr:.0f}, spike = actual RRP > {spike_thr:.0f} $/MWh")
 
     # ── Quantile calibration
-    QUANTILES = (0.1, 0.5, 0.9)
-    cal = quantile_calibration(preds_all, targ, mask, QUANTILES)
+    target_quants = ckpt.get("quantiles", (0.3, 0.5, 0.7))
+    cal = quantile_calibration(preds_all, targ, mask, target_quants)
     print("\n── Quantile calibration (all valid steps) ──")
     print(f"  {'Quantile':>10}  {'Expected':>10}  {'Actual':>10}  {'Bias':>8}")
     print(f"  {'-'*44}")

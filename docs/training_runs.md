@@ -12,6 +12,35 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
+## Run 010 — 2026-04-12 — Log-Scaling & q30/50/70 + Extended Backfill
+
+**Closing the Spike Gap: Addressing Normalization Squeeze.**
+Switched from `QuantileTransformer` (Normal) to Log-Scaling for `rrp` to prevent tail compression.
+Updated quantiles to `[0.3, 0.5, 0.7]` for LightGBM/Dispatch consistency.
+Extended PREDISPATCH backfill to 2022 (NEMSEER).
+
+### Changes from Run 009
+- `build_training_dataset.py`:
+  - Added `--target-scaling log` (scale factor 60.0).
+  - Added `log_rrp_momentum` encoder feature (slope of last 4 log-steps).
+  - Added `rrp_volatility_30m` encoder feature (std from 5m aggregates).
+- `train_tft_price.py`:
+  - Updated `QUANTILES = [0.3, 0.5, 0.7]`.
+  - Added `inverse_log_transform` logic.
+- `evaluate_tft.py`: Updated for q30/q70 calibration.
+
+### Config
+| Parameter | Value |
+|---|---|
+| Target Scaling | Log-Scaling (scale=60.0) |
+| Quantiles | [0.3, 0.5, 0.7] |
+| Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | pw_wMAPE (price+horizon weighted) |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | Extended backfill to 2022 (approx 35K samples) |
+
+
 ## Run 009 — 2026-04-12 — Full 5-minute dispatch coverage (NEMSEER backfill)
 
 **Spike gap unchanged — 5m features confirmed non-predictive at current data scale.**

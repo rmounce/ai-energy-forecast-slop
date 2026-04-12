@@ -235,9 +235,8 @@ Standalone utility called by the nightly `ai-energy-update-tariffs` service. Smo
 A new price forecasting model is being developed to replace the LightGBM+Amber APF approach. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
-- Model type: LSTM encoder-decoder with cross-attention (simplified TFT, Lim et al. 2021)
-- Encoder: 96 steps (2 days) × 18 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (3: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`) + time encodings (6) + `rrp_5m_missing` flag (1)
-- Decoder: 144 steps (72h) × 13 features — SA1 PREDISPATCH/PD7Day (4) + VIC1/NSW1 PREDISPATCH prices (2) + time encodings (6) + `covar_missing` flag (1)
+- Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` (slope of last 4 log-steps) + time encodings (6) + `rrp_5m_missing` flag (1)
+- Decoder: 144 steps (72h) × 13 features — SA1 PREDISPATCH/PD7Day (4) + VIC1/NSW1 PREDISPATCH prices (2) + `pd_demand`, `pd_net_interchange` + time encodings (6) + `covar_missing` flag (1)
 - Covariate construction: Option B (run-aligned) — each training sample uses the PREDISPATCH run issued at the encoder/decoder boundary, exactly matching inference
 - Masked loss: each decoder step independently masked; handles variable PREDISPATCH horizon and growing PD7Day history
 - Stratified eval benchmark: 900 fixed samples (spike + low/negative + seasonal normal) for durable cross-run comparison
@@ -251,7 +250,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 6. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
 7. `train/evaluate_tft.py --eval-set stratified` → nMAPE (all/base/spike) + quantile calibration vs LightGBM
 
-**Status (2026-04-12):** Run 006 complete (VIC1/NSW1 decoder features). Stratified eval reveals spike nMAPE gap (TFT 79–84% vs LightGBM 38–53%); calibration excellent (|bias| ≤ 0.027). Run 007 in progress (5-min volatility encoder features, dataset rebuilt 2026-04-12).
+**Status (2026-04-12):** Run 010 in progress (**Log-Scaling** + **q30/50/70** + **2022 Backfill**). Stratified eval benchmark used to close the spike nMAPE gap vs LightGBM.
 
 ---
 

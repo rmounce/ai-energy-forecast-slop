@@ -2,7 +2,7 @@
 
 Fittingly, most of this code was also AI generated.
 
-This project provides a comprehensive forecasting pipeline for home energy management. It leverages a LightGBM machine learning model to predict future energy load and electricity prices. The script integrates deeply with Home Assistant and InfluxDB to gather data, train models, and publish actionable forecasts back to Home Assistant entities. This enables smarter home automation, such as optimizing battery charging/discharging or running high-consumption appliances during low-price periods.
+This project provides a comprehensive forecasting pipeline for home energy management. It leverages a LightGBM machine learning model (baseline) and a Temporal Fusion Transformer (TFT, in development) to predict future energy load and electricity prices. The script integrates deeply with Home Assistant and InfluxDB to gather data, train models, and publish actionable forecasts back to Home Assistant entities. This enables smarter home automation, such as optimizing battery charging/discharging or running high-consumption appliances during low-price periods.
 
 ## Features
 
@@ -50,7 +50,8 @@ The system operates in a cyclical fashion:
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
-    pip install -r requirements.txt
+    # Use uv for faster, reliable package management
+    uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
     ```
 
 4.  **Configure InfluxDB:**

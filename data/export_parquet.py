@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 from influxdb import InfluxDBClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -35,7 +36,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 REGION = "SA1"
 RP = "rp_30m"
 
-ACTUALS_START = "2024-03-29T00:00:00Z"   # 2 days before first PREDISPATCH run
+ACTUALS_START = "2022-01-01T00:00:00Z"   # Use full history in InfluxDB
 PERSISTENCE_THRESHOLD = 150.0             # $/MWh — price level tracked by rrp_persistence
 
 
@@ -331,6 +332,7 @@ def export_actuals_5m_agg(client):
     agg = pd.DataFrame({
         "rrp_5m_max":      rrp_5m_max,
         "rrp_5m_std":      rrp_5m_std,
+        "rrp_volatility_30m": np.log1p(rrp_5m_std),
         "rrp_persistence": rrp_persistence,
     })
 
