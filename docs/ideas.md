@@ -134,3 +134,39 @@ unit dependency gymnastics. See plan file for full design.
 
 Make this change when TFT goes into production and the Parquet rebuild becomes a
 dependency of the prediction path.
+
+---
+
+## Evaluation & Metrics
+
+### Spike-aware evaluation set
+
+Rather than a rolling last-N-days val window (which may be mild or volatile by chance),
+construct a stratified held-out eval set that is automatically selected to include:
+- A representative sample of extreme price spike events (RRP > threshold for ≥ N intervals)
+- Moderate volatility events
+- "Business as usual" across a seasonal mix (summer/autumn/winter/spring)
+
+Selection criteria would be purely data-driven (no hard-coded dates), making the eval set
+stable across rebuilds while remaining representative of the full distribution.
+This would make `evaluate_tft.py` comparisons more meaningful and prevent a lucky/unlucky
+val window from misleading early stopping.
+
+### Is nMAPE / wMAPE the right metric?
+
+nMAPE and wMAPE treat all price levels symmetrically (percentage error). For battery dispatch:
+- A 20% error on a $300 spike is much more costly than a 20% error on a $70 base price
+- The asymmetric dispatch strategy (q90 bias for sell threshold) means under-forecasting
+  spikes has higher cost than over-forecasting them
+- Consider: pinball loss (already used in training), revenue-weighted error, or a custom
+  "dispatch regret" metric that simulates actual battery decisions on the forecast vs actuals
+
+### Amber APF — CSIRO Kick-Start case study
+
+CSIRO worked with Amber Electric on APF; case study at:
+https://www.csiro.au/en/work-with-us/funding-programs/SME/CSIRO-Kick-Start/Case-studies/Amber-Electric
+
+Worth investigating for implementation details. Goal: replicate the near-term debiasing
+signal that gives LightGBM its 1–2h advantage, without depending on Amber as a data source.
+Likely involves: bias correction of PREDISPATCH using recent actuals (similar to what P5MIN
+tier would provide), possibly with volatility regime detection.
