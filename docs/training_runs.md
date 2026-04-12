@@ -11,6 +11,59 @@ All nMAPE buckets are **cumulative** (1-step through Nh), valid steps only.
 across runs. Use the Delta column (TFT vs LightGBM on the same window) as the primary signal.
 
 ---
+ 
+ ## Run 006 — 2026-04-12 — Interconnector features + Stratified Eval
+ 
+ **Major regression on Stratified set (as expected by review).**
+ While calibration is excellent (|bias| < 0.03), absolute accuracy on spikes is poor (79%+ nMAPE). 
+ VIC1/NSW1 features added but did not close the gap vs LightGBM on the benchmark set.
+ 
+ ### Changes from Run 003 (Baseline comparison)
+ - Added `vic1_pd_rrp` and `nsw1_pd_rrp` as decoder features (steps 1–56).
+ - Evaluated on the new **Stratified Eval set** (fixed benchmark) instead of rolling window.
+ - Rebuilt dataset excludes stratified samples from train/val.
+ 
+ ### Config
+ | Parameter | Value |
+ |---|---|
+ | Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+ | Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+ | Early stopping | wMAPE (horizon-weighted); fallback val_loss |
+ | Horizon decay tau| 14 steps (7h) |
+ | d_model / heads / layers | 64 / 4 / 2 |
+ | Dataset | 17,514 samples (431 excluded for stratified eval) |
+ 
+ ### Training outcome
+ - Best epoch: **4**
+ - wMAPE: **43.74%**
+ - nMAPE 4h: 41.0%  |  16h: 44.1%  |  28h: 44.6%  |  72h: 78.6%
+ 
+ ### evaluate_tft.py results (TFT vs LightGBM, Stratified Set)
+ | Horizon | TFT nMAPE | LightGBM | Delta | TFT (base) | TFT (spike) |
+ |---|---|---|---|---|---|
+ | 1h | 79.4% | 37.9% | +41.6% | 34.9% | 84.7% |
+ | 2h | 77.5% | 40.7% | +36.8% | 37.6% | 82.8% |
+ | 4h | 73.8% | 43.7% | +30.1% | 40.2% | 79.1% |
+ | 8h | 71.7% | 45.9% | +25.8% | 41.9% | 76.8% |
+ | 16h | 73.3% | 48.3% | +25.0% | 42.6% | 78.4% |
+ | 28h | 74.5% | 52.9% | +21.6% | 44.0% | 79.4% |
+ 
+ ### Quantile calibration (all valid steps, Stratified Set)
+ | Quantile | Expected | Actual coverage | Bias | Status |
+ |---|---|---|---|---|
+ | q10 | 0.100 | 0.127 | +0.027 | ✓ well-calibrated |
+ | q50 | 0.500 | 0.512 | +0.012 | ✓ well-calibrated |
+ | q90 | 0.900 | 0.876 | -0.024 | ✓ well-calibrated |
+ 
+ **Major Win:** Calibration is within |0.030| across the board. The model's uncertainty estimates are reliable, even if the point forecast is noisy.
+ 
+ ### Notes
+ - The delta vs LightGBM confirms the "spike nMAPE" issue observed on historical distributions.
+ - 1h/2h regression (+41.6% delta) is likely due to LightGBM's access to the debiased Amber APF signal which TFT lacks.
+ - Checkpoint: `models/tft_price/checkpoint_best.pt`
+ - Training log: `train_run006.log`
+ 
+ ---
 
 ## Run 005 — 2026-04-12 — VAL_DAYS=60 rebuild (current best)
 

@@ -538,7 +538,7 @@ def main():
 
     if not args.dry_run:
         print(f"\n  Next: run rolling-origin evaluation:")
-        print(f"    python train/evaluate_tft.py --weeks 12")
+        print(f"    python train/evaluate_tft.py --eval-set stratified")
 
 
 if __name__ == "__main__":
