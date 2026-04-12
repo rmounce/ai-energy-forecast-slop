@@ -268,28 +268,45 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 6. ✅ NEMSEER/NEMWeb backfill: `ingest/backfill_predispatch_nemseer.py` (2024-04 → 2025-02)
 7. ✅ Actuals extended to 2024-03-29; ~33K training samples now available
 
-### Baseline evaluation results (17K samples, epoch 1 best)
-| Horizon | TFT | LightGBM | Delta |
-|---|---|---|---|
-| 2h | 29.6% | 26.4% | +3.2% (TFT loses) |
-| 4h | 31.4% | 29.2% | +2.2% (TFT loses) |
-| 8h | 32.9% | 34.6% | **-1.6%** ✓ |
-| 16h | 34.2% | 40.6% | **-6.4%** ✓ |
-| 28h | 34.7% | 42.6% | **-7.9%** ✓ |
+### Evaluation results: 17K vs 33K samples (same val window: 2026-03-11 → 2026-04-10)
 
-**Performance requirement:** TFT must outperform LightGBM at ALL horizons including 2–4h. Training is currently data-starved (early stopping at epoch 1). Re-training with ~33K samples in progress.
+Both runs: epoch 1 best, early stopping at epoch 8. LightGBM baseline is the same log over the same window.
+
+| Horizon | LightGBM | TFT 17K | TFT 33K | 17K→33K change |
+|---|---|---|---|---|
+| 2h | 26.4% | 29.6% | 32.9% | +3.3% (worse) |
+| 4h | 29.2% | 31.4% | 34.1% | +2.7% (worse) |
+| 8h | 34.6% | 32.9% | 35.7% | +2.8% (worse) |
+| 16h | 40.6% | 34.2% | 37.6% | +3.4% (worse) |
+| 28h | 42.6% | 34.7% | 37.7% | +3.0% (worse) |
+
+**More data made TFT uniformly worse.** This is the clearest possible signal that the problem is the optimizer, not data volume.
+
+### Root cause diagnosis
+
+Two distinct bugs in `train/train_tft_price.py`:
+
+1. **LR=1e-3 causes epoch-1 overshoot.** Train loss falls continuously (0.128 → 0.069 over 8 epochs), but val loss rises immediately after epoch 1. The model overshoots a good generalising minimum on the first large-LR update and never returns. Fix: lower default LR to 2e-4; add weight_decay=1e-4 to Adam.
+
+2. **Early stopping monitors val_loss, not nMAPE.** At epoch 4, nMAPE_all=39.5% (best overall) but val_loss=0.116 (worse than epoch 1's 0.107). The quantile loss and nMAPE diverge because quantile loss rewards calibrated uncertainty, not median accuracy. Early stopping on val_loss saves the wrong checkpoint. Fix: monitor nMAPE_28h for checkpoint selection and early stopping.
+
+3. **Structural 2–4h gap (separate issue).** Even with the optimizer fixed, TFT may continue to lose at 2–4h because LightGBM sees Amber APF (a debiased near-term signal) as a feature, while TFT's encoder only has raw PREDISPATCH (structurally biased). Long-term fix: P5MIN integration (Step 5 in plan).
 
 ### Next steps
-8. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
+8. **Fix training dynamics** (`train/train_tft_price.py`):
+   - Lower default `--lr` from 1e-3 to 2e-4
+   - Add `--weight-decay` flag (default 1e-4), pass to `torch.optim.Adam`
+   - Switch early stopping / checkpoint selection to monitor nMAPE_28h instead of val_loss
+   - Retrain and evaluate; confirm epoch-1-best pattern is resolved
+9. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
    - At inference time: read latest PREDISPATCH and PD7Day from InfluxDB (single source of truth)
    - Apply `scalers.pkl` to normalise decoder inputs; inverse-transform outputs to $/MWh
    - A/B compare for several weeks before switching
-9. **Retailer switch:** remove Amber APF calls after TFT validated in production
-10. **P5MIN integration (later):** 0–2h near-term improvement via 5-min resolution
+10. **Retailer switch:** remove Amber APF calls after TFT validated in production
+11. **P5MIN integration (later):** 0–2h structural improvement via 5-min resolution
 
 ### Longer-term
-11. Rebuild dataset and retrain monthly (systemd timer) as PD7Day accumulates
-12. If 2–4h gap persists after ~33K samples, next lever is P5MIN decoder input (steps 1–2) and/or explicit price-spike/regime encoder features
+12. Rebuild dataset and retrain monthly (systemd timer) as PD7Day accumulates (currently only 60 days / 183 runs — 28–72h mask coverage only 5.8%)
 
 ---
 
