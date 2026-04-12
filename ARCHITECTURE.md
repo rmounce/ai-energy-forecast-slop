@@ -74,6 +74,7 @@ Six pairs of `.service` + `.timer` units drive the pipeline:
 | `ai-energy-pd7day.timer` | 3×/day (07:20, 12:55, 18:05 AEST) | `ingest/ingest-pd7day.py --fetch` |
 | `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch` |
 | `ai-energy-sevendayoutlook.timer` | Every 30 min (`:15` and `:45`) | `ingest/ingest-sevendayoutlook.py --fetch` |
+| `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch` — SA1/VIC1/NSW1 5-min predispatch → `rp_5m.aemo_p5min_forecast` |
 
 All services run as user `saltspork`, `WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority).
 
@@ -160,6 +161,7 @@ At prediction time, `apply_tariffs_to_forecast()` adds network loss factor and c
 | `ingest-pd7day.py --fetch` | 3×/day | AEMO NEMWeb `PD7DAY/PRICESOLUTION` | `rp_30m.aemo_pd7day_forecast` (tags: region, run_time; fields: rrp $/MWh) |
 | `ingest-predispatch.py --fetch` | Every 30 min | AEMO NEMWeb `Predispatch_Reports` | `rp_30m.aemo_predispatch_forecast` (tags: region, run_time; fields: rrp, total_demand, net_interchange) |
 | `ingest-sevendayoutlook.py --fetch` | Every 30 min | AEMO NEMWeb `SEVENDAYOUTLOOK_FULL` | `rp_30m.aemo_sevendayoutlook` (tags: region, run_time; fields: scheduled_demand, scheduled_capacity, net_interchange, scheduled_reserve) |
+| `ingest-p5min.py --fetch` | Every 5 min | AEMO NEMWeb `P5_Reports` | `rp_5m.aemo_p5min_forecast` (tags: region, run_time; fields: rrp, total_demand, net_interchange) — SA1/VIC1/NSW1 |
 
 Each script also has a `--backfill-archive` mode that imports historical weekly ZIPs from NEMWeb. Backfills were completed 2026-04-10 covering March 2025–April 2026 for PREDISPATCH and SEVENDAYOUTLOOK, and February–April 2026 for PD7Day (no older archive exists).
 
@@ -234,21 +236,22 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 
 **Summary:**
 - Model type: LSTM encoder-decoder with cross-attention (simplified TFT, Lim et al. 2021)
-- Encoder: 96 steps (2 days) of actual historical price, demand, load, PV, weather
-- Decoder: 144 steps (72h) of PREDISPATCH forecasts (h=1–56) + PD7Day (h=57–144) + `covar_missing` flag (prevents 0-padding from being interpreted as median price)
+- Encoder: 96 steps (2 days) × 18 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (3: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`) + time encodings (6) + `rrp_5m_missing` flag (1)
+- Decoder: 144 steps (72h) × 13 features — SA1 PREDISPATCH/PD7Day (4) + VIC1/NSW1 PREDISPATCH prices (2) + time encodings (6) + `covar_missing` flag (1)
 - Covariate construction: Option B (run-aligned) — each training sample uses the PREDISPATCH run issued at the encoder/decoder boundary, exactly matching inference
 - Masked loss: each decoder step independently masked; handles variable PREDISPATCH horizon and growing PD7Day history
-- Key insight from Sinclair et al. 2026 (SHAP): PREDISPATCH RRP alone is >60% of predictive importance
+- Stratified eval benchmark: 900 fixed samples (spike + low/negative + seasonal normal) for durable cross-run comparison
 
 **Data pipeline:**
-1. `ingest/ingest-predispatch.py` and `ingest/ingest-pd7day.py` → InfluxDB (ongoing, systemd timers)
+1. `ingest/ingest-predispatch.py`, `ingest/ingest-pd7day.py`, `ingest/ingest-p5min.py` → InfluxDB (ongoing, systemd timers)
 2. `ingest/backfill_predispatch_nemseer.py` → extends PREDISPATCH parquet back to 2024-04 (run once; ~2 min from cache)
-3. `data/export_parquet.py --actuals-only` → refreshes actuals Parquet from InfluxDB without overwriting the NEMSEER-backfilled PREDISPATCH
-4. `data/build_training_dataset.py` → numpy arrays for training
-5. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
-6. `train/evaluate_tft.py` → nMAPE comparison vs LightGBM at 2h/4h/8h/16h/28h horizons
+3. `data/export_parquet.py` → SA1/VIC1/NSW1 PREDISPATCH + actuals + 5m volatility agg (use `--actuals-5m` to refresh just actuals without touching NEMSEER-backfilled PREDISPATCH)
+4. `data/build_stratified_eval.py` → fixed 900-sample benchmark index (run once; `--force` to regenerate)
+5. `data/build_training_dataset.py` → numpy arrays for training (18 enc / 13 dec features)
+6. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
+7. `train/evaluate_tft.py --eval-set stratified` → nMAPE (all/base/spike) + quantile calibration vs LightGBM
 
-**Status (2026-04-12):** First training run complete. NEMSEER backfill extends PREDISPATCH to 2024-04; actuals extended to 2024-03-29 — expanding training from ~17K to ~33K samples. Second training run in progress.
+**Status (2026-04-12):** Run 006 complete (VIC1/NSW1 decoder features). Stratified eval reveals spike nMAPE gap (TFT 79–84% vs LightGBM 38–53%); calibration excellent (|bias| ≤ 0.027). Run 007 in progress (5-min volatility encoder features, dataset rebuilt 2026-04-12).
 
 ---
 

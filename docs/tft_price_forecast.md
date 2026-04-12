@@ -148,8 +148,8 @@ LSTM encoder-decoder with Gated Residual Networks and cross-attention. Simplifie
 
 ```
 Input:
-  Encoder [B, 96, 14]:  GRN → LSTM(d_model, n_layers)  → enc_out [B, 96, d_model]
-  Decoder [B, 144, 10]: GRN → LSTM(d_model, n_layers)  → dec_out [B, 144, d_model]
+  Encoder [B, 96, 18]:  GRN → LSTM(d_model, n_layers)  → enc_out [B, 96, d_model]
+  Decoder [B, 144, 13]: GRN → LSTM(d_model, n_layers)  → dec_out [B, 144, d_model]
                                   ↑ initialized with encoder LSTM final (h, c)
 
 Cross-attention:  MultiheadAttention(dec_out, enc_out, enc_out) + residual + LayerNorm
@@ -177,7 +177,9 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 
 ## Feature Sets
 
-### Encoder (14 features, past 96 × 30min = 2 days)
+### Encoder (18 features, past 96 × 30min = 2 days)
+
+**Base features (8, always available):**
 
 | Feature | Source | Notes |
 |---|---|---|
@@ -189,11 +191,27 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 | `temp` | `rp_30m.temperature_adelaide` | Adelaide temp °C |
 | `humidity` | `rp_30m.humidity_adelaide` | Adelaide humidity % |
 | `wind_speed` | `rp_30m.wind_speed_adelaide` | Adelaide wind speed km/h |
-| `hour_sin/cos` | computed | Diurnal cycle encoding |
-| `dow_sin/cos` | computed | Weekly cycle encoding |
-| `month_sin/cos` | computed | Annual seasonality encoding |
 
-### Decoder (11 features, future 144 × 30min = 72h)
+**5-minute volatility features (3, available from 2025-03-31; ~50% of training samples):**
+
+| Feature | Source | Notes |
+|---|---|---|
+| `rrp_5m_max` | `rp_5m.aemo_dispatch_sa1_5m` | Max 5-min price in the 30-min window — captures intra-period spike peaks smoothed by 30m averaging |
+| `rrp_5m_std` | same | Std of 5-min prices in the 30-min window — intra-period price chaos signal |
+| `rrp_persistence` | same | Count of 5-min intervals in the last 1h with price > $150 — regime persistence detector |
+
+Motivation (Run 007): when a spike is building, 5-min prices jump from $50 → $300 → $1000 within a single 30-min window — information the 30-min average obscures. The TFT attention mechanism can learn to selectively attend to these volatility signals. Missing steps (pre-2025-03-31) are 0-filled and flagged by `rrp_5m_missing`.
+
+**Non-scaled features (7):**
+
+| Feature | Notes |
+|---|---|
+| `hour_sin/cos` | Diurnal cycle encoding |
+| `dow_sin/cos` | Weekly cycle encoding |
+| `month_sin/cos` | Annual seasonality encoding |
+| `rrp_5m_missing` | Binary: 1.0 where 5m data unavailable (pre-era or gap); allows model to ignore 0-filled 5m features |
+
+### Decoder (13 features, future 144 × 30min = 72h)
 
 | Feature | Source | Steps | Notes |
 |---|---|---|---|
@@ -201,6 +219,8 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 | `pd_rrp` | PD7Day `rrp` | 57–144 | Most recent PD7Day run ≤ T (Option A; ~8h max staleness; acceptable) |
 | `pd_demand` | PREDISPATCH `total_demand` | 1–56 | 0 for steps 57–144 (not in PD7Day) |
 | `pd_net_interchange` | PREDISPATCH `net_interchange` | 1–56 | 0 for steps 57–144 |
+| `vic1_pd_rrp` | VIC1 PREDISPATCH `rrp` | 1–56 | Adjacent region price — Heywood interconnector (~650MW) spike precursor |
+| `nsw1_pd_rrp` | NSW1 PREDISPATCH `rrp` | 1–56 | Adjacent region price — EnergyConnect (~800MW, commissioning 2026–2027) |
 | `hour_sin/cos` | computed | 1–144 | Future time encodings |
 | `dow_sin/cos` | computed | 1–144 | |
 | `month_sin/cos` | computed | 1–144 | |
@@ -209,17 +229,20 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 
 ---
 
-## Dataset Stats (as of 2026-04-12)
+## Dataset Stats (as of 2026-04-12, Run 006/007 rebuild)
 
 | Metric | Value |
 |---|---|
 | PREDISPATCH SA1 rows | ~1,878,000 (33,844 runs, April 2024 – April 2026) |
+| PREDISPATCH VIC1/NSW1 rows | ~390,000 each (decoder features, same run coverage) |
 | PD7Day SA1 rows | 64,294 (183 runs, Feb 2026 – April 2026) |
-| Training samples total | ~33,500 (previously ~17K before NEMSEER backfill + actuals extension) |
-| Train / Val split | ~32,700 / ~820 (last 30 days = val) |
+| 5m dispatch SA1 rows | ~97,000 (2025-03-31 → 2026-04-12 → aggregated to 17,194 30m slots) |
+| Training samples (Run 007 rebuild) | 14,736 train / 2,211 val / 431 stratified eval hold-out |
+| Stratified eval set | 900 samples: 300 spike (top 5% RRP) + 200 low/negative + 400 seasonal normal |
 | Steps 1–16h mask coverage | ~98% |
 | Steps 1–28h mask coverage | ~87% |
 | Steps 28–72h mask coverage | ~11% (growing as PD7Day accumulates) |
+| 5m feature coverage | ~50% of encoder steps (pre-2025-03-31 = 0-filled + flagged) |
 | Target RRP stats ($/MWh) | mean=87.8, p50=58.7, p99=~220, max=20,300 |
 
 **Key constraint:** encoder requires 2 days of actuals before each run_time. Actuals go back to 2024-03-29 in InfluxDB (weather only to 2023-04-19, which still covers the full backfill window). PREDISPATCH runs before 2024-04-01 cannot be used as training samples.
@@ -260,13 +283,14 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 ## Current Status and Next Steps
 
 ### Complete (as of 2026-04-12)
-1. ✅ AEMO ingest infrastructure: PREDISPATCH, PD7Day, SevenDayOutlook → InfluxDB
-2. ✅ Parquet ML cache layer: `data/export_parquet.py` (with `--actuals-only` flag)
-3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py`
+1. ✅ AEMO ingest: PREDISPATCH, PD7Day, SevenDayOutlook, P5MIN → InfluxDB (systemd timers)
+2. ✅ Parquet ML cache: `data/export_parquet.py` — SA1/VIC1/NSW1 PD + 5m volatility agg + actuals
+3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py` — 18 enc / 13 dec features
 4. ✅ Training script: `train/train_tft_price.py` — AdamW + ReduceLROnPlateau + horizon-weighted loss
-5. ✅ Rolling-origin evaluation: `train/evaluate_tft.py` — nMAPE + quantile calibration
+5. ✅ Rolling-origin evaluation: `train/evaluate_tft.py` — nMAPE (all/base/spike) + quantile calibration
 6. ✅ NEMSEER/NEMWeb backfill: `ingest/backfill_predispatch_nemseer.py` (2024-04 → 2025-02)
-7. ✅ 33K training samples; VAL_DAYS=60 (2,260 val samples)
+7. ✅ Stratified eval benchmark: `data/build_stratified_eval.py` — fixed set, durable across runs
+8. ✅ 17,514 training samples; 431 stratified eval hold-out; VAL_DAYS=60
 
 ### Current training setup (`train/train_tft_price.py`)
 
@@ -276,53 +300,58 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
   Short-horizon steps dominate gradients; 4h weight=0.56, 16h weight=0.10, 28h weight=0.02.
 - **Early stopping:** wMAPE (horizon-weighted nMAPE, consistent with training loss); fallback val_loss
 
-### Current evaluation results — Run 005 (eval window: 2026-02-09 → 2026-04-10)
+### Run 006 evaluation (Stratified Eval Set — fixed benchmark, Apr 2026)
 
-TFT now beats LightGBM at **all** forecast horizons:
+| Horizon | TFT nMAPE | LightGBM | Delta | TFT base (≤$150) | TFT spike (>$150) |
+|---|---|---|---|---|---|
+| 1h | 79.4% | 37.9% | +41.6% ❌ | 34.9% | 84.7% |
+| 2h | 77.5% | 40.7% | +36.8% ❌ | 37.6% | 82.8% |
+| 4h | 73.8% | 43.7% | +30.1% ❌ | 40.2% | 79.1% |
+| 28h | 74.5% | 52.9% | +21.6% ❌ | 44.0% | 79.4% |
 
-| Horizon | TFT nMAPE | LightGBM | Delta |
-|---|---|---|---|
-| 1h | 32.6% | 34.7% | **-2.2%** |
-| 2h | 34.5% | 37.8% | **-3.3%** |
-| 4h | 37.0% | 42.0% | **-5.0%** |
-| 8h | 39.6% | 45.1% | **-5.4%** |
-| 16h | 41.6% | 47.1% | **-5.4%** |
-| 28h | 42.5% | 49.6% | **-7.2%** |
+**Key finding:** Run 005's apparent 1h TFT win was an artefact of the Feb–Apr val window being
+anomalously favourable. The stratified benchmark reveals TFT spike nMAPE is 79–84% — much worse
+than LightGBM's 38–53%. Baseload accuracy is competitive (~35–44% vs ~38–53%). The spike gap
+is the primary problem to solve.
 
-Higher absolute nMAPE vs earlier runs (see `docs/training_runs.md`) because the eval window now
-includes volatile late-summer SA1 pricing (Feb–Mar). Delta column is the meaningful signal.
-
-**Quantile calibration:** q90 well-calibrated (+0.010 bias) — sell threshold reliable.
-q50/q10 over-cover (upward bias, consistent with PREDISPATCH itself biasing toward higher prices).
+**Calibration (Run 006, Stratified Set):** q10 +0.027 / q50 +0.012 / q90 −0.024 — **excellent**.
+Despite poor point accuracy, uncertainty quantification is reliable. The q90 sell-threshold strategy
+for battery dispatch remains valid.
 
 Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
 
-### Open design questions (flagged for review)
-- **Eval set composition:** Single contiguous val window may be lucky/unlucky (volatile vs mild).
-  Proposed: stratified eval set auto-selected for spike events, moderate volatility, seasonal mix.
-  See `docs/ideas.md`.
-- **Metric correctness:** Is nMAPE/wMAPE the right optimisation target for battery dispatch?
-  Alternative: revenue-weighted error or dispatch-regret metric. See `docs/ideas.md`.
-- **1h advantage:** TFT winning at 1h vs LightGBM may partly reflect LightGBM struggling on
-  the volatile Feb–Mar eval window, not a genuine 1h TFT improvement. Amber APF near-term
-  debiasing remains structurally unavailable to TFT until P5MIN tier is built (Step 5).
+### Run 007 (in progress — 5-min volatility encoder features)
+
+Adding `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_5m_missing` to the encoder.
+Hypothesis: intra-30min price volatility signals spike momentum that 30-min averaging obscures.
+VIC1/NSW1 decoder features were already added in Run 006 but insufficient alone.
+
+To rebuild and retrain:
+```bash
+python data/export_parquet.py --actuals-5m
+python data/build_training_dataset.py
+python train/train_tft_price.py
+python train/evaluate_tft.py --eval-set stratified
+```
 
 ### Next steps
-8. ✅ Training dynamics fixed (AdamW + ReduceLROnPlateau + horizon-weighted loss)
-9. **Add VIC1 + NSW1 as decoder features** (Step 2e)
-   - SA1 interconnectors: Heywood→VIC1 (~650MW operating), EnergyConnect→NSW1 (~800MW, commissioning ~2026–2027)
-   - Adjacent region PREDISPATCH prices are spike precursors; data likely already in InfluxDB
-   - See `docs/ideas.md` for full implementation steps
-10. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
+9. ✅ VIC1/NSW1 decoder features (Run 006 — added but insufficient alone)
+10. ✅ Stratified eval benchmark (confirmed spike gap is structural, not eval window artefact)
+11. **Run 007:** 5-min volatility encoder features (in progress — see above)
+12. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
     - Read PREDISPATCH/PD7Day exclusively from InfluxDB at inference time
     - A/B compare for several weeks before switching
-11. **Retailer switch:** remove Amber APF calls after TFT validated in production
-12. **P5MIN integration (later):** 0–2h near-term debiased signal; only after Step 10 is stable
+    - Only proceed if Run 007 (or later) closes the spike gap meaningfully
+13. **Retailer switch:** remove Amber APF calls after TFT validated in production
+14. **P5MIN inference tier (later):** 0–1h near-term debiased signal; only after Step 12 stable
+    - History accumulating since 2026-04-12; NEMSEER backfill available when needed
+    - Resolution cascade: P5MIN (0–1h) → PREDISPATCH (1–28h) → PD7Day (28–72h)
 
 ### Longer-term
-- Rebuild dataset and retrain regularly as PD7Day accumulates (28–72h mask coverage currently 5.8%)
-- Temporal sample weighting (`--temporal-halflife`) implemented but not yet beneficial — revisit
-  when 3+ years of training data available (annual seasonal signal currently dominates any benefit)
+- Rebuild dataset and retrain regularly as PD7Day accumulates (28–72h mask coverage ~11%)
+- SevenDayOutlook demand/interchange as decoder features for 28h+ (data already in parquet)
+- Temporal sample weighting: revisit when 3+ years available (annual seasonality dominates currently)
+- Dispatch-regret metric: simulate charge/hold/discharge vs perfect foresight once model matures
 
 ---
 
