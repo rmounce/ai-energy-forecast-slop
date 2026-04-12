@@ -295,9 +295,10 @@ Two distinct bugs in `train/train_tft_price.py`:
 ### Next steps
 8. **Fix training dynamics** (`train/train_tft_price.py`):
    - Lower default `--lr` from 1e-3 to 2e-4
-   - Add `--weight-decay` flag (default 1e-4), pass to `torch.optim.Adam`
-   - Switch early stopping / checkpoint selection to monitor nMAPE_28h instead of val_loss
+   - Switch to `torch.optim.AdamW` with `--weight-decay` flag (default 1e-4). AdamW uses *decoupled* weight decay — strictly better than `Adam(weight_decay=...)` because Adam's gradient normalising accumulators interfere with the L2 penalty scaling
+   - Switch early stopping / checkpoint selection to monitor nMAPE_28h instead of val_loss, with `val_loss` as fallback when nMAPE is NaN
    - Retrain and evaluate; confirm epoch-1-best pattern is resolved
+   - **If still overshooting after the above:** replace `CosineAnnealingLR(T_max=100)` with `ReduceLROnPlateau(mode='min', factor=0.5, patience=2)` monitoring nMAPE_28h. With T_max=100 and early stopping at epoch 8, cosine barely decays in the relevant window.
 9. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
    - At inference time: read latest PREDISPATCH and PD7Day from InfluxDB (single source of truth)
    - Apply `scalers.pkl` to normalise decoder inputs; inverse-transform outputs to $/MWh
