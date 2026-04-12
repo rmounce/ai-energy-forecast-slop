@@ -71,7 +71,7 @@ def run_tft_inference(model, val_ds, scalers, batch_size=256):
 
     model.eval()
     with torch.no_grad():
-        for X_enc, X_dec, _y_norm, y_raw, mask in loader:
+        for X_enc, X_dec, _y_norm, y_raw, mask, _weights in loader:
             preds_norm = model(X_enc, X_dec)                     # [B, T, 3]
             preds_norm, _ = torch.sort(preds_norm, dim=-1)       # prevent quantile crossing
             preds_norm_np = preds_norm.numpy()                   # [B, T, 3]
