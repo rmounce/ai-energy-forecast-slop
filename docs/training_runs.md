@@ -12,6 +12,72 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
  
+## Run 008 — 2026-04-12 — Progressive price-weighted loss
+
+**Spike gap unchanged. Loss weighting alone does not solve the structural problem.**
+Spike nMAPE 84.1% at 1h (vs 84.6% Run 007 — effectively no change). Model converged in just
+4 epochs (faster than prior runs), suggesting the pw_wMAPE signal is not providing richer
+gradient information — the model still finds it easier to minimise average loss by predicting
+baseload. Root cause is likely data quantity/diversity, not loss function shape.
+Positive: calibration recovered significantly — q50/q90 both near-perfect vs Run 007 regression.
+
+### Changes from Run 007
+- `build_training_dataset.py`: added `y_weights.npy` — log-growth price weighting
+  `weight = 1 + log1p(max(0, (raw_price − p50_ref) / p50_ref))` per decoder step
+  ref = training p50 (62.6 $/MWh); masked steps → weight=0; saved alongside targets
+- `train_tft_price.py`: loaded `y_weights`, applied in `MaskedQuantileLoss` as `price_weights`
+- Early stopping metric changed from `wMAPE` to `pw_wMAPE` (price+horizon weighted nMAPE)
+- `evaluate_tft.py`: fixed 6-tuple unpack (y_weights added to dataset return)
+
+### Config
+| Parameter | Value |
+|---|---|
+| Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | pw_wMAPE (price+horizon weighted) |
+| Price weight | log-growth, ref=62.6 $/MWh ($300=2.57×, $1000=3.77×) |
+| Horizon decay tau | 14 steps (7h) |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | 17,516 samples (14,736 train / 2,211 val / 431 stratified eval) |
+| Encoder features | 18 (same as Run 007) |
+| Decoder features | 13 (same as Run 007) |
+
+### Training outcome
+- Best epoch: **4** (faster convergence than prior runs)
+- val_loss: **0.1087**
+- pw_wMAPE: **37.99%**
+- wMAPE: **43.43%**
+- nMAPE 4h: 39.8%  |  16h: 44.3%  |  28h: 45.5%  |  72h: 73.2%
+
+### evaluate_tft.py results (TFT vs LightGBM, Stratified Set)
+| Horizon | TFT nMAPE | LightGBM | Delta | TFT (base) | TFT (spike) |
+|---|---|---|---|---|---|
+| 1h | 79.0% | 37.9% | +41.1% | 36.0% | 84.1% |
+| 2h | 77.3% | 40.7% | +36.6% | 38.9% | 82.3% |
+| 4h | 73.5% | 43.7% | +29.8% | 41.7% | 78.5% |
+| 8h | 71.1% | 45.9% | +25.2% | 43.3% | 75.9% |
+| 16h | 73.0% | 48.3% | +24.7% | 44.2% | 77.8% |
+| 28h | 74.3% | 52.9% | +21.4% | 45.8% | 78.8% |
+
+### Quantile calibration (all valid steps, Stratified Set)
+| Quantile | Expected | Actual coverage | Bias | Status |
+|---|---|---|---|---|
+| q10 | 0.100 | 0.156 | +0.056 | ↑ over-covers |
+| q50 | 0.500 | 0.502 | +0.002 | ✓ well-calibrated |
+| q90 | 0.900 | 0.883 | -0.017 | ✓ well-calibrated |
+
+### Notes
+- Spike nMAPE essentially unchanged after 8 runs — structural data problem confirmed
+- pw_wMAPE headline metric working correctly; early stopping fires at epoch 4 is suspicious
+  (less patience exhausted, possible the new metric is less smooth than wMAPE)
+- Calibration recovery (q50/q90) is a genuine improvement vs Run 007 regression
+- Next: Run 009 — NEMSEER 5m backfill to take 5m coverage from 48.8% → ~100%
+  If 5m features fire on all spike events, regime-detection may finally have impact
+- Checkpoint: `models/tft_price/checkpoint_best.pt`
+- Training log: `models/tft_price/training_log.csv`
+
+---
+
 ## Run 007 — 2026-04-12 — 5-minute volatility encoder features
 
 **5m features provide marginal improvement; spike gap structurally unchanged.**
