@@ -88,7 +88,32 @@ Average predictions from multiple TFT checkpoints (different random seeds, diffe
 and improve quantile calibration. Low implementation cost once the single-model pipeline
 is working.
 
-### SevenDayOutlook as decoder feature
+### VIC1 + NSW1 prices as decoder features (near-term, low effort)
+
+SA1 has two high-capacity interconnectors:
+- **Heywood** → VIC1 (~650MW, already operating)
+- **Project EnergyConnect** → NSW1 (~800MW, expected full commission ~2026–2027,
+  will be represented in NEM dispatch as a direct SA1↔NSW1 interchange)
+
+`net_interchange` is already an encoder feature (the *result* of price differentials)
+but not the *cause*. Adding VIC1 and NSW1 PREDISPATCH forecast prices as decoder features
+gives the model the actual signals driving interchange — useful for spike precursors where
+adjacent region prices lead SA1 convergence, and for constraint events where SA1 diverges.
+
+VIC1 and NSW1 data are almost certainly already in InfluxDB (AEMO ingest files cover all
+NEM regions; the SA1 filter is only applied at export time in `export_parquet.py`).
+
+Implementation:
+1. Verify in InfluxDB: `SELECT COUNT(rrp) FROM rp_30m.aemo_predispatch_forecast WHERE region='VIC1'` (and NSW1)
+2. Add VIC1 + NSW1 exports to `data/export_parquet.py` → `aemo_predispatch_vic1.parquet`, `aemo_predispatch_nsw1.parquet`
+3. In `data/build_training_dataset.py`, join both to each decoder step → add `vic1_pd_rrp` and `nsw1_pd_rrp` to `DEC_CONTINUOUS`
+4. Rebuild dataset and retrain — EnergyConnect-era data will have both features populated; pre-commissioning NSW1 data will have sparse/missing NSW1 values, handled by the existing `covar_missing` flag
+
+Note: once EnergyConnect is fully commissioned and SA1↔NSW1 interchange is represented in
+NEM data, also add `nsw1_net_interchange` as an encoder feature alongside the existing
+`net_interchange` (which currently represents the SA1↔VIC1 Heywood flow).
+
+### Multi-region training
 
 `aemo_sevendayoutlook_sa1.parquet` is already ingested and exported but not yet used in
 training. AEMO's 7-day outlook provides scheduled demand and net interchange forecasts for
