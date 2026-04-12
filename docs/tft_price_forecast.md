@@ -314,44 +314,29 @@ anomalously favourable. The stratified benchmark reveals TFT spike nMAPE is 79�
 than LightGBM's 38–53%. Baseload accuracy is competitive (~35–44% vs ~38–53%). The spike gap
 is the primary problem to solve.
 
-**Calibration (Run 006, Stratified Set):** q10 +0.027 / q50 +0.012 / q90 −0.024 — **excellent**.
-Despite poor point accuracy, uncertainty quantification is reliable. The q90 sell-threshold strategy
-for battery dispatch remains valid.
+**Run 007 result:** Spike nMAPE barely moved (84.6% vs 84.7% at 1h). 5m coverage only 48.8% —
+most stratified spike events predate the 5m data window (starts 2025-03-31).
+**Run 008 (in progress):** Progressive price-weighted loss — `weight = 1 + log1p(max(0, (price−ref)/ref))`
+where ref = training p50 (~$60). Directly attacks the training imbalance: ~10% of steps are spikes
+but the uniform loss can ignore them. `pw_wMAPE` (price+horizon weighted) is now the headline metric.
 
 Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
 
-### Run 007 (in progress — 5-min volatility encoder features)
-
-Adding `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_5m_missing` to the encoder.
-Hypothesis: intra-30min price volatility signals spike momentum that 30-min averaging obscures.
-VIC1/NSW1 decoder features were already added in Run 006 but insufficient alone.
-
-To rebuild and retrain:
-```bash
-python data/export_parquet.py --actuals-5m
-python data/build_training_dataset.py
-python train/train_tft_price.py
-python train/evaluate_tft.py --eval-set stratified
-```
-
 ### Next steps
-9. ✅ VIC1/NSW1 decoder features (Run 006 — added but insufficient alone)
-10. ✅ Stratified eval benchmark (confirmed spike gap is structural, not eval window artefact)
-11. **Run 007:** 5-min volatility encoder features (in progress — see above)
-12. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
-    - Read PREDISPATCH/PD7Day exclusively from InfluxDB at inference time
-    - A/B compare for several weeks before switching
-    - Only proceed if Run 007 (or later) closes the spike gap meaningfully
-13. **Retailer switch:** remove Amber APF calls after TFT validated in production
-14. **P5MIN inference tier (later):** 0–1h near-term debiased signal; only after Step 12 stable
-    - History accumulating since 2026-04-12; NEMSEER backfill available when needed
-    - Resolution cascade: P5MIN (0–1h) → PREDISPATCH (1–28h) → PD7Day (28–72h)
+9. ✅ VIC1/NSW1 decoder features (Run 006)
+10. ✅ Stratified eval benchmark (spike gap confirmed structural)
+11. ✅ 5-min volatility encoder features (Run 007 — marginal; coverage too low)
+12. **Run 008 (in progress):** Progressive price-weighted loss (log-growth)
+13. **Run 009:** NEMSEER backfill of 5-min dispatch actuals → full 5m feature coverage
+14. **Wire into forecast.py:** only after spike gap meaningfully narrowed
+15. **Retailer switch:** remove Amber APF after TFT validated in production
+16. **P5MIN inference tier (later):** 0–1h debiased signal; accumulating since 2026-04-12
 
 ### Longer-term
-- Rebuild dataset and retrain regularly as PD7Day accumulates (28–72h mask coverage ~11%)
-- SevenDayOutlook demand/interchange as decoder features for 28h+ (data already in parquet)
-- Temporal sample weighting: revisit when 3+ years available (annual seasonality dominates currently)
-- Dispatch-regret metric: simulate charge/hold/discharge vs perfect foresight once model matures
+- Extend PREDISPATCH backfill to 2022 (more spike episodes; NEMSEER available)
+- Larger encoder window (144 steps / 3 days) and larger model (d_model=128)
+- SevenDayOutlook demand/interchange as decoder features for 28h+
+- Dispatch-regret metric: simulate charge/hold/discharge vs perfect foresight
 
 ---
 
