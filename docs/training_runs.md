@@ -12,6 +12,72 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
  
+## Run 007 — 2026-04-12 — 5-minute volatility encoder features
+
+**5m features provide marginal improvement; spike gap structurally unchanged.**
+Spike nMAPE improved ~1–2pp vs Run 006 (84.6% vs 84.7% at 1h; 77.9% vs 79.1% at 4h).
+Base nMAPE improved ~2pp at 1h (33.0% vs 34.9%). 48.8% 5m coverage means many stratified
+spike events predate the 5m data window — the signal can't fire on what it can't see.
+Calibration regressed: q50 and q90 now under-cover (were well-calibrated in Run 006).
+
+### Changes from Run 006
+- Added 3 new encoder features from `actuals_sa1_5m_agg.parquet`:
+  - `rrp_5m_max`: max price over 6-interval (30min) rolling window
+  - `rrp_5m_std`: std price over 6-interval (30min) rolling window
+  - `rrp_persistence`: count of 5-min intervals above $150 in last 1h (12 intervals)
+- Added `rrp_5m_missing` binary encoder flag (1 = no 5m data for that step)
+- Scalers fitted/applied only on non-missing 5m rows (avoids 0-padding bias)
+- Encoder grows: 14 (Run 005) → 16 (Run 006) → **18** (Run 007)
+- 5m data coverage: 48.8% of training samples (starts 2025-03-31)
+
+### Config
+| Parameter | Value |
+|---|---|
+| Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | wMAPE (horizon-weighted); fallback val_loss |
+| Horizon decay tau | 14 steps (7h) |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | 17,516 samples (14,736 train / 2,211 val / 431 stratified eval) |
+| Encoder features | 18: base(8) + 5m volatility(3) + time(6) + rrp_5m_missing(1) |
+| Decoder features | 13: pd covariates(5) + time(6) + horizon_norm(1) + covar_missing(1) |
+
+### Training outcome
+- Best epoch: **6**
+- val_loss: **0.0992**
+- wMAPE: **40.56%**
+- nMAPE 4h: 37.7%  |  16h: 41.3%  |  28h: 41.6%  |  72h: 67.3%
+
+### evaluate_tft.py results (TFT vs LightGBM, Stratified Set)
+| Horizon | TFT nMAPE | LightGBM | Delta | TFT (base) | TFT (spike) |
+|---|---|---|---|---|---|
+| 1h | 79.1% | 37.9% | +41.3% | 33.0% | 84.6% |
+| 2h | 77.0% | 40.7% | +36.3% | 36.3% | 82.3% |
+| 4h | 72.5% | 43.7% | +28.8% | 38.5% | 77.9% |
+| 8h | 69.9% | 45.9% | +24.0% | 40.5% | 75.0% |
+| 16h | 71.7% | 48.3% | +23.4% | 41.1% | 76.7% |
+| 28h | 73.0% | 52.9% | +20.0% | 41.8% | 77.9% |
+
+### Quantile calibration (all valid steps, Stratified Set)
+| Quantile | Expected | Actual coverage | Bias | Status |
+|---|---|---|---|---|
+| q10 | 0.100 | 0.105 | +0.005 | ✓ well-calibrated |
+| q50 | 0.500 | 0.450 | -0.050 | ↓ under-covers |
+| q90 | 0.900 | 0.862 | -0.038 | ↓ under-covers |
+
+**Calibration regression vs Run 006:** q10 improved (+0.027 → +0.005), but q50 and q90 went from ✓ to ↓.
+q90 is the primary dispatch threshold — -0.038 bias means it will under-predict high prices 3.8% more
+than expected. Watch this closely before wiring TFT into forecast.py.
+
+### Notes
+- 5m feature coverage too low to close the spike gap on the stratified set — many spike events predate
+  the 5m data (collected from 2025-03-31; stratified set spans back to 2025-03-24)
+- As 5m data accumulates the signal will improve — re-evaluate in Run 008+ when coverage exceeds 70%
+- Checkpoint: `models/tft_price/checkpoint_best.pt`
+- Training log: `models/tft_price/training_log.csv`
+
+---
+
  ## Run 006 — 2026-04-12 — Interconnector features + Stratified Eval
  
  **Major regression on Stratified set (as expected by review).**
