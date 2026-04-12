@@ -59,7 +59,7 @@ PARQUET_DIR = ROOT / "data" / "parquet"
 MODELS_DIR = ROOT / "models" / "tft_price"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-QUANTILES = [0.1, 0.5, 0.9]
+QUANTILES = [0.3, 0.5, 0.7]
 
 
 # ─── Dataset ─────────────────────────────────────────────────────────────────
@@ -235,18 +235,12 @@ def run_epoch(model, loader, criterion, optimiser=None):
     return total_loss / n_batches if n_batches else float("nan")
 
 
-def evaluate_nmape(model, loader, scalers, horizon_weights=None, price_weight_ref=None):
-    """Compute nMAPE on raw (denormalised) predictions vs raw targets (valid steps only).
-
-    Returns (nmape_global, buckets) where:
-      nmape_global:            unweighted nMAPE over all valid steps (informative)
-      buckets["pw_weighted"]:  price+horizon-weighted nMAPE — primary early stopping metric.
-                               Combines exp(-h/tau) horizon decay with log-growth price weight.
-                               Equals buckets["weighted"] when price_weight_ref is None.
-      buckets["weighted"]:     horizon-only weighted nMAPE (monitoring)
-      buckets["1-4h/16h/28h/72h"]: unweighted per-bucket nMAPEs for monitoring.
-
-    horizon_weights:  optional numpy [T] array (exp(-h/tau) from training loss).
+def evaluate_nmape(model, loader, scalers, horizon_weights,
+                   target_scaling="quantile", log_scale_factor=60.0,
+                   price_weight_ref=None):
+    """
+    Compute nMAPE by horizon bucket.
+    Inverse-transforms predictions back to $/MWh first.
     price_weight_ref: training-set p50 RRP in $/MWh; enables log-growth price weighting.
     """
     model.eval()
@@ -259,7 +253,12 @@ def evaluate_nmape(model, loader, scalers, horizon_weights=None, price_weight_re
             preds_norm = model(X_enc, X_dec)           # [B, T, 3]
             preds_norm, _ = torch.sort(preds_norm, dim=-1) # Prevent quantile crossing
             p50_norm   = preds_norm[:, :, 1].numpy()   # median quantile
-            p50_raw = qt.inverse_transform(p50_norm.reshape(-1, 1)).reshape(p50_norm.shape)
+
+            if target_scaling == "log":
+                # Inverse log transform: x = scale * (exp(scaled) - 1)
+                p50_raw = log_scale_factor * (np.exp(p50_norm) - 1.0)
+            else:
+                p50_raw = qt.inverse_transform(p50_norm.reshape(-1, 1)).reshape(p50_norm.shape)
 
             all_pred_raw.append(p50_raw)
             all_targ_raw.append(y_batch_raw.numpy())
@@ -484,8 +483,12 @@ def main():
         prev_lr = optimiser.param_groups[0]["lr"]
         train_loss = run_epoch(model, train_loader, criterion, optimiser)
         val_loss   = run_epoch(model, val_loader,   criterion)
-        nmape_global, buckets = evaluate_nmape(model, val_loader, scalers, hw_numpy,
-                                               price_weight_ref=price_weight_ref)
+        nmape_global, buckets = evaluate_nmape(
+            model, val_loader, scalers, hw_numpy,
+            target_scaling=meta.get("target_scaling", "quantile"),
+            log_scale_factor=meta.get("log_scale_factor", 60.0),
+            price_weight_ref=price_weight_ref
+        )
         elapsed    = time.time() - t0
 
         # Primary metric: price+horizon-weighted nMAPE; fall back to val_loss if NaN

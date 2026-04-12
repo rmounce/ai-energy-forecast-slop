@@ -118,15 +118,15 @@ pytorch-forecasting's `TimeSeriesDataSet(group_ids=["run_time"])` would allow on
 
 ## Normalisation
 
-**Method:** `QuantileTransformer(n_quantiles=2000, output_distribution='normal')` per feature.
+### Normalisation: Log-Scaling vs QuantileTransformer
 
-**Rationale:** SA1 prices have extreme right-tail spikes (max observed: 20,300 $/MWh in training data). `StandardScaler` would compress the bulk of the distribution into a narrow range dominated by spike statistics. `QuantileTransformer` maps the empirical CDF to a normal distribution: the p50 price (~60 $/MWh) maps to 0, the p99 price (~433 $/MWh) maps to ~+2.3, and extreme spikes map to +5. This gives the model a well-conditioned input space.
+As of Run 010, the target `rrp` and decoder covariates `pd_rrp` (SA1/VIC1/NSW1) use **Log-Scaling** instead of `QuantileTransformer`.
 
-**Confirmed:** Sinclair et al. `training.py` uses `QuantileTransformer(n_quantiles=2000, output_distribution='normal')` for all continuous features.
+**Rationale:** `QuantileTransformer` (Normal distribution) compresses the extreme price tail ($300 to $16,000) into a very narrow range of z-scores (z=2.4 to z=3.4). This "blinds" the loss function to the magnitude of spikes. Log-scaling preserves relative distance in the tail: a jump from $1,000 to $10,000 remains several times larger than a jump from $50 to $150.
 
-**Implementation:** Transformers are fitted on the **train split only** (last 30 days = validation). Applied to encoder features, decoder continuous features (pd_rrp, pd_demand, pd_net_interchange), and the target (actual RRP). Time encodings (sin/cos) and `horizon_norm` are pre-bounded and not normalised.
-
-**At inference:** Apply the same fitted transformers (saved as `data/parquet/scalers.pkl`) to incoming PREDISPATCH data before feeding to the model. Inverse-transform outputs to get $/MWh.
+**Implementation:**
+`scaled = sign(x) * log1p(abs(x) / 60.0)`
+Target quantiles are predicted in log-space and inverse-transformed for evaluation. Other features (demand, PV, weather) continue to use `QuantileTransformer`.
 
 ---
 
@@ -154,7 +154,7 @@ Input:
 
 Cross-attention:  MultiheadAttention(dec_out, enc_out, enc_out) + residual + LayerNorm
 Post-attention:   GRN(d_model)
-Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
+Output:           Linear(d_model → 3) → [B, 144, 3]  (q30, q50, q70)
 ```
 
 **Hyperparameters (defaults):**
@@ -164,7 +164,7 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 - `dropout=0.1`
 - Parameters at d_model=64: ~190K
 
-**Loss:** Masked QuantileLoss averaged over valid decoder steps. `mask[h]=1` where both forecast covariate and actual target exist.
+**Loss:** Masked QuantileLoss averaged over valid decoder steps. `mask[h]=1` where both forecast covariate and actual target exist. quantiles: `[0.3, 0.5, 0.7]`.
 
 **Training:**
 - Adam, lr=1e-3

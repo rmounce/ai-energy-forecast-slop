@@ -93,14 +93,16 @@ ENC_CONT_BASE  = ["rrp", "total_demand", "net_interchange",
 
 # 5-min volatility aggregates — only available from ~2025-03-30; NaN-filled earlier.
 # Steps where data is absent get rrp_5m_missing=1; the 3 values are 0-filled.
-ENC_5M_CONTINUOUS   = ["rrp_5m_max", "rrp_5m_std", "rrp_persistence"]
+ENC_5M_CONTINUOUS   = ["rrp_5m_max", "rrp_5m_std", "rrp_persistence", "rrp_volatility_30m"]
 ENC_5M_FEATURES_SET = set(ENC_5M_CONTINUOUS)
 
-ENC_CONTINUOUS = ENC_CONT_BASE + ENC_5M_CONTINUOUS       # 11 scaled features
+ENC_CONTINUOUS = ENC_CONT_BASE + ENC_5M_CONTINUOUS + ["rrp_log_momentum"]  # 13 scaled features
 TIME_FEATURES  = ["hour_sin", "hour_cos", "dow_sin", "dow_cos",
                   "month_sin", "month_cos"]
-ENC_FEATURES   = ENC_CONTINUOUS + TIME_FEATURES + ["rrp_5m_missing"]   # 18 features
-ENC_5M_MISSING_IDX = len(ENC_CONTINUOUS) + len(TIME_FEATURES)          # index of rrp_5m_missing = 17
+ENC_FEATURES   = ENC_CONTINUOUS + TIME_FEATURES + ["rrp_5m_missing"]   # 20 features
+ENC_5M_MISSING_IDX = len(ENC_CONTINUOUS) + len(TIME_FEATURES)          # index of rrp_5m_missing = 19
+
+LOG_SCALE_FACTOR = 60.0  # reference price for log-scaling: log1p(x/60)
 
 # Decoder: forecast covariates (PREDISPATCH/PD7Day) + time + horizon
 DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange",
@@ -206,10 +208,19 @@ def build_samples(actuals: pd.DataFrame,
 
         enc_time = time_encodings(enc_base.index)
 
-        # Assemble [96, 18]: base(8) + 5m(3) + time(6) + missing_flag(1)
+        # Add log-momentum and volatility features
+        # Log-momentum: slope of log-price over last 4 steps (2h)
+        rrp_raw = enc_base["rrp"].values.astype(np.float32)
+        rrp_log = np.log1p(np.maximum(0, rrp_raw) / LOG_SCALE_FACTOR)
+        # Simple slope estimate: current - 4 steps ago
+        log_mom = np.zeros_like(rrp_log)
+        log_mom[4:] = rrp_log[4:] - rrp_log[:-4]
+
+        # Assemble [96, 20]: base(8) + 5m(4) + log_mom(1) + time(6) + missing_flag(1)
         enc_full = np.concatenate([
             enc_base.values.astype(np.float32),                      # [96, 8]
-            enc_5m.values.astype(np.float32),                        # [96, 3]
+            enc_5m.values.astype(np.float32),                        # [96, 4]
+            log_mom.reshape(-1, 1),                                  # [96, 1]
             enc_time.values.astype(np.float32),                      # [96, 6]
             missing_5m.astype(np.float32).reshape(-1, 1),            # [96, 1]
         ], axis=1)
@@ -335,14 +346,25 @@ def split_by_time(run_times: np.ndarray, val_days: int = VAL_DAYS, train_gap_hou
 
 # ─── Normalisation ───────────────────────────────────────────────────────────
 
-def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_train):
+def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_train,
+                target_scaling="quantile"):
     """
     Fit QuantileTransformer per continuous feature on train split only.
+    If target_scaling='log', rrp features use log-scaling instead of QuantileTransformer.
     Time encoding and horizon_norm features are NOT normalised (already bounded).
     """
     scalers = {}
 
     def fit_one(name, values):
+        # Use log-scaling for rrp and targets if requested
+        is_rrp = any(x in name for x in ["rrp", "target_rrp", "pd_rrp"])
+        if target_scaling == "log" and is_rrp:
+            scalers[name] = "log"
+            v = values
+            print(f"    {name}: [log-scaling] p50={np.nanpercentile(v, 50):.2f}, "
+                  f"p95={np.nanpercentile(v, 95):.2f}, max={np.nanmax(v):.2f}")
+            return
+
         qt = QuantileTransformer(n_quantiles=2000, output_distribution="normal",
                                  random_state=42)
         qt.fit(values.reshape(-1, 1))
@@ -386,33 +408,32 @@ def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers):
     X_dec_n = X_dec.copy()
     y_norm  = np.zeros_like(y_raw)
 
+    def transform(val, s):
+        if s == "log":
+            return np.sign(val) * np.log1p(np.abs(val) / LOG_SCALE_FACTOR)
+        return s.transform(val.reshape(-1, 1)).reshape(-1)
+
     has_5m = (X_enc_n[:, :, ENC_5M_MISSING_IDX] == 0)  # [N, 96] bool
 
     for j, feat in enumerate(ENC_CONTINUOUS):
         if feat in ENC_5M_FEATURES_SET:
             # Transform only non-missing steps; leave 0-filled missing steps as 0
-            flat = X_enc_n[:, :, j][has_5m].reshape(-1, 1)
-            X_enc_n[:, :, j][has_5m] = scalers[feat].transform(flat).reshape(-1)
+            view = X_enc_n[:, :, j]
+            view[has_5m] = transform(view[has_5m], scalers[feat])
         else:
-            flat = X_enc_n[:, :, j].reshape(-1, 1)
-            X_enc_n[:, :, j] = scalers[feat].transform(flat).reshape(X_enc_n[:, :, j].shape)
+            X_enc_n[:, :, j] = transform(X_enc_n[:, :, j], scalers[feat]).reshape(X_enc_n[:, :, j].shape)
 
     for j, feat in enumerate(DEC_CONTINUOUS):
         if feat in ADJ_REGION_FEATURES:
             view = X_dec_n[:, :56, j]
             pd_mask = y_covar_mask[:, :56]
-            valid_flat = view[pd_mask].reshape(-1, 1)
-            view[pd_mask] = scalers[feat].transform(valid_flat).reshape(-1)
+            view[pd_mask] = transform(view[pd_mask], scalers[feat])
         else:
             view = X_dec_n[:, :, j]
-            valid_flat = view[y_covar_mask].reshape(-1, 1)
-            view[y_covar_mask] = scalers[feat].transform(valid_flat).reshape(-1)
+            view[y_covar_mask] = transform(view[y_covar_mask], scalers[feat])
 
-    qt = scalers["target_rrp"]
-    # Only transform valid targets; leave zero-padded positions as 0
-    valid_flat = y_raw[y_mask].reshape(-1, 1)
-    y_norm_valid = qt.transform(valid_flat).reshape(-1)
-    y_norm[y_mask] = y_norm_valid
+    # Target: use transform helper
+    y_norm[y_mask] = transform(y_raw[y_mask], scalers["target_rrp"])
 
     return X_enc_n, X_dec_n, y_norm
 
@@ -426,6 +447,8 @@ def main():
                         help="Process first 200 runs; print shapes and exit")
     parser.add_argument("--no-normalise", action="store_true",
                         help="Skip normalisation (saves raw arrays for inspection)")
+    parser.add_argument("--target-scaling", choices=["quantile", "log"], default="log",
+                        help="Scaling method for rrp/target (default: log)")
     parser.add_argument("--output-length", type=int, default=OUTPUT_LENGTH,
                         help=f"Decoder steps (default: {OUTPUT_LENGTH} = 72h)")
     parser.add_argument("--min-valid-steps", type=int, default=MIN_VALID_STEPS,
@@ -575,9 +598,10 @@ def main():
 
     # ── Normalisation
     if not args.no_normalise:
-        print("\nFitting scalers on train split...")
+        print(f"\nFitting scalers on train split (target_scaling={args.target_scaling})...")
         scalers = fit_scalers(X_enc[train_mask], X_dec[train_mask],
-                              y_raw[train_mask], y_mask[train_mask], y_covar_mask[train_mask])
+                              y_raw[train_mask], y_mask[train_mask], y_covar_mask[train_mask],
+                              target_scaling=args.target_scaling)
         print("\nApplying scalers...")
         X_enc_n, X_dec_n, y_norm = apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers)
         with open(PARQUET_DIR / "scalers.pkl", "wb") as f:
@@ -621,6 +645,8 @@ def main():
         "n_test_stratified": int(test_mask.sum()),
         "val_days": VAL_DAYS,
         "normalised": not args.no_normalise,
+        "target_scaling": args.target_scaling,
+        "log_scale_factor": LOG_SCALE_FACTOR,
         "price_weight_ref": price_weight_ref,
         "mask_coverage": {
             "steps_1_32":   float(y_mask[:, :32].mean()),

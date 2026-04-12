@@ -8,12 +8,25 @@ import os
 
 # --- Basic Configuration ---
 logging.getLogger("nemosis").setLevel(logging.WARNING)
-INFLUXDB_HOST = 'REDACTED'
-INFLUXDB_PORT = 8086
-INFLUXDB_USERNAME = 'user'
-INFLUXDB_PASSWORD = 'REDACTED'
-INFLUXDB_DATABASE = 'hass'
-RAW_DATA_CACHE_PATH = "./nemosis_cache"
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+def load_config(path=ROOT / "config.json"):
+    with open(path) as f:
+        return json.load(f)
+
+cfg = load_config()
+ic = cfg["influxdb"]
+
+INFLUXDB_HOST = ic["host"]
+INFLUXDB_PORT = ic.get("port", 8086)
+INFLUXDB_USERNAME = ic["username"]
+INFLUXDB_PASSWORD = ic["password"]
+INFLUXDB_DATABASE = ic["database"]
+
+RAW_DATA_CACHE_PATH = os.path.join(ROOT, "nemosis_cache")
 NEM_TIMEZONE = pytz.timezone('Australia/Brisbane')
 
 # --- Simplified Data Configuration ---

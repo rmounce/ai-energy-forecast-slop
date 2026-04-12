@@ -51,7 +51,6 @@ _dh._parse_datetime_cols = _patched_parse_datetime_cols
 import nemseer  # noqa: E402 (must import after patch)
 
 ROOT      = Path(__file__).resolve().parent.parent
-PARQUET   = ROOT / "data" / "parquet" / "aemo_predispatch_sa1.parquet"
 CACHE_DIR = ROOT / "data" / "nemseer_cache"
 
 NEM_TZ_OFFSET = timedelta(hours=10)   # AEST = UTC+10, no DST in NEM time
@@ -124,12 +123,8 @@ def _download_zip(url: str, cache_path: Path) -> bytes:
     return r.content
 
 
-def fetch_month_direct(year: int, month: int) -> pd.DataFrame:
-    """Fetch PREDISPATCH SA1 for one month via direct NEMWeb download.
-
-    Used for months from August 2024 onwards where NEMSEER's MMSDM archive
-    lookup returns 0 tables (AEMO changed the archive structure).
-    """
+def fetch_month_direct(year: int, month: int, region_id: str = "SA1") -> pd.DataFrame:
+    """Fetch PREDISPATCH for one month via direct NEMWeb download."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     frames = {}
     for table, subtable in [("PRICE", "REGION_PRICES"), ("REGIONSUM", "REGION_SOLUTION")]:
@@ -158,12 +153,21 @@ def fetch_month_direct(year: int, month: int) -> pd.DataFrame:
     price_df  = frames["PRICE"]
     region_df = frames["REGIONSUM"]
 
-    # Filter SA1, INTERVENTION=0
-    price_df  = price_df[(price_df["REGIONID"].str.strip() == "SA1") & (price_df["INTERVENTION"] == 0)]
-    region_df = region_df[(region_df["REGIONID"].str.strip() == "SA1") & (region_df["INTERVENTION"] == 0)]
+    # Filter Region, INTERVENTION=0
+    price_df  = price_df[(price_df["REGIONID"].str.strip() == region_id) & (price_df["INTERVENTION"] == 0)]
+    region_df = region_df[(region_df["REGIONID"].str.strip() == region_id) & (region_df["INTERVENTION"] == 0)]
 
     if price_df.empty or region_df.empty:
-        print(f"  WARNING: No SA1/INTERVENTION=0 data for {year}-{month:02d}")
+        print(f"  WARNING: No {region_id} data for {year}-{month:02d}")
+        return pd.DataFrame(columns=["interval_dt", "run_time", "rrp",
+                                     "total_demand", "net_interchange"])
+
+    # Filter Region, INTERVENTION=0
+    price_df  = price_df[(price_df["REGIONID"].str.strip() == region_id) & (price_df["INTERVENTION"] == 0)]
+    region_df = region_df[(region_df["REGIONID"].str.strip() == region_id) & (region_df["INTERVENTION"] == 0)]
+
+    if price_df.empty or region_df.empty:
+        print(f"  WARNING: No {region_id}/INTERVENTION=0 data for {year}-{month:02d}")
         return pd.DataFrame(columns=["interval_dt", "run_time", "rrp",
                                      "total_demand", "net_interchange"])
 
@@ -183,8 +187,8 @@ def fetch_month_direct(year: int, month: int) -> pd.DataFrame:
     return merged[["interval_dt", "run_time", "rrp", "total_demand", "net_interchange"]]
 
 
-def fetch_month_nemseer(year: int, month: int) -> pd.DataFrame:
-    """Fetch one calendar month of PREDISPATCH SA1 data via NEMSEER."""
+def fetch_month_nemseer(year: int, month: int, region_id: str = "SA1") -> pd.DataFrame:
+    """Fetch one calendar month of PREDISPATCH data via NEMSEER."""
     month_start = datetime(year, month, 1)
     next_month  = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
     run_end_dt  = next_month - timedelta(minutes=30)
@@ -193,19 +197,35 @@ def fetch_month_nemseer(year: int, month: int) -> pd.DataFrame:
     run_end   = run_end_dt.strftime("%Y/%m/%d %H:%M")
     fc_end    = (run_end_dt + timedelta(hours=28)).strftime("%Y/%m/%d %H:%M")
 
-    data = nemseer.compile_data(
-        run_start=run_start, run_end=run_end,
-        forecasted_start=run_start, forecasted_end=fc_end,
-        forecast_type="PREDISPATCH",
-        tables=["PRICE", "REGIONSUM"],
-        raw_cache=str(CACHE_DIR),
-    )
+    try:
+        data = nemseer.compile_data(
+            run_start=run_start, run_end=run_end,
+            forecasted_start=run_start, forecasted_end=fc_end,
+            forecast_type="PREDISPATCH",
+            tables=["PRICE", "REGIONSUM"],
+            raw_cache=str(CACHE_DIR),
+        )
+    except ValueError as e:
+        if "Table(s) not available" in str(e):
+            print(f"  Attempting with _D suffixes for {year}-{month:02d}...")
+            data = nemseer.compile_data(
+                run_start=run_start, run_end=run_end,
+                forecasted_start=run_start, forecasted_end=fc_end,
+                forecast_type="PREDISPATCH",
+                tables=["PRICE_D", "REGIONSUM_D"],
+                raw_cache=str(CACHE_DIR),
+            )
+            # Normalize keys back to PRICE/REGIONSUM
+            data["PRICE"] = data["PRICE_D"]
+            data["REGIONSUM"] = data["REGIONSUM_D"]
+        else:
+            raise e
 
     price_df  = data["PRICE"]
     region_df = data["REGIONSUM"]
 
-    price_df  = price_df[(price_df["REGIONID"] == "SA1") & (price_df["INTERVENTION"] == 0)]
-    region_df = region_df[(region_df["REGIONID"] == "SA1") & (region_df["INTERVENTION"] == 0)]
+    price_df  = price_df[(price_df["REGIONID"] == region_id) & (price_df["INTERVENTION"] == 0)]
+    region_df = region_df[(region_df["REGIONID"] == region_id) & (region_df["INTERVENTION"] == 0)]
 
     if price_df.empty or region_df.empty:
         print(f"  WARNING: No data for {year}-{month:02d}")
@@ -229,12 +249,11 @@ def fetch_month_nemseer(year: int, month: int) -> pd.DataFrame:
     return merged[["interval_dt", "run_time", "rrp", "total_demand", "net_interchange"]]
 
 
-def fetch_month(year: int, month: int) -> pd.DataFrame:
+def fetch_month(year: int, month: int, region_id: str = "SA1") -> pd.DataFrame:
     """Dispatch to NEMSEER or direct download based on archive availability."""
     if (year, month) >= DIRECT_DOWNLOAD_FROM:
-        return fetch_month_direct(year, month)
-    else:
-        return fetch_month_nemseer(year, month)
+        return fetch_month_direct(year, month, region_id=region_id)
+    return fetch_month_nemseer(year, month, region_id=region_id)
 
 
 def iter_months(start_year, start_month, end_year, end_month):
@@ -252,19 +271,23 @@ def main():
                         help="First month to fetch (YYYY-MM, default 2024-04)")
     parser.add_argument("--end", default="2025-02",
                         help="Last month to fetch (YYYY-MM, default 2025-02)")
+    parser.add_argument("--region", default="SA1",
+                        help="AEMO Region (default SA1)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Fetch first month only; do not write parquet")
     args = parser.parse_args()
 
     start_year, start_month = map(int, args.start.split("-"))
     end_year,   end_month   = map(int, args.end.split("-"))
+    region_id = args.region.upper()
+    out_file = ROOT / "data" / "parquet" / f"aemo_predispatch_{region_id.lower()}.parquet"
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("=== NEMSEER PREDISPATCH Backfill ===")
+    print(f"=== NEMSEER PREDISPATCH {region_id} Backfill ===")
     print(f"  Range: {args.start} → {args.end}")
     print(f"  Cache: {CACHE_DIR}")
-    print(f"  Output: {PARQUET}\n")
+    print(f"  Output: {out_file}\n")
     print(f"  Using NEMSEER for months before {DIRECT_DOWNLOAD_FROM[0]}-{DIRECT_DOWNLOAD_FROM[1]:02d}, "
           f"direct NEMWeb download for {DIRECT_DOWNLOAD_FROM[0]}-{DIRECT_DOWNLOAD_FROM[1]:02d}+\n")
 
@@ -279,7 +302,7 @@ def main():
     for i, (year, month) in enumerate(months, 1):
         source = "direct" if (year, month) >= DIRECT_DOWNLOAD_FROM else "NEMSEER"
         print(f"[{i}/{len(months)}] {year}-{month:02d} ({source}) ...", end=" ", flush=True)
-        df = fetch_month(year, month)
+        df = fetch_month(year, month, region_id=region_id)
         n_runs = df["run_time"].nunique() if not df.empty else 0
         print(f"{len(df):,} rows  ({n_runs} runs)")
         if not df.empty:
@@ -300,8 +323,8 @@ def main():
         return
 
     # ── Merge with existing parquet
-    if PARQUET.exists():
-        existing = pd.read_parquet(PARQUET)
+    if out_file.exists():
+        existing = pd.read_parquet(out_file)
         print(f"\nExisting parquet: {len(existing):,} rows  "
               f"({existing['run_time'].nunique()} runs)")
         combined = pd.concat([backfill, existing], ignore_index=True)
@@ -322,8 +345,8 @@ def main():
           f"({combined['run_time'].nunique()} runs)")
     print(f"  run_time range: {combined['run_time'].min()} → {combined['run_time'].max()}")
 
-    combined.to_parquet(PARQUET, index=False)
-    print(f"\nSaved: {PARQUET}")
+    combined.to_parquet(out_file, index=False)
+    print(f"\nSaved: {out_file}")
     print("\nNext steps:")
     print("  1. python data/build_training_dataset.py")
     print("  2. python train/train_tft_price.py --epochs 100")
