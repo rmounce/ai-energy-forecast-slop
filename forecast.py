@@ -1049,8 +1049,17 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     X_enc = hist[ENC_CONT + TIME_COLS + ["rrp_5m_missing"]].values.astype(np.float32)
 
     # ── 4. Prepare Decoder Input (Next 144 steps = 72h)
-    fut = future_covariates_df.head(144).copy()
+    # IMPORTANT: Ensure decoder starts from forecast_start_time (current window)
+    # future_covariates_df passed here is actually combined_covariates (hist + future)
+    # We find the first 30m boundary >= now
+    now_utc = datetime.now(pytz.UTC)
+    start_t = now_utc.replace(minute=30 if now_utc.minute >= 30 else 0, second=0, microsecond=0)
     
+    fut = future_covariates_df[future_covariates_df.index >= start_t].head(144).copy()
+    if fut.empty:
+        logging.error("TFT decoder input is empty! Check future_covariates_df alignment.")
+        return {}
+
     # TFT specifically needs PD price forecasts, which aren't in standard future_covariates_df
     pd_prices = _get_aemo_short_term_price_forecast()
     if not pd_prices.empty:
@@ -1103,11 +1112,21 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     
     # ── 6. Format Return
     # Return as { 'tft_price': df_q50, 'tft_price_q30': df_q30, 'tft_price_q70': df_q70 }
+    # CONVERSION: Convert $/MWh to $/kWh (divide by 1000)
     res = {}
     quants = ['tft_price_q30', 'tft_price', 'tft_price_q70']
     for i, q_name in enumerate(quants):
-        # Use [float(x) for x in ...] to ensure standard Python types for JSON serialization safety
-        df_q = pd.DataFrame({'forecast': [float(x) for x in preds_raw[:, i]]}, index=fut.index)
+        # Create DataFrame matching the structure of standard price models
+        # Use [float(x) for x in ...] for JSON safety
+        df_q = pd.DataFrame({
+            'wholesale_price': [float(x) / 1000.0 for x in preds_raw[:, i]]
+        }, index=fut.index)
+        
+        # Add basic tariff columns if they exist in covariates (for easy integration)
+        # This allows apply_tariffs_to_forecasts to work if called.
+        df_q['general_tariff'] = fut.get('general_tariff', 0.0)
+        df_q['feed_in_tariff'] = fut.get('feed_in_tariff', 0.0)
+        
         res[q_name] = df_q
         
     logging.info(f"TFT Parallel Inference complete. Steps: {len(preds_raw)}")
@@ -1239,9 +1258,10 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         primary_pred_df_for_save = result_data['forecasts'][primary_key].copy()
         logging.info(f"Preparing to save primary forecast for '{model_name}'...")
         
-        if model_name == 'price':
+        if 'price' in model_name:
             primary_pred_df_for_save.rename(columns={primary_pred_df_for_save.columns[0]: 'wholesale_price'}, inplace=True)
-            if not use_dynamic_handoff:
+            # Only apply Amber spot override for the base 'price' model if handover is NOT used
+            if model_name == 'price' and not use_dynamic_handoff:
                 amber_spot_df = get_amber_spot_price_forecast()
                 if not amber_spot_df.empty:
                     primary_pred_df_for_save.update(amber_spot_df)
@@ -1273,9 +1293,10 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 logging.info(f"Processing and publishing '{key}' to '{entity_id_check}'...")
                 publish_df = forecast_df.copy()
                 
-                if base_model_name == 'price':
+                if 'price' in base_model_name:
                     # Price models are renamed to 'wholesale_price' for the tariff function
-                    publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
+                    if 'wholesale_price' not in publish_df.columns:
+                        publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
                     apply_tariffs_to_forecast(publish_df)
                 else:
                     # All other models (e.g., load) are renamed to their generic target column
