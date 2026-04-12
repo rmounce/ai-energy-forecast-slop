@@ -556,6 +556,23 @@ def main():
     print(f"\nTrain/val split (last {VAL_DAYS} days = val, with 72h gap):")
     print(f"  Train: {n_train:,}  Val: {n_val:,}")
 
+    # ── Price weights (log-growth, fitted on train split p50)
+    # weight = 1 + log1p(max(0, (raw_price - ref) / ref))
+    # Grows quickly above baseload, slows at extreme spikes — no cap needed.
+    # Ref is training-set p50 so weight=1.0 at the median and grows from there.
+    # Invalid (masked) steps get weight=0 so they contribute nothing to the loss.
+    valid_train_rrp = y_raw[train_mask][y_mask[train_mask]]
+    price_weight_ref = float(np.percentile(valid_train_rrp, 50))
+    y_weights = (1.0 + np.log1p(
+        np.maximum(0.0, (y_raw - price_weight_ref) / price_weight_ref)
+    )).astype(np.float32)
+    y_weights[~y_mask] = 0.0   # zero out invalid steps explicitly
+    valid_w = y_weights[y_mask]
+    print(f"\nPrice weights (log-growth, ref={price_weight_ref:.1f} $/MWh):")
+    print(f"  min={valid_w.min():.2f}  p50={np.percentile(valid_w, 50):.2f}  "
+          f"p90={np.percentile(valid_w, 90):.2f}  p99={np.percentile(valid_w, 99):.2f}  "
+          f"max={valid_w.max():.2f}")
+
     # ── Normalisation
     if not args.no_normalise:
         print("\nFitting scalers on train split...")
@@ -577,6 +594,7 @@ def main():
     np.save(PARQUET_DIR / "y_targets.npy",    y_norm)
     np.save(PARQUET_DIR / "y_targets_raw.npy", y_raw)
     np.save(PARQUET_DIR / "y_mask.npy",       y_mask)
+    np.save(PARQUET_DIR / "y_weights.npy",    y_weights)
     np.save(PARQUET_DIR / "y_covar_mask.npy", y_covar_mask)
     np.save(PARQUET_DIR / "run_times.npy",    run_times)
     train_idx = np.where(train_mask)[0]
@@ -603,6 +621,7 @@ def main():
         "n_test_stratified": int(test_mask.sum()),
         "val_days": VAL_DAYS,
         "normalised": not args.no_normalise,
+        "price_weight_ref": price_weight_ref,
         "mask_coverage": {
             "steps_1_32":   float(y_mask[:, :32].mean()),
             "steps_1_56":   float(y_mask[:, :56].mean()),
