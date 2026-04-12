@@ -19,7 +19,7 @@ Output:
   Printed comparison table + models/tft_price/evaluation_results.csv
 
 Usage:
-    python train/evaluate_tft.py
+    python train/evaluate_tft.py --eval-set val
     python train/evaluate_tft.py --eval-set stratified
     python train/evaluate_tft.py --batch-size 512 --spike-threshold 150
 """
