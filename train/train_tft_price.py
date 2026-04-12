@@ -35,7 +35,7 @@ Usage:
   python train/train_tft_price.py --epochs 100 --d-model 128
   python train/train_tft_price.py --dry-run   # 5 epochs, small batch, check shapes
 
-Optimizer: AdamW (lr=2e-4, weight_decay=1e-4) + CosineAnnealingLR.
+Optimizer: AdamW (lr=2e-4, weight_decay=1e-4) + ReduceLROnPlateau(factor=0.5, patience=2).
 Early stopping: monitors nMAPE_28h (lower is better); falls back to val_loss when NaN.
 """
 
@@ -258,8 +258,8 @@ def evaluate_nmape(model, loader, scalers):
 
 def main():
     parser = argparse.ArgumentParser(description="Train TFT price model")
-    parser.add_argument("--epochs", type=int, default=50,
-                        help="Max training epochs (default 50; increase to 100+ for final run)")
+    parser.add_argument("--epochs", type=int, default=100,
+                        help="Max training epochs (default 100; ReduceLROnPlateau + early stopping will terminate earlier)")
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--d-model", type=int, default=64,
                         help="LSTM/attention hidden size (64 for CPU; 128+ for GPU)")
@@ -338,8 +338,8 @@ def main():
     criterion = MaskedQuantileLoss(QUANTILES)
     optimiser = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                   weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimiser, T_max=args.epochs, eta_min=args.lr * 0.01)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimiser, mode="min", factor=0.5, patience=2)
 
     # ── Training loop
     # Primary metric: nMAPE_28h (lower is better); falls back to val_loss when NaN
@@ -349,19 +349,25 @@ def main():
 
     print(f"\nTraining for up to {args.epochs} epochs (patience={args.patience})...")
     print(f"  Optimizer: AdamW  lr={args.lr:.1e}  weight_decay={args.weight_decay:.1e}")
+    print(f"  Scheduler: ReduceLROnPlateau  factor=0.5  patience=2")
     print(f"  Early stopping on: nMAPE_28h (fallback: val_loss when NaN)")
     print(f"{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'nMAPE%':>8}  {'LR':>10}  {'Time':>6}")
     print("-" * 60)
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
+        prev_lr = optimiser.param_groups[0]["lr"]
         train_loss = run_epoch(model, train_loader, criterion, optimiser)
         val_loss   = run_epoch(model, val_loader,   criterion)
         nmape, buckets = evaluate_nmape(model, val_loader, scalers)
-        lr_now     = optimiser.param_groups[0]["lr"]
         elapsed    = time.time() - t0
 
-        scheduler.step()
+        # Primary metric: nMAPE_28h; fall back to val_loss if NaN (e.g. early epochs)
+        nmape_28h = buckets["1-28h"]
+        target_metric = nmape_28h if not np.isnan(nmape_28h) else val_loss
+
+        scheduler.step(target_metric)
+        lr_now = optimiser.param_groups[0]["lr"]
 
         bucket_str = (f"  16h={buckets['1-16h']:.1f}%"
                       f"  28h={buckets['1-28h']:.1f}%"
@@ -378,10 +384,6 @@ def main():
             "nmape_72h": round(buckets["28-72h"], 4) if not np.isnan(buckets["28-72h"]) else None,
             "lr": lr_now, "time_s": round(elapsed, 1),
         })
-
-        # Primary metric: nMAPE_28h; fall back to val_loss if NaN (e.g. early epochs)
-        nmape_28h = buckets["1-28h"]
-        target_metric = nmape_28h if not np.isnan(nmape_28h) else val_loss
 
         # Save best
         if target_metric < best_target_metric:
@@ -410,6 +412,9 @@ def main():
             if patience_counter >= args.patience:
                 print(f"\nEarly stopping at epoch {epoch} (patience={args.patience} exhausted)")
                 break
+
+        if lr_now < prev_lr:
+            print(f"         ↓ LR reduced: {prev_lr:.2e} → {lr_now:.2e}")
 
     # ── Save training log
     log_path = MODELS_DIR / "training_log.csv"
