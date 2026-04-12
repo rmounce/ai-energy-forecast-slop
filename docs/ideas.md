@@ -141,32 +141,68 @@ dependency of the prediction path.
 
 ### Spike-aware evaluation set
 
+**Recommended (external design review, 2026-04-12):** build this before the next significant
+architecture change so future run comparisons are meaningful.
+
+The problem: Run 003 wMAPE=31.2% and Run 005 wMAPE=40.6% are not comparable — the windows
+differed (mild autumn vs volatile late-summer). A durable benchmark removes this ambiguity.
+
 Rather than a rolling last-N-days val window (which may be mild or volatile by chance),
-construct a stratified held-out eval set that is automatically selected to include:
-- A representative sample of extreme price spike events (RRP > threshold for ≥ N intervals)
-- Moderate volatility events
-- "Business as usual" across a seasonal mix (summer/autumn/winter/spring)
+construct a stratified held-out eval set automatically selected to include:
+- Major spike events (e.g. top 5% of 30-min intervals by volatility / RRP level)
+- Extreme low / negative price events (heavy solar curtailment days)
+- Normal diurnal cycles covering all 4 seasons
 
-Selection criteria would be purely data-driven (no hard-coded dates), making the eval set
-stable across rebuilds while remaining representative of the full distribution.
-This would make `evaluate_tft.py` comparisons more meaningful and prevent a lucky/unlucky
-val window from misleading early stopping.
+Selection criteria should be purely data-driven (no hard-coded dates), so the set is
+stable and reproducible across dataset rebuilds. Candidate approach: rank all PREDISPATCH
+run-times by some spike/volatility score, stratified-sample across deciles and seasons.
 
-### Is nMAPE / wMAPE the right metric?
+This would make `evaluate_tft.py` comparisons meaningful regardless of when training runs.
 
-nMAPE and wMAPE treat all price levels symmetrically (percentage error). For battery dispatch:
-- A 20% error on a $300 spike is much more costly than a 20% error on a $70 base price
-- The asymmetric dispatch strategy (q90 bias for sell threshold) means under-forecasting
-  spikes has higher cost than over-forecasting them
-- Consider: pinball loss (already used in training), revenue-weighted error, or a custom
-  "dispatch regret" metric that simulates actual battery decisions on the forecast vs actuals
+### Evaluation metric: nMAPE, revenue-weighted, or dispatch-regret?
+
+**Why not MSE or raw MAE?**
+- **MSE** squares errors. Electricity prices reach the $15,000 market cap; a handful of
+  spike events would dominate the loss and make training numerically unstable. Avoid.
+- **MAE** is linear but scale-dependent — a $50 error on a $100 price equals a $50 error
+  on a $1,000 price. Doesn't normalise for price level.
+
+**Current: nMAPE / wMAPE** = normalised MAE = `sum(|e|)/sum(|y|)`. Scale-invariant,
+standard for electricity price evaluation. Limitation: treats relative errors symmetrically
+regardless of economic impact. A 20% error on a $300 spike and on $70 baseload are equal.
+
+**Recommended next step: revenue-weighted nMAPE (eval-only, no retraining)**
+Add to `evaluate_tft.py`: errors during intervals where actual RRP > $150 weighted 10×.
+Preserves scale-invariance, directly encodes the asymmetric value of spike accuracy.
+Specific threshold ($150) and weight (10×) should be tuned to actual dispatch economics.
+
+**Longer-term: dispatch-regret metric**
+Simulate charge/hold/discharge decisions on the forecast vs actuals; measure lost revenue
+against theoretical perfect-foresight dispatch. Gold standard for this use case. Requires
+a simplified but realistic EMHASS/battery model at evaluation time. Complex to implement
+correctly — do after revenue-weighted nMAPE is validated.
+
+**Pinball/quantile loss** (current training objective): directly penalises quantile
+miscalibration. Keep for training. Not ideal as standalone eval metric — not interpretable
+in dollar terms and doesn't encode the asymmetric dispatch value.
 
 ### Amber APF — CSIRO Kick-Start case study
 
 CSIRO worked with Amber Electric on APF; case study at:
 https://www.csiro.au/en/work-with-us/funding-programs/SME/CSIRO-Kick-Start/Case-studies/Amber-Electric
 
-Worth investigating for implementation details. Goal: replicate the near-term debiasing
-signal that gives LightGBM its 1–2h advantage, without depending on Amber as a data source.
-Likely involves: bias correction of PREDISPATCH using recent actuals (similar to what P5MIN
-tier would provide), possibly with volatility regime detection.
+**Key finding (external review, 2026-04-12):** CSIRO did not create a proprietary data
+source. Their approach: identify "periods of concern" where AEMO PREDISPATCH forecast high
+prices but actuals came in low (typically due to generator rebidding or late-stage
+constraints). They trained a model specifically to predict these PREDISPATCH divergence
+events. Amber integrated this as a subset model in SmartShift.
+
+**How our planned steps replicate this without Amber:**
+- **P5MIN (Step 5):** Updates every 5 min, catches late generator rebidding that 30-min
+  PREDISPATCH misses entirely. Directly addresses the "period of concern" divergence.
+- **VIC1/NSW1 decoder features (Step 2e):** SA1 price divergence from PREDISPATCH is often
+  driven by interconnector constraints. Adding adjacent-region prices gives the model exactly
+  the constraint-divergence signal CSIRO likely used. Confirmed high-value by review.
+
+Our Step 2e and Step 5 are already the right moves. VIC1/NSW1 first (lower effort,
+no new ingest required), P5MIN after Step 3 is stable in production.
