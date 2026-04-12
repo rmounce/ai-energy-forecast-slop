@@ -11,7 +11,65 @@ All nMAPE buckets are **cumulative** (1-step through Nh), valid steps only.
 across runs. Use the Delta column (TFT vs LightGBM on the same window) as the primary signal.
 
 ---
- 
+
+## Run 009 — 2026-04-12 — Full 5-minute dispatch coverage (NEMSEER backfill)
+
+**Spike gap unchanged — 5m features confirmed non-predictive at current data scale.**
+Spike nMAPE 86.8% at 1h (worse than Run 008's 84.1%). Model converged in just 2 epochs —
+fastest of all runs — suggesting the 5m features may be adding noise rather than signal.
+Root cause is now confirmed as **data quantity/diversity**: ~17,500 samples and ~2 years
+of SA1 history don't contain enough spike-onset examples for the LSTM to learn the pattern.
+Calibration: excellent across all three quantiles (best of all runs).
+
+### Changes from Run 008
+- Backfilled `rp_5m.aemo_dispatch_sa1_5m` via `ingest/backfill_dispatch_5m_nemseer.py`
+  (DISPATCHPRICE + DISPATCHREGIONSUM, DVD format pre-Aug 2024, archive format after)
+- Extended `rp_5m` retention policy: 371 days → 3 years (26,280h), admin credentials required
+- Re-exported `actuals_sa1_5m_agg.parquet`: coverage 48.8% → ~100% (2024-03-31 → 2026-04-12)
+- Dataset rebuild picks up full 5m window; `rrp_5m_missing` flag now rarely fires
+
+### Config
+| Parameter | Value |
+|---|---|
+| Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | pw_wMAPE (price+horizon weighted) |
+| Price weight | log-growth, ref=training p50 (same as Run 008) |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | ~17,500 samples (same architecture as Run 008) |
+| 5m coverage | ~100% (was 48.8% in Run 007/008) |
+
+### Training outcome
+- Best epoch: **2** (fastest convergence of all runs — likely noise overfitting)
+- val_loss: **0.1121**
+- nMAPE all: 62.40%
+
+### evaluate_tft.py results (TFT vs LightGBM, Stratified Set)
+| Horizon | TFT nMAPE | LightGBM | Delta | TFT (base) | TFT (spike) |
+|---|---|---|---|---|---|
+| 1h | 81.8% | 37.9% | +43.9% | 38.6% | 86.8% |
+| 2h | 79.8% | 40.7% | +39.0% | 41.7% | 84.7% |
+| 4h | 75.8% | 43.7% | +32.1% | 44.0% | 80.8% |
+| 8h | 73.5% | 45.9% | +27.6% | 45.3% | 78.4% |
+| 16h | 75.0% | 48.3% | +26.7% | 46.2% | 79.8% |
+| 28h | 76.1% | 52.9% | +23.1% | 47.6% | 80.6% |
+
+### Quantile calibration (all valid steps, Stratified Set)
+| Quantile | Expected | Actual coverage | Bias | Status |
+|---|---|---|---|---|
+| q10 | 0.100 | 0.111 | +0.011 | ✓ well-calibrated |
+| q50 | 0.500 | 0.505 | +0.005 | ✓ well-calibrated |
+| q90 | 0.900 | 0.878 | -0.022 | ✓ well-calibrated |
+
+### Notes
+- All three training imbalance and feature-coverage hypotheses now exhausted
+- Spike nMAPE has been 84–87% across 9 runs; the limiting factor is data, not model or loss
+- Run 010: extend PREDISPATCH backfill to 2022 to add more spike episodes (~2× more data)
+- Consider reverting price-weighted loss (Runs 008–009) before Run 010 — adds complexity,
+  no measured benefit; pw_wMAPE can remain as a reporting metric only
+
+---
+
 ## Run 008 — 2026-04-12 — Progressive price-weighted loss
 
 **Spike gap unchanged. Loss weighting alone does not solve the structural problem.**
