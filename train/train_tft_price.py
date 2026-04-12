@@ -65,18 +65,24 @@ QUANTILES = [0.1, 0.5, 0.9]
 # ─── Dataset ─────────────────────────────────────────────────────────────────
 
 class PREDISPATCHDataset(Dataset):
-    def __init__(self, X_enc, X_dec, y, y_raw, mask):
+    def __init__(self, X_enc, X_dec, y, y_raw, mask, y_weights=None):
         self.X_enc = torch.tensor(X_enc, dtype=torch.float32)
         self.X_dec = torch.tensor(X_dec, dtype=torch.float32)
         self.y     = torch.tensor(y,     dtype=torch.float32)
         self.y_raw = torch.tensor(y_raw, dtype=torch.float32)
         self.mask  = torch.tensor(mask,  dtype=torch.bool)
+        # y_weights: per-step price weights [N, T]; ones if not provided
+        if y_weights is not None:
+            self.y_weights = torch.tensor(y_weights, dtype=torch.float32)
+        else:
+            self.y_weights = torch.ones(len(y), y.shape[1], dtype=torch.float32)
 
     def __len__(self):
         return len(self.y)
 
     def __getitem__(self, i):
-        return self.X_enc[i], self.X_dec[i], self.y[i], self.y_raw[i], self.mask[i]
+        return (self.X_enc[i], self.X_dec[i], self.y[i],
+                self.y_raw[i], self.mask[i], self.y_weights[i])
 
 
 # ─── Model ───────────────────────────────────────────────────────────────────
@@ -175,19 +181,23 @@ class MaskedQuantileLoss(nn.Module):
             self.horizon_weights = None
 
     def forward(self, preds: torch.Tensor, targets: torch.Tensor,
-                mask: torch.Tensor) -> torch.Tensor:
+                mask: torch.Tensor,
+                price_weights: torch.Tensor = None) -> torch.Tensor:
         """
-        preds:   [B, T, Q]
-        targets: [B, T]
-        mask:    [B, T] bool — 1 where loss should be computed
+        preds:         [B, T, Q]
+        targets:       [B, T]
+        mask:          [B, T] bool — 1 where loss should be computed
+        price_weights: [B, T] float — per-step price weights (ones = uniform)
         """
         loss = torch.tensor(0.0, device=preds.device)
 
-        # Effective per-step weight: horizon_weight * mask (zero where masked)
+        # Effective per-step weight: horizon_weight * mask * price_weight
         if self.horizon_weights is not None:
             eff_w = self.horizon_weights.unsqueeze(0) * mask.float()  # [B, T]
         else:
             eff_w = mask.float()
+        if price_weights is not None:
+            eff_w = eff_w * price_weights
         w_sum = eff_w.sum(dim=1).clamp(min=1e-8)  # [B]
 
         for i, q in enumerate(self.quantiles):
@@ -209,9 +219,9 @@ def run_epoch(model, loader, criterion, optimiser=None):
     n_batches = 0
 
     with torch.set_grad_enabled(training):
-        for X_enc, X_dec, y, y_raw, mask in loader:
+        for X_enc, X_dec, y, y_raw, mask, y_weights in loader:
             preds = model(X_enc, X_dec)
-            loss = criterion(preds, y, mask)
+            loss = criterion(preds, y, mask, price_weights=y_weights)
 
             if training:
                 optimiser.zero_grad()
@@ -225,18 +235,19 @@ def run_epoch(model, loader, criterion, optimiser=None):
     return total_loss / n_batches if n_batches else float("nan")
 
 
-def evaluate_nmape(model, loader, scalers, horizon_weights=None):
+def evaluate_nmape(model, loader, scalers, horizon_weights=None, price_weight_ref=None):
     """Compute nMAPE on raw (denormalised) predictions vs raw targets (valid steps only).
 
     Returns (nmape_global, buckets) where:
-      nmape_global:        unweighted nMAPE over all valid steps (informative)
-      buckets["weighted"]: horizon-weighted nMAPE — sum(w_h*|e_h|)/sum(w_h*|y_h|) across
-                           valid steps using the same exp(-h/tau) weights as the training
-                           loss. Primary early stopping metric when horizon_weights active.
-                           Equals nmape_global when horizon_weights is None.
+      nmape_global:            unweighted nMAPE over all valid steps (informative)
+      buckets["pw_weighted"]:  price+horizon-weighted nMAPE — primary early stopping metric.
+                               Combines exp(-h/tau) horizon decay with log-growth price weight.
+                               Equals buckets["weighted"] when price_weight_ref is None.
+      buckets["weighted"]:     horizon-only weighted nMAPE (monitoring)
       buckets["1-4h/16h/28h/72h"]: unweighted per-bucket nMAPEs for monitoring.
 
-    horizon_weights: optional numpy [T] array matching the training loss weights.
+    horizon_weights:  optional numpy [T] array (exp(-h/tau) from training loss).
+    price_weight_ref: training-set p50 RRP in $/MWh; enables log-growth price weighting.
     """
     model.eval()
     qt = scalers["target_rrp"]
@@ -244,7 +255,7 @@ def evaluate_nmape(model, loader, scalers, horizon_weights=None):
     all_pred_raw, all_targ_raw, all_masks = [], [], []
 
     with torch.no_grad():
-        for X_enc, X_dec, y_norm, y_batch_raw, mask in loader:
+        for X_enc, X_dec, y_norm, y_batch_raw, mask, _y_weights in loader:
             preds_norm = model(X_enc, X_dec)           # [B, T, 3]
             preds_norm, _ = torch.sort(preds_norm, dim=-1) # Prevent quantile crossing
             p50_norm   = preds_norm[:, :, 1].numpy()   # median quantile
@@ -263,8 +274,7 @@ def evaluate_nmape(model, loader, scalers, horizon_weights=None):
     t_valid = targ[masks]
     nmape_global = np.abs(p_valid - t_valid).sum() / np.abs(t_valid).sum() * 100
 
-    # Horizon-weighted nMAPE: sum(w_h * |e_h|) / sum(w_h * |y_h|) across valid steps.
-    # Consistent with training loss — short horizons dominate when tau is small.
+    # Horizon-only weighted nMAPE (monitoring)
     if horizon_weights is not None:
         hw = horizon_weights[np.newaxis, :]          # [1, T]
         w_eff   = hw * masks                         # [N, T]  zero where invalid
@@ -273,6 +283,20 @@ def evaluate_nmape(model, loader, scalers, horizon_weights=None):
         nmape_weighted = w_numer / w_denom * 100 if w_denom > 0 else float("nan")
     else:
         nmape_weighted = nmape_global
+
+    # Price+horizon weighted nMAPE — primary early stopping metric
+    # weight = 1 + log1p(max(0, (raw_price - ref) / ref)); grows above median, safe at extremes
+    if price_weight_ref is not None:
+        pw = 1.0 + np.log1p(np.maximum(0.0, (targ - price_weight_ref) / price_weight_ref))
+        if horizon_weights is not None:
+            comb_w = horizon_weights[np.newaxis, :] * masks * pw
+        else:
+            comb_w = masks.astype(np.float32) * pw
+        pw_numer = (comb_w * np.abs(pred - targ)).sum()
+        pw_denom = (comb_w * np.abs(targ)).sum()
+        nmape_pw = pw_numer / pw_denom * 100 if pw_denom > 0 else float("nan")
+    else:
+        nmape_pw = nmape_weighted   # fall back to horizon-weighted
 
     # Unweighted per-bucket nMAPEs (monitoring only)
     def bucket_nmape(lo, hi):
@@ -284,11 +308,12 @@ def evaluate_nmape(model, loader, scalers, horizon_weights=None):
         return np.abs(bp - bt).sum() / np.abs(bt).sum() * 100
 
     return nmape_global, {
-        "weighted": nmape_weighted,
-        "1-4h":     bucket_nmape(0,   8),
-        "1-16h":    bucket_nmape(0,  32),
-        "1-28h":    bucket_nmape(0,  56),
-        "28-72h":   bucket_nmape(56, 144),
+        "pw_weighted": nmape_pw,
+        "weighted":    nmape_weighted,
+        "1-4h":        bucket_nmape(0,   8),
+        "1-16h":       bucket_nmape(0,  32),
+        "1-28h":       bucket_nmape(0,  56),
+        "28-72h":      bucket_nmape(56, 144),
     }
 
 
@@ -339,6 +364,15 @@ def main():
     train_idx = split["train"]
     val_idx   = split["val"]
 
+    # Price weights (optional — present after build_training_dataset.py generates them)
+    y_weights_path = PARQUET_DIR / "y_weights.npy"
+    if y_weights_path.exists():
+        y_weights = np.load(y_weights_path)
+        print(f"  y_weights: loaded (log-growth price weighting)")
+    else:
+        y_weights = None
+        print(f"  y_weights: not found — uniform weighting (re-run build_training_dataset.py)")
+
     import pickle
     with open(PARQUET_DIR / "scalers.pkl", "rb") as f:
         scalers = pickle.load(f)
@@ -358,10 +392,14 @@ def main():
     print(f"  Train/val: {len(train_idx):,} / {len(val_idx):,} samples")
 
     # ── DataLoaders
+    yw_train = y_weights[train_idx] if y_weights is not None else None
+    yw_val   = y_weights[val_idx]   if y_weights is not None else None
     train_ds = PREDISPATCHDataset(X_enc[train_idx], X_dec[train_idx],
-                                  y[train_idx],     y_raw[train_idx], y_mask[train_idx])
+                                  y[train_idx],     y_raw[train_idx], y_mask[train_idx],
+                                  y_weights=yw_train)
     val_ds   = PREDISPATCHDataset(X_enc[val_idx],   X_dec[val_idx],
-                                  y[val_idx],       y_raw[val_idx],   y_mask[val_idx])
+                                  y[val_idx],       y_raw[val_idx],   y_mask[val_idx],
+                                  y_weights=yw_val)
 
     if args.temporal_halflife > 0:
         run_times = np.load(PARQUET_DIR / "run_times.npy", allow_pickle=True)
@@ -425,9 +463,18 @@ def main():
               f"4h={w4h:.2f}  16h={w16h:.2f}  28h={w28h:.2f}")
     else:
         print(f"  Horizon weights: uniform (disabled)")
-    print(f"  Early stopping on: wMAPE (horizon-weighted, fallback: val_loss when NaN)")
-    print(f"{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'wMAPE%':>8}  {'LR':>10}  {'Time':>6}")
-    print("-" * 60)
+
+    # Price weighting — load ref from dataset metadata if y_weights present
+    price_weight_ref = None
+    if y_weights is not None:
+        price_weight_ref = meta.get("price_weight_ref")
+        if price_weight_ref:
+            print(f"  Price weights: log-growth  ref={price_weight_ref:.1f} $/MWh  "
+                  f"(weight at $300={(1+np.log1p(max(0,(300-price_weight_ref)/price_weight_ref))):.2f}x  "
+                  f"$1000={(1+np.log1p(max(0,(1000-price_weight_ref)/price_weight_ref))):.2f}x)")
+    print(f"  Early stopping on: pw_wMAPE (price+horizon weighted, fallback: val_loss when NaN)")
+    print(f"{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'pw_wMAPE%':>10}  {'LR':>10}  {'Time':>6}")
+    print("-" * 64)
 
     # numpy version of horizon_weights for evaluate_nmape
     hw_numpy = horizon_weights.numpy() if horizon_weights is not None else None
@@ -437,29 +484,32 @@ def main():
         prev_lr = optimiser.param_groups[0]["lr"]
         train_loss = run_epoch(model, train_loader, criterion, optimiser)
         val_loss   = run_epoch(model, val_loader,   criterion)
-        nmape_global, buckets = evaluate_nmape(model, val_loader, scalers, hw_numpy)
+        nmape_global, buckets = evaluate_nmape(model, val_loader, scalers, hw_numpy,
+                                               price_weight_ref=price_weight_ref)
         elapsed    = time.time() - t0
 
-        # Primary metric: horizon-weighted nMAPE; fall back to val_loss if NaN
-        nmape_weighted = buckets["weighted"]
-        target_metric = nmape_weighted if not np.isnan(nmape_weighted) else val_loss
+        # Primary metric: price+horizon-weighted nMAPE; fall back to val_loss if NaN
+        nmape_pw = buckets["pw_weighted"]
+        target_metric = nmape_pw if not np.isnan(nmape_pw) else val_loss
 
         scheduler.step(target_metric)
         lr_now = optimiser.param_groups[0]["lr"]
 
+        nmape_weighted = buckets["weighted"]
         bucket_str = (f"  unw={nmape_global:.1f}%"
                       f"  4h={buckets['1-4h']:.1f}%"
                       f"  16h={buckets['1-16h']:.1f}%"
                       f"  28h={buckets['1-28h']:.1f}%"
                       + (f"  72h={buckets['28-72h']:.1f}%" if not np.isnan(buckets['28-72h']) else ""))
-        wmape_s = f"{nmape_weighted:.2f}" if not np.isnan(nmape_weighted) else "   nan"
+        pw_s = f"{nmape_pw:.2f}" if not np.isnan(nmape_pw) else "      nan"
         print(f"{epoch:>6}  {train_loss:>10.4f}  {val_loss:>10.4f}  "
-              f"{wmape_s:>8}  {lr_now:>10.2e}  {elapsed:>5.1f}s"
+              f"{pw_s:>10}  {lr_now:>10.2e}  {elapsed:>5.1f}s"
               f"  [{bucket_str.strip()}]")
 
         log_rows.append({
             "epoch": epoch, "train_loss": round(train_loss, 6),
             "val_loss": round(val_loss, 6),
+            "nmape_pw_weighted": round(nmape_pw, 4) if not np.isnan(nmape_pw) else None,
             "nmape_weighted": round(nmape_weighted, 4) if not np.isnan(nmape_weighted) else None,
             "nmape_all":  round(nmape_global, 4),
             "nmape_4h":   round(buckets["1-4h"],   4),
@@ -477,6 +527,7 @@ def main():
                 "epoch": epoch,
                 "val_loss": val_loss,
                 "nmape_all": nmape_global,
+                "nmape_pw_weighted": nmape_pw,
                 "nmape_weighted": nmape_weighted,
                 "nmape_buckets": buckets,
                 "primary_metric": target_metric,
@@ -494,8 +545,8 @@ def main():
             import datetime as _dt
             _ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
             torch.save(ckpt, MODELS_DIR / f"checkpoint_{_ts}_ep{epoch}.pt")
-            metric_label = (f"wMAPE={target_metric:.2f}%"
-                            if not np.isnan(nmape_weighted)
+            metric_label = (f"pw_wMAPE={target_metric:.2f}%"
+                            if not np.isnan(nmape_pw)
                             else f"val_loss={target_metric:.4f}")
             print(f"         ↑ best {metric_label}")
         else:
@@ -516,18 +567,20 @@ def main():
     print(f"\nTraining log: {log_path}")
 
     # ── Final summary — pick best epoch by wMAPE (NaN-safe), fallback to val_loss
-    def _wmape_key(r):
-        v = r["nmape_weighted"]
+    def _pw_key(r):
+        v = r["nmape_pw_weighted"]
         return v if (v is not None and not np.isnan(v)) else float("inf")
 
-    best_row = min(log_rows, key=_wmape_key)
-    if _wmape_key(best_row) == float("inf"):  # all NaN — fallback
+    best_row = min(log_rows, key=_pw_key)
+    if _pw_key(best_row) == float("inf"):  # all NaN — fallback
         best_row = min(log_rows, key=lambda r: r["val_loss"])
     print(f"\n=== Training complete ===")
     print(f"  Best epoch:    {best_row['epoch']}")
     print(f"  Best val loss: {best_row['val_loss']:.4f}")
+    if best_row.get("nmape_pw_weighted") is not None:
+        print(f"  pw_wMAPE (price+horizon weighted): {best_row['nmape_pw_weighted']:.2f}%")
     if best_row.get("nmape_weighted") is not None:
-        print(f"  wMAPE (weighted): {best_row['nmape_weighted']:.2f}%")
+        print(f"  wMAPE (horizon-weighted): {best_row['nmape_weighted']:.2f}%")
     print(f"  nMAPE (all):   {best_row['nmape_all']:.2f}%")
     print(f"  nMAPE (4h):    {best_row['nmape_4h']:.2f}%")
     print(f"  nMAPE (16h):   {best_row['nmape_16h']:.2f}%")
