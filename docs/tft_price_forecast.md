@@ -263,51 +263,66 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q10, q50, q90)
 1. ✅ AEMO ingest infrastructure: PREDISPATCH, PD7Day, SevenDayOutlook → InfluxDB
 2. ✅ Parquet ML cache layer: `data/export_parquet.py` (with `--actuals-only` flag)
 3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py`
-4. ✅ Training script: `train/train_tft_price.py` (masked QuantileLoss, 100-epoch default)
-5. ✅ First training run and rolling-origin evaluation: `train/evaluate_tft.py`
+4. ✅ Training script: `train/train_tft_price.py` — AdamW + ReduceLROnPlateau + horizon-weighted loss
+5. ✅ Rolling-origin evaluation: `train/evaluate_tft.py` — nMAPE + quantile calibration
 6. ✅ NEMSEER/NEMWeb backfill: `ingest/backfill_predispatch_nemseer.py` (2024-04 → 2025-02)
-7. ✅ Actuals extended to 2024-03-29; ~33K training samples now available
+7. ✅ 33K training samples; VAL_DAYS=60 (2,260 val samples)
 
-### Evaluation results: 17K vs 33K samples (same val window: 2026-03-11 → 2026-04-10)
+### Current training setup (`train/train_tft_price.py`)
 
-Both runs: epoch 1 best, early stopping at epoch 8. LightGBM baseline is the same log over the same window.
+- **Optimizer:** AdamW (lr=2e-4, weight_decay=1e-4)
+- **Scheduler:** ReduceLROnPlateau (factor=0.5, patience=2) — fires after 2 non-improving epochs
+- **Loss:** Horizon-weighted masked quantile loss: `weight_h = exp(-h / tau)`, tau=14 steps (7h).
+  Short-horizon steps dominate gradients; 4h weight=0.56, 16h weight=0.10, 28h weight=0.02.
+- **Early stopping:** wMAPE (horizon-weighted nMAPE, consistent with training loss); fallback val_loss
 
-| Horizon | LightGBM | TFT 17K | TFT 33K | 17K→33K change |
-|---|---|---|---|---|
-| 2h | 26.4% | 29.6% | 32.9% | +3.3% (worse) |
-| 4h | 29.2% | 31.4% | 34.1% | +2.7% (worse) |
-| 8h | 34.6% | 32.9% | 35.7% | +2.8% (worse) |
-| 16h | 40.6% | 34.2% | 37.6% | +3.4% (worse) |
-| 28h | 42.6% | 34.7% | 37.7% | +3.0% (worse) |
+### Current evaluation results — Run 005 (eval window: 2026-02-09 → 2026-04-10)
 
-**More data made TFT uniformly worse.** This is the clearest possible signal that the problem is the optimizer, not data volume.
+TFT now beats LightGBM at **all** forecast horizons:
 
-### Root cause diagnosis
+| Horizon | TFT nMAPE | LightGBM | Delta |
+|---|---|---|---|
+| 1h | 32.6% | 34.7% | **-2.2%** |
+| 2h | 34.5% | 37.8% | **-3.3%** |
+| 4h | 37.0% | 42.0% | **-5.0%** |
+| 8h | 39.6% | 45.1% | **-5.4%** |
+| 16h | 41.6% | 47.1% | **-5.4%** |
+| 28h | 42.5% | 49.6% | **-7.2%** |
 
-Two distinct bugs in `train/train_tft_price.py`:
+Higher absolute nMAPE vs earlier runs (see `docs/training_runs.md`) because the eval window now
+includes volatile late-summer SA1 pricing (Feb–Mar). Delta column is the meaningful signal.
 
-1. **LR=1e-3 causes epoch-1 overshoot.** Train loss falls continuously (0.128 → 0.069 over 8 epochs), but val loss rises immediately after epoch 1. The model overshoots a good generalising minimum on the first large-LR update and never returns. Fix: lower default LR to 2e-4; add weight_decay=1e-4 to Adam.
+**Quantile calibration:** q90 well-calibrated (+0.010 bias) — sell threshold reliable.
+q50/q10 over-cover (upward bias, consistent with PREDISPATCH itself biasing toward higher prices).
 
-2. **Early stopping monitors val_loss, not nMAPE.** At epoch 4, nMAPE_all=39.5% (best overall) but val_loss=0.116 (worse than epoch 1's 0.107). The quantile loss and nMAPE diverge because quantile loss rewards calibrated uncertainty, not median accuracy. Early stopping on val_loss saves the wrong checkpoint. Fix: monitor nMAPE_28h for checkpoint selection and early stopping.
+Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
 
-3. **Structural 2–4h gap (separate issue).** Even with the optimizer fixed, TFT may continue to lose at 2–4h because LightGBM sees Amber APF (a debiased near-term signal) as a feature, while TFT's encoder only has raw PREDISPATCH (structurally biased). Long-term fix: P5MIN integration (Step 5 in plan).
+### Open design questions (flagged for review)
+- **Eval set composition:** Single contiguous val window may be lucky/unlucky (volatile vs mild).
+  Proposed: stratified eval set auto-selected for spike events, moderate volatility, seasonal mix.
+  See `docs/ideas.md`.
+- **Metric correctness:** Is nMAPE/wMAPE the right optimisation target for battery dispatch?
+  Alternative: revenue-weighted error or dispatch-regret metric. See `docs/ideas.md`.
+- **1h advantage:** TFT winning at 1h vs LightGBM may partly reflect LightGBM struggling on
+  the volatile Feb–Mar eval window, not a genuine 1h TFT improvement. Amber APF near-term
+  debiasing remains structurally unavailable to TFT until P5MIN tier is built (Step 5).
 
 ### Next steps
-8. **Fix training dynamics** (`train/train_tft_price.py`):
-   - Lower default `--lr` from 1e-3 to 2e-4
-   - Switch to `torch.optim.AdamW` with `--weight-decay` flag (default 1e-4). AdamW uses *decoupled* weight decay — strictly better than `Adam(weight_decay=...)` because Adam's gradient normalising accumulators interfere with the L2 penalty scaling
-   - Switch early stopping / checkpoint selection to monitor nMAPE_28h instead of val_loss, with `val_loss` as fallback when nMAPE is NaN
-   - Retrain and evaluate; confirm epoch-1-best pattern is resolved
-   - **If still overshooting after the above:** replace `CosineAnnealingLR(T_max=100)` with `ReduceLROnPlateau(mode='min', factor=0.5, patience=2)` monitoring nMAPE_28h. With T_max=100 and early stopping at epoch 8, cosine barely decays in the relevant window.
-9. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
-   - At inference time: read latest PREDISPATCH and PD7Day from InfluxDB (single source of truth)
-   - Apply `scalers.pkl` to normalise decoder inputs; inverse-transform outputs to $/MWh
-   - A/B compare for several weeks before switching
-10. **Retailer switch:** remove Amber APF calls after TFT validated in production
-11. **P5MIN integration (later):** 0–2h structural improvement via 5-min resolution
+8. ✅ Training dynamics fixed (AdamW + ReduceLROnPlateau + horizon-weighted loss)
+9. **Add VIC1 + NSW1 as decoder features** (Step 2e)
+   - SA1 interconnectors: Heywood→VIC1 (~650MW operating), EnergyConnect→NSW1 (~800MW, commissioning ~2026–2027)
+   - Adjacent region PREDISPATCH prices are spike precursors; data likely already in InfluxDB
+   - See `docs/ideas.md` for full implementation steps
+10. **Wire into forecast.py:** add TFT prediction path alongside LightGBM (`--model tft` flag)
+    - Read PREDISPATCH/PD7Day exclusively from InfluxDB at inference time
+    - A/B compare for several weeks before switching
+11. **Retailer switch:** remove Amber APF calls after TFT validated in production
+12. **P5MIN integration (later):** 0–2h near-term debiased signal; only after Step 10 is stable
 
 ### Longer-term
-12. Rebuild dataset and retrain monthly (systemd timer) as PD7Day accumulates (currently only 60 days / 183 runs — 28–72h mask coverage only 5.8%)
+- Rebuild dataset and retrain regularly as PD7Day accumulates (28–72h mask coverage currently 5.8%)
+- Temporal sample weighting (`--temporal-halflife`) implemented but not yet beneficial — revisit
+  when 3+ years of training data available (annual seasonal signal currently dominates any benefit)
 
 ---
 
@@ -328,7 +343,8 @@ Two distinct bugs in `train/train_tft_price.py`:
 | `data/parquet/scalers.pkl` | Fitted QuantileTransformer per feature |
 | `data/parquet/dataset_meta.json` | Shape/coverage metadata |
 | `train/train_tft_price.py` | Training script |
-| `train/evaluate_tft.py` | Rolling-origin evaluation: TFT vs LightGBM nMAPE at 2h/4h/8h/16h/28h |
+| `train/evaluate_tft.py` | Rolling-origin evaluation: TFT vs LightGBM nMAPE at 1h/2h/4h/8h/16h/28h + quantile calibration |
+| `docs/training_runs.md` | Persistent log of all training runs, configs, and eval results |
 | `models/tft_price/checkpoint_best.pt` | Best trained model |
 | `models/tft_price/training_log.csv` | Epoch-level metrics |
 | `models/tft_price/evaluation_results.csv` | nMAPE comparison table (written by evaluate_tft.py) |
