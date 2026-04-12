@@ -171,20 +171,20 @@ This would make `evaluate_tft.py` comparisons meaningful regardless of when trai
 standard for electricity price evaluation. Limitation: treats relative errors symmetrically
 regardless of economic impact. A 20% error on a $300 spike and on $70 baseload are equal.
 
-**Recommended next step: revenue-weighted nMAPE (eval-only, no retraining)**
-Add to `evaluate_tft.py`: errors during intervals where actual RRP > $150 weighted 10×.
-Preserves scale-invariance, directly encodes the asymmetric value of spike accuracy.
-Specific threshold ($150) and weight (10×) should be tuned to actual dispatch economics.
+**Implemented (Run 008): progressive price-weighted loss**
+`weight = 1 + log1p(max(0, (price − p50_ref) / p50_ref))` applied per-step in training loss.
+Chosen over sharp threshold (avoids discontinuity) and CDF-based (similar shape, simpler).
+`pw_wMAPE` (price+horizon weighted) is now the headline training and early stopping metric.
+`y_weights.npy` produced by `build_training_dataset.py`; loaded by `train_tft_price.py`.
 
 **Longer-term: dispatch-regret metric**
 Simulate charge/hold/discharge decisions on the forecast vs actuals; measure lost revenue
 against theoretical perfect-foresight dispatch. Gold standard for this use case. Requires
 a simplified but realistic EMHASS/battery model at evaluation time. Complex to implement
-correctly — do after revenue-weighted nMAPE is validated.
+correctly — do after TFT is in production and producing real value.
 
-**Pinball/quantile loss** (current training objective): directly penalises quantile
-miscalibration. Keep for training. Not ideal as standalone eval metric — not interpretable
-in dollar terms and doesn't encode the asymmetric dispatch value.
+**Pinball/quantile loss** (current training objective): keep for training. Not ideal as
+standalone eval metric — not interpretable in dollar terms.
 
 ### Amber APF — CSIRO Kick-Start case study
 
