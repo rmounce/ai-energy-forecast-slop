@@ -34,6 +34,9 @@ Usage:
   python train/train_tft_price.py             # train with defaults (50 epochs)
   python train/train_tft_price.py --epochs 100 --d-model 128
   python train/train_tft_price.py --dry-run   # 5 epochs, small batch, check shapes
+
+Optimizer: AdamW (lr=2e-4, weight_decay=1e-4) + CosineAnnealingLR.
+Early stopping: monitors nMAPE_28h (lower is better); falls back to val_loss when NaN.
 """
 
 import argparse
@@ -264,7 +267,9 @@ def main():
                         help="Attention heads (must divide d-model)")
     parser.add_argument("--n-layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4,
+                        help="AdamW weight decay (default 1e-4)")
     parser.add_argument("--patience", type=int, default=7,
                         help="Early stopping patience (default 7)")
     parser.add_argument("--dry-run", action="store_true",
@@ -331,16 +336,20 @@ def main():
     print(f"  Parameters: {n_params:,}")
 
     criterion = MaskedQuantileLoss(QUANTILES)
-    optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimiser = torch.optim.AdamW(model.parameters(), lr=args.lr,
+                                  weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimiser, T_max=args.epochs, eta_min=args.lr * 0.01)
 
     # ── Training loop
-    best_val_loss = float("inf")
+    # Primary metric: nMAPE_28h (lower is better); falls back to val_loss when NaN
+    best_target_metric = float("inf")
     patience_counter = 0
     log_rows = []
 
     print(f"\nTraining for up to {args.epochs} epochs (patience={args.patience})...")
+    print(f"  Optimizer: AdamW  lr={args.lr:.1e}  weight_decay={args.weight_decay:.1e}")
+    print(f"  Early stopping on: nMAPE_28h (fallback: val_loss when NaN)")
     print(f"{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'nMAPE%':>8}  {'LR':>10}  {'Time':>6}")
     print("-" * 60)
 
@@ -370,15 +379,20 @@ def main():
             "lr": lr_now, "time_s": round(elapsed, 1),
         })
 
+        # Primary metric: nMAPE_28h; fall back to val_loss if NaN (e.g. early epochs)
+        nmape_28h = buckets["1-28h"]
+        target_metric = nmape_28h if not np.isnan(nmape_28h) else val_loss
+
         # Save best
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if target_metric < best_target_metric:
+            best_target_metric = target_metric
             patience_counter = 0
             ckpt = {
                 "epoch": epoch,
                 "val_loss": val_loss,
                 "nmape_all": nmape,
                 "nmape_buckets": buckets,
+                "primary_metric": target_metric,
                 "model_state": model.state_dict(),
                 "model_config": {
                     "n_enc": n_enc, "n_dec": n_dec,
@@ -389,7 +403,8 @@ def main():
                 "quantiles": QUANTILES,
             }
             torch.save(ckpt, MODELS_DIR / "checkpoint_best.pt")
-            print(f"         ↑ best val loss: {best_val_loss:.4f}")
+            metric_label = f"nMAPE_28h={target_metric:.2f}%" if not np.isnan(nmape_28h) else f"val_loss={target_metric:.4f}"
+            print(f"         ↑ best {metric_label}")
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
@@ -404,8 +419,14 @@ def main():
         writer.writerows(log_rows)
     print(f"\nTraining log: {log_path}")
 
-    # ── Final summary
-    best_row = min(log_rows, key=lambda r: r["val_loss"])
+    # ── Final summary — pick best epoch by nMAPE_28h (NaN-safe), fallback to val_loss
+    def _nmape_28h_key(r):
+        v = r["nmape_28h"]
+        return v if (v is not None and not np.isnan(v)) else float("inf")
+
+    best_row = min(log_rows, key=_nmape_28h_key)
+    if _nmape_28h_key(best_row) == float("inf"):  # all NaN — fallback
+        best_row = min(log_rows, key=lambda r: r["val_loss"])
     print(f"\n=== Training complete ===")
     print(f"  Best epoch:    {best_row['epoch']}")
     print(f"  Best val loss: {best_row['val_loss']:.4f}")

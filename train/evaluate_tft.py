@@ -6,7 +6,7 @@ Loads the best TFT checkpoint and evaluates it on the pre-built validation
 split (last ~30 days of PREDISPATCH runs). Compares against LightGBM forecasts
 from price_forecast_log.csv over the same time window.
 
-Horizon buckets: 2h, 4h, 8h, 16h, 28h
+Horizon buckets: 1h, 2h, 4h, 8h, 16h, 28h
   Each bucket is cumulative (1-step to Nh), masked to valid steps only.
   28–72h skipped: ~11% coverage makes that bucket noisy before NEMSEER backfill.
 
@@ -38,6 +38,7 @@ MODELS_DIR  = ROOT / "models" / "tft_price"
 
 # (label, lo_step, hi_step) — Python slice [lo:hi], each step = 30 min
 HORIZON_BUCKETS = [
+    ("1h",   0,   2),
     ("2h",   0,   4),
     ("4h",   0,   8),
     ("8h",   0,  16),
