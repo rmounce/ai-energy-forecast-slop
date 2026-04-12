@@ -7,6 +7,8 @@ Parquet is rebuilt from InfluxDB on demand. Re-run to refresh.
 
 Outputs (data/parquet/):
   aemo_predispatch_sa1.parquet  — interval_dt, run_time, rrp, total_demand, net_interchange
+  aemo_predispatch_vic1.parquet — interval_dt, run_time, rrp  (adjacent region, spike precursor)
+  aemo_predispatch_nsw1.parquet — interval_dt, run_time, rrp  (adjacent region, EnergyConnect)
   aemo_pd7day_sa1.parquet       — interval_dt, run_time, rrp
   aemo_sevendayoutlook_sa1.parquet — interval_dt, run_time, scheduled_demand, net_interchange
   actuals_sa1.parquet           — time, rrp, total_demand, net_interchange, power_load, power_pv,
@@ -137,25 +139,34 @@ def query_batched(client, measurement, fields, where_extra="",
     return df
 
 
-def export_predispatch(client):
-    print("\n[1/4] Exporting PREDISPATCH SA1...")
-    # ~990K rows — use batched query to avoid HTTP response size limits
+def export_predispatch(client, region=REGION):
+    """Export PREDISPATCH for one NEM region.
+
+    SA1: full fields (rrp, total_demand, net_interchange) — used as decoder features.
+    VIC1/NSW1: rrp only — used as adjacent-region price signals (spike precursors).
+    """
+    region_lower = region.lower()
+    fields = ["rrp", "total_demand", "net_interchange", "run_time"] if region == "SA1" else ["rrp", "run_time"]
+    print(f"\nExporting PREDISPATCH {region}...")
     df = query_batched(
         client,
         measurement=f"{RP}.aemo_predispatch_forecast",
-        fields=["rrp", "total_demand", "net_interchange", "run_time"],
-        where_extra=f"region='{REGION}'",
+        fields=fields,
+        where_extra=f"region='{region}'",
     )
     if df.empty:
         print("  SKIP: no data")
-        return
+        return None
 
     df = df.rename(columns={"time": "interval_dt"})
     df["run_time"] = pd.to_datetime(df["run_time"], utc=True)
-    df = df[["interval_dt", "run_time", "rrp", "total_demand", "net_interchange"]].copy()
+    keep = ["interval_dt", "run_time", "rrp"]
+    if region == "SA1":
+        keep += ["total_demand", "net_interchange"]
+    df = df[keep].copy()
     df = df.sort_values(["run_time", "interval_dt"]).reset_index(drop=True)
 
-    out = OUT_DIR / "aemo_predispatch_sa1.parquet"
+    out = OUT_DIR / f"aemo_predispatch_{region_lower}.parquet"
     df.to_parquet(out, index=False, compression="snappy")
     size_mb = out.stat().st_size / 1024 / 1024
     print(f"  Written: {out} ({size_mb:.1f}MB)")
@@ -297,7 +308,9 @@ def main():
         print("(--actuals-only: skipping PREDISPATCH, PD7Day, SevenDayOutlook)")
         export_actuals(client)
     else:
-        export_predispatch(client)
+        export_predispatch(client, region="SA1")
+        export_predispatch(client, region="VIC1")
+        export_predispatch(client, region="NSW1")
         export_pd7day(client)
         export_sevendayoutlook(client)
         export_actuals(client)
