@@ -314,23 +314,26 @@ anomalously favourable. The stratified benchmark reveals TFT spike nMAPE is 79�
 than LightGBM's 38–53%. Baseload accuracy is competitive (~35–44% vs ~38–53%). The spike gap
 is the primary problem to solve.
 
-**Run 007 result:** Spike nMAPE barely moved (84.6% vs 84.7% at 1h). 5m coverage only 48.8% —
-most stratified spike events predate the 5m data window (starts 2025-03-31).
-**Run 008 (in progress):** Progressive price-weighted loss — `weight = 1 + log1p(max(0, (price−ref)/ref))`
-where ref = training p50 (~$60). Directly attacks the training imbalance: ~10% of steps are spikes
-but the uniform loss can ignore them. `pw_wMAPE` (price+horizon weighted) is now the headline metric.
+**Run 007:** Spike nMAPE barely moved (84.6%). 5m coverage only 48.8% — most stratified
+spike events predate the 5m window. **Run 008:** Progressive price-weighted loss (log-growth
+up to 6.8× at market cap) — spike nMAPE unchanged (84.1%); training imbalance hypothesis
+falsified. **Run 009:** Full 5m coverage (~100% after NEMSEER backfill) — spike nMAPE 86.8%,
+model converged in epoch 2, suggesting features add noise. All three mitigation hypotheses
+exhausted. **Root cause confirmed: insufficient spike-episode diversity** in 2-year training
+window. Next: extend PREDISPATCH backfill to 2022 (adds energy-crisis-era spikes, ~2× more data).
 
 Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
 
 ### Next steps
 9. ✅ VIC1/NSW1 decoder features (Run 006)
 10. ✅ Stratified eval benchmark (spike gap confirmed structural)
-11. ✅ 5-min volatility encoder features (Run 007 — marginal; coverage too low)
-12. **Run 008 (in progress):** Progressive price-weighted loss (log-growth)
-13. **Run 009:** NEMSEER backfill of 5-min dispatch actuals → full 5m feature coverage
-14. **Wire into forecast.py:** only after spike gap meaningfully narrowed
-15. **Retailer switch:** remove Amber APF after TFT validated in production
-16. **P5MIN inference tier (later):** 0–1h debiased signal; accumulating since 2026-04-12
+11. ✅ 5-min volatility encoder features (Run 007 — marginal)
+12. ✅ Progressive price-weighted loss (Run 008 — no spike improvement; calibration recovered)
+13. ✅ NEMSEER 5m backfill → full coverage (Run 009 — no spike improvement; data hypothesis confirmed)
+14. **Run 010:** Extend PREDISPATCH backfill to 2022 → rebuild dataset (~2× more data, more spike episodes)
+15. **Wire into forecast.py:** only after spike gap meaningfully narrowed
+16. **Retailer switch:** remove Amber APF after TFT validated in production
+17. **P5MIN inference tier (later):** 0–1h debiased signal; accumulating since 2026-04-12
 
 ### Longer-term
 - Extend PREDISPATCH backfill to 2022 (more spike episodes; NEMSEER available)
