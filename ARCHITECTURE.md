@@ -230,7 +230,7 @@ Standalone utility called by the nightly `ai-energy-update-tariffs` service. Smo
 
 ### `data/` and `train/` — TFT Price Model (in development)
 
-A new price forecasting model is being developed to replace the LightGBM+Amber APF approach. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**.
+A new price forecasting model is being developed to replace the LightGBM+Amber APF approach. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
 - Model type: LSTM encoder-decoder with cross-attention (simplified TFT, Lim et al. 2021)
