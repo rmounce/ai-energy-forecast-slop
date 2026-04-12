@@ -47,7 +47,7 @@ Normalisation:
 
 Outputs (data/parquet/):
   X_encoder.npy        [N, 96,  N_ENC]  — normalised
-  X_decoder.npy        [N, 144, N_DEC]  — normalised prices/demand + raw time/horizon
+  X_decoder.npy        [N, 144, N_DEC]  — normalised prices/demand (SA1+VIC1+NSW1) + raw time/horizon
   y_targets.npy        [N, 144]         — normalised actual RRP (zeros where mask=0)
   y_targets_raw.npy    [N, 144]         — raw actual RRP in $/MWh
   y_mask.npy           [N, 144]         — bool: 1 where covariate + target both valid
@@ -95,8 +95,13 @@ TIME_FEATURES  = ["hour_sin", "hour_cos", "dow_sin", "dow_cos",
 ENC_FEATURES   = ENC_CONTINUOUS + TIME_FEATURES          # 14 features
 
 # Decoder: forecast covariates (PREDISPATCH/PD7Day) + time + horizon
-DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange"]
-DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + ["horizon_norm", "covar_missing"]  # 11 features
+DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange",
+                  "vic1_pd_rrp", "nsw1_pd_rrp"]
+DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + ["horizon_norm", "covar_missing"]  # 13 features
+
+# VIC1/NSW1 data only covers steps 0-55 (PREDISPATCH horizon); steps 56-143 are 0-filled.
+# Track these by name so scalers are fitted on the right slice.
+ADJ_REGION_FEATURES = {"vic1_pd_rrp", "nsw1_pd_rrp"}
 
 
 # ─── Time encoding helpers ──────────────────────────────────────────────────
@@ -119,6 +124,8 @@ def time_encodings(timestamps: pd.DatetimeIndex) -> pd.DataFrame:
 def build_samples(actuals: pd.DataFrame,
                   predispatch: pd.DataFrame,
                   pd7day: pd.DataFrame,
+                  vic1_pd: pd.DataFrame | None = None,
+                  nsw1_pd: pd.DataFrame | None = None,
                   dry_run: bool = False,
                   output_length: int = OUTPUT_LENGTH,
                   min_valid_steps: int = MIN_VALID_STEPS):
@@ -128,6 +135,8 @@ def build_samples(actuals: pd.DataFrame,
     actuals:     columns include ENC_CONTINUOUS; indexed by UTC datetime after set_index
     predispatch: columns [interval_dt, run_time, rrp, total_demand, net_interchange]
     pd7day:      columns [interval_dt, run_time, rrp]
+    vic1_pd:     columns [interval_dt, run_time, rrp] — adjacent region, steps 0-55 only
+    nsw1_pd:     columns [interval_dt, run_time, rrp] — adjacent region, steps 0-55 only
     """
     actuals = actuals.set_index("time").sort_index()
 
@@ -142,6 +151,17 @@ def build_samples(actuals: pd.DataFrame,
     pd7_grouped = (pd7day
                    .sort_values(["run_time", "interval_dt"])
                    .groupby("run_time", sort=False))
+
+    # Adjacent-region PREDISPATCH (VIC1/NSW1) — steps 0-55 only; None → all 0-filled
+    adj_grouped = {}
+    for name, df in (("vic1", vic1_pd), ("nsw1", nsw1_pd)):
+        if df is not None:
+            adj_grouped[name] = (df.sort_values(["run_time", "interval_dt"])
+                                   .groupby("run_time", sort=False))
+            print(f"  Grouping {name.upper()} PREDISPATCH by run_time "
+                  f"({df.run_time.nunique():,} runs)...")
+        else:
+            adj_grouped[name] = None
 
     all_run_times = sorted(predispatch["run_time"].unique())
     print(f"  Total PREDISPATCH runs: {len(all_run_times):,}")
@@ -201,6 +221,20 @@ def build_samples(actuals: pd.DataFrame,
             mask_arr[:56]   = valid_pd.values
         except KeyError:
             pass   # no PREDISPATCH run at T — indices 0..55 stay masked
+
+        # -- VIC1/NSW1 PREDISPATCH (indices 0..55 = steps h=1..56, rrp only)
+        for adj_name, adj_col_idx in (("vic1", DEC_CONTINUOUS.index("vic1_pd_rrp")),
+                                       ("nsw1", DEC_CONTINUOUS.index("nsw1_pd_rrp"))):
+            grp = adj_grouped[adj_name]
+            if grp is None:
+                continue
+            try:
+                adj_run = grp.get_group(run_t)
+                adj_sub = (adj_run.set_index("interval_dt")
+                           .reindex(dec_intervals[:56])["rrp"])
+                dec_arr[:56, adj_col_idx] = adj_sub.fillna(0.0).values
+            except KeyError:
+                pass   # no matching run — stays 0
 
         # -- PD7Day (indices 56..143 = steps h=57..144)
         bisect_idx = bisect.bisect_right(pd7day_run_times_sorted, run_t) - 1
@@ -298,7 +332,13 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_tr
     for j, feat in enumerate(ENC_CONTINUOUS):
         fit_one(feat, X_enc_train[:, :, j])
     for j, feat in enumerate(DEC_CONTINUOUS):
-        valid_covars = X_dec_train[:, :, j][y_covar_mask_train]
+        if feat in ADJ_REGION_FEATURES:
+            # VIC1/NSW1 only valid in steps 0-55 (PREDISPATCH horizon);
+            # steps 56-143 are 0-filled — exclude to avoid biasing the scaler.
+            pd_mask = y_covar_mask_train[:, :56]
+            valid_covars = X_dec_train[:, :56, j][pd_mask]
+        else:
+            valid_covars = X_dec_train[:, :, j][y_covar_mask_train]
         fit_one(feat, valid_covars)
 
     # Target: fit on VALID train steps only to avoid fitting on zero-padded values
@@ -319,9 +359,15 @@ def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers):
         X_enc_n[:, :, j] = scalers[feat].transform(flat).reshape(X_enc_n[:, :, j].shape)
 
     for j, feat in enumerate(DEC_CONTINUOUS):
-        view = X_dec_n[:, :, j]
-        valid_flat = view[y_covar_mask].reshape(-1, 1)
-        view[y_covar_mask] = scalers[feat].transform(valid_flat).reshape(-1)
+        if feat in ADJ_REGION_FEATURES:
+            view = X_dec_n[:, :56, j]
+            pd_mask = y_covar_mask[:, :56]
+            valid_flat = view[pd_mask].reshape(-1, 1)
+            view[pd_mask] = scalers[feat].transform(valid_flat).reshape(-1)
+        else:
+            view = X_dec_n[:, :, j]
+            valid_flat = view[y_covar_mask].reshape(-1, 1)
+            view[y_covar_mask] = scalers[feat].transform(valid_flat).reshape(-1)
 
     qt = scalers["target_rrp"]
     # Only transform valid targets; leave zero-padded positions as 0
@@ -357,18 +403,35 @@ def main():
     pd7day      = pd.read_parquet(PARQUET_DIR / "aemo_pd7day_sa1.parquet")
     actuals     = pd.read_parquet(PARQUET_DIR / "actuals_sa1.parquet")
 
+    # Adjacent-region PREDISPATCH (VIC1/NSW1) — optional decoder features
+    vic1_pd = nsw1_pd = None
+    for region, varname in (("vic1", "vic1_pd"), ("nsw1", "nsw1_pd")):
+        path = PARQUET_DIR / f"aemo_predispatch_{region}.parquet"
+        if path.exists():
+            df = pd.read_parquet(path)
+            for col in ["interval_dt", "run_time"]:
+                df[col] = pd.to_datetime(df[col], utc=True)
+            if varname == "vic1_pd":
+                vic1_pd = df
+            else:
+                nsw1_pd = df
+            print(f"  {region.upper()} PREDISPATCH: {len(df):,} rows, "
+                  f"{df.run_time.nunique():,} unique run_times")
+        else:
+            print(f"  WARNING: {path.name} not found — {region.upper()} features will be 0-filled")
+
     for df in [predispatch, pd7day]:
         for col in ["interval_dt", "run_time"]:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], utc=True)
     actuals["time"] = pd.to_datetime(actuals["time"], utc=True)
 
-    print(f"  PREDISPATCH: {len(predispatch):,} rows, "
+    print(f"  SA1 PREDISPATCH: {len(predispatch):,} rows, "
           f"{predispatch.run_time.nunique():,} unique run_times")
-    print(f"  PD7Day:      {len(pd7day):,} rows, "
+    print(f"  PD7Day:          {len(pd7day):,} rows, "
           f"{pd7day.run_time.nunique():,} unique run_times "
           f"({pd7day.run_time.min().date()} → {pd7day.run_time.max().date()})")
-    print(f"  Actuals:     {len(actuals):,} rows, "
+    print(f"  Actuals:         {len(actuals):,} rows, "
           f"{actuals.time.min()} → {actuals.time.max()}")
 
     # Forward-fill minor actuals gaps
@@ -384,6 +447,7 @@ def main():
     print("\nBuilding run-aligned samples...")
     X_enc, X_dec, y_raw, y_mask, y_covar_mask, run_times = build_samples(
         actuals, predispatch, pd7day,
+        vic1_pd=vic1_pd, nsw1_pd=nsw1_pd,
         dry_run=args.dry_run,
         output_length=out_len,
         min_valid_steps=args.min_valid_steps,
