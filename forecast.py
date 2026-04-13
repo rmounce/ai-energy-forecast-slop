@@ -1105,7 +1105,7 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     # qt_targ was the key in my previous code, now it's from scalers dictionary
     s_targ = scalers.get("target_rrp", "log")
     if s_targ == "log":
-        preds_raw = log_scale * (np.exp(preds_norm) - 1.0)
+        preds_raw = np.sign(preds_norm) * log_scale * (np.exp(np.abs(preds_norm)) - 1.0)
     else:
         # QuantileTransformer inverse
         preds_raw = s_targ.inverse_transform(preds_norm)
