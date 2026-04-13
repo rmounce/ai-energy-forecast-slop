@@ -65,6 +65,9 @@ CONFIG = load_config()
 # Shared cached session for all AEMO/NEMWeb HTTP requests
 _aemo_session = make_aemo_session()
 
+# Set to True by --debug-tft flag to print TFT input/output diagnostic table
+_DEBUG_TFT = False
+
 # Import TFT Model class (must be same as trained)
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent / "train"))
@@ -951,6 +954,63 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
         return raw_forecasts
 
 
+def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, dec_index, preds_raw):
+    """Print side-by-side diagnostic table for TFT inputs and outputs.
+
+    Helps diagnose systematic underestimation: shows what the model actually
+    received (encoder history + decoder PREDISPATCH covariates) vs what it predicted.
+    All prices in $/MWh for comparability; TFT outputs are $/MWh before /1000 conversion.
+    """
+    SEP = "─" * 90
+
+    # ── Encoder summary (last 96 steps = 48h)
+    print(f"\n{SEP}")
+    print("TFT DEBUG — Encoder input (last 96 steps = 48h of history)")
+    print(SEP)
+    missing_frac = enc_5m_missing.mean() * 100
+    print(f"  5m features missing: {missing_frac:.0f}% of encoder steps")
+    if not enc_load_raw.empty:
+        load_zeros = (enc_load_raw == 0).sum()
+        print(f"  power_load zero steps: {load_zeros}/96 {'⚠️  likely missing/bfilled' if load_zeros > 10 else '✓'}")
+    print(f"  rrp ($/MWh):  min={enc_rrp_raw.min():.1f}  median={enc_rrp_raw.median():.1f}  "
+          f"max={enc_rrp_raw.max():.1f}  last={enc_rrp_raw.iloc[-1]:.1f}")
+    print(f"\n  {'Time (UTC)':>22}  {'rrp $/MWh':>10}  {'5m_missing':>10}")
+    print(f"  {'─'*22}  {'─'*10}  {'─'*10}")
+    # Print last 8 encoder steps as sample
+    for ts, rrp, miss in zip(enc_rrp_raw.index[-8:], enc_rrp_raw.values[-8:], enc_5m_missing.values[-8:]):
+        print(f"  {str(ts):>22}  {rrp:>10.2f}  {int(miss):>10}")
+
+    # ── Decoder table (next 144 steps = 72h)
+    print(f"\n{SEP}")
+    print("TFT DEBUG — Decoder covariates vs TFT output (next 72h)")
+    print(SEP)
+    print(f"  {'Time (UTC)':>22}  {'PD_RRP $/MWh':>13}  {'TFT q30':>8}  {'TFT q50':>8}  {'TFT q70':>8}  {'delta q50-PD':>13}")
+    print(f"  {'─'*22}  {'─'*13}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*13}")
+
+    # Print every 4th step (every 2h) for readability, plus always the first/last
+    n = len(dec_index)
+    show_idx = sorted(set([0, 1] + list(range(0, n, 4)) + [n - 1]))
+    for i in show_idx:
+        ts = dec_index[i]
+        pd_rrp = float(dec_pd_rrp_raw.iloc[i]) if i < len(dec_pd_rrp_raw) else float('nan')
+        q30 = preds_raw[i, 0]
+        q50 = preds_raw[i, 1]
+        q70 = preds_raw[i, 2]
+        delta = q50 - pd_rrp
+        pd_str = f"{pd_rrp:>13.2f}" if pd_rrp != 0.0 else f"{'(zero)':>13}"
+        print(f"  {str(ts):>22}  {pd_str}  {q30:>8.2f}  {q50:>8.2f}  {q70:>8.2f}  {delta:>+13.2f}")
+
+    # Summary stats
+    q50_vals = preds_raw[:, 1]
+    pd_vals = dec_pd_rrp_raw.values[:len(q50_vals)]
+    nonzero = pd_vals != 0
+    if nonzero.sum() > 0:
+        mean_delta = (q50_vals[nonzero] - pd_vals[nonzero]).mean()
+        print(f"\n  Mean (TFT q50 − PD_RRP) over non-zero PD steps: {mean_delta:+.2f} $/MWh")
+    print(f"  TFT q50 range: {q50_vals.min():.1f} → {q50_vals.max():.1f} $/MWh")
+    print(SEP + "\n")
+
+
 def _execute_tft_prediction(historical_df, future_covariates_df):
     """
     TFT Inference Worker: Parallel branch for Run 010.
@@ -1045,6 +1105,11 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
             return float(s.transform(np.array([[val]]))[0, 0])
         return s.transform(val.values.reshape(-1, 1)).flatten()
 
+    # Snapshot raw encoder values before scaling (for debug table)
+    _enc_rrp_raw = hist["rrp"].copy()           # $/MWh
+    _enc_load_raw = hist.get("power_load", pd.Series(dtype=float)).copy()
+    _enc_5m_missing = hist["rrp_5m_missing"].copy()
+
     # Apply enc scalers
     for feat in ENC_CONT:
         hist[feat] = transform_val(hist[feat], feat)
@@ -1090,6 +1155,9 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     fut['horizon_norm'] = np.arange(len(fut)) / 144.0
     fut['covar_missing'] = 0
     
+    # Snapshot raw decoder pd_rrp before scaling (for debug table); values are $/kWh here
+    _dec_pd_rrp_raw = fut["pd_rrp"].copy() * 1000.0  # convert back to $/MWh for display
+
     DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp"]
     # Apply dec scalers
     for feat in DEC_CONT:
@@ -1133,6 +1201,16 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         
         res[q_name] = df_q
         
+    if _DEBUG_TFT:
+        _print_tft_debug(
+            enc_rrp_raw=_enc_rrp_raw,
+            enc_load_raw=_enc_load_raw,
+            enc_5m_missing=_enc_5m_missing,
+            dec_pd_rrp_raw=_dec_pd_rrp_raw,
+            dec_index=fut.index,
+            preds_raw=preds_raw,
+        )
+
     logging.info(f"TFT Parallel Inference complete. Steps: {len(preds_raw)}")
     return res
 
@@ -1919,11 +1997,13 @@ def main():
     parser.add_argument('--publish-covariates', action='store_true', help="Publish adjusted covariate forecasts to Home Assistant.")
     parser.add_argument('--publish-hass', action='store_true', help="Publish FINAL forecasts to Home Assistant entities.")
     parser.add_argument('--dynamic-handoff', action='store_true', help="For 'predict-price' mode, use Amber's advanced forecast to seed the model.")
+    parser.add_argument('--debug-tft', action='store_true', help="Print TFT encoder/decoder inputs and output side-by-side (for diagnosing underestimation).")
     parser.add_argument('--config', default='config.json', help="Path to the configuration file.")
     args = parser.parse_args()
 
-    global CONFIG
+    global CONFIG, _DEBUG_TFT
     CONFIG = load_config(args.config)
+    _DEBUG_TFT = getattr(args, "debug_tft", False)
 
     if args.mode.startswith('predict-'):
         models = []
