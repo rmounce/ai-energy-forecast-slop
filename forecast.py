@@ -954,6 +954,58 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
         return raw_forecasts
 
 
+def _get_influx_pd_prices(client, start_time, end_time):
+    """Get TFT decoder price covariates from InfluxDB, matching training structure.
+
+    Steps 0-55 (0.5h-28h): PREDISPATCH rrp for SA1, VIC1, NSW1.
+    Steps 56-143 (28-72h): PD7Day rrp for SA1 only (VIC1/NSW1 = 0 per training).
+
+    Returns DataFrame with columns pd_rrp, vic1_pd_rrp, nsw1_pd_rrp (all $/MWh),
+    indexed by UTC datetime, or empty DataFrame on failure.
+    """
+    start_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+    end_str   = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+    try:
+        pd_frames = {}
+        for region, col in [('SA1', 'pd_rrp'), ('VIC1', 'vic1_pd_rrp'), ('NSW1', 'nsw1_pd_rrp')]:
+            q = (f"SELECT last(rrp) AS rrp FROM \"rp_30m\".\"aemo_predispatch_forecast\" "
+                 f"WHERE region='{region}' AND time >= '{start_str}' AND time <= '{end_str}' "
+                 f"GROUP BY time(30m) fill(null)")
+            r = client.query(q)
+            if r and list(r.get_points()):
+                df = pd.DataFrame(r.get_points())
+                df['time'] = pd.to_datetime(df['time'], utc=True)
+                df.set_index('time', inplace=True)
+                pd_frames[col] = df['rrp']
+
+        # PD7Day for SA1 (covers 28h-72h horizon)
+        q7 = (f"SELECT last(rrp) AS rrp FROM \"rp_30m\".\"aemo_pd7day_forecast\" "
+              f"WHERE region='SA1' AND time >= '{start_str}' AND time <= '{end_str}' "
+              f"GROUP BY time(30m) fill(null)")
+        r7 = client.query(q7)
+        if r7 and list(r7.get_points()):
+            df7 = pd.DataFrame(r7.get_points())
+            df7['time'] = pd.to_datetime(df7['time'], utc=True)
+            df7.set_index('time', inplace=True)
+            pd7_rrp = df7['rrp']
+            # Merge: PREDISPATCH takes priority; PD7Day fills where PREDISPATCH is absent
+            if 'pd_rrp' in pd_frames:
+                pd_frames['pd_rrp'] = pd_frames['pd_rrp'].combine_first(pd7_rrp)
+            else:
+                pd_frames['pd_rrp'] = pd7_rrp
+
+        if not pd_frames:
+            return pd.DataFrame()
+        result = pd.DataFrame(pd_frames)
+        client.close()
+        return result
+    except Exception as e:
+        logging.warning(f"Failed to get InfluxDB PD prices: {e}")
+        try: client.close()
+        except Exception: pass
+        return pd.DataFrame()
+
+
 def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, dec_index, preds_raw):
     """Print side-by-side diagnostic table for TFT inputs and outputs.
 
@@ -1133,26 +1185,39 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         logging.error("TFT decoder input is empty! Check future_covariates_df alignment.")
         return {}
 
-    # TFT specifically needs PD price forecasts, which aren't in standard future_covariates_df
-    pd_prices = _get_aemo_short_term_price_forecast()
-    if not pd_prices.empty:
-        # _get_aemo_short_term_price_forecast() returns $/kWh; training used $/MWh.
-        pd_prices = pd_prices * 1000.0  # $/kWh → $/MWh
-        # Join price forecasts; missing steps are 0-filled (masked by covar_missing)
-        fut = fut.join(pd_prices)
+    # TFT decoder price covariates: replicate training structure
+    #   Steps 0-55  (0.5h-28h): PREDISPATCH rrp for SA1/VIC1/NSW1
+    #   Steps 56-143 (28-72h): PD7Day rrp for SA1 only; VIC1/NSW1 = 0 (matches training)
+    #
+    # Primary source: InfluxDB (reliable, ingested every 30 min).
+    # Supplement: AEMO viz API short-term price forecast (more recent but unreliable).
+    influx_pd_prices = _get_influx_pd_prices(
+        InfluxDBClient(**CONFIG['influxdb']), fut.index.min(), fut.index.max()
+    )
+    if not influx_pd_prices.empty:
+        fut = fut.join(influx_pd_prices, how='left')
     else:
         for c in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']: fut[c] = 0.0
+
+    # Supplement with viz API for short-horizon steps (more current if available)
+    viz_prices = _get_aemo_short_term_price_forecast()
+    if not viz_prices.empty:
+        viz_prices = viz_prices * 1000.0  # $/kWh → $/MWh
+        for col in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']:
+            if col in viz_prices.columns:
+                # Override with viz API where both exist (more recent data)
+                fut[col] = viz_prices[col].reindex(fut.index).combine_first(fut.get(col, pd.Series(dtype=float)))
 
     fut.rename(columns={
         'total_demand_sa1': 'pd_demand',
         'net_interchange_sa1': 'pd_net_interchange'
     }, inplace=True)
-    
-    # Ensure columns exist even if join failed
+
+    # Ensure columns exist even if all sources failed
     for c in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']:
         if c not in fut.columns: fut[c] = 0.0
 
-    # Fill NaNs from AEMO gaps
+    # Fill remaining NaNs (steps outside all data sources)
     fut['pd_rrp'] = fut['pd_rrp'].fillna(0.0)
     fut['vic1_pd_rrp'] = fut['vic1_pd_rrp'].fillna(0.0)
     fut['nsw1_pd_rrp'] = fut['nsw1_pd_rrp'].fillna(0.0)
