@@ -221,7 +221,7 @@ def get_5m_price_history(client, start_time, end_time):
             df = pd.DataFrame(result.get_points())
             df['time'] = pd.to_datetime(df['time'])
             df.set_index('time', inplace=True)
-            return df['price'] / 1000.0  # Raw $/MWh
+            return df['price']  # $/MWh (matches training pipeline)
     except Exception as e:
         logging.warning(f"Error querying 5m prices: {e}")
     return pd.Series(dtype=float)
@@ -1064,6 +1064,10 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         'net_interchange_sa1': 'net_interchange',
         'total_demand_sa1': 'total_demand'
     }, inplace=True)
+    # get_historical_data() stores aemo_price_sa1 in $/kWh (divides by 1000).
+    # Training pipeline (export_parquet.py) uses $/MWh with LOG_SCALE_FACTOR=60.
+    # Convert here to match training units before any feature computation.
+    hist['rrp'] = hist['rrp'] * 1000.0  # $/kWh → $/MWh
 
     # ── 3. High-Frequency Features (5m)
     client = InfluxDBClient(**CONFIG['influxdb'])
@@ -1132,6 +1136,8 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     # TFT specifically needs PD price forecasts, which aren't in standard future_covariates_df
     pd_prices = _get_aemo_short_term_price_forecast()
     if not pd_prices.empty:
+        # _get_aemo_short_term_price_forecast() returns $/kWh; training used $/MWh.
+        pd_prices = pd_prices * 1000.0  # $/kWh → $/MWh
         # Join price forecasts; missing steps are 0-filled (masked by covar_missing)
         fut = fut.join(pd_prices)
     else:
@@ -1155,8 +1161,8 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     fut['horizon_norm'] = np.arange(len(fut)) / 144.0
     fut['covar_missing'] = 0
     
-    # Snapshot raw decoder pd_rrp before scaling (for debug table); values are $/kWh here
-    _dec_pd_rrp_raw = fut["pd_rrp"].copy() * 1000.0  # convert back to $/MWh for display
+    # Snapshot raw decoder pd_rrp before scaling ($/MWh after unit fix)
+    _dec_pd_rrp_raw = fut["pd_rrp"].copy()  # $/MWh (matches training)
 
     DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp"]
     # Apply dec scalers
