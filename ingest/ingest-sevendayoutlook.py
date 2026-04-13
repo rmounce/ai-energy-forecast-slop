@@ -27,14 +27,22 @@ import csv
 import io
 import json
 import re
+import sys
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import urljoin
 
 import pytz
 from influxdb import InfluxDBClient
+
+# Allow importing aemo_session from project root when invoked via systemd
+# (WorkingDirectory is the project root, which is already on sys.path via the
+# venv activation, but add it explicitly for direct invocations too)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from aemo_session import make_aemo_session
 
 CURRENT_URL = "https://nemweb.com.au/Reports/CURRENT/SEVENDAYOUTLOOK_FULL/"
 ARCHIVE_URL = "https://nemweb.com.au/Reports/ARCHIVE/SEVENDAYOUTLOOK_FULL/"
@@ -101,9 +109,13 @@ class LinkExtractor(HTMLParser):
                 self.links.append(href)
 
 
-def list_files(url, pattern):
-    with urllib.request.urlopen(url) as r:
-        html = r.read().decode("utf-8", errors="ignore")
+def list_files(url, pattern, session=None):
+    if session is not None:
+        resp = session.get(url, timeout=30)
+        html = resp.text
+    else:
+        with urllib.request.urlopen(url) as r:
+            html = r.read().decode("utf-8", errors="ignore")
     parser = LinkExtractor()
     parser.feed(html)
     files = []
@@ -276,7 +288,8 @@ def main():
         print(f"\nDone. Grand total points written: {grand_total}")
 
     elif args.fetch:
-        current_files = list_files(CURRENT_URL, CURRENT_FILE_RE)
+        session = make_aemo_session()
+        current_files = list_files(CURRENT_URL, CURRENT_FILE_RE, session=session)
         if not current_files:
             print("No SEVENDAYOUTLOOK files found in CURRENT")
             return
@@ -285,8 +298,7 @@ def main():
             if run_time_utc and to_iso(run_time_utc) in existing:
                 continue
             print(f"Fetching {name}...")
-            with urllib.request.urlopen(url) as r:
-                zip_bytes = r.read()
+            zip_bytes = session.get(url, timeout=60).content
             n, status = ingest_individual_zip(zip_bytes, name, existing, regions, client, args.dry_run)
             print(f"{name}: {n} points — {status}")
             break
