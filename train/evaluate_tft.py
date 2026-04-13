@@ -167,14 +167,21 @@ def load_lgbm_log(path, val_start, val_end):
     return df
 
 
-def lgbm_bucket_nmape(df, hi_h):
+def lgbm_bucket_nmape(df, hi_h, actual_min=None, actual_max=None):
     """nMAPE from LightGBM log for forecasts with 0 < horizon_h <= hi_h.
 
     prediction/actual are linearly scaled — nMAPE is scale-invariant so the
     result is identical to computing in raw $/MWh.
+
+    actual_min / actual_max: optional float bounds on the actual price column
+      (inclusive) to restrict to a price band (e.g. baseload or spike).
     Returns (nmape_pct, n_rows).
     """
     sub = df[(df["horizon_h"] > 0) & (df["horizon_h"] <= hi_h)]
+    if actual_min is not None:
+        sub = sub[sub["actual"] >= actual_min]
+    if actual_max is not None:
+        sub = sub[sub["actual"] <= actual_max]
     if sub.empty:
         return float("nan"), 0
     p = sub["prediction"].values.astype(float)
@@ -311,38 +318,45 @@ def main():
             print(f"  LightGBM rows used: {len(df_lgbm):,}  "
                   f"(horizon range: {df_lgbm['horizon_h'].min():.1f}h → "
                   f"{df_lgbm['horizon_h'].max():.1f}h)\n")
+            # price_forecast_log.csv stores actual/prediction in $/kWh;
+            # spike_thr is in $/MWh — convert for the LGBM price-band filter.
+            spike_thr_lgbm = spike_thr / 1000.0
             for label, _lo, hi in HORIZON_BUCKETS:
                 hi_h = hi * 0.5  # steps → hours
-                nmape, n = lgbm_bucket_nmape(df_lgbm, hi_h)
-                lgbm_results[label] = (nmape, n)
+                nmape_all,   n_all   = lgbm_bucket_nmape(df_lgbm, hi_h)
+                nmape_base,  n_base  = lgbm_bucket_nmape(df_lgbm, hi_h, actual_max=spike_thr_lgbm)
+                nmape_spike, n_spike = lgbm_bucket_nmape(df_lgbm, hi_h, actual_min=spike_thr_lgbm)
+                lgbm_results[label] = (nmape_all, n_all, nmape_base, n_base, nmape_spike, n_spike)
     else:
         print(f"  WARNING: LightGBM log not found at {log_path}\n")
 
     # ── Print comparison table
-    # Columns: Horizon | TFT(all) | LGBM(all) | Delta | TFT(base) | TFT(spike)
-    W = 100
+    # Columns: Horizon | TFT(all) | LGBM(all) | Delta | TFT(base) | LGBM(base) | TFT(spike) | LGBM(spike)
+    W = 120
     print("─" * W)
     print(f"  Eval set: {eval_label}  |  spike threshold: {spike_thr:.0f} $/MWh")
     print("─" * W)
+
+    def fmt(v):  return f"{v:.1f}%" if not np.isnan(v) else "  N/A"
+    def fmtd(v): return f"{v:+.1f}%" if not np.isnan(v) else "   N/A"
+
     if lgbm_available:
         print(f"{'Horizon':>8}  {'TFT all':>8}  {'LGBM all':>9}  {'Delta':>7}  "
-              f"{'TFT base':>9}  {'TFT spike':>10}  {'steps(all)':>11}")
+              f"{'TFT base':>9}  {'LGBM base':>10}  {'TFT spike':>10}  {'LGBM spike':>11}  {'steps(all)':>11}")
         print("─" * W)
         for label, lo, hi in HORIZON_BUCKETS:
-            tft_all, n_all, tft_base, _, tft_spike, n_spike_b = tft_results[label]
-            lgbm_v, lgbm_n = lgbm_results.get(label, (float("nan"), 0))
-            delta = tft_all - lgbm_v if not (np.isnan(tft_all) or np.isnan(lgbm_v)) else float("nan")
-
-            def fmt(v): return f"{v:.1f}%" if not np.isnan(v) else "  N/A"
-            def fmtd(v): return f"{v:+.1f}%" if not np.isnan(v) else "   N/A"
-            print(f"{label:>8}  {fmt(tft_all):>8}  {fmt(lgbm_v):>9}  {fmtd(delta):>7}  "
-                  f"{fmt(tft_base):>9}  {fmt(tft_spike):>10}  {n_all:>11,}")
+            tft_all, n_all, tft_base, _, tft_spike, _ = tft_results[label]
+            lgbm_all, _, lgbm_base, _, lgbm_spike, _ = lgbm_results.get(
+                label, (float("nan"),) * 6)
+            delta = tft_all - lgbm_all if not (np.isnan(tft_all) or np.isnan(lgbm_all)) else float("nan")
+            print(f"{label:>8}  {fmt(tft_all):>8}  {fmt(lgbm_all):>9}  {fmtd(delta):>7}  "
+                  f"{fmt(tft_base):>9}  {fmt(lgbm_base):>10}  {fmt(tft_spike):>10}  "
+                  f"{fmt(lgbm_spike):>11}  {n_all:>11,}")
     else:
         print(f"{'Horizon':>8}  {'TFT all':>8}  {'TFT base':>9}  {'TFT spike':>10}  {'steps(all)':>11}")
         print("─" * W)
         for label, lo, hi in HORIZON_BUCKETS:
             tft_all, n_all, tft_base, _, tft_spike, _ = tft_results[label]
-            def fmt(v): return f"{v:.1f}%" if not np.isnan(v) else "  N/A"
             print(f"{label:>8}  {fmt(tft_all):>8}  {fmt(tft_base):>9}  {fmt(tft_spike):>10}  {n_all:>11,}")
     print("─" * W)
 
@@ -370,9 +384,10 @@ def main():
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
     for label, lo, hi in HORIZON_BUCKETS:
-        tft_all, n_all, tft_base, n_base, tft_spike, n_spike_b = tft_results[label]
-        lgbm_v, lgbm_n = lgbm_results.get(label, (float("nan"), 0))
-        delta = tft_all - lgbm_v if not (np.isnan(tft_all) or np.isnan(lgbm_v)) else None
+        tft_all, n_all, tft_base, n_base, tft_spike, n_spike = tft_results[label]
+        lgbm_all, lgbm_n_all, lgbm_base, lgbm_n_base, lgbm_spike, lgbm_n_spike = lgbm_results.get(
+            label, (float("nan"),) * 6)
+        delta = tft_all - lgbm_all if not (np.isnan(tft_all) or np.isnan(lgbm_all)) else None
         def r(v): return round(float(v), 4) if not np.isnan(v) else None
         rows.append({
             "horizon": label,
@@ -381,12 +396,16 @@ def main():
             "tft_nmape_all": r(tft_all),
             "tft_nmape_base": r(tft_base),
             "tft_nmape_spike": r(tft_spike),
-            "lgbm_nmape": r(lgbm_v),
-            "delta": round(delta, 4) if delta is not None else None,
+            "lgbm_nmape_all": r(lgbm_all),
+            "lgbm_nmape_base": r(lgbm_base),
+            "lgbm_nmape_spike": r(lgbm_spike),
+            "delta_all": round(delta, 4) if delta is not None else None,
             "tft_n_valid_steps": n_all,
             "tft_n_base_steps": n_base,
-            "tft_n_spike_steps": n_spike_b,
-            "lgbm_n_rows": lgbm_n,
+            "tft_n_spike_steps": n_spike,
+            "lgbm_n_rows_all": lgbm_n_all,
+            "lgbm_n_rows_base": lgbm_n_base,
+            "lgbm_n_rows_spike": lgbm_n_spike,
         })
 
     with open(out_path, "w", newline="") as f:
