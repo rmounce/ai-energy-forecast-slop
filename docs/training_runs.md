@@ -46,15 +46,18 @@ Extended PREDISPATCH backfill to 2022 (NEMSEER).
 - pw_wMAPE: **37.74%**
 - nMAPE (4h): 38.76%  |  16h: 42.11%  |  28h: 42.52%  |  72h: 63.64%
 
-### evaluate_tft.py results (TFT vs LightGBM, Stratified Set)
+### evaluate_tft.py results (TFT vs LightGBM, Stratified Set — corrected, commit dc4ea19)
+LightGBM filtered to exact same `forecast_creation_time` values as TFT stratified set.
+Previous table used a time-window filter which inflated LGBM's apparent advantage (~2× gap was artefact).
+
 | Horizon | TFT nMAPE | LightGBM | Delta | TFT (base) | TFT (spike) |
 |---|---|---|---|---|---|
-| 1h | 79.2% | 37.9% | +41.3% | 34.2% | 84.4% |
-| 2h | 77.5% | 40.7% | +36.8% | 37.3% | 82.8% |
-| 4h | 73.8% | 43.7% | +30.1% | 40.0% | 79.1% |
-| 8h | 71.8% | 45.9% | +25.9% | 42.0% | 77.0% |
-| 16h | 73.5% | 48.3% | +25.2% | 43.5% | 78.5% |
-| 28h | 74.6% | 52.9% | +21.7% | 44.4% | 79.5% |
+| 1h | 79.2% | 63.9% | +15.3% | 34.2% | 84.4% |
+| 2h | 77.5% | 68.3% | +9.2% | 37.3% | 82.8% |
+| 4h | 73.8% | 66.4% | +7.4% | 40.0% | 79.1% |
+| 8h | 71.8% | 64.4% | +7.4% | 42.0% | 77.0% |
+| 16h | 73.5% | 65.1% | +8.4% | 43.5% | 78.5% |
+| 28h | 74.6% | 71.0% | +3.6% | 44.4% | 79.5% |
 
 ### Quantile calibration (all valid steps, Stratified Set)
 | Quantile | Expected | Actual coverage | Bias | Status |
@@ -69,7 +72,7 @@ Extended PREDISPATCH backfill to 2022 (NEMSEER).
 - **Dispatch Ready:** The calibration for q50 and q70 is extremely reliable (|bias| < 0.015), which was our primary target for battery dispatch blending.
 - **Spike Resilience:** Log-scaling has stabilized the point forecast, preventing high-price gradients from washing out the baseload signal.
 - **Shadow Mode:** Run 010 deployed in `forecast.py` as `_execute_tft_prediction`. HA entities: `sensor.ai_tft_price_forecast` (q50), `_low` (q30), `_high` (q70). Logs to `tft_price_forecast_log.csv`.
-- **Known shadow issues:** (1) Decoder date bug fixed in commit 2623e50 — previous runs logged targets 10 days in the past. (2) Inverse log transform incorrect for negative prices in `forecast.py:1108`. (3) LightGBM stratified comparison in `evaluate_tft.py` uses time-window filter instead of exact run-time matching — comparison validity suspect. (4) Systematic underestimation reported vs Amber APF — investigate after 2 weeks of shadow data.
+- **Shadow mode fixes (commits 258db6a, f2d9127, dc4ea19):** (1) Decoder date bug fixed. (2) Inverse log transform corrected for negative prices. (3) Unit mismatch ($/kWh vs $/MWh) fixed in encoder and decoder — was causing near-zero price signal. (4) PD_RRP zeros for steps 56–143 fixed — now queries InfluxDB PREDISPATCH/PD7Day directly. (5) LightGBM stratified comparison corrected — previous filter inflated LGBM gap ~2×. (6) `sensor.ai_aemo_price_forecast` added to HA for decoder input visibility.
 
 ---
 
