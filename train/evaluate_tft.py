@@ -297,8 +297,18 @@ def main():
                   f"({run_times.min().date()} → {run_times.max().date()})")
             print(f"  LightGBM log may not cover this period — showing N/A\n")
         else:
+            # When using stratified eval, filter LightGBM to the EXACT same run times
+            # so the comparison is apples-to-apples.  The run_times index is already
+            # floored to 30-min boundaries (matching forecast_creation_time granularity).
+            if args.eval_set == "stratified":
+                matched_times = set(run_times.floor("30min"))
+                df_lgbm = df_lgbm[
+                    df_lgbm["forecast_creation_time"].dt.floor("30min").isin(matched_times)
+                ].copy()
+                print(f"  Stratified filter applied: {len(df_lgbm):,} LightGBM rows "
+                      f"matching {len(matched_times):,} TFT run times")
             lgbm_available = True
-            print(f"  LightGBM rows in window: {len(df_lgbm):,}  "
+            print(f"  LightGBM rows used: {len(df_lgbm):,}  "
                   f"(horizon range: {df_lgbm['horizon_h'].min():.1f}h → "
                   f"{df_lgbm['horizon_h'].max():.1f}h)\n")
             for label, _lo, hi in HORIZON_BUCKETS:
