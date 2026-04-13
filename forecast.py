@@ -1271,7 +1271,14 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         df_q['feed_in_tariff'] = fut.get('feed_in_tariff', 0.0)
         
         res[q_name] = df_q
-        
+
+    # Publish the merged PREDISPATCH/PD7Day prices as a separate HA entity so they
+    # can be visualised alongside the TFT quantile forecasts for debugging.
+    res['aemo_price_forecast'] = pd.DataFrame(
+        {'wholesale_price': _dec_pd_rrp_raw.values / 1000.0},
+        index=fut.index,
+    )
+
     if _DEBUG_TFT:
         _print_tft_debug(
             enc_rrp_raw=_enc_rrp_raw,
