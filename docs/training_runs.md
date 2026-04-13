@@ -46,18 +46,22 @@ Extended PREDISPATCH backfill to 2022 (NEMSEER).
 - pw_wMAPE: **37.74%**
 - nMAPE (4h): 38.76%  |  16h: 42.11%  |  28h: 42.52%  |  72h: 63.64%
 
-### evaluate_tft.py results (TFT vs LightGBM, Stratified Set — corrected, commit dc4ea19)
+### evaluate_tft.py results (TFT vs LightGBM, Stratified Set — corrected, commits dc4ea19, c288cb9)
 LightGBM filtered to exact same `forecast_creation_time` values as TFT stratified set.
 Previous table used a time-window filter which inflated LGBM's apparent advantage (~2× gap was artefact).
 
-| Horizon | TFT nMAPE | LightGBM | Delta | TFT (base) | TFT (spike) |
-|---|---|---|---|---|---|
-| 1h | 79.2% | 63.9% | +15.3% | 34.2% | 84.4% |
-| 2h | 77.5% | 68.3% | +9.2% | 37.3% | 82.8% |
-| 4h | 73.8% | 66.4% | +7.4% | 40.0% | 79.1% |
-| 8h | 71.8% | 64.4% | +7.4% | 42.0% | 77.0% |
-| 16h | 73.5% | 65.1% | +8.4% | 43.5% | 78.5% |
-| 28h | 74.6% | 71.0% | +3.6% | 44.4% | 79.5% |
+| Horizon | TFT all | LGBM all | Delta | TFT base | LGBM base | TFT spike | LGBM spike |
+|---|---|---|---|---|---|---|---|
+| 1h | 79.2% | 63.9% | +15.3% | 34.2% | 30.6% | 84.4% | 71.9% |
+| 2h | 77.5% | 68.3% | +9.2% | 37.3% | 35.6% | 82.8% | 77.4% |
+| 4h | 73.8% | 66.4% | +7.4% | 40.0% | 46.2% | 79.1% | 74.8% |
+| 8h | 71.8% | 64.4% | +7.4% | 42.0% | 46.7% | 77.0% | 73.6% |
+| 16h | 73.5% | 65.1% | +8.4% | 43.5% | 46.4% | 78.5% | 74.8% |
+| 28h | 74.6% | 71.0% | +3.6% | 44.4% | 58.2% | 79.5% | 77.2% |
+
+Key findings: TFT wins on baseload at 4h+ horizons. LightGBM still leads on spikes at all horizons,
+but the gap at 28h is only ~2pp. The overall delta is largely driven by the LGBM baseload advantage
+at 1–2h (LightGBM 30.6% vs TFT 34.2%) where it benefits from having current PREDISPATCH as a direct feature.
 
 ### Quantile calibration (all valid steps, Stratified Set)
 | Quantile | Expected | Actual coverage | Bias | Status |
