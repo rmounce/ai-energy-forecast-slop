@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import pytz
 import requests
+from aemo_session import make_aemo_session
 from darts import TimeSeries
 from darts.models import LightGBMModel
 from influxdb import InfluxDBClient
@@ -60,6 +61,9 @@ def load_config(config_path='config.json'):
         raise
 
 CONFIG = load_config()
+
+# Shared cached session for all AEMO/NEMWeb HTTP requests
+_aemo_session = make_aemo_session()
 
 # Import TFT Model class (must be same as trained)
 try:
@@ -483,7 +487,7 @@ def _get_aemo_short_term_forecast():
                 logging.info(f"Retry attempt {attempt}/{max_attempts} for AEMO forecast (backoff: {backoff}s)...")
                 time.sleep(backoff)
             
-            response = requests.post(url, json=payload, timeout=timeout_seconds)
+            response = _aemo_session.post(url, json=payload, timeout=timeout_seconds)
             response.raise_for_status()
             data = response.json()
             break # Success
@@ -522,7 +526,7 @@ def _get_aemo_short_term_price_forecast(regions=['SA1', 'VIC1', 'NSW1']):
     payload = {"timeScale": ["30MIN"]}
     
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        response = _aemo_session.post(url, json=payload, timeout=10)
         response.raise_for_status()
         data = response.json()
         if "5MIN" not in data or not data["5MIN"]:
@@ -557,8 +561,8 @@ def _get_aemo_7_day_outlook_forecast():
     logging.info("Fetching AEMO 7-Day Outlook forecast (NEMWeb ZIP)...")
     try:
         # 1. Scrape the directory to find the latest file
-        dir_url = "https://nemweb.com.au/Reports/Current/SEVENDAYOUTLOOK_FULL/"
-        response = requests.get(dir_url, timeout=30)
+        dir_url = "https://nemweb.com.au/Reports/CURRENT/SEVENDAYOUTLOOK_FULL/"
+        response = _aemo_session.get(dir_url, timeout=30)
         response.raise_for_status()
         
         file_pattern = r"PUBLIC_SEVENDAYOUTLOOK_FULL_(\d{14})_\d+\.zip"
@@ -577,7 +581,7 @@ def _get_aemo_7_day_outlook_forecast():
         logging.info(f"Downloading latest report: {zip_url}")
 
         # 2. Download and extract the CSV from the ZIP in memory
-        zip_response = requests.get(zip_url, timeout=60)
+        zip_response = _aemo_session.get(zip_url, timeout=60)
         zip_response.raise_for_status()
         
         with zipfile.ZipFile(io.BytesIO(zip_response.content)) as z:

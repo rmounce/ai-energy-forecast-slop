@@ -11,3 +11,4 @@ lightning
 joblib
 matplotlib
 holidays
+requests-cache
