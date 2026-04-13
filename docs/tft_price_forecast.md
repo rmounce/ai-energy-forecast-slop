@@ -320,16 +320,22 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 
 ### Run 006 evaluation (Stratified Eval Set — fixed benchmark, Apr 2026)
 
+Numbers below are from Run 006. See Run 010 table for the corrected LightGBM comparison.
+
 | Horizon | TFT nMAPE | LightGBM | Delta | TFT base (≤$150) | TFT spike (>$150) |
 |---|---|---|---|---|---|
-| 1h | 79.4% | 37.9% | +41.6% ❌ | 34.9% | 84.7% |
-| 2h | 77.5% | 40.7% | +36.8% ❌ | 37.6% | 82.8% |
-| 4h | 73.8% | 43.7% | +30.1% ❌ | 40.2% | 79.1% |
-| 28h | 74.5% | 52.9% | +21.6% ❌ | 44.0% | 79.4% |
+| 1h | 79.4% | 37.9% | +41.6% ⚠️ inflated | 34.9% | 84.7% |
+| 2h | 77.5% | 40.7% | +36.8% ⚠️ inflated | 37.6% | 82.8% |
+| 4h | 73.8% | 43.7% | +30.1% ⚠️ inflated | 40.2% | 79.1% |
+| 28h | 74.5% | 52.9% | +21.6% ⚠️ inflated | 44.0% | 79.4% |
+
+⚠️ LightGBM deltas above are inflated ~2× — `evaluate_tft.py` used a time-window filter rather
+than exact `forecast_creation_time` matching against the TFT stratified set (fixed in dc4ea19).
+Corrected Run 010 deltas: +15.3% (1h), +7.4% (4h), +3.6% (28h).
 
 **Key finding:** Run 005's apparent 1h TFT win was an artefact of the Feb–Apr val window being
 anomalously favourable. The stratified benchmark reveals TFT spike nMAPE is 79–84% — much worse
-than LightGBM's 38–53%. Baseload accuracy is competitive (~35–44% vs ~38–53%). The spike gap
+than LightGBM at spike-weighted samples. Baseload accuracy is competitive. The spike gap
 is the primary problem to solve.
 
 **Run 007:** Spike nMAPE barely moved (84.6%). 5m coverage only 48.8% — most stratified
