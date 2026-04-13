@@ -337,8 +337,10 @@ spike events predate the 5m window. **Run 008:** Progressive price-weighted loss
 up to 6.8× at market cap) — spike nMAPE unchanged (84.1%); training imbalance hypothesis
 falsified. **Run 009:** Full 5m coverage (~100% after NEMSEER backfill) — spike nMAPE 86.8%,
 model converged in epoch 2, suggesting features add noise. All three mitigation hypotheses
-exhausted. **Root cause confirmed: insufficient spike-episode diversity** in 2-year training
-window. Next: extend PREDISPATCH backfill to 2022 (adds energy-crisis-era spikes, ~2× more data).
+After 10 runs all mitigation approaches exhausted. Spike nMAPE structurally stuck at ~84%.
+Likely a fundamental mismatch: LightGBM uses PREDISPATCH RRP directly as a feature; TFT must
+infer spike onset from encoder context. TFT's production value is in **long-horizon baseload
+accuracy and calibrated quantile intervals**, not spike prediction.
 
 Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
 
@@ -347,11 +349,13 @@ Full run history and calibration results: **[docs/training_runs.md](training_run
 10. ✅ Stratified eval benchmark (spike gap confirmed structural)
 11. ✅ 5-min volatility encoder features (Run 007 — marginal)
 12. ✅ Progressive price-weighted loss (Run 008 — no spike improvement; calibration recovered)
-13. ✅ NEMSEER 5m backfill → full coverage (Run 009 — no spike improvement; data hypothesis confirmed)
-14. **Run 010:** Extend PREDISPATCH backfill to 2022 → rebuild dataset (~2× more data, more spike episodes)
-15. **Wire into forecast.py:** only after spike gap meaningfully narrowed
-16. **Retailer switch:** remove Amber APF after TFT validated in production
-17. **P5MIN inference tier (later):** 0–1h debiased signal; accumulating since 2026-04-12
+13. ✅ NEMSEER 5m backfill → full coverage (Run 009 — no spike improvement)
+14. ✅ Log-scaling + 4yr backfill + shadow mode (Run 010 — in production shadow mode)
+15. **Fix eval**: LightGBM stratified comparison uses wrong sample set (time window ≠ exact run times)
+16. **Fix inference**: inverse log transform incorrect for negative prices (`forecast.py:1108`)
+17. **Accumulate shadow data**: 2+ weeks before concluding on underestimation pattern
+18. **Retailer switch:** remove Amber APF after TFT validated in production
+19. **P5MIN inference tier:** 0–1h debiased signal; accumulating since 2026-04-12
 
 ### Longer-term
 - Extend PREDISPATCH backfill to 2022 (more spike episodes; NEMSEER available)

@@ -68,6 +68,8 @@ Extended PREDISPATCH backfill to 2022 (NEMSEER).
 - **Improved Baseload:** TFT baseload accuracy is now consistently beating the global LightGBM average at horizons > 4h.
 - **Dispatch Ready:** The calibration for q50 and q70 is extremely reliable (|bias| < 0.015), which was our primary target for battery dispatch blending.
 - **Spike Resilience:** Log-scaling has stabilized the point forecast, preventing high-price gradients from washing out the baseload signal.
+- **Shadow Mode:** Run 010 deployed in `forecast.py` as `_execute_tft_prediction`. HA entities: `sensor.ai_tft_price_forecast` (q50), `_low` (q30), `_high` (q70). Logs to `tft_price_forecast_log.csv`.
+- **Known shadow issues:** (1) Decoder date bug fixed in commit 2623e50 — previous runs logged targets 10 days in the past. (2) Inverse log transform incorrect for negative prices in `forecast.py:1108`. (3) LightGBM stratified comparison in `evaluate_tft.py` uses time-window filter instead of exact run-time matching — comparison validity suspect. (4) Systematic underestimation reported vs Amber APF — investigate after 2 weeks of shadow data.
 
 ---
 
