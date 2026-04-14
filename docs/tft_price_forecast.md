@@ -374,17 +374,43 @@ See plan file for full sequencing. Summary:
    Also add: reserve margin feature (SevenDayOutlook), `aemo_divergence` encoder feature,
    expanded quantiles (q5/q10/q50/q90/q95/q99).
 
-2. **Phase 2 — Tactical LightGBM** (needs P5MIN backfill): Multi-output LightGBM for 0–60 min.
-   Requires NEMSEER backfill of historical P5MIN forecasts (2024-04 → 2026-04).
+2. **Phase 2 — Tactical model** (needs P5MIN backfill): Backfill P5MIN forecasts via
+   NEMSEER. Train both multi-output LightGBM and a TFT variant on the tactical tier.
+   Compare on financial regret over a common evaluation window; promote the winner.
+   Note: the theoretical case for LightGBM is strong but has not been empirically
+   confirmed — empirical comparison is required before committing.
 
 3. **Phase 3 — Dispatch simulator**: Offline LP backtester. Financial regret minus cycle
    degradation cost. Golden set of historical crisis events. CI/CD promotion gate.
+   **Note:** Golden set events must be hard-excluded from training (not merely
+   downweighted) — the gate measures generalisation, not memorisation.
 
 4. **Phase 4 — Calibration**: Conditional conformal prediction stratified by reserve margin
    (spike regime) and residual demand (oversupply regime).
 
-5. **Phase 5 — Production routing**: Tier 1 (0–60 min LightGBM) + Tier 2 (1h–72h TFT).
+5. **Phase 5 — Production routing**: Tier 1 (0–60 min) + Tier 2 (1h–72h TFT).
    HA automations for tail risk overrides. EMHASS on q50. Amber APF removal.
+   Investigate exposing EMHASS LP shadow price (SOC dual variable) via fork or upstream
+   PR before implementing the tail-risk override trigger — this is the correct
+   opportunity cost denominator. Finite-difference approximation is fallback only.
+
+### Known Open Issues (V4)
+
+- **Reserve margin demand bias:** SevenDayOutlook demand forecasts are biased low
+  during heatwaves — exactly when reserve margin tightens. Mitigation: add a rolling
+  actual-vs-forecast demand divergence term (analogous to `aemo_divergence`) to both
+  the encoder and the debiaser training pipeline.
+
+- **Debiaser endogeneity:** The PREDISPATCH debiaser trains on actual settlement prices
+  that are partially endogenous to the PREDISPATCH forecast (generators respond to it).
+  This is a fundamental constraint of operating in a strategic market, not fixable by
+  design. Monitor debiaser residuals; retrain more aggressively during known structural
+  transition periods (battery fleet scaling, new FCAS products, generator retirements).
+
+- **NEM intervention pricing:** Actual prices may be revised up to 4 days post-dispatch.
+  Training labels and the `aemo_divergence` feature may be based on provisional prices.
+  Pipeline must handle corrections when revisions arrive.
+
 - Dispatch-regret metric: simulate charge/hold/discharge vs perfect foresight
 
 ---
