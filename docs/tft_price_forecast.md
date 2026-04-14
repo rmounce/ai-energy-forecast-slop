@@ -1,6 +1,12 @@
 # TFT Price Forecast: Design Rationale and Implementation Guide
 
-**Goal:** Replace the current LightGBM price forecast (which uses Amber Electric's APF as a future covariate seed) with a Temporal Fusion Transformer (TFT) that learns horizon-dependent bias correction of AEMO pre-dispatch forecasts. Primary driver is **forecast accuracy**; retailer portability (removing the Amber dependency) is a side-effect.
+**Current goal (V4 architecture, April 2026):** Replace Amber/CSIRO APF entirely with a
+three-tier cascaded pipeline: (1) a multi-output LightGBM tactical model (0–60 min, 5-min
+resolution), (2) a TFT strategic model (0–72h, 30-min resolution) using explicitly debiased
+PREDISPATCH as its decoder covariate, and (3) a conditional conformal calibration layer
+stratified by physical grid regime. See plan file for full V4 spec.
+
+**Original goal (Runs 001–010):** Replace the current LightGBM price forecast (which uses Amber Electric's APF as a future covariate seed) with a Temporal Fusion Transformer (TFT) that learns horizon-dependent bias correction of AEMO pre-dispatch forecasts. Primary driver is **forecast accuracy**; retailer portability (removing the Amber dependency) is a side-effect.
 
 **Paper reference:**
 > Sinclair, Shepley, Hajati (2026) "Learning the Grid: Transformer Architectures for Electricity Price Forecasting in the Australian National Market". *Applied Sciences* 16(1), 75.
@@ -350,23 +356,35 @@ accuracy and calibrated quantile intervals**, not spike prediction.
 
 Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
 
-### Next steps
+### Completed (Runs 001–010) ✅
 9. ✅ VIC1/NSW1 decoder features (Run 006)
 10. ✅ Stratified eval benchmark (spike gap confirmed structural)
 11. ✅ 5-min volatility encoder features (Run 007 — marginal)
 12. ✅ Progressive price-weighted loss (Run 008 — no spike improvement; calibration recovered)
 13. ✅ NEMSEER 5m backfill → full coverage (Run 009 — no spike improvement)
 14. ✅ Log-scaling + 4yr backfill + shadow mode (Run 010 — in production shadow mode)
-15. **Fix eval**: LightGBM stratified comparison uses wrong sample set (time window ≠ exact run times)
-16. **Fix inference**: inverse log transform incorrect for negative prices (`forecast.py:1108`)
-17. **Accumulate shadow data**: 2+ weeks before concluding on underestimation pattern
-18. **Retailer switch:** remove Amber APF after TFT validated in production
-19. **P5MIN inference tier:** 0–1h debiased signal; accumulating since 2026-04-12
+15. ✅ Fix eval: LightGBM stratified comparison corrected (dc4ea19)
+16. ✅ Fix inference: inverse log transform + unit mismatch + PD_RRP zeros (258db6a, f2d9127)
 
-### Longer-term
-- Extend PREDISPATCH backfill to 2022 (more spike episodes; NEMSEER available)
-- Larger encoder window (144 steps / 3 days) and larger model (d_model=128)
-- SevenDayOutlook demand/interchange as decoder features for 28h+
+### V4 Architecture — Next Steps
+See plan file for full sequencing. Summary:
+
+1. **Phase 1 — PREDISPATCH debiaser** (trainable now): LightGBM on (PREDISPATCH forecast →
+   actual settlement) pairs. Feed debiased `pd_rrp` into TFT decoder as Run 011.
+   Also add: reserve margin feature (SevenDayOutlook), `aemo_divergence` encoder feature,
+   expanded quantiles (q5/q10/q50/q90/q95/q99).
+
+2. **Phase 2 — Tactical LightGBM** (needs P5MIN backfill): Multi-output LightGBM for 0–60 min.
+   Requires NEMSEER backfill of historical P5MIN forecasts (2024-04 → 2026-04).
+
+3. **Phase 3 — Dispatch simulator**: Offline LP backtester. Financial regret minus cycle
+   degradation cost. Golden set of historical crisis events. CI/CD promotion gate.
+
+4. **Phase 4 — Calibration**: Conditional conformal prediction stratified by reserve margin
+   (spike regime) and residual demand (oversupply regime).
+
+5. **Phase 5 — Production routing**: Tier 1 (0–60 min LightGBM) + Tier 2 (1h–72h TFT).
+   HA automations for tail risk overrides. EMHASS on q50. Amber APF removal.
 - Dispatch-regret metric: simulate charge/hold/discharge vs perfect foresight
 
 ---
