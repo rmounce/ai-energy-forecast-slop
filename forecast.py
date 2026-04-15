@@ -21,13 +21,9 @@ import pandas as pd
 import pytz
 import requests
 from aemo_session import make_aemo_session
-from darts import TimeSeries
-from darts.models import LightGBMModel
 from influxdb import InfluxDBClient
-from sklearn.multioutput import MultiOutputRegressor
 import time
 import pickle
-import torch
 
 import io
 import re
@@ -67,13 +63,6 @@ _aemo_session = make_aemo_session()
 
 # Set to True by --debug-tft flag to print TFT input/output diagnostic table
 _DEBUG_TFT = False
-
-# Import TFT Model class (must be same as trained)
-try:
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "train"))
-    from train_tft_price import TFTPriceModel
-except ImportError:
-    logging.warning("TFTPriceModel could not be imported from train.train_tft_price. TFT shadow mode will be disabled.")
 
 # --------------------------------------------------------------------------- #
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
@@ -723,6 +712,9 @@ def train_single_model(model_name, quantile_info=None):
     Trains a single model and saves it.
     Can handle standard regression or native LightGBM quantile regression.
     """
+    from darts import TimeSeries
+    from darts.models import LightGBMModel
+    from sklearn.multioutput import MultiOutputRegressor
     logging.info(f"--- Running in TRAIN mode for model: {model_name} ---")
     
     # For a quantile model like 'price_p30', use the base 'price' config
@@ -826,7 +818,7 @@ def train_models(base_model_name):
     logging.info(f"--- All '{base_model_name}' models trained successfully ---")
 
 def _predict_simple(model, params, historical_df, future_covariates_ts, model_config):
-    # This function is unchanged
+    from darts import TimeSeries
     logging.info("Generating forecast using 'simple' method.")
     target_col = model_config['target_column']
     hist_df = historical_df[[target_col] + model_config['feature_cols']].copy()
@@ -845,6 +837,7 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     Generates a forecast using the 'dynamic handoff' method, seeded with a provided
     advanced forecast dataframe.
     """
+    from darts import TimeSeries
     logging.info("Generating forecast using 'dynamic handoff' method.")
     target_col = model_config['target_column']
     shift_value = params['shift_value']
@@ -897,6 +890,7 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
     Handles prediction for a model with multiple quantiles (e.g., price or load).
     It loads each sub-model, generates a forecast, and returns a dictionary of forecasts.
     """
+    from darts import TimeSeries
     logging.info(f"--- Generating forecasts for all '{base_model_name}' models ---")
     
     model_config = CONFIG['models'][base_model_name]
@@ -1067,8 +1061,16 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     """
     TFT Inference Worker: Parallel branch for Run 010.
     """
+    import torch
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "train"))
+        from train_tft_price import TFTPriceModel
+    except ImportError:
+        logging.warning("TFTPriceModel could not be imported. TFT shadow mode disabled.")
+        return {}
+
     logging.info("--- Executing TFT Parallel Inference (Run 010) ---")
-    
+
     # ── 1. Load Model and Scalers
     paths = CONFIG['paths']
     try:
