@@ -369,26 +369,30 @@ Full run history and calibration results: **[docs/training_runs.md](training_run
 ### V4 Architecture — Next Steps
 See plan file for full sequencing. Summary:
 
-1. **Phase 1 — PREDISPATCH debiaser** (trainable now): LightGBM on (PREDISPATCH forecast →
-   actual settlement) pairs. Feed debiased `pd_rrp` into TFT decoder as Run 011.
-   Also add: reserve margin feature (SevenDayOutlook), `aemo_divergence` encoder feature,
-   expanded quantiles (q5/q10/q50/q90/q95/q99).
+1. **Phase 1a — PREDISPATCH debiaser** (in progress, `train/train_pd_debiaser.py`):
+   LightGBM on (PREDISPATCH forecast → actual settlement) pairs, 2022–2026.
+   OOF 5-fold time-based CV to generate a leak-free `debiased_pd_rrp` series.
+   Live inference wiring deferred; offline debiased series for TFT training only.
+   Dry-run metrics: overall MAE 202→45 $/MWh, spike 700→120 $/MWh, bias -162→+9 $/MWh.
 
-2. **Phase 2 — Tactical model** (needs P5MIN backfill): Backfill P5MIN forecasts via
+2. **Phase 1b — Run 011**: Swap raw `pd_rrp` → OOF debiased signal in TFT decoder.
+   Expand quantiles q30/50/70 → q5/q10/q50/q90/q95/q99. Add reserve margin to
+   decoder features. Compare vs Run 010 on nMAPE and per-quantile calibration error.
+
+3. **Phase 2 — Tactical model** (needs P5MIN backfill): Backfill P5MIN forecasts via
    NEMSEER. Train both multi-output LightGBM and a TFT variant on the tactical tier.
    Compare on financial regret over a common evaluation window; promote the winner.
    Note: the theoretical case for LightGBM is strong but has not been empirically
    confirmed — empirical comparison is required before committing.
 
-3. **Phase 3 — Dispatch simulator**: Offline LP backtester. Financial regret minus cycle
-   degradation cost. Golden set of historical crisis events. CI/CD promotion gate.
-   **Note:** Golden set events must be hard-excluded from training (not merely
-   downweighted) — the gate measures generalisation, not memorisation.
+4. **Phase 3 — Dispatch simulator**: Offline LP backtester. Financial regret minus cycle
+   degradation cost. **Golden set partitioned (see below) — CI/CD gate tests
+   generalisation, not memorisation.**
 
-4. **Phase 4 — Calibration**: Conditional conformal prediction stratified by reserve margin
+5. **Phase 4 — Calibration**: Conditional conformal prediction stratified by reserve margin
    (spike regime) and residual demand (oversupply regime).
 
-5. **Phase 5 — Production routing**: Tier 1 (0–60 min) + Tier 2 (1h–72h TFT).
+6. **Phase 5 — Production routing**: Tier 1 (0–60 min) + Tier 2 (1h–72h TFT).
    HA automations for tail risk overrides. EMHASS on q50. Amber APF removal.
    Investigate exposing EMHASS LP shadow price (SOC dual variable) via fork or upstream
    PR before implementing the tail-risk override trigger — this is the correct
@@ -396,22 +400,31 @@ See plan file for full sequencing. Summary:
 
 ### Known Open Issues (V4)
 
+- **NEM intervention pricing (mitigated):** During an AEMO market intervention,
+  published prices are administratively capped (~$300/MWh) even when the shadow price
+  is $15,000/MWh. Without correction, the `aemo_divergence` feature shows a massive
+  false error (-$14,700) that teaches LightGBM to crash q95 during grid stress.
+  *Mitigation (locked):* Add `is_intervention` boolean to the ingest pipeline (from
+  the AEMO dispatch payload). Mask `aemo_divergence` to 0 in both Tier 1 and Tier 2
+  when `is_intervention == True`. Also track provisional vs. final settlement prices
+  and apply corrections when AEMO revises (up to 4 days post-interval).
+
+- **Golden set partitioning (resolved):** Historical crises are split into two
+  mutually exclusive sets. Set A (training allowed, decay floor applies): June 2022
+  Energy Crisis. Set B (gate only, never in training): February 2024 SA Storm
+  Islanding. Set A and Set B must remain mutually exclusive at every retraining cycle —
+  using both for training and gating would measure memorisation, not generalisation.
+
 - **Reserve margin demand bias:** SevenDayOutlook demand forecasts are biased low
   during heatwaves — exactly when reserve margin tightens. Mitigation: add a rolling
   actual-vs-forecast demand divergence term (analogous to `aemo_divergence`) to both
   the encoder and the debiaser training pipeline.
 
-- **Debiaser endogeneity:** The PREDISPATCH debiaser trains on actual settlement prices
-  that are partially endogenous to the PREDISPATCH forecast (generators respond to it).
-  This is a fundamental constraint of operating in a strategic market, not fixable by
-  design. Monitor debiaser residuals; retrain more aggressively during known structural
-  transition periods (battery fleet scaling, new FCAS products, generator retirements).
-
-- **NEM intervention pricing:** Actual prices may be revised up to 4 days post-dispatch.
-  Training labels and the `aemo_divergence` feature may be based on provisional prices.
-  Pipeline must handle corrections when revisions arrive.
-
-- Dispatch-regret metric: simulate charge/hold/discharge vs perfect foresight
+- **Debiaser endogeneity (fundamental constraint):** The PREDISPATCH debiaser trains
+  on actual settlement prices that are partially endogenous to the PREDISPATCH forecast
+  (generators respond to it). This is not fixable; it is an inherent constraint of
+  operating in a strategic market. Monitor debiaser residuals; retrain more aggressively
+  during known structural transition periods (battery fleet scaling, generator retirements).
 
 ---
 
@@ -431,7 +444,8 @@ See plan file for full sequencing. Summary:
 | `data/parquet/y_mask.npy` | Valid-step mask [N, 144] bool |
 | `data/parquet/scalers.pkl` | Fitted QuantileTransformer per feature |
 | `data/parquet/dataset_meta.json` | Shape/coverage metadata |
-| `train/train_tft_price.py` | Training script |
+| `train/train_pd_debiaser.py` | Phase 1a: LightGBM debiaser (OOF 5-fold). Outputs `debiased_pd_rrp_oof.parquet` + `models/pd_debiaser/lgbm_final.pkl` |
+| `train/train_tft_price.py` | TFT training script |
 | `train/evaluate_tft.py` | Rolling-origin evaluation: TFT vs LightGBM nMAPE at 1h/2h/4h/8h/16h/28h + quantile calibration |
 | `docs/training_runs.md` | Persistent log of all training runs, configs, and eval results |
 | `models/tft_price/checkpoint_best.pt` | Best trained model |
