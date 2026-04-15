@@ -230,42 +230,29 @@ Standalone utility called by the nightly `ai-energy-update-tariffs` service. Smo
 
 ---
 
-### `data/` and `train/` — TFT Price Model (in development)
+### `data/` and `train/` — TFT Price Model (V4, in development)
 
 A new price forecasting model is being developed to replace the LightGBM+Amber APF approach. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
-- Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` (slope of last 4 log-steps) + time encodings (6) + `rrp_5m_missing` flag (1)
-- Decoder: 144 steps (72h) × 13 features — SA1 PREDISPATCH/PD7Day (4) + VIC1/NSW1 PREDISPATCH prices (2) + `pd_demand`, `pd_net_interchange` + time encodings (6) + `covar_missing` flag (1)
+- Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` + time encodings (6) + `rrp_5m_missing` flag (1)
+- Decoder: 144 steps (72h) × 15 features — SA1 OOF-debiased PREDISPATCH/PD7Day (price, demand, interchange) + VIC1/NSW1 PREDISPATCH prices + SevenDayOutlook demand/interchange (all 144 steps) + time encodings (6) + `horizon_norm` + `covar_missing` flag (1)
 - Covariate construction: Option B (run-aligned) — each training sample uses the PREDISPATCH run issued at the encoder/decoder boundary, exactly matching inference
 - Masked loss: each decoder step independently masked; handles variable PREDISPATCH horizon and growing PD7Day history
 - Stratified eval benchmark: 900 fixed samples (spike + low/negative + seasonal normal) for durable cross-run comparison
+- Quantiles: q5/q10/q50/q90/q95/q99
 
 **Data pipeline:**
-1. `ingest/ingest-predispatch.py`, `ingest/ingest-pd7day.py`, `ingest/ingest-p5min.py` → InfluxDB (ongoing, systemd timers)
-2. `ingest/backfill_predispatch_nemseer.py` → extends PREDISPATCH parquet back to 2024-04 (run once; ~2 min from cache)
-3. `data/export_parquet.py` → SA1/VIC1/NSW1 PREDISPATCH + actuals + 5m volatility agg (use `--actuals-5m` to refresh just actuals without touching NEMSEER-backfilled PREDISPATCH)
-4. `data/build_stratified_eval.py` → fixed 900-sample benchmark index (run once; `--force` to regenerate)
-5. `data/build_training_dataset.py` → numpy arrays for training (18 enc / 13 dec features)
-6. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
-7. `train/evaluate_tft.py --eval-set stratified` → nMAPE (all/base/spike) + quantile calibration vs LightGBM
+1. `ingest/ingest-predispatch.py`, `ingest/ingest-pd7day.py`, `ingest/ingest-sevendayoutlook.py`, `ingest/ingest-p5min.py` → InfluxDB (ongoing, systemd timers)
+2. `ingest/backfill_predispatch_nemseer.py` → PREDISPATCH parquet back to 2022 (run once; ~2 min from cache)
+3. `data/export_parquet.py` → SA1/VIC1/NSW1 PREDISPATCH + actuals + 5m volatility agg + SevenDayOutlook (use `--actuals-only` for routine refreshes to preserve NEMSEER backfill)
+4. `train/train_pd_debiaser.py` → Phase 1a OOF debiaser; outputs `data/parquet/debiased_pd_rrp_oof.parquet`
+5. `data/build_stratified_eval.py` → fixed 900-sample benchmark index (run once; `--force` to regenerate)
+6. `data/build_training_dataset.py` → numpy arrays for training (20 enc / 15 dec features)
+7. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
+8. `train/evaluate_tft.py --eval-set stratified` → nMAPE (all/base/spike) + quantile calibration vs LightGBM
 
-**Status (2026-04-12):** Run 010 in progress (**Log-Scaling** + **q30/50/70** + **2022 Backfill**). Stratified eval benchmark used to close the spike nMAPE gap vs LightGBM.
-
----
-
-### `model/` — Offline Training Scripts (exploratory, not part of automated pipeline)
-
-These scripts were used to develop and validate the ML approach before it was integrated into `forecast.py`. They are **not called by any systemd service** and are not kept in sync with the main script.
-
-| Script | Purpose |
-|---|---|
-| `01-load-historical.py` | Load and explore historical data from InfluxDB |
-| `02-load-forecasts.py` | Fetch and combine future covariates (has its own implementations, different from `forecast.py`) |
-| `03-train-model.py` | Train a single model with hardcoded parameters |
-| `04-predict.py` | Run predictions and visualise with matplotlib |
-
-These scripts duplicate logic from `forecast.py` (especially the prediction and training code) but are not config-driven and would need manual synchronisation if the pipeline changes. Consider them as reference material rather than active code.
+**Status (2026-04-16):** Run 010 in production shadow mode (q30/50/70). **Run 011b training** (OOF debiased decoder + SDO features + q5/10/50/90/95/99; lr=1e-4, patience=15). Run 011 eval showed nMAPE 1–2pp better than Run 010; upper quantile calibration excellent; lower tail (q05/q10) needs 011b convergence to confirm.
 
 ---
 
@@ -361,7 +348,6 @@ HC_PREDICT_URL=https://hc-ping.com/<your-uuid>
 7. **`analyse.ipynb`** is a 36MB notebook with embedded output data committed to the repo. Should either have outputs stripped or be moved outside the repo.
 
 8. ~~**`_publish_covariates_helper()`** is defined in `forecast.py` but never called~~ — removed (75c5c84).
-
 9. ~~**`model/` scripts are out of sync.**~~ — removed (75c5c84).
 
 ---
