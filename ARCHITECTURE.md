@@ -117,7 +117,7 @@ The file contains ~28 functions that fall naturally into these logical groups:
 | **Publishing** | `publish_forecast_to_hass`, `publish_adjusted_covariates_to_hass` | Push results to HA |
 | **Orchestrators** | `run_predictions`, `main` | Top-level entry points |
 
-One function — `_publish_covariates_helper` — is defined but never called (orphaned).
+Dead code removed: `_publish_covariates_helper` (never called) and `model/` (01–04-*.py exploratory scripts, superseded by `forecast.py`).
 
 #### Model Details
 
@@ -360,9 +360,9 @@ HC_PREDICT_URL=https://hc-ping.com/<your-uuid>
 
 7. **`analyse.ipynb`** is a 36MB notebook with embedded output data committed to the repo. Should either have outputs stripped or be moved outside the repo.
 
-8. **`_publish_covariates_helper()`** is defined in `forecast.py` but never called — orphaned dead code.
+8. ~~**`_publish_covariates_helper()`** is defined in `forecast.py` but never called~~ — removed (75c5c84).
 
-9. **`model/` scripts are out of sync.** The four scripts in `model/` duplicate logic from `forecast.py` with hardcoded parameters. They are useful as reference but misleading as "current" code.
+9. ~~**`model/` scripts are out of sync.**~~ — removed (75c5c84).
 
 ---
 
