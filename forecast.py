@@ -1132,7 +1132,8 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         def get_agg(t):
             win = hist_5m.loc[t - timedelta(minutes=25):t]
             if win.empty: return 0.0, 0.0, 0.0, 0.0
-            return float(win.max()), float(win.std()), float((win > 150).sum()), float(win.std())
+            std = float(win.std()) if len(win) > 1 else 0.0
+            return float(win.max()), std, float((win > 150).sum()), std
 
         aggs = [get_agg(t) for t in hist.index]
         hist['rrp_5m_max'] = [a[0] for a in aggs]
@@ -1167,6 +1168,11 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     _enc_rrp_raw = hist["rrp"].copy()           # $/MWh
     _enc_load_raw = hist.get("power_load", pd.Series(dtype=float)).copy()
     _enc_5m_missing = hist["rrp_5m_missing"].copy()
+
+    # Fill any data gaps before scaling — the LGBM path uses ffill/dropna at
+    # data load time, but the TFT path builds hist from tail(96) of raw data
+    # which can have brief InfluxDB gaps at the most recent intervals.
+    hist[ENC_CONT] = hist[ENC_CONT].ffill().bfill()
 
     # Apply enc scalers
     for feat in ENC_CONT:
@@ -1981,37 +1987,6 @@ def apply_covariate_adjustments(future_covariates_df):
             adjusted_df[cov_name] *= adjustments
 
     return adjusted_df.drop(columns=['time_of_day'])
-
-def _publish_covariates_helper():
-    """
-    A helper function that fetches all future covariate data sources, applies
-    adjustments, and publishes the results. Called by main() when needed.
-    """
-    logging.info("--- Publishing Adjusted Covariates ---")
-
-    # Fetch ALL future data sources to get the maximum possible horizon
-    logging.info("Fetching all future covariate data sources...")
-    future_sources = {
-        'solcast': get_solcast_forecast(),
-        'weather': get_weather_forecast(),
-        'aemo': get_aemo_forecast() # Include AEMO to ensure we use its 7-day index
-    }
-
-    # Combine them into a single DataFrame
-    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
-
-    # Apply the bias adjustments
-    adjusted_df = apply_covariate_adjustments(future_covariates_df)
-
-    # Filter to only future data before publishing
-    now = datetime.now(pytz.UTC)
-    minute = 30 if now.minute >= 30 else 0
-    forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
-    
-    publish_df = adjusted_df[adjusted_df.index >= forecast_start_time]
-
-    # Call the existing, robust publishing function
-    publish_adjusted_covariates_to_hass(publish_df)
 
 def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
     """
