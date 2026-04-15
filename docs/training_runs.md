@@ -12,6 +12,75 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
+## Run 011 — 2026-04-16 — Debiased decoder + SDO features + q5/10/50/90/95/99
+
+**Three Phase 1b improvements applied simultaneously.**
+- OOF-debiased PREDISPATCH RRP replaces raw `pd_rrp` at decoder steps 0–55.
+- SevenDayOutlook `sd_demand` + `sd_net_interchange` added as decoder features for all 144 steps.
+- Quantiles expanded from q30/50/70 → q5/10/50/90/95/99.
+
+### Changes from Run 010
+- `build_training_dataset.py`: loads `debiased_pd_rrp_oof.parquet`, substitutes OOF-debiased
+  RRP at decoder steps 0–55 (raw fallback if run absent). Adds SDO features; DEC_FEATURES 13→15.
+- `train_tft_price.py`: `QUANTILES = [0.05, 0.10, 0.50, 0.90, 0.95, 0.99]`.
+- `evaluate_tft.py`: p50 index derived from checkpoint quantile list (backwards-compatible).
+
+### Config
+| Parameter | Value |
+|---|---|
+| Target Scaling | Log-Scaling (scale=60.0) |
+| Quantiles | [0.05, 0.10, 0.50, 0.90, 0.95, 0.99] |
+| Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | pw_wMAPE (price+horizon weighted) |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | 54,404 samples (51,623 train, 2,211 val, 431 eval) |
+
+### Training outcome
+- Best epoch: **4** (early stop epoch 11, patience=7)
+- Best val loss: **0.0513** (not comparable to Run 010 — 3→6 quantiles changes loss scale)
+- pw_wMAPE: **39.99%**
+- nMAPE (4h): 39.71%  |  16h: 45.67%  |  28h: 46.84%  |  72h: 74.55%
+- **Note:** Early stopping at epoch 4 due to aggressive LR schedule (patience=2 halved LR twice
+  by epoch 10). Training loss still decreasing at stop — clear under-convergence.
+  Retrained as **Run 011b** with `--lr 1e-4 --patience 15`.
+
+### evaluate_tft.py results (TFT vs LightGBM, Stratified Set)
+
+| Horizon | TFT all | LGBM all | Delta | TFT base | LGBM base | TFT spike | LGBM spike |
+|---|---|---|---|---|---|---|---|
+| 1h | 77.5% | 63.9% | +13.6% | 33.8% | 30.6% | 82.6% | 71.9% |
+| 2h | 75.6% | 68.3% | +7.3% | 35.4% | 35.6% | 80.9% | 77.4% |
+| 4h | 71.7% | 66.4% | +5.3% | 37.8% | 46.2% | 77.0% | 74.8% |
+| 8h | 69.3% | 64.4% | +4.9% | 39.9% | 46.7% | 74.4% | 73.6% |
+| 16h | 71.6% | 65.1% | +6.6% | 42.9% | 46.4% | 76.4% | 74.8% |
+| 28h | 73.0% | 71.0% | +1.9% | 44.7% | 58.2% | 77.5% | 77.2% |
+
+**nMAPE 1–2pp better than Run 010 on the stratified set.** LightGBM still leads on spikes
+at short horizons (1h/2h); TFT wins on baseload at 4h+.
+
+### Quantile calibration (all valid steps, Stratified Set)
+| Quantile | Expected | Actual coverage | Bias | Status |
+|---|---|---|---|---|
+| q05 | 0.050 | 0.153 | +0.103 | ❌ far over-covers |
+| q10 | 0.100 | 0.200 | +0.100 | ❌ far over-covers |
+| q50 | 0.500 | 0.541 | +0.041 | ↑ mild |
+| q90 | 0.900 | 0.895 | -0.005 | ✓ |
+| q95 | 0.950 | 0.941 | -0.009 | ✓ |
+| q99 | 0.990 | 0.976 | -0.014 | ✓ |
+
+**Upper tail (q90/q95/q99) well-calibrated.** Lower tail (q05/q10) badly miscalibrated —
+the model's lower-quantile predictions are too high (conservative), meaning it underestimates
+how often prices fall below q05/q10. Root cause: under-convergence (epoch 4) + log-scaling
+compresses the low-price region. Expect improvement in Run 011b.
+
+### Notes
+- SDO covariate shift: 75% of training samples have SDO=0 (pre-2025-03); val set is 100%
+  within SDO coverage (last 60 days). May contribute to mild val loss divergence.
+- Run 011b (same dataset): `--lr 1e-4 --patience 15 --epochs 150`.
+
+---
+
 ## Run 010 — 2026-04-12 — Log-Scaling & q30/50/70 + Extended Backfill [PRODUCTION SHADOW]
 
 **Closing the Spike Gap: Addressing Normalization Squeeze.**
