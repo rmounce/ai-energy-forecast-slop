@@ -47,13 +47,20 @@ Normalisation:
 
 Outputs (data/parquet/):
   X_encoder.npy        [N, 96,  N_ENC]  — normalised base(8) + 5m(3) + time(6) + missing_flag(1) = 18
-  X_decoder.npy        [N, 144, N_DEC]  — normalised prices/demand (SA1+VIC1+NSW1) + raw time/horizon
+  X_decoder.npy        [N, 144, N_DEC]  — normalised prices/demand (SA1+VIC1+NSW1+SDO) + raw time/horizon
   y_targets.npy        [N, 144]         — normalised actual RRP (zeros where mask=0)
   y_targets_raw.npy    [N, 144]         — raw actual RRP in $/MWh
   y_mask.npy           [N, 144]         — bool: 1 where covariate + target both valid
+  sdo_covar_mask.npy   [N, 144]         — bool: 1 where SevenDayOutlook data was available
   run_times.npy        [N]              — int64 nanosecond timestamps of each run_time
   scalers.pkl          — dict: feature_name → fitted QuantileTransformer
   dataset_meta.json    — shapes, feature names, split info
+
+Run 011 changes:
+  - pd_rrp (steps 0–55) substituted with OOF-debiased PREDISPATCH RRP where available
+    (raw pd_rrp kept as fallback when OOF data absent for a run)
+  - sd_demand + sd_net_interchange added as decoder features (SevenDayOutlook, all 144 steps)
+    Scalers fitted on SDO-valid steps only; 0-filled where SDO unavailable (pre-2025-03)
 """
 
 import argparse
@@ -104,14 +111,18 @@ ENC_5M_MISSING_IDX = len(ENC_CONTINUOUS) + len(TIME_FEATURES)          # index o
 
 LOG_SCALE_FACTOR = 60.0  # reference price for log-scaling: log1p(x/60)
 
-# Decoder: forecast covariates (PREDISPATCH/PD7Day) + time + horizon
+# Decoder: forecast covariates (PREDISPATCH/PD7Day/SDO) + time + horizon
 DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange",
-                  "vic1_pd_rrp", "nsw1_pd_rrp"]
-DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + ["horizon_norm", "covar_missing"]  # 13 features
+                  "vic1_pd_rrp", "nsw1_pd_rrp",
+                  "sd_demand", "sd_net_interchange"]
+DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + ["horizon_norm", "covar_missing"]  # 15 features
 
 # VIC1/NSW1 data only covers steps 0-55 (PREDISPATCH horizon); steps 56-143 are 0-filled.
 # Track these by name so scalers are fitted on the right slice.
 ADJ_REGION_FEATURES = {"vic1_pd_rrp", "nsw1_pd_rrp"}
+# SDO features available from ~2025-03-22; 0-filled for earlier runs.
+# Scalers fitted on SDO-valid steps only (tracked per sample in sdo_covar_mask).
+SDO_FEATURES        = {"sd_demand", "sd_net_interchange"}
 
 
 # ─── Time encoding helpers ──────────────────────────────────────────────────
@@ -136,6 +147,8 @@ def build_samples(actuals: pd.DataFrame,
                   pd7day: pd.DataFrame,
                   vic1_pd: pd.DataFrame | None = None,
                   nsw1_pd: pd.DataFrame | None = None,
+                  sdo: pd.DataFrame | None = None,
+                  oof_grouped=None,
                   dry_run: bool = False,
                   output_length: int = OUTPUT_LENGTH,
                   min_valid_steps: int = MIN_VALID_STEPS):
@@ -147,6 +160,10 @@ def build_samples(actuals: pd.DataFrame,
     pd7day:      columns [interval_dt, run_time, rrp]
     vic1_pd:     columns [interval_dt, run_time, rrp] — adjacent region, steps 0-55 only
     nsw1_pd:     columns [interval_dt, run_time, rrp] — adjacent region, steps 0-55 only
+    sdo:         columns [interval_dt, run_time, scheduled_demand, net_interchange]
+                 SevenDayOutlook — fills sd_demand/sd_net_interchange for all 144 steps
+    oof_grouped: GroupBy object from debiased_pd_rrp_oof.parquet; substitutes raw pd_rrp
+                 at steps 0-55 where OOF values are available (raw pd_rrp kept as fallback)
     """
     actuals = actuals.set_index("time").sort_index()
 
@@ -173,6 +190,21 @@ def build_samples(actuals: pd.DataFrame,
         else:
             adj_grouped[name] = None
 
+    # SevenDayOutlook lookup (bisect on run_times, like PD7Day)
+    if sdo is not None:
+        sdo_run_times_sorted = sorted(sdo["run_time"].unique())
+        sdo_grouped_by_rt = sdo.groupby("run_time", sort=False)
+        print(f"  Grouping SevenDayOutlook by run_time ({len(sdo_run_times_sorted)} runs, "
+              f"{sdo['run_time'].min().date()} → {sdo['run_time'].max().date()})...")
+    else:
+        sdo_run_times_sorted = []
+        sdo_grouped_by_rt = None
+        print(f"  WARNING: sdo=None — sd_demand/sd_net_interchange will be 0-filled")
+
+    # Column indices for new SDO features
+    sd_demand_idx = DEC_CONTINUOUS.index("sd_demand")
+    sd_ni_idx     = DEC_CONTINUOUS.index("sd_net_interchange")
+
     all_run_times = sorted(predispatch["run_time"].unique())
     print(f"  Total PREDISPATCH runs: {len(all_run_times):,}")
 
@@ -180,7 +212,7 @@ def build_samples(actuals: pd.DataFrame,
     all_steps = pd.RangeIndex(output_length)     # 0..143
 
     (enc_list, dec_list, target_list,
-     mask_list, covar_mask_list, run_time_list) = [], [], [], [], [], []
+     mask_list, covar_mask_list, sdo_covar_mask_list, run_time_list) = [], [], [], [], [], [], []
     stats = dict(skipped_encoder=0, skipped_min_valid=0, total=0)
 
     for i, run_t in enumerate(all_run_times):
@@ -228,9 +260,10 @@ def build_samples(actuals: pd.DataFrame,
         # ── Decoder: 144-step window with per-step mask
         dec_intervals = pd.date_range(run_t + dt30, periods=output_length,
                                       freq="30min", tz="UTC")
-        dec_arr  = np.zeros((output_length, len(DEC_FEATURES)), dtype=np.float32)
-        mask_arr = np.zeros(output_length, dtype=bool)
-        targ_arr = np.zeros(output_length, dtype=np.float32)
+        dec_arr      = np.zeros((output_length, len(DEC_FEATURES)), dtype=np.float32)
+        mask_arr     = np.zeros(output_length, dtype=bool)
+        sdo_mask_arr = np.zeros(output_length, dtype=bool)
+        targ_arr     = np.zeros(output_length, dtype=np.float32)
 
         # Time encodings + horizon_norm are always valid (constant for each step)
         dec_time_enc = time_encodings(dec_intervals)  # [144, 6]
@@ -254,6 +287,23 @@ def build_samples(actuals: pd.DataFrame,
             mask_arr[:56]   = valid_pd.values
         except KeyError:
             pass   # no PREDISPATCH run at T — indices 0..55 stay masked
+
+        # -- OOF debiased pd_rrp substitution (indices 0..55 = steps h=1..56)
+        # Replaces raw pd_rrp with the OOF-debiased value where available.
+        # Fallback: raw pd_rrp kept if run_t not in OOF (e.g. edge of training window).
+        if oof_grouped is not None:
+            try:
+                oof_run = oof_grouped.get_group(run_t)
+                oof_sub = (oof_run.set_index("interval_dt")
+                           .reindex(dec_intervals[:56])["oof_debiased_rrp"])
+                valid_oof = ~oof_sub.isna()
+                dec_arr[:56, 0] = np.where(
+                    valid_oof.values,
+                    oof_sub.fillna(0.0).values,
+                    dec_arr[:56, 0],   # keep raw pd_rrp where OOF absent
+                )
+            except KeyError:
+                pass   # no OOF for this run — raw pd_rrp stays
 
         # -- VIC1/NSW1 PREDISPATCH (indices 0..55 = steps h=1..56, rrp only)
         for adj_name, adj_col_idx in (("vic1", DEC_CONTINUOUS.index("vic1_pd_rrp")),
@@ -283,6 +333,25 @@ def build_samples(actuals: pd.DataFrame,
             except KeyError:
                 pass
 
+        # -- SevenDayOutlook (all 144 steps): sd_demand + sd_net_interchange
+        # Uses most recent SDO run ≤ run_t (same bisect pattern as PD7Day).
+        # 0-filled + sdo_mask_arr=False where SDO unavailable (pre-2025-03).
+        if sdo_grouped_by_rt is not None and sdo_run_times_sorted:
+            bisect_sdo = bisect.bisect_right(sdo_run_times_sorted, run_t) - 1
+            if bisect_sdo >= 0:
+                sdo_run_t = sdo_run_times_sorted[bisect_sdo]
+                try:
+                    sdo_run = sdo_grouped_by_rt.get_group(sdo_run_t)
+                    sdo_sub = (sdo_run.set_index("interval_dt")
+                               .reindex(dec_intervals)
+                               [["scheduled_demand", "net_interchange"]])
+                    valid_sdo = ~sdo_sub["scheduled_demand"].isna()
+                    dec_arr[:, sd_demand_idx] = sdo_sub["scheduled_demand"].fillna(0.0).values
+                    dec_arr[:, sd_ni_idx]     = sdo_sub["net_interchange"].fillna(0.0).values
+                    sdo_mask_arr[:] = valid_sdo.values
+                except KeyError:
+                    pass   # no SDO run ≤ run_t (shouldn't happen after 2025-03)
+
         covar_mask = mask_arr.copy()
         dec_arr[:, n_cont + 7] = (~covar_mask).astype(np.float32)
 
@@ -308,17 +377,19 @@ def build_samples(actuals: pd.DataFrame,
         target_list.append(targ_arr)
         mask_list.append(mask_arr)
         covar_mask_list.append(covar_mask)
+        sdo_covar_mask_list.append(sdo_mask_arr)
         run_time_list.append(run_t)
 
     print(f"  Valid samples:  {len(enc_list):,}")
     print(f"  Skipped — encoder gaps:   {stats['skipped_encoder']}")
     print(f"  Skipped — <{min_valid_steps} valid steps: {stats['skipped_min_valid']}")
 
-    X_enc  = np.stack(enc_list)     # [N, 96,  N_ENC]
-    X_dec  = np.stack(dec_list)     # [N, 144, N_DEC]
-    y_raw  = np.stack(target_list)  # [N, 144]
-    y_mask = np.stack(mask_list)    # [N, 144] bool
-    y_covar_mask = np.stack(covar_mask_list) # [N, 144] bool
+    X_enc         = np.stack(enc_list)          # [N, 96,  N_ENC]
+    X_dec         = np.stack(dec_list)          # [N, 144, N_DEC]
+    y_raw         = np.stack(target_list)       # [N, 144]
+    y_mask        = np.stack(mask_list)         # [N, 144] bool
+    y_covar_mask  = np.stack(covar_mask_list)   # [N, 144] bool
+    sdo_covar_mask = np.stack(sdo_covar_mask_list)  # [N, 144] bool
 
     # Print coverage stats
     cov_by_step = y_mask.mean(axis=0)
@@ -326,12 +397,16 @@ def build_samples(actuals: pd.DataFrame,
     print(f"    Steps  1–32  (16h):  {cov_by_step[:32].mean():.1%}")
     print(f"    Steps  1–56  (28h):  {cov_by_step[:56].mean():.1%}")
     print(f"    Steps 57–144 (72h):  {cov_by_step[56:].mean():.1%}")
+    print(f"  SDO coverage: {sdo_covar_mask.mean():.1%} of all steps "
+          f"({sdo_covar_mask[:, :56].mean():.1%} PREDISPATCH, "
+          f"{sdo_covar_mask[:, 56:].mean():.1%} PD7Day)")
 
     return (X_enc,
             X_dec,
             y_raw,
             y_mask,
             y_covar_mask,
+            sdo_covar_mask,
             np.array(run_time_list, dtype="datetime64[ns]"))
 
 
@@ -347,7 +422,7 @@ def split_by_time(run_times: np.ndarray, val_days: int = VAL_DAYS, train_gap_hou
 # ─── Normalisation ───────────────────────────────────────────────────────────
 
 def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_train,
-                target_scaling="quantile"):
+                sdo_covar_mask_train=None, target_scaling="quantile"):
     """
     Fit QuantileTransformer per continuous feature on train split only.
     If target_scaling='log', rrp features use log-scaling instead of QuantileTransformer.
@@ -391,6 +466,15 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_tr
             # steps 56-143 are 0-filled — exclude to avoid biasing the scaler.
             pd_mask = y_covar_mask_train[:, :56]
             valid_covars = X_dec_train[:, :56, j][pd_mask]
+        elif feat in SDO_FEATURES:
+            # SDO available from ~2025-03-22; 0-filled before that.
+            # Use sdo_covar_mask to fit only on valid SDO steps.
+            if sdo_covar_mask_train is not None and sdo_covar_mask_train.any():
+                valid_covars = X_dec_train[:, :, j][sdo_covar_mask_train]
+            else:
+                # No SDO data in train split — fit on all (will be near-constant 0s)
+                valid_covars = X_dec_train[:, :, j].reshape(-1)
+                print(f"    WARNING: no SDO data in train split for {feat}")
         else:
             valid_covars = X_dec_train[:, :, j][y_covar_mask_train]
         fit_one(feat, valid_covars)
@@ -402,7 +486,8 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_tr
     return scalers
 
 
-def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers):
+def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers,
+                  sdo_covar_mask=None):
     """Apply fitted scalers. Non-continuous features pass through unchanged."""
     X_enc_n = X_enc.copy()
     X_dec_n = X_dec.copy()
@@ -428,6 +513,11 @@ def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers):
             view = X_dec_n[:, :56, j]
             pd_mask = y_covar_mask[:, :56]
             view[pd_mask] = transform(view[pd_mask], scalers[feat])
+        elif feat in SDO_FEATURES:
+            # Transform only valid SDO steps; leave 0-filled missing steps as 0.
+            view = X_dec_n[:, :, j]
+            if sdo_covar_mask is not None and sdo_covar_mask.any():
+                view[sdo_covar_mask] = transform(view[sdo_covar_mask], scalers[feat])
         else:
             view = X_dec_n[:, :, j]
             view[y_covar_mask] = transform(view[y_covar_mask], scalers[feat])
@@ -482,6 +572,32 @@ def main():
         else:
             print(f"  WARNING: {path.name} not found — {region.upper()} features will be 0-filled")
 
+    # SevenDayOutlook (sd_demand + sd_net_interchange, all 144 decoder steps)
+    sdo_path = PARQUET_DIR / "aemo_sevendayoutlook_sa1.parquet"
+    if sdo_path.exists():
+        sdo = pd.read_parquet(sdo_path)
+        for col in ["interval_dt", "run_time"]:
+            sdo[col] = pd.to_datetime(sdo[col], utc=True)
+        print(f"  SevenDayOutlook: {len(sdo):,} rows, {sdo.run_time.nunique():,} unique run_times "
+              f"({sdo.run_time.min().date()} → {sdo.run_time.max().date()})")
+    else:
+        sdo = None
+        print(f"  WARNING: aemo_sevendayoutlook_sa1.parquet not found — sd_demand/sd_net_interchange 0-filled")
+
+    # OOF debiased PREDISPATCH RRP (substitutes raw pd_rrp at steps 0-55)
+    oof_path = PARQUET_DIR / "debiased_pd_rrp_oof.parquet"
+    if oof_path.exists():
+        oof_df = pd.read_parquet(oof_path)
+        for col in ["interval_dt", "run_time"]:
+            oof_df[col] = pd.to_datetime(oof_df[col], utc=True)
+        oof_grouped = oof_df.groupby("run_time", sort=False)
+        print(f"  OOF debiased PD RRP: {len(oof_df):,} rows, "
+              f"{oof_df.run_time.nunique():,} unique run_times")
+        del oof_df  # free memory — we only need the groupby
+    else:
+        oof_grouped = None
+        print(f"  WARNING: debiased_pd_rrp_oof.parquet not found — raw pd_rrp used")
+
     for df in [predispatch, pd7day]:
         for col in ["interval_dt", "run_time"]:
             if col in df.columns:
@@ -530,9 +646,10 @@ def main():
 
     # ── Build samples
     print("\nBuilding run-aligned samples...")
-    X_enc, X_dec, y_raw, y_mask, y_covar_mask, run_times = build_samples(
+    X_enc, X_dec, y_raw, y_mask, y_covar_mask, sdo_covar_mask, run_times = build_samples(
         actuals, predispatch, pd7day,
         vic1_pd=vic1_pd, nsw1_pd=nsw1_pd,
+        sdo=sdo, oof_grouped=oof_grouped,
         dry_run=args.dry_run,
         output_length=out_len,
         min_valid_steps=args.min_valid_steps,
@@ -601,9 +718,12 @@ def main():
         print(f"\nFitting scalers on train split (target_scaling={args.target_scaling})...")
         scalers = fit_scalers(X_enc[train_mask], X_dec[train_mask],
                               y_raw[train_mask], y_mask[train_mask], y_covar_mask[train_mask],
+                              sdo_covar_mask_train=sdo_covar_mask[train_mask],
                               target_scaling=args.target_scaling)
         print("\nApplying scalers...")
-        X_enc_n, X_dec_n, y_norm = apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers)
+        X_enc_n, X_dec_n, y_norm = apply_scalers(
+            X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers,
+            sdo_covar_mask=sdo_covar_mask)
         with open(PARQUET_DIR / "scalers.pkl", "wb") as f:
             pickle.dump(scalers, f)
         print(f"  Scalers saved: {PARQUET_DIR}/scalers.pkl")
@@ -619,8 +739,9 @@ def main():
     np.save(PARQUET_DIR / "y_targets_raw.npy", y_raw)
     np.save(PARQUET_DIR / "y_mask.npy",       y_mask)
     np.save(PARQUET_DIR / "y_weights.npy",    y_weights)
-    np.save(PARQUET_DIR / "y_covar_mask.npy", y_covar_mask)
-    np.save(PARQUET_DIR / "run_times.npy",    run_times)
+    np.save(PARQUET_DIR / "y_covar_mask.npy",    y_covar_mask)
+    np.save(PARQUET_DIR / "sdo_covar_mask.npy",  sdo_covar_mask)
+    np.save(PARQUET_DIR / "run_times.npy",        run_times)
     train_idx = np.where(train_mask)[0]
     val_idx   = np.where(val_mask)[0]
     test_idx  = np.where(test_mask)[0]

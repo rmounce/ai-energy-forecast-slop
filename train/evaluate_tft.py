@@ -56,26 +56,36 @@ HORIZON_BUCKETS = [
 # ─── TFT inference ────────────────────────────────────────────────────────────
 
 def run_tft_inference(model, val_ds, scalers, batch_size=256,
-                      target_scaling="quantile", log_scale_factor=60.0):
+                      target_scaling="quantile", log_scale_factor=60.0,
+                      quantiles=None):
     """Run TFT inference on val set.
 
     Returns:
         pred_raw:  [N, 144]    — p50 in raw $/MWh (for nMAPE)
         targ_raw:  [N, 144]    — actuals in raw $/MWh
         mask:      [N, 144]    — bool valid steps
-        preds_all: [N, 144, 3] — all quantiles (q30/q50/q70) in raw $/MWh
+        preds_all: [N, 144, Q] — all quantiles in raw $/MWh
     """
     qt = scalers["target_rrp"]
     loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+
+    # Locate p50 index in quantile list — supports both Run 010 (q30/50/70) and
+    # Run 011+ (q5/10/50/90/95/99). Falls back to middle index if 0.5 not found.
+    if quantiles is not None and 0.5 in quantiles:
+        p50_idx = list(quantiles).index(0.5)
+    elif quantiles is not None:
+        p50_idx = len(quantiles) // 2
+    else:
+        p50_idx = 1   # legacy default: 3-quantile model, p50 = index 1
 
     all_pred, all_targ, all_mask, all_quants = [], [], [], []
 
     model.eval()
     with torch.no_grad():
         for X_enc, X_dec, _y_norm, y_raw, mask, _weights in loader:
-            preds_norm = model(X_enc, X_dec)                     # [B, T, 3]
+            preds_norm = model(X_enc, X_dec)                     # [B, T, Q]
             preds_norm, _ = torch.sort(preds_norm, dim=-1)       # prevent quantile crossing
-            preds_norm_np = preds_norm.numpy()                   # [B, T, 3]
+            preds_norm_np = preds_norm.numpy()                   # [B, T, Q]
 
             B, T, Q = preds_norm_np.shape
             if target_scaling == "log":
@@ -85,7 +95,7 @@ def run_tft_inference(model, val_ds, scalers, batch_size=256,
                     preds_norm_np.reshape(-1, 1)
                 ).reshape(B, T, Q)
 
-            all_pred.append(preds_raw[:, :, 1])   # p50
+            all_pred.append(preds_raw[:, :, p50_idx])   # p50
             all_targ.append(y_raw.numpy())
             all_mask.append(mask.numpy())
             all_quants.append(preds_raw)
@@ -268,9 +278,11 @@ def main():
     target_scaling = ckpt.get("meta", {}).get("target_scaling", "quantile")
     log_scale_factor = ckpt.get("meta", {}).get("log_scale_factor", 60.0)
 
+    target_quants = ckpt.get("quantiles", (0.3, 0.5, 0.7))
     pred, targ, mask, preds_all = run_tft_inference(
         model, val_ds, scalers, args.batch_size,
-        target_scaling=target_scaling, log_scale_factor=log_scale_factor
+        target_scaling=target_scaling, log_scale_factor=log_scale_factor,
+        quantiles=target_quants,
     )
     print(f"  Predictions: {pred.shape}  valid steps: {mask.sum():,}\n")
 
@@ -365,8 +377,7 @@ def main():
     print("      28–72h omitted: 11% coverage pre-NEMSEER backfill.")
     print(f"      base = actual RRP ≤ {spike_thr:.0f}, spike = actual RRP > {spike_thr:.0f} $/MWh")
 
-    # ── Quantile calibration
-    target_quants = ckpt.get("quantiles", (0.3, 0.5, 0.7))
+    # ── Quantile calibration (target_quants already loaded above for run_tft_inference)
     cal = quantile_calibration(preds_all, targ, mask, target_quants)
     print("\n── Quantile calibration (all valid steps) ──")
     print(f"  {'Quantile':>10}  {'Expected':>10}  {'Actual':>10}  {'Bias':>8}")
