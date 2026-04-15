@@ -47,7 +47,11 @@ All data ingested to InfluxDB (`hass` database, `rp_30m` retention policy) by sc
 
 ### SevenDayOutlook (`aemo_sevendayoutlook`)
 - **What:** AEMO's 7-day demand/capacity/interchange outlook
-- **Note:** Contains NO price data (demand/capacity only). Useful as a covariate for 28h+ horizon demand forecasting but not used in the current price model.
+- **Fields:** `scheduled_demand` (MW), `net_interchange` (MW) — no price data
+- **Used in model (as of Run 011):** `sd_demand` + `sd_net_interchange` added as decoder
+  features for all 144 steps. Available from 2025-03-22; 0-filled for earlier samples.
+- **Reserve margin:** `scheduled_capacity` is ingested but reserve margin (capacity − demand)
+  not yet added as a feature — needs capacity-availability data quality validation first.
 
 ### Actuals (`aemo_dispatch_sa1_30m`)
 - Historical SA1 dispatch price and demand, updated via `ingest/ingest-nem-data.py`
@@ -154,36 +158,36 @@ LSTM encoder-decoder with Gated Residual Networks and cross-attention. Simplifie
 
 ```
 Input:
-  Encoder [B, 96, 18]:  GRN → LSTM(d_model, n_layers)  → enc_out [B, 96, d_model]
-  Decoder [B, 144, 13]: GRN → LSTM(d_model, n_layers)  → dec_out [B, 144, d_model]
+  Encoder [B, 96, 20]:  GRN → LSTM(d_model, n_layers)  → enc_out [B, 96, d_model]
+  Decoder [B, 144, 15]: GRN → LSTM(d_model, n_layers)  → dec_out [B, 144, d_model]
                                   ↑ initialized with encoder LSTM final (h, c)
 
 Cross-attention:  MultiheadAttention(dec_out, enc_out, enc_out) + residual + LayerNorm
 Post-attention:   GRN(d_model)
-Output:           Linear(d_model → 3) → [B, 144, 3]  (q30, q50, q70)
+Output:           Linear(d_model → Q) → [B, 144, Q]  where Q = len(QUANTILES)
 ```
 
-**Hyperparameters (defaults):**
+**Hyperparameters (defaults, Run 011+):**
 - `d_model=64` (CPU-optimised; increase to 128+ with GPU)
 - `n_heads=4`
 - `n_layers=2`
 - `dropout=0.1`
 - Parameters at d_model=64: ~190K
 
-**Loss:** Masked QuantileLoss averaged over valid decoder steps. `mask[h]=1` where both forecast covariate and actual target exist. quantiles: `[0.3, 0.5, 0.7]`.
+**Loss:** Masked QuantileLoss averaged over valid decoder steps. `mask[h]=1` where both forecast covariate and actual target exist. quantiles: `[0.05, 0.10, 0.50, 0.90, 0.95, 0.99]` (Run 011+; was `[0.30, 0.50, 0.70]` for Runs 001–010).
 
-**Training:**
-- Adam, lr=1e-3
-- CosineAnnealingLR (T_max=n_epochs, eta_min=0.01×lr)
-- Early stopping on val loss, patience=7
+**Training (Run 011b defaults):**
+- AdamW, lr=1e-4, weight_decay=1e-4
+- ReduceLROnPlateau (factor=0.5, patience=2)
+- Early stopping on pw_wMAPE (price+horizon weighted), patience=15
 - Gradient clipping, max_norm=1.0
-- Default: 100 epochs
+- Default: 150 epochs
 
 ---
 
 ## Feature Sets
 
-### Encoder (18 features, past 96 × 30min = 2 days)
+### Encoder (20 features, past 96 × 30min = 2 days)
 
 **Base features (8, always available):**
 
@@ -198,13 +202,14 @@ Output:           Linear(d_model → 3) → [B, 144, 3]  (q30, q50, q70)
 | `humidity` | `rp_30m.humidity_adelaide` | Adelaide humidity % |
 | `wind_speed` | `rp_30m.wind_speed_adelaide` | Adelaide wind speed km/h |
 
-**5-minute volatility features (3, available from 2025-03-31; ~50% of training samples):**
+**5-minute volatility features (4, available from 2025-03-31; ~47% of training samples):**
 
 | Feature | Source | Notes |
 |---|---|---|
 | `rrp_5m_max` | `rp_5m.aemo_dispatch_sa1_5m` | Max 5-min price in the 30-min window — captures intra-period spike peaks smoothed by 30m averaging |
 | `rrp_5m_std` | same | Std of 5-min prices in the 30-min window — intra-period price chaos signal |
 | `rrp_persistence` | same | Count of 5-min intervals in the last 1h with price > $150 — regime persistence detector |
+| `rrp_volatility_30m` | same | Rolling std of log-prices over last 30 min — regime stability signal |
 
 Motivation (Run 007): when a spike is building, 5-min prices jump from $50 → $300 → $1000 within a single 30-min window — information the 30-min average obscures. The TFT attention mechanism can learn to selectively attend to these volatility signals. Missing steps (pre-2025-03-31) are 0-filled and flagged by `rrp_5m_missing`.
 
@@ -217,45 +222,50 @@ Motivation (Run 007): when a spike is building, 5-min prices jump from $50 → $
 | `month_sin/cos` | Annual seasonality encoding |
 | `rrp_5m_missing` | Binary: 1.0 where 5m data unavailable (pre-era or gap); allows model to ignore 0-filled 5m features |
 
-### Decoder (13 features, future 144 × 30min = 72h)
+### Decoder (15 features, future 144 × 30min = 72h)
 
 | Feature | Source | Steps | Notes |
 |---|---|---|---|
-| `pd_rrp` | PREDISPATCH `rrp` | 1–56 | PREDISPATCH run issued AT encoder/decoder boundary |
+| `pd_rrp` | OOF-debiased PREDISPATCH `rrp` | 1–56 | **Run 011+:** OOF-debiased via `train_pd_debiaser.py`; raw pd_rrp fallback if run absent in OOF |
 | `pd_rrp` | PD7Day `rrp` | 57–144 | Most recent PD7Day run ≤ T (Option A; ~8h max staleness; acceptable) |
 | `pd_demand` | PREDISPATCH `total_demand` | 1–56 | 0 for steps 57–144 (not in PD7Day) |
 | `pd_net_interchange` | PREDISPATCH `net_interchange` | 1–56 | 0 for steps 57–144 |
 | `vic1_pd_rrp` | VIC1 PREDISPATCH `rrp` | 1–56 | Adjacent region price — Heywood interconnector (~650MW) spike precursor |
 | `nsw1_pd_rrp` | NSW1 PREDISPATCH `rrp` | 1–56 | Adjacent region price — EnergyConnect (~800MW, commissioning 2026–2027) |
+| `sd_demand` | SevenDayOutlook `scheduled_demand` | 1–144 | **Run 011+.** 0-filled for samples pre-2025-03-22; covers all 144 steps |
+| `sd_net_interchange` | SevenDayOutlook `net_interchange` | 1–144 | **Run 011+.** Same coverage as sd_demand |
 | `hour_sin/cos` | computed | 1–144 | Future time encodings |
 | `dow_sin/cos` | computed | 1–144 | |
 | `month_sin/cos` | computed | 1–144 | |
 | `horizon_norm` | computed | 1–144 | (h-1)/143; "hours to delivery" |
-| `covar_missing` | computed | 1–144 | 1.0 where no valid covariate exists; prevents model treating 0-padded steps as median price |
+| `covar_missing` | computed | 1–144 | 1.0 where no valid PREDISPATCH/PD7Day covariate; prevents model treating 0-padded steps as median price |
 
 ---
 
-## Dataset Stats (as of 2026-04-12, Run 006/007 rebuild)
+## Dataset Stats (as of 2026-04-16, Run 011 rebuild)
 
 | Metric | Value |
 |---|---|
-| PREDISPATCH SA1 rows | ~1,878,000 (33,844 runs, April 2024 – April 2026) |
-| PREDISPATCH VIC1/NSW1 rows | ~390,000 each (decoder features, same run coverage) |
-| PD7Day SA1 rows | 64,294 (183 runs, Feb 2026 – April 2026) |
-| 5m dispatch SA1 rows | ~97,000 (2025-03-31 → 2026-04-12 → aggregated to 17,194 30m slots) |
-| Training samples (Run 007 rebuild) | 14,736 train / 2,211 val / 431 stratified eval hold-out |
+| PREDISPATCH SA1 rows | ~3,087,000 (57,070 runs, 2022–2026 via NEMSEER full backfill) |
+| PREDISPATCH VIC1/NSW1 rows | ~3,087,000 each (same run coverage) |
+| PD7Day SA1 rows | 65,348 (186 runs, Feb 2026 – April 2026) |
+| SevenDayOutlook rows | 5,611,480 (17,900 runs, March 2025 – April 2026) |
+| OOF debiased PD RRP rows | 3,067,043 (57,069 runs; output of `train_pd_debiaser.py`) |
+| 5m dispatch SA1 rows | ~34,690 aggregated 30m slots (2024-03-31 → 2026-04-12) |
+| Training samples (Run 011 rebuild) | 51,623 train / 2,211 val / 431 stratified eval hold-out |
 | Stratified eval set | 900 samples: 300 spike (top 5% RRP) + 200 low/negative + 400 seasonal normal |
-| Steps 1–16h mask coverage | ~98% |
-| Steps 1–28h mask coverage | ~87% |
-| Steps 28–72h mask coverage | ~11% (growing as PD7Day accumulates) |
-| 5m feature coverage | ~50% of encoder steps (pre-2025-03-31 = 0-filled + flagged) |
-| Target RRP stats ($/MWh) | mean=87.8, p50=58.7, p99=~220, max=20,300 |
+| Steps 1–16h mask coverage | ~99.4% |
+| Steps 1–28h mask coverage | ~88.0% |
+| Steps 28–72h mask coverage | ~3.5% (growing as PD7Day accumulates) |
+| 5m feature coverage | ~46.6% of encoder steps (pre-2024-03-31 = 0-filled + flagged) |
+| SDO feature coverage | ~25% of training samples (post-2025-03-22 only) |
+| Target RRP stats ($/MWh) | mean=104.3, p50=70.9, max=20,300 |
 
-**Key constraint:** encoder requires 2 days of actuals before each run_time. Actuals go back to 2024-03-29 in InfluxDB (weather only to 2023-04-19, which still covers the full backfill window). PREDISPATCH runs before 2024-04-01 cannot be used as training samples.
+**Key constraint:** encoder requires 2 days of actuals before each run_time. Actuals go back to 2022-01-01 (extended via NEMSEER PREDISPATCH backfill + NEM dispatch history). PREDISPATCH runs before 2022-01-03 cannot be used as training samples.
 
 ## Production Integration (Shadow Mode)
 
-As of April 2026, the TFT model (Run 010) is running in **Shadow Mode** within the `forecast.py` pipeline.
+As of April 2026, the TFT model (Run 010) is running in **Shadow Mode** within the `forecast.py` pipeline. **Run 011b** (debiased decoder, SDO features, expanded quantiles) is in training and will be evaluated for shadow mode promotion once calibration confirms improvement over Run 010.
 
 ### Architecture
 - **Worker:** `_execute_tft_prediction` in `forecast.py`.
@@ -263,10 +273,12 @@ As of April 2026, the TFT model (Run 010) is running in **Shadow Mode** within t
 - **Regime Features:** High-frequency (5m) price spikes, log-momentum, and 30m volatility are engineered in real-time.
 - **Safety:** Sandboxed execution via `try-except` to ensure zero impact on the primary LightGBM battery dispatch signal.
 
-### Entities (Home Assistant)
+### Entities (Home Assistant — Run 010, q30/50/70)
 - `sensor.ai_tft_price_forecast` (q50)
 - `sensor.ai_tft_price_forecast_low` (q30)
 - `sensor.ai_tft_price_forecast_high` (q70)
+
+**Note:** Promotion of Run 011b will require updating `forecast.py` to publish the new quantiles (q05/q10/q90/q95/q99) as additional HA entities for the tail-risk dispatch automations.
 
 ### Logging
 Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benchmarking against the local actuals.
@@ -306,23 +318,25 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 
 ## Current Status and Next Steps
 
-### Complete (as of 2026-04-12)
+### Complete (as of 2026-04-16)
 1. ✅ AEMO ingest: PREDISPATCH, PD7Day, SevenDayOutlook, P5MIN → InfluxDB (systemd timers)
 2. ✅ Parquet ML cache: `data/export_parquet.py` — SA1/VIC1/NSW1 PD + 5m volatility agg + actuals
-3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py` — 18 enc / 13 dec features
+3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py` — 20 enc / 15 dec features
 4. ✅ Training script: `train/train_tft_price.py` — AdamW + ReduceLROnPlateau + horizon-weighted loss
 5. ✅ Rolling-origin evaluation: `train/evaluate_tft.py` — nMAPE (all/base/spike) + quantile calibration
-6. ✅ NEMSEER/NEMWeb backfill: `ingest/backfill_predispatch_nemseer.py` (2024-04 → 2025-02)
+6. ✅ NEMSEER/NEMWeb backfill: `ingest/backfill_predispatch_nemseer.py` — 2022–2026 full backfill
 7. ✅ Stratified eval benchmark: `data/build_stratified_eval.py` — fixed set, durable across runs
-8. ✅ 17,514 training samples; 431 stratified eval hold-out; VAL_DAYS=60
+8. ✅ 51,623 training samples; 431 stratified eval hold-out; VAL_DAYS=60
+9. ✅ Phase 1a: PREDISPATCH debiaser (`train/train_pd_debiaser.py`) — OOF MAE 325→65 $/MWh overall, spike 1125→182 $/MWh (commit ee2f415)
+10. ✅ Phase 1b: Run 011 — OOF debiased decoder + SDO features + q5/10/50/90/95/99 (commit 26b9cb5). Run 011b retraining in progress (lr=1e-4, patience=15).
 
 ### Current training setup (`train/train_tft_price.py`)
 
-- **Optimizer:** AdamW (lr=2e-4, weight_decay=1e-4)
+- **Optimizer:** AdamW (lr=1e-4, weight_decay=1e-4)
 - **Scheduler:** ReduceLROnPlateau (factor=0.5, patience=2) — fires after 2 non-improving epochs
 - **Loss:** Horizon-weighted masked quantile loss: `weight_h = exp(-h / tau)`, tau=14 steps (7h).
   Short-horizon steps dominate gradients; 4h weight=0.56, 16h weight=0.10, 28h weight=0.02.
-- **Early stopping:** wMAPE (horizon-weighted nMAPE, consistent with training loss); fallback val_loss
+- **Early stopping:** pw_wMAPE (price+horizon weighted nMAPE); fallback val_loss when NaN
 
 ### Run 006 evaluation (Stratified Eval Set — fixed benchmark, Apr 2026)
 
@@ -357,27 +371,26 @@ accuracy and calibrated quantile intervals**, not spike prediction.
 Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
 
 ### Completed (Runs 001–010) ✅
-9. ✅ VIC1/NSW1 decoder features (Run 006)
-10. ✅ Stratified eval benchmark (spike gap confirmed structural)
-11. ✅ 5-min volatility encoder features (Run 007 — marginal)
-12. ✅ Progressive price-weighted loss (Run 008 — no spike improvement; calibration recovered)
-13. ✅ NEMSEER 5m backfill → full coverage (Run 009 — no spike improvement)
-14. ✅ Log-scaling + 4yr backfill + shadow mode (Run 010 — in production shadow mode)
-15. ✅ Fix eval: LightGBM stratified comparison corrected (dc4ea19)
-16. ✅ Fix inference: inverse log transform + unit mismatch + PD_RRP zeros (258db6a, f2d9127)
+11. ✅ VIC1/NSW1 decoder features (Run 006)
+12. ✅ Stratified eval benchmark (spike gap confirmed structural)
+13. ✅ 5-min volatility encoder features (Run 007 — marginal)
+14. ✅ Progressive price-weighted loss (Run 008 — no spike improvement; calibration recovered)
+15. ✅ NEMSEER 5m backfill → full coverage (Run 009 — no spike improvement)
+16. ✅ Log-scaling + 4yr backfill + shadow mode (Run 010 — in production shadow mode)
+17. ✅ Fix eval: LightGBM stratified comparison corrected (dc4ea19)
+18. ✅ Fix inference: inverse log transform + unit mismatch + PD_RRP zeros (258db6a, f2d9127)
 
 ### V4 Architecture — Next Steps
 See plan file for full sequencing. Summary:
 
-1. **Phase 1a — PREDISPATCH debiaser** (in progress, `train/train_pd_debiaser.py`):
-   LightGBM on (PREDISPATCH forecast → actual settlement) pairs, 2022–2026.
-   OOF 5-fold time-based CV to generate a leak-free `debiased_pd_rrp` series.
-   Live inference wiring deferred; offline debiased series for TFT training only.
-   Dry-run metrics: overall MAE 202→45 $/MWh, spike 700→120 $/MWh, bias -162→+9 $/MWh.
+1. ✅ **Phase 1a — PREDISPATCH debiaser** (`train/train_pd_debiaser.py`, commit ee2f415):
+   LightGBM OOF 5-fold on 3M (PREDISPATCH, actual) pairs 2022–2026.
+   Full-run: overall MAE 325→65 $/MWh; spike regime 1125→182 $/MWh; bias -267→+26 $/MWh.
 
-2. **Phase 1b — Run 011**: Swap raw `pd_rrp` → OOF debiased signal in TFT decoder.
-   Expand quantiles q30/50/70 → q5/q10/q50/q90/q95/q99. Add reserve margin to
-   decoder features. Compare vs Run 010 on nMAPE and per-quantile calibration error.
+2. ✅ **Phase 1b — Run 011** (commit 26b9cb5): OOF-debiased decoder + SDO demand features +
+   q5/10/50/90/95/99. Run 011 stratified eval: nMAPE 1–2pp better than Run 010;
+   q90/q95/q99 well-calibrated; q05/q10 miscalibrated (under-converged, epoch 4).
+   **Run 011b retraining** with lr=1e-4, patience=15 to allow lower quantiles to converge.
 
 3. **Phase 2 — Tactical model** (needs P5MIN backfill): Backfill P5MIN forecasts via
    NEMSEER. Train both multi-output LightGBM and a TFT variant on the tactical tier.
@@ -386,7 +399,7 @@ See plan file for full sequencing. Summary:
    confirmed — empirical comparison is required before committing.
 
 4. **Phase 3 — Dispatch simulator**: Offline LP backtester. Financial regret minus cycle
-   degradation cost. **Golden set partitioned (see below) — CI/CD gate tests
+   degradation cost. **Golden set partitioned (see plan file) — CI/CD gate tests
    generalisation, not memorisation.**
 
 5. **Phase 4 — Calibration**: Conditional conformal prediction stratified by reserve margin
@@ -437,13 +450,15 @@ See plan file for full sequencing. Summary:
 | `data/parquet/aemo_predispatch_sa1.parquet` | PREDISPATCH: InfluxDB (2025-03+) merged with NEMSEER backfill (2024-04 to 2025-02) |
 | `data/parquet/aemo_pd7day_sa1.parquet` | PD7Day (Feb 2026+) |
 | `data/parquet/actuals_sa1.parquet` | Actuals (dispatch + local sensors, 2024-03-29+) |
-| `data/parquet/X_encoder.npy` | Built training encoder arrays [N, 96, 14] |
-| `data/parquet/X_decoder.npy` | Built training decoder arrays [N, 144, 11] |
+| `data/parquet/X_encoder.npy` | Built training encoder arrays [N, 96, 20] |
+| `data/parquet/X_decoder.npy` | Built training decoder arrays [N, 144, 15] |
 | `data/parquet/y_targets.npy` | Normalised target RRP [N, 144] |
 | `data/parquet/y_targets_raw.npy` | Raw target RRP in $/MWh [N, 144] |
 | `data/parquet/y_mask.npy` | Valid-step mask [N, 144] bool |
-| `data/parquet/scalers.pkl` | Fitted QuantileTransformer per feature |
-| `data/parquet/dataset_meta.json` | Shape/coverage metadata |
+| `data/parquet/sdo_covar_mask.npy` | SevenDayOutlook validity mask [N, 144] bool |
+| `data/parquet/debiased_pd_rrp_oof.parquet` | OOF debiased PREDISPATCH RRP (output of train_pd_debiaser.py) |
+| `data/parquet/scalers.pkl` | Fitted scalers (QuantileTransformer + log-scaling) per feature |
+| `data/parquet/dataset_meta.json` | Shape/coverage/feature-list metadata |
 | `train/train_pd_debiaser.py` | Phase 1a: LightGBM debiaser (OOF 5-fold). Outputs `debiased_pd_rrp_oof.parquet` + `models/pd_debiaser/lgbm_final.pkl` |
 | `train/train_tft_price.py` | TFT training script |
 | `train/evaluate_tft.py` | Rolling-origin evaluation: TFT vs LightGBM nMAPE at 1h/2h/4h/8h/16h/28h + quantile calibration |
