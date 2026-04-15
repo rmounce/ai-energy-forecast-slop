@@ -6,8 +6,14 @@ Architecture: LSTM encoder-decoder with cross-attention (simplified TFT).
   Encoder (96 steps = 2 days): actual historical RRP, demand, interchange,
                                 local load/PV/weather, cyclic time encodings
   Decoder (144 steps = 72h):   PREDISPATCH forecasts (h=1–56) + PD7Day (h=57–144)
+                                + SDO demand/interchange (all 144 steps)
                                 + cyclic time encodings + horizon_norm
-  Output:                      3-quantile prediction [q10, q50, q90] in $/MWh
+  Output:                      6-quantile prediction [q5, q10, q50, q90, q95, q99] in $/MWh
+
+Run 011 changes vs Run 010:
+  - Decoder pd_rrp (steps 0–55): OOF-debiased PREDISPATCH RRP (see train_pd_debiaser.py)
+  - Decoder features: +sd_demand, +sd_net_interchange from SevenDayOutlook (all 144 steps)
+  - Quantiles: q30/50/70 → q5/10/50/90/95/99 (full tail coverage for dispatch automation)
 
 Masked loss: y_mask [N, 144] indicates which decoder steps have valid covariates
   AND actual targets. Loss is averaged only over valid steps.
@@ -18,8 +24,8 @@ Masked loss: y_mask [N, 144] indicates which decoder steps have valid covariates
 See data/build_training_dataset.py and docs/tft_price_forecast.md for full design rationale.
 
 Input data: pre-built numpy arrays from data/build_training_dataset.py
-  data/parquet/X_encoder.npy     [N, 96,  14]  — normalised encoder features
-  data/parquet/X_decoder.npy     [N, 144, 10]  — normalised decoder features
+  data/parquet/X_encoder.npy     [N, 96,  20]  — normalised encoder features
+  data/parquet/X_decoder.npy     [N, 144, 15]  — normalised decoder features
   data/parquet/y_targets.npy     [N, 144]      — normalised target RRP
   data/parquet/y_targets_raw.npy [N, 144]      — raw target RRP (evaluation)
   data/parquet/y_mask.npy        [N, 144]      — bool: valid covariate + target
@@ -59,7 +65,7 @@ PARQUET_DIR = ROOT / "data" / "parquet"
 MODELS_DIR = ROOT / "models" / "tft_price"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-QUANTILES = [0.3, 0.5, 0.7]
+QUANTILES = [0.05, 0.10, 0.50, 0.90, 0.95, 0.99]
 
 
 # ─── Dataset ─────────────────────────────────────────────────────────────────
@@ -248,11 +254,13 @@ def evaluate_nmape(model, loader, scalers, horizon_weights,
 
     all_pred_raw, all_targ_raw, all_masks = [], [], []
 
+    p50_idx = QUANTILES.index(0.5)   # index of q50 (= 2 for the 6-quantile model)
+
     with torch.no_grad():
         for X_enc, X_dec, y_norm, y_batch_raw, mask, _y_weights in loader:
-            preds_norm = model(X_enc, X_dec)           # [B, T, 3]
+            preds_norm = model(X_enc, X_dec)           # [B, T, Q]
             preds_norm, _ = torch.sort(preds_norm, dim=-1) # Prevent quantile crossing
-            p50_norm   = preds_norm[:, :, 1].numpy()   # median quantile
+            p50_norm   = preds_norm[:, :, p50_idx].numpy()   # median quantile
 
             if target_scaling == "log":
                 # Inverse log transform: x = scale * (exp(scaled) - 1)
