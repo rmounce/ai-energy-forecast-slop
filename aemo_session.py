@@ -21,14 +21,14 @@ def make_aemo_session() -> CachedSession:
       - AEMO visualisations API (5MIN JSON):  300 s  (data refreshes ~5 min)
       - NEMWeb reports (ZIPs, listings):     1800 s  (reports update every 30 min)
 
-    stale_if_error=True: on network failure, returns the most recent cached
-    response rather than raising, so a transient AEMO outage doesn't abort
-    the forecast run.
+    stale_if_error=7200: on network failure, serves the most recent cached
+    response for up to 2 hours past its TTL expiry. Covers transient AEMO
+    outages without silently feeding the pipeline with arbitrarily old data.
     """
     return CachedSession(
         str(CACHE_PATH),
         backend="sqlite",
-        stale_if_error=True,
+        stale_if_error=7200,
         urls_expire_after={
             "*visualisations.aemo.com.au*": 300,
             "*nemweb.com.au*": 1800,
