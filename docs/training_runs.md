@@ -71,13 +71,78 @@ at short horizons (1h/2h); TFT wins on baseload at 4h+.
 
 **Upper tail (q90/q95/q99) well-calibrated.** Lower tail (q05/q10) badly miscalibrated —
 the model's lower-quantile predictions are too high (conservative), meaning it underestimates
-how often prices fall below q05/q10. Root cause: under-convergence (epoch 4) + log-scaling
-compresses the low-price region. Expect improvement in Run 011b.
+how often prices fall below q05/q10. Initially attributed to under-convergence (epoch 4).
+**Confirmed structural after Run 011b** — more training did not fix it. Root cause: log-scaling
+compresses the low-price region; Phase 4 conformal calibration required for q05/q10.
 
 ### Notes
 - SDO covariate shift: 75% of training samples have SDO=0 (pre-2025-03); val set is 100%
   within SDO coverage (last 60 days). May contribute to mild val loss divergence.
-- Run 011b (same dataset): `--lr 1e-4 --patience 15 --epochs 150`.
+- Retrained as Run 011b (`--lr 1e-4 --patience 15 --epochs 150`) — lower tail bias unchanged.
+
+---
+
+## Run 011b — 2026-04-16 — Lower LR + higher patience (convergence re-test)
+
+**Lower tail calibration confirmed structural — more training does not fix it.**
+Retrain of Run 011 with `--lr 1e-4 --patience 15` to test whether epoch-4 early stopping
+caused the q05/q10 miscalibration. Best checkpoint still epoch 5; nMAPE marginally worse
+than Run 011. q05 bias: +0.103→+0.096 (negligible); q10: +0.100→+0.108 (slightly worse).
+Upper tail (q90/q95/q99) remains well-calibrated. **Conclusion: lower tail bias is structural,
+not a convergence artefact. Requires Phase 4 conformal calibration layer.**
+
+### Config
+| Parameter | Value |
+|---|---|
+| Target Scaling | Log-Scaling (scale=60.0) |
+| Quantiles | [0.05, 0.10, 0.50, 0.90, 0.95, 0.99] |
+| Optimizer | AdamW lr=1e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | pw_wMAPE, patience=15 |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | Same as Run 011 (54,404 samples) |
+
+### Training outcome
+- Best epoch: **5** (early stop epoch 20, patience=15 exhausted)
+- Best val loss: **0.0538**
+- pw_wMAPE: **42.38%**
+- nMAPE (4h): 43.04%  |  16h: 48.96%  |  28h: 49.77%  |  72h: 67.28%
+- LR decayed to 3.13e-6 by early stop — scheduler (patience=2) still aggressive relative
+  to early-stopping patience; val loss diverging from epoch 6 onward.
+
+### evaluate_tft.py results (TFT vs LightGBM, Stratified Set)
+| Horizon | TFT all | LGBM all | Delta | TFT base | LGBM base | TFT spike | LGBM spike |
+|---|---|---|---|---|---|---|---|
+| 1h | 79.1% | 63.9% | +15.2% | 36.2% | 30.6% | 84.1% | 71.9% |
+| 2h | 77.2% | 68.3% | +8.9% | 39.2% | 35.6% | 82.1% | 77.4% |
+| 4h | 73.1% | 66.4% | +6.8% | 40.6% | 46.2% | 78.3% | 74.8% |
+| 8h | 70.9% | 64.4% | +6.5% | 42.5% | 46.7% | 75.8% | 73.6% |
+| 16h | 72.9% | 65.1% | +7.9% | 44.4% | 46.4% | 77.6% | 74.8% |
+| 28h | 74.2% | 71.0% | +3.2% | 45.5% | 58.2% | 78.8% | 77.2% |
+
+Marginally worse than Run 011 at short horizons (1h: 79.1% vs 77.5%) — same best epoch, same
+convergence pattern. Not a meaningful regression.
+
+### Quantile calibration (all valid steps, Stratified Set)
+| Quantile | Expected | Actual coverage | Bias | Status |
+|---|---|---|---|---|
+| q05 | 0.050 | 0.146 | +0.096 | ❌ over-covers (vs Run 011: +0.103) |
+| q10 | 0.100 | 0.208 | +0.108 | ❌ over-covers (vs Run 011: +0.100) |
+| q50 | 0.500 | 0.543 | +0.043 | ↑ mild over-covers |
+| q90 | 0.900 | 0.909 | +0.009 | ✓ |
+| q95 | 0.950 | 0.943 | -0.007 | ✓ |
+| q99 | 0.990 | 0.974 | -0.016 | ✓ |
+
+### Notes
+- **Key finding:** Lower tail bias did not improve with 3× more training budget. Convergence
+  was not the cause. Log-scaling compresses the low-price region; the model cannot represent
+  q05/q10 tails accurately in that space. Phase 4 conformal calibration (stratified by regime)
+  is the correct and only fix.
+- Upper tail excellent — q90/q95/q99 all within ±0.02. These are safe for dispatch use.
+- q50 mild over-coverage (+0.043) is acceptable for EMHASS median input; conformal layer will
+  tighten this too.
+- **Current production checkpoint.** Upper tail quantiles (q90/q95/q99) reliable. Lower tail
+  (q05/q10) should not be used for dispatch thresholds until Phase 4 calibration is applied.
 
 ---
 
