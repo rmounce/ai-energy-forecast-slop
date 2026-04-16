@@ -255,10 +255,11 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 **Data pipeline (Tier 1 tactical — Phase 2):**
 1. `ingest/backfill_p5min_nemseer.py` → P5MIN forecasts 2024-04 → 2026-03 (run once; NEMSEER + direct ARCHIVE)
 2. `data/export_parquet.py --p5min` → `actuals_sa1_5m.parquet` (raw 5-min dispatch prices)
-3. `data/build_tactical_dataset.py` → (TODO) numpy arrays for Tier 1 LightGBM
-4. `train/train_lgbm_tactical.py` → (TODO) multi-output LightGBM, q5/50/95
+3. `data/build_stratified_eval_tactical.py` → fixed 1,600-sample benchmark index (500 spike ≥$300, 300 low/negative, 800 seasonal normal; run once)
+4. `data/build_tactical_dataset.py` → numpy arrays for Tier 1 LightGBM; X [210k, 24], y [210k, 12], long-format 2.2M rows after horizon expansion
+5. `train/train_lgbm_tactical.py` → 3 LightGBM quantile models (q5/q50/q95), long-format with horizon as feature
 
-**Status (2026-04-16):** Run 011b complete. Upper tail (q90/q95/q99) well-calibrated — safe for spike defence automation. Lower tail (q05/q10) bias structural (+0.096/+0.108) — requires Phase 4 conformal calibration before dispatch use. Phase 2 data backfill complete; next: `build_tactical_dataset.py`.
+**Status (2026-04-16):** Phase 2 complete. LightGBM Tactical Run 001 done — 31.4% MAE reduction on val set, 41.4% on stratified eval. q95 spike under-coverage (0.857 vs 0.950) is structural; Phase 4 conditional conformal calibration is the fix. Next: Phase 3 offline LP backtester / dispatch simulator.
 
 ---
 
