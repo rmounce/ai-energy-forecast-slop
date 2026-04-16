@@ -288,6 +288,28 @@ def main():
 
     # ── Train/val split ───────────────────────────────────────────────────────
     train_mask, val_mask = split_by_time(run_times)
+
+    # ── Stratified eval hold-out (excluded from train and val) ───────────────
+    strat_path = PARQUET_DIR / "stratified_eval_run_times_tactical.npy"
+    test_mask  = np.zeros(len(run_times), dtype=bool)
+    if strat_path.exists():
+        strat_rt    = np.load(strat_path)                        # datetime64[ns]
+        strat_set   = set(strat_rt.view(np.int64).tolist())
+        rt_int64    = run_times.view(np.int64)
+        for i, rt in enumerate(rt_int64):
+            if int(rt) in strat_set:
+                test_mask[i]  = True
+                train_mask[i] = False
+                val_mask[i]   = False
+        n_found   = test_mask.sum()
+        n_missing = len(strat_rt) - n_found
+        print(f"\nStratified eval hold-out: {n_found:,} samples excluded from train/val")
+        if n_missing:
+            print(f"  ({n_missing} run_times in stratified file not found in dataset)")
+    else:
+        print(f"\nNo stratified eval file found ({strat_path.name}).")
+        print("  Run data/build_stratified_eval_tactical.py, then rebuild to exclude hold-out.")
+
     n_train, n_val = train_mask.sum(), val_mask.sum()
     rts = pd.DatetimeIndex(run_times)
     print(f"\nTrain/val split (last {VAL_DAYS} days = val, {TRAIN_GAP_H}h gap):")
@@ -296,6 +318,7 @@ def main():
 
     train_idx = np.where(train_mask)[0]
     val_idx   = np.where(val_mask)[0]
+    test_idx  = np.where(test_mask)[0]
 
     # ── Target stats ──────────────────────────────────────────────────────────
     valid_train_rrp = y[train_mask][y_mask[train_mask]]
@@ -310,7 +333,7 @@ def main():
     np.save(PARQUET_DIR / "y_tactical_mask.npy",     y_mask)
     np.save(PARQUET_DIR / "run_times_tactical.npy",  run_times)
     np.savez(PARQUET_DIR / "split_indices_tactical.npz",
-             train=train_idx, val=val_idx)
+             train=train_idx, val=val_idx, test=test_idx)
 
     meta = {
         "output_steps":   OUTPUT_STEPS,
@@ -319,6 +342,7 @@ def main():
         "n_samples":      int(N),
         "n_train":        int(n_train),
         "n_val":          int(n_val),
+        "n_test_stratified": int(test_mask.sum()),
         "val_days":       VAL_DAYS,
         "train_gap_hours": TRAIN_GAP_H,
         "run_time_min":   str(pd.Timestamp(run_times[0])),
@@ -335,8 +359,10 @@ def main():
     with open(PARQUET_DIR / "tactical_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
+    n_test = test_mask.sum()
+    test_s = f", {n_test:,} stratified eval" if n_test else ""
     print(f"\n=== Tactical dataset build complete ===")
-    print(f"  {N:,} samples ({n_train:,} train, {n_val:,} val)")
+    print(f"  {N:,} samples ({n_train:,} train, {n_val:,} val{test_s})")
     print(f"  Files saved to {PARQUET_DIR}/")
     print(f"    X_tactical.npy          {X.nbytes / 1e6:.1f} MB")
     print(f"    y_tactical.npy          {y.nbytes / 1e6:.1f} MB")
