@@ -1,0 +1,72 @@
+{
+  "n_comparison_runs": 130,
+  "note": "TFT uses step-hold: TFT 30-min step 0 q50 held for 5-min intervals 0-5, step 1 q50 for intervals 6-11. Comparison set = tactical stratified eval runs at 30-min boundaries that exist in TFT run_times.",
+  "strata_counts": {
+    "spike": 36,
+    "low": 56,
+    "normal": 38,
+    "all": 130
+  },
+  "results_by_stratum": {
+    "spike": {
+      "n": 36,
+      "mean_revenue": {
+        "oracle": 2.6185098301128114,
+        "p5min": 2.512676264462648,
+        "lgbm_q50": 2.6125657367618,
+        "tft_q50": 2.6125657367618
+      },
+      "mean_regret_vs_oracle": {
+        "p5min": 0.10583356565016287,
+        "lgbm_q50": 0.00594409335101092,
+        "tft_q50": 0.00594409335101092
+      },
+      "lgbm_vs_tft_revenue": 0.0
+    },
+    "low": {
+      "n": 56,
+      "mean_revenue": {
+        "oracle": 0.038509599538076485,
+        "p5min": -0.019195618932586513,
+        "lgbm_q50": -0.008902003161749841,
+        "tft_q50": -0.0099494147137517
+      },
+      "mean_regret_vs_oracle": {
+        "p5min": 0.057705218470663,
+        "lgbm_q50": 0.047411602699826326,
+        "tft_q50": 0.04845901425182819
+      },
+      "lgbm_vs_tft_revenue": 0.001047411552001859
+    },
+    "normal": {
+      "n": 38,
+      "mean_revenue": {
+        "oracle": 0.5007570419102384,
+        "p5min": 0.4529636108226944,
+        "lgbm_q50": 0.4677016231992789,
+        "tft_q50": 0.4651287310144358
+      },
+      "mean_regret_vs_oracle": {
+        "p5min": 0.0477934310875441,
+        "lgbm_q50": 0.03305541871095959,
+        "tft_q50": 0.03562831089580268
+      },
+      "lgbm_vs_tft_revenue": 0.0025728921848430786
+    },
+    "all": {
+      "n": 130,
+      "mean_revenue": {
+        "oracle": 0.8880896850060194,
+        "p5min": 0.8199539082437913,
+        "lgbm_q50": 0.8563578155995338,
+        "tft_q50": 0.8551545467538711
+      },
+      "mean_regret_vs_oracle": {
+        "p5min": 0.0681357767622282,
+        "lgbm_q50": 0.03173186940648563,
+        "tft_q50": 0.032935138252148256
+      },
+      "lgbm_vs_tft_revenue": 0.001203268845662686
+    }
+  }
+}

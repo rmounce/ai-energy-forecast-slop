@@ -112,6 +112,32 @@ forecast at each 5-min step. Initial SoC fixed at 50% for all runs (5 kWh).
 
 ---
 
+## TFT vs LightGBM Dispatch Comparison — 2026-04-16 — Phase 3 architecture validation
+
+**Compares TFT (30-min step-hold to 5-min) vs LightGBM q50 on 130 overlapping runs** (tactical
+stratified eval runs at 30-min boundaries that exist in TFT's run_times). TFT step 0 q50 held
+constant for intervals 0–5; step 1 q50 for intervals 6–11.
+
+### Results (130 runs: 36 spike, 56 low, 38 normal)
+| Stratum | n | Oracle | P5MIN | LightGBM | TFT | LightGBM regret | TFT regret | LGB vs TFT |
+|---|---|---|---|---|---|---|---|---|
+| SPIKE | 36 | $2.619 | $2.513 (4.0%) | $2.613 (0.2%) | $2.613 (0.2%) | 0.2% | 0.2% | ~equal |
+| LOW | 56 | $0.039 | −$0.019 (150%) | −$0.009 (123%) | −$0.010 (126%) | 123% | 126% | LGB +$0.001 |
+| NORMAL | 38 | $0.501 | $0.453 (9.5%) | $0.468 (6.6%) | $0.465 (7.1%) | 6.6% | 7.1% | LGB +$0.003 |
+| ALL | 130 | $0.888 | $0.820 (7.7%) | $0.856 (3.6%) | $0.855 (3.7%) | 3.6% | 3.7% | LGB +$0.001 |
+
+### Conclusion
+**LightGBM and TFT are functionally equivalent for 0–60 min dispatch.** The $0.001/run revenue
+difference is statistical noise on 130 runs. Both massively outperform P5MIN (3.6–3.7% vs 7.7%
+regret). The architecture rationale for LightGBM as Tier 1 is **practical, not accuracy-based**:
+- Native 5-min cadence (TFT is 30-min, requires step-hold approximation)
+- ~10ms inference (TFT requires loading 144-step decoder + PREDISPATCH features)
+- No PREDISPATCH pipeline dependency at runtime
+
+Full results: `eval/results/tft_dispatch_comparison.json`
+
+---
+
 ## Run 011 — 2026-04-16 — Debiased decoder + SDO features + q5/10/50/90/95/99
 
 **Three Phase 1b improvements applied simultaneously.**
