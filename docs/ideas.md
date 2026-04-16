@@ -125,6 +125,18 @@ zero-padded beyond the PREDISPATCH horizon.
 
 ## Infrastructure
 
+### UTC-first timezone handling
+
+The codebase mixes timezone conventions in a way that creates recurring train/inference skew:
+- `time_sin_cos()` hardcodes `"Australia/Brisbane"` (UTC+10, no DST)
+- `build_load_dataset.py` uses `"Australia/Adelaide"` (UTC+9:30 / UTC+10:30)
+- `add_time_features()` uses `CONFIG['timezone']` = Adelaide
+- InfluxDB stores timestamps in UTC; pandas operations can silently shift on DST boundaries
+
+The right fix is to standardise on UTC throughout — compute all time features from UTC timestamps directly (e.g. `hour = (utc_hour * 60 + utc_minute) / 60.0` mapped to local-hour via a fixed offset), and only convert to local time at the display/publish boundary. This removes DST as a source of train/inference feature skew entirely.
+
+Not urgent while models are in shadow mode, but should be resolved before any model is promoted to primary. The load TFT `_time_sin_cos_local()` workaround is a stopgap.
+
 ### APScheduler pipeline service
 
 Replace the predict/train/Parquet-rebuild systemd timers with a single

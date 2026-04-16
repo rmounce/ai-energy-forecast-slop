@@ -1301,6 +1301,19 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     return res
 
 
+def _time_sin_cos_local(timestamps):
+    """Like time_sin_cos() but uses Australia/Adelaide — matches build_load_dataset.py training."""
+    t = timestamps.tz_convert("Australia/Adelaide")
+    return pd.DataFrame({
+        "hour_sin":  np.sin(2 * np.pi * t.hour / 24),
+        "hour_cos":  np.cos(2 * np.pi * t.hour / 24),
+        "dow_sin":   np.sin(2 * np.pi * t.dayofweek / 7),
+        "dow_cos":   np.cos(2 * np.pi * t.dayofweek / 7),
+        "month_sin": np.sin(2 * np.pi * (t.month - 1) / 12),
+        "month_cos": np.cos(2 * np.pi * (t.month - 1) / 12),
+    }, index=timestamps)
+
+
 def _execute_tft_load_prediction(historical_df, future_covariates_df):
     """
     TFT Load Inference: shadow branch for household load forecasting.
@@ -1380,7 +1393,7 @@ def _execute_tft_load_prediction(historical_df, future_covariates_df):
     # Ensure PV gaps are zero (night = no generation)
     hist["power_pv"] = hist.get("power_pv", pd.Series(0.0, index=hist.index)).fillna(0.0)
 
-    hist = pd.concat([hist, time_sin_cos(hist.index)], axis=1)
+    hist = pd.concat([hist, _time_sin_cos_local(hist.index)], axis=1)
     hist = add_time_features(hist)
 
     # Fill any data gaps before scaling
@@ -1420,7 +1433,7 @@ def _execute_tft_load_prediction(historical_df, future_covariates_df):
     })
     fut["power_pv"] = fut.get("power_pv", pd.Series(0.0, index=fut.index)).fillna(0.0)
 
-    fut = pd.concat([fut, time_sin_cos(fut.index)], axis=1)
+    fut = pd.concat([fut, _time_sin_cos_local(fut.index)], axis=1)
     fut = add_time_features(fut)
     fut["horizon_norm"] = np.arange(len(fut)) / 144.0
 
