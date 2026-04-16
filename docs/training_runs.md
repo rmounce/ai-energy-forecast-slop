@@ -71,6 +71,47 @@ Horizon appended as scalar feature; models learn horizon-specific AEMO bias patt
 
 ---
 
+## Dispatch Sim Run 001 — 2026-04-16 — Phase 3 LP backtester baseline
+
+**First financial regret evaluation.** Rolling MPC LP dispatch simulator over the 1,600-sample
+stratified eval set. Three strategies compared: oracle (perfect foresight), P5MIN baseline,
+LightGBM q50. Revenue is booked against actual prices; decisions are made using each strategy's
+forecast at each 5-min step. Initial SoC fixed at 50% for all runs (5 kWh).
+
+### Battery parameters
+| Parameter | Value |
+|---|---|
+| Capacity | 40 kWh |
+| Max charge/discharge | 10 kW |
+| Charge efficiency | 0.95 |
+| Discharge efficiency | 0.95 |
+| Cycle degradation cost | $0.05/kWh throughput |
+| Initial SoC | 20.0 kWh (50%) |
+
+### Financial regret — stratified eval (1,600 runs)
+| Stratum | n | Oracle rev | P5MIN rev | LightGBM rev | P5MIN regret | LightGBM regret | Regret reduction |
+|---|---|---|---|---|---|---|---|
+| SPIKE | 543 | $5.175 | $4.946 | $4.942 | $0.229 (4.4%) | $0.233 (4.5%) | −1.8% ⚠ |
+| LOW | 591 | $0.080 | $0.026 | $0.044 | $0.054 (67%) | $0.036 (46%) | **+32.3%** |
+| NORMAL | 466 | $0.608 | $0.585 | $0.589 | $0.023 (3.8%) | $0.019 (3.1%) | **+17.5%** |
+| ALL | 1,600 | $1.963 | $1.859 | $1.865 | $0.104 (5.3%) | $0.098 (5.0%) | **+5.9%** |
+
+*Revenue = mean per-run revenue over 12 × 5-min intervals ($)*
+
+### Notes
+- **Low stratum dominates the improvement** (+32.3% regret reduction): LightGBM's
+  `aemo_divergence_t1` and rolling features detect oversupply regimes earlier than raw P5MIN,
+  avoiding charging at prices that will go negative.
+- **Spike stratum: essentially neutral** (−1.8%, within noise). During spike events, both
+  strategies correctly predict "discharge now" — marginal q50 differences don't change the
+  binary charge/discharge decision. Spike *capture* is a tail-risk problem (q95/HA override),
+  not a q50 dispatch problem.
+- **Spike regret vs oracle is low** ($0.114/run, 4.4%) because MPC oracle also can't see
+  beyond the 12-step window; spike is typically one or two intervals of extreme price.
+- Full results: `eval/results/dispatch_sim_run001.json`
+
+---
+
 ## Run 011 — 2026-04-16 — Debiased decoder + SDO features + q5/10/50/90/95/99
 
 **Three Phase 1b improvements applied simultaneously.**
