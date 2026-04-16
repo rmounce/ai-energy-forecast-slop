@@ -11,6 +11,21 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
+## Load TFT Run 001 — 2026-04-17 — Initial TFT load model (IN PROGRESS)
+
+**Shadow implementation.** Replaces Darts/LightGBM load model's manual lag engineering
+with TFT attention. 72h forecast at 30-min resolution. Trained with horizon-weighted
+quantile loss (tau=24 steps / 12h) so short-horizon accuracy (0–24h) dominates.
+
+**Config:** `train/train_tft_load.py --epochs 100 --batch-size 512 --horizon-decay 24`
+**Dataset:** 75,073 samples (75k rows / 4.3y), 13 enc + 13 dec features, 90d val split
+**Model:** d_model=64, 4 heads, 2 LSTM layers, 189k params, q10/q50/q90
+**Shadow entities:** `sensor.ai_tft_load_forecast` / `_low` / `_high`
+
+*Results TBD — training in progress.*
+
+---
+
 ## Conformal Calibration Run 001 — 2026-04-16 — Phase 4 conditional conformal for Tier 1
 
 **Per-regime additive corrections for q05 and q95.** Calibrated on val set (17,175 runs),
