@@ -1300,6 +1300,166 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     logging.info(f"TFT Parallel Inference complete. Steps: {len(preds_raw)}")
     return res
 
+
+def _execute_tft_load_prediction(historical_df, future_covariates_df):
+    """
+    TFT Load Inference: shadow branch for household load forecasting.
+
+    Encoder: last 96 steps (48h) of historical load, PV, weather + calendar features.
+    Decoder: 144 steps (72h) of weather forecast, PV forecast, calendar features.
+    Returns: {'tft_load': df_q50, 'tft_load_q10': df_q10, 'tft_load_q90': df_q90}
+    with 'power_load' column in Watts.
+    """
+    import pickle as _pickle
+    import torch as _torch
+
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent / "train"))
+        from train_tft_load import TFTLoadModel
+    except ImportError:
+        logging.warning("TFTLoadModel could not be imported. Load TFT shadow mode disabled.")
+        return {}
+
+    logging.info("--- Executing TFT Load Shadow Inference ---")
+
+    paths = CONFIG['paths']
+    try:
+        model_path = Path(paths.get('tft_load_model', 'models/tft_load/checkpoint_best.pt'))
+        if not model_path.exists():
+            logging.warning(f"TFT Load model not found at {model_path}. Shadow mode skipped.")
+            return {}
+
+        ckpt   = _torch.load(model_path, map_location="cpu", weights_only=False)
+        m_cfg  = ckpt["model_config"]
+        model  = TFTLoadModel(
+            n_enc=m_cfg["n_enc"], n_dec=m_cfg["n_dec"],
+            n_quantiles=m_cfg.get("n_quantiles", 3),
+            d_model=m_cfg.get("d_model", 64),
+            n_heads=m_cfg.get("n_heads", 4),
+            n_lstm_layers=m_cfg.get("n_lstm_layers", 2),
+            dropout=0.0,
+        )
+        model.load_state_dict(ckpt["model_state"])
+        model.eval()
+
+        scalers_path = Path(paths.get('tft_load_scalers', 'data/parquet/load_scalers.pkl'))
+        with open(scalers_path, "rb") as f:
+            scalers = _pickle.load(f)
+    except Exception as e:
+        logging.error(f"Failed to load TFT load model or scalers: {e}")
+        return {}
+
+    meta      = ckpt.get("meta", {})
+    quantiles = ckpt.get("quantiles", [0.10, 0.50, 0.90])
+
+    ENC_FEATURES = meta.get("enc_feature_names", [
+        "power_load", "power_pv", "temp", "humidity", "wind_speed",
+        "is_public_holiday", "is_daylight_saving_time",
+        "hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos",
+    ])
+    DEC_FEATURES = meta.get("dec_feature_names", [
+        "temp", "humidity", "wind_speed", "power_pv",
+        "is_public_holiday", "is_daylight_saving_time", "horizon_norm",
+        "hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos",
+    ])
+
+    # ── 1. Encoder (last 96 steps of history)
+    hist = historical_df.tail(96).copy()
+    if len(hist) < 96:
+        full_idx = pd.date_range(end=hist.index.max(), periods=96, freq="30min")
+        hist = hist.reindex(full_idx).bfill().ffill()
+
+    # Rename to match training feature names
+    hist = hist.rename(columns={
+        "temperature_adelaide": "temp",
+        "humidity_adelaide":    "humidity",
+        "wind_speed_adelaide":  "wind_speed",
+    })
+    # power_load in historical_df is already dump-load-corrected (get_historical_data subtracts it)
+    # Ensure PV gaps are zero (night = no generation)
+    hist["power_pv"] = hist.get("power_pv", pd.Series(0.0, index=hist.index)).fillna(0.0)
+
+    hist = pd.concat([hist, time_sin_cos(hist.index)], axis=1)
+    hist = add_time_features(hist)
+
+    # Fill any data gaps before scaling
+    for feat in ENC_FEATURES:
+        if feat not in hist.columns:
+            hist[feat] = 0.0
+    hist[ENC_FEATURES] = hist[ENC_FEATURES].ffill().bfill().fillna(0.0)
+
+    def _scale(val, feat):
+        sc = scalers.get(feat)
+        if sc is None:
+            return val
+        if np.isscalar(val):
+            return float(sc.transform(np.array([[val]]))[0, 0])
+        return sc.transform(np.array(val).reshape(-1, 1)).flatten()
+
+    X_enc = np.zeros((96, len(ENC_FEATURES)), dtype=np.float32)
+    for j, feat in enumerate(ENC_FEATURES):
+        X_enc[:, j] = _scale(hist[feat].values, feat)
+
+    # ── 2. Decoder (next 144 steps of future covariates)
+    now_utc = datetime.now(pytz.UTC)
+    start_t = now_utc.replace(minute=30 if now_utc.minute >= 30 else 0, second=0, microsecond=0)
+    fut = future_covariates_df[future_covariates_df.index >= start_t].head(144).copy()
+    if len(fut) < 144:
+        # Pad with last known values if forecast horizon is short
+        needed = 144 - len(fut)
+        last_t = fut.index[-1] if not fut.empty else start_t
+        pad_idx = pd.date_range(last_t + pd.Timedelta("30min"), periods=needed, freq="30min")
+        fut = pd.concat([fut, pd.DataFrame(index=pad_idx)])
+        fut = fut.ffill().bfill()
+
+    fut = fut.rename(columns={
+        "temperature_adelaide": "temp",
+        "humidity_adelaide":    "humidity",
+        "wind_speed_adelaide":  "wind_speed",
+    })
+    fut["power_pv"] = fut.get("power_pv", pd.Series(0.0, index=fut.index)).fillna(0.0)
+
+    fut = pd.concat([fut, time_sin_cos(fut.index)], axis=1)
+    fut = add_time_features(fut)
+    fut["horizon_norm"] = np.arange(len(fut)) / 144.0
+
+    for feat in DEC_FEATURES:
+        if feat not in fut.columns:
+            fut[feat] = 0.0
+    fut[DEC_FEATURES] = fut[DEC_FEATURES].ffill().bfill().fillna(0.0)
+
+    X_dec = np.zeros((144, len(DEC_FEATURES)), dtype=np.float32)
+    for j, feat in enumerate(DEC_FEATURES):
+        X_dec[:, j] = _scale(fut[feat].values[:144], feat)
+
+    # ── 3. Inference
+    with _torch.no_grad():
+        t_enc     = _torch.tensor(X_enc).unsqueeze(0)
+        t_dec     = _torch.tensor(X_dec).unsqueeze(0)
+        preds_norm = model(t_enc, t_dec).squeeze(0).numpy()  # [144, Q]
+    preds_norm = np.sort(preds_norm, axis=-1)
+
+    # Inverse-transform: StandardScaler on power_load
+    load_sc    = scalers["power_load"]
+    preds_W    = load_sc.inverse_transform(
+        preds_norm.reshape(-1, 1)
+    ).reshape(preds_norm.shape).clip(min=0.0)            # [144, Q]
+
+    # ── 4. Format return
+    dec_index = fut.index[:144]
+    q_names   = ["tft_load_q10", "tft_load", "tft_load_q90"]
+    res = {}
+    for i, q_name in enumerate(q_names):
+        res[q_name] = pd.DataFrame(
+            {"power_load": preds_W[:, i].tolist()},
+            index=dec_index,
+        )
+
+    logging.info(f"TFT Load Inference complete. q50 median={np.median(preds_W[:, 1]):.0f}W")
+    return res
+
+
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
     WORKER: Executes prediction for a model type (e.g. 'price' or 'load'),
@@ -1400,15 +1560,22 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         if forecasts:
             all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
 
-    # 2b. Execute TFT Shadow Model in parallel (Sandboxed)
+    # 2b. Execute TFT Shadow Models (Sandboxed — existing forecasts are safe on failure)
     if 'price' in models_to_run:
         try:
             tft_results = _execute_tft_prediction(historical_df, adjusted_covariates_for_prediction)
             if tft_results:
-                # Merge into all_results so publishing/logging picks it up
                 all_results['tft_price'] = {'forecasts': tft_results, 'type': 'tft_pytorch'}
         except Exception as e:
-            logging.error(f"FATAL ERROR in TFT Shadow Model execution (existing forecasts are SAFE): {e}", exc_info=True)
+            logging.error(f"FATAL ERROR in TFT Price shadow execution: {e}", exc_info=True)
+
+    if 'load' in models_to_run:
+        try:
+            tft_load_results = _execute_tft_load_prediction(historical_df, adjusted_covariates_for_prediction)
+            if tft_load_results:
+                all_results['tft_load'] = {'forecasts': tft_load_results, 'type': 'tft_pytorch'}
+        except Exception as e:
+            logging.error(f"FATAL ERROR in TFT Load shadow execution: {e}", exc_info=True)
 
     # 3. Process and SAVE all collected results (This part is unchanged)
     try:
