@@ -350,8 +350,18 @@ def main():
         "strat_results":       strat_results,
     }
     meta_path = MODEL_DIR / "training_meta.json"
+
+    def _json_default(obj):
+        if isinstance(obj, (np.floating, np.float32, np.float64)):
+            return float(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        raise TypeError(f"Not JSON serializable: {type(obj)}")
+
     with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
+        json.dump(meta, f, indent=2, default=_json_default)
     print(f"  Metadata: {meta_path}")
 
     print("\n=== Training complete ===")
