@@ -11,18 +11,31 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
-## Load TFT Run 001 — 2026-04-17 — Initial TFT load model (IN PROGRESS)
+## Load TFT Run 001 — 2026-04-17 — Initial TFT load model
 
 **Shadow implementation.** Replaces Darts/LightGBM load model's manual lag engineering
 with TFT attention. 72h forecast at 30-min resolution. Trained with horizon-weighted
 quantile loss (tau=24 steps / 12h) so short-horizon accuracy (0–24h) dominates.
 
 **Config:** `train/train_tft_load.py --epochs 100 --batch-size 512 --horizon-decay 24`
-**Dataset:** 75,073 samples (75k rows / 4.3y), 13 enc + 13 dec features, 90d val split
+**Dataset:** 75,073 samples (continuous 30-min stride, 4.3y), 13 enc + 13 dec features, 90d val split
 **Model:** d_model=64, 4 heads, 2 LSTM layers, 189k params, q10/q50/q90
 **Shadow entities:** `sensor.ai_tft_load_forecast` / `_low` / `_high`
 
-*Results TBD — training in progress.*
+### Results (best epoch 7 / early stop at 14)
+| Metric | Value |
+|---|---|
+| wMAE (horizon-weighted) | **224.7 W** |
+| MAE 0–24h | 226.2 W |
+| MAE 24–48h | 228.7 W |
+| MAE 48–72h | 226.7 W |
+| Val loss | 0.1385 |
+
+### Notes
+- Training time ~158s/epoch (75k samples × stride 1 — highly autocorrelated).
+- Epoch-to-epoch wMAE improvement was small after epoch 4; model converges quickly.
+- Run 002 planned: stride=4 subsampling (~19k samples) + vectorised scaling for faster iteration.
+- No comparison vs LightGBM baseline yet — see `eval/compare_load_forecast.py` (planned).
 
 ---
 
