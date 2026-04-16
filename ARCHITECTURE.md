@@ -242,7 +242,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 - Stratified eval benchmark: 900 fixed samples (spike + low/negative + seasonal normal) for durable cross-run comparison
 - Quantiles: q5/q10/q50/q90/q95/q99
 
-**Data pipeline:**
+**Data pipeline (Tier 2 TFT):**
 1. `ingest/ingest-predispatch.py`, `ingest/ingest-pd7day.py`, `ingest/ingest-sevendayoutlook.py`, `ingest/ingest-p5min.py` → InfluxDB (ongoing, systemd timers)
 2. `ingest/backfill_predispatch_nemseer.py` → PREDISPATCH parquet back to 2022 (run once; ~2 min from cache)
 3. `data/export_parquet.py` → SA1/VIC1/NSW1 PREDISPATCH + actuals + 5m volatility agg + SevenDayOutlook (use `--actuals-only` for routine refreshes to preserve NEMSEER backfill)
@@ -252,7 +252,13 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 7. `train/train_tft_price.py` → model checkpoint at `models/tft_price/`
 8. `train/evaluate_tft.py --eval-set stratified` → nMAPE (all/base/spike) + quantile calibration vs LightGBM
 
-**Status (2026-04-16):** Run 010 in production shadow mode (q30/50/70). **Run 011b training** (OOF debiased decoder + SDO features + q5/10/50/90/95/99; lr=1e-4, patience=15). Run 011 eval showed nMAPE 1–2pp better than Run 010; upper quantile calibration excellent; lower tail (q05/q10) needs 011b convergence to confirm.
+**Data pipeline (Tier 1 tactical — Phase 2):**
+1. `ingest/backfill_p5min_nemseer.py` → P5MIN forecasts 2024-04 → 2026-03 (run once; NEMSEER + direct ARCHIVE)
+2. `data/export_parquet.py --p5min` → `actuals_sa1_5m.parquet` (raw 5-min dispatch prices)
+3. `data/build_tactical_dataset.py` → (TODO) numpy arrays for Tier 1 LightGBM
+4. `train/train_lgbm_tactical.py` → (TODO) multi-output LightGBM, q5/50/95
+
+**Status (2026-04-16):** Run 011b complete. Upper tail (q90/q95/q99) well-calibrated — safe for spike defence automation. Lower tail (q05/q10) bias structural (+0.096/+0.108) — requires Phase 4 conformal calibration before dispatch use. Phase 2 data backfill complete; next: `build_tactical_dataset.py`.
 
 ---
 
