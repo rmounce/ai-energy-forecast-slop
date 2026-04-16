@@ -292,6 +292,42 @@ def export_actuals(client):
     return dispatch
 
 
+def export_actuals_5m(client):
+    """
+    Export raw 5-minute actual dispatch prices for SA1.
+
+    Used as targets and lag features for the Tier 1 tactical LightGBM model.
+    Schema: time (UTC index), rrp, total_demand, net_interchange.
+    Coverage: 2024-04-01 onwards (backfill) + live from 2024-03-31.
+    """
+    print("\nExporting 5-min actual dispatch prices...")
+    df = query_batched(
+        client,
+        measurement="rp_5m.aemo_dispatch_sa1_5m",
+        fields=["price", "total_demand", "net_interchange"],
+        start_time=ACTUALS_START,
+    )
+    if df.empty:
+        print("  SKIP: no 5m data")
+        return None
+
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    df = df.sort_values("time").set_index("time")
+    df.rename(columns={"price": "rrp"}, inplace=True)
+    df = df[["rrp", "total_demand", "net_interchange"]].copy()
+    df["rrp"]             = pd.to_numeric(df["rrp"],             errors="coerce")
+    df["total_demand"]    = pd.to_numeric(df["total_demand"],    errors="coerce")
+    df["net_interchange"] = pd.to_numeric(df["net_interchange"], errors="coerce")
+
+    out = OUT_DIR / "actuals_sa1_5m.parquet"
+    df.to_parquet(out, compression="snappy")
+    size_kb = out.stat().st_size / 1024
+    print(f"  Written: {out} ({size_kb:.0f}KB)")
+    print(f"  time range: {df.index.min()} → {df.index.max()}")
+    print(f"  rows: {len(df):,}")
+    return df
+
+
 def export_actuals_5m_agg(client):
     """
     Compute 5-minute price volatility aggregates per 30-minute dispatch interval.
@@ -357,6 +393,8 @@ def main():
                         help="Re-export only actuals_sa1.parquet (preserves backfilled PREDISPATCH)")
     parser.add_argument("--actuals-5m", action="store_true",
                         help="Re-export actuals_sa1.parquet + actuals_sa1_5m_agg.parquet only")
+    parser.add_argument("--p5min", action="store_true",
+                        help="Export actuals_sa1_5m.parquet only (raw 5-min prices for Tier 1)")
     args = parser.parse_args()
 
     print("=== Parquet export from InfluxDB ===")
@@ -366,7 +404,10 @@ def main():
     client = influx_client(cfg)
     print(f"Connected to InfluxDB: {cfg['influxdb']['host']}:{cfg['influxdb'].get('port', 8086)}")
 
-    if args.actuals_only:
+    if args.p5min:
+        print("(--p5min: exporting raw 5-min actuals only)")
+        export_actuals_5m(client)
+    elif args.actuals_only:
         print("(--actuals-only: skipping PREDISPATCH, PD7Day, SevenDayOutlook)")
         export_actuals(client)
     elif args.actuals_5m:
@@ -380,6 +421,7 @@ def main():
         export_pd7day(client)
         export_sevendayoutlook(client)
         export_actuals(client)
+        export_actuals_5m(client)
         export_actuals_5m_agg(client)
 
     print("\n=== Export complete ===")
