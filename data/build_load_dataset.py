@@ -31,7 +31,7 @@ Decoder features (13):
 
 Usage:
   python data/build_load_dataset.py
-  python data/build_load_dataset.py --val-days 90
+  python data/build_load_dataset.py --val-days 90 --stride 4
 """
 
 import argparse
@@ -109,19 +109,21 @@ def build_scalers(df, feature_cols):
     return scalers
 
 
-def apply_scalers(arr, feature_list, scalers):
-    """Scale a 2-D array [T, F] in-place using per-feature scalers.
+def apply_scalers_batch(arr, feature_list, scalers):
+    """Scale a 3-D array [N, T, F] in-place using per-feature scalers.
+    Operates column-wise across all samples at once (vectorised).
     NaN values are filled with the feature mean before scaling (= 0 after scaling).
     """
+    N, T, _ = arr.shape
     for i, feat in enumerate(feature_list):
         sc = scalers.get(feat)
         if sc is not None:
-            vals = arr[:, i]
-            nan_mask = np.isnan(vals)
+            col = arr[:, :, i].reshape(-1)          # [N*T]
+            nan_mask = np.isnan(col)
             if nan_mask.any():
-                vals = vals.copy()
-                vals[nan_mask] = float(sc.mean_[0])  # mean → 0 after scaling
-            arr[:, i] = sc.transform(vals.reshape(-1, 1)).flatten()
+                col = col.copy()
+                col[nan_mask] = float(sc.mean_[0])  # mean → 0 after scaling
+            arr[:, :, i] = sc.transform(col.reshape(-1, 1)).reshape(N, T)
     return arr
 
 
@@ -131,6 +133,9 @@ def main():
                         help="Number of days to hold out as validation (default 90)")
     parser.add_argument("--min-valid-frac", type=float, default=0.80,
                         help="Minimum fraction of valid (non-NaN) decoder steps to keep a sample")
+    parser.add_argument("--stride", type=int, default=4,
+                        help="Step between sequence start points (default 4 = every 2h). "
+                             "Use 1 for dense (original) dataset.")
     args = parser.parse_args()
 
     if not IN_FILE.exists():
@@ -166,11 +171,13 @@ def main():
             print(f"  {feat:<30} mean={mean:>8.2f}  std={std:>8.2f}")
 
     # ── Sliding window construction
-    times  = df.index.values                       # [N_total] datetime64
-    n      = len(times)
-    n_samp = n - ENC_STEPS - DEC_STEPS + 1
+    times   = df.index.values                      # [N_total] datetime64
+    n       = len(times)
+    n_total = n - ENC_STEPS - DEC_STEPS + 1
+    starts  = np.arange(0, n_total, args.stride)
+    n_samp  = len(starts)
 
-    print(f"\nBuilding {n_samp:,} samples (window {ENC_STEPS}+{DEC_STEPS} steps)...")
+    print(f"\nBuilding {n_samp:,} samples (window {ENC_STEPS}+{DEC_STEPS} steps, stride={args.stride})...")
 
     # Pre-extract arrays for each feature (avoid repeated pandas lookups)
     load_raw = df["power_load"].values.astype(np.float32)
@@ -196,7 +203,7 @@ def main():
     valid_count = 0
     keep        = np.ones(n_samp, dtype=bool)
 
-    for s in range(n_samp):
+    for idx, s in enumerate(starts):
         enc_start = s
         enc_end   = s + ENC_STEPS
         dec_start = enc_end
@@ -208,27 +215,27 @@ def main():
         valid_frac = msk.sum() / DEC_STEPS
 
         if valid_frac < args.min_valid_frac:
-            keep[s] = False
+            keep[idx] = False
             continue
 
-        y_raw_all[s]  = np.where(msk, tgt, 0.0)
-        y_mask_all[s] = msk
-        run_times[s]  = times[dec_start]
+        y_raw_all[idx]  = np.where(msk, tgt, 0.0)
+        y_mask_all[idx] = msk
+        run_times[idx]  = times[dec_start]
 
         # Encoder
         for j, feat in enumerate(ENC_FEATURES):
             arr = enc_arrs[feat]
-            X_enc_all[s, :, j] = arr[enc_start:enc_end]
+            X_enc_all[idx, :, j] = arr[enc_start:enc_end]
 
         # Decoder
         for j, feat in enumerate(DEC_FEATURES):
             if feat == "horizon_norm":
-                X_dec_all[s, :, j] = dec_arrs[feat]
+                X_dec_all[idx, :, j] = dec_arrs[feat]
             else:
-                X_dec_all[s, :, j] = dec_arrs[feat][dec_start:dec_end]
+                X_dec_all[idx, :, j] = dec_arrs[feat][dec_start:dec_end]
 
         valid_count += 1
-        if valid_count % 10_000 == 0:
+        if valid_count % 5_000 == 0:
             print(f"  {valid_count:,} valid samples built...")
 
     # Apply keep mask
@@ -240,11 +247,10 @@ def main():
     N = keep.sum()
     print(f"\nKept {N:,} / {n_samp:,} samples (dropped {n_samp - N:,} with <{args.min_valid_frac:.0%} valid decoder steps)")
 
-    # ── Scale features
+    # ── Scale features (vectorised: operates over all samples at once)
     print("Scaling features...")
-    for s_idx in range(N):
-        apply_scalers(X_enc_all[s_idx], ENC_FEATURES, scalers)
-        apply_scalers(X_dec_all[s_idx], DEC_FEATURES, scalers)
+    apply_scalers_batch(X_enc_all, ENC_FEATURES, scalers)
+    apply_scalers_batch(X_dec_all, DEC_FEATURES, scalers)
 
     # ── Scale target
     load_sc = scalers["power_load"]
@@ -301,6 +307,7 @@ def main():
         "time_start":       str(run_times.min()),
         "time_end":         str(run_times.max()),
         "min_valid_frac":   args.min_valid_frac,
+        "stride":           args.stride,
     }
     with open(PARQUET / "load_dataset_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
