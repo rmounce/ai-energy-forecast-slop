@@ -266,7 +266,28 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 **Phase 4 (conformal calibration):**
 8. `train/calibrate_conformal.py` → conditional conformal δ corrections; `models/lgbm_tactical/conformal_deltas.json`
 
-**Status (2026-04-16):** Phase 4 complete. Dispatch Sim Run 001: LightGBM +5.9% overall regret reduction vs P5MIN (low stratum +32.3%; spike neutral −1.8%). TFT comparison: LightGBM ≈ TFT (3.6% vs 3.7% regret) — architecture choice confirmed on practical grounds (5-min cadence, ~10ms inference). Next: Phase 4 conformal calibration (q95 spike under-coverage) and Phase 5 HA wiring.
+**Status (2026-04-16):** Phases 1–4 complete. Dispatch Sim Run 001: LightGBM +5.9% overall regret reduction vs P5MIN (low stratum +32.3%; spike neutral −1.8%). TFT comparison: LightGBM ≈ TFT (3.6% vs 3.7% regret) — architecture choice confirmed. Conformal calibration: spike q95 0.750 → 0.821 (inference regime; fundamental limit 0.970 with oracle regime). Next: Phase 5 production routing + Load TFT (see below).
+
+---
+
+### `data/` and `train/` — TFT Load Model (in development)
+
+A TFT model for household load prediction, intended to shadow and eventually replace the existing Darts/LightGBM load model. The existing model uses manual lag engineering (t-48, t-96, t-336 etc.) to capture daily/weekly seasonality; TFT replaces this with attention.
+
+**Architecture:**
+- Encoder: 96 steps (48h lookback) — `power_load`, `power_pv`, temperature/humidity/wind, time features
+- Decoder: 144 steps (72h) — temperature/humidity/wind forecasts (BOM), Solcast PV forecast, time features, holidays
+- Target: `power_load` at each future step
+- Quantiles: q10/q50/q90 (3 quantiles; symmetric uncertainty)
+- Loss: horizon-weighted quantile loss (exponential decay, half-life ~24 steps / 12h) — shorter-term accuracy prioritised for EMHASS
+
+**Key difference from price TFT:** No PREDISPATCH equivalent. Decoder covariates are purely weather + time — cleaner architecture. Target is positive-and-bounded so no log transform needed.
+
+**Data pipeline (Load TFT):**
+1. `data/export_load_dataset.py` → pull `power_load_30m`, `power_pv_30m`, weather from InfluxDB → parquet
+2. `data/build_load_dataset.py` → encoder/decoder numpy arrays, MinMax scalers, train/val split
+3. `train/train_tft_load.py` → TFT checkpoint at `models/tft_load/`
+4. Shadow implementation in `forecast.py` → `predict_tft_load()` analogous to `predict_tft_price()`; publishes to `sensor.ai_tft_load_forecast`
 
 ---
 
