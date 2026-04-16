@@ -1,14 +1,73 @@
-# TFT Training Run Log
+# Training Run Log
 
 Persistent record of training runs, config changes, and evaluation results.
 **Purpose:** prevent regressions from being forgotten and identify which changes actually helped.
 
-Val set covers the most recent N days of training data (before the 72h gap).
-LightGBM comparison numbers from `price_forecast_log.csv` over the same val window.
+Val set covers the most recent N days of training data (before the gap).
 All nMAPE buckets are **cumulative** (1-step through Nh), valid steps only.
 
 ⚠️ **Eval windows differ between runs** — nMAPE absolute values are not directly comparable
 across runs. Use the Delta column (TFT vs LightGBM on the same window) as the primary signal.
+
+---
+
+## LightGBM Tactical Run 001 — 2026-04-16 — Tier 1 baseline (3-quantile, long-format)
+
+**First Tier 1 training run.** Multi-output LightGBM (q5/q50/q95) for 0–60 min SA1 price
+correction. Long-format construction: X [191k runs × 12 horizons = 2.2M rows, 25 features].
+Horizon appended as scalar feature; models learn horizon-specific AEMO bias patterns.
+
+### Config
+| Parameter | Value |
+|---|---|
+| Architecture | LightGBM quantile regression (3 separate models: q5, q50, q95) |
+| Input format | Long format: 2,214,949 train rows / 158,343 val rows |
+| Features (25) | 12× p5min_rrp, aemo_divergence_t1, actual_rrp_t{1,2,6}, rolling_{1h_std,3h_max}, residual_demand, hour/dow sin/cos, is_imputed_p5min, horizon |
+| n_estimators | 2000 (early stopping) |
+| learning_rate | 0.05 |
+| num_leaves | 63 |
+| min_child_samples | 50 |
+| subsample / colsample | 0.8 / 0.8 |
+| early_stopping_rounds | 50 |
+
+### Training outcome
+| Quantile | Best iter | Val pinball |
+|---|---|---|
+| q05 | 305 | 3.15 |
+| q50 | 312 | 10.54 |
+| q95 | 269 | 5.39 |
+
+### Calibration — val set (last 60 days, 17,175 runs)
+| Quantile | Expected | Actual | Bias | Status |
+|---|---|---|---|---|
+| q05 | 0.050 | 0.051 | +0.001 | ✓ |
+| q50 | 0.500 | 0.505 | +0.005 | ✓ |
+| q95 | 0.950 | 0.948 | -0.002 | ✓ |
+
+**q50 MAE: 21.1 $/MWh vs P5MIN baseline 30.7 $/MWh → 31.4% reduction on val set.**
+
+### Calibration — stratified eval (1,600 runs: 500 spike, 300 low, 800 normal)
+| Quantile | Expected | Actual | Bias | Status |
+|---|---|---|---|---|
+| q05 | 0.050 | 0.050 | -0.000 | ✓ |
+| q50 | 0.500 | 0.465 | -0.035 | ⚠ |
+| q95 | 0.950 | 0.920 | -0.030 | ⚠ |
+
+**q50 MAE: 110.0 $/MWh vs P5MIN baseline 187.7 $/MWh → 41.4% reduction on stratified set.**
+
+#### By stratum
+| Stratum | Runs | Mean max RRP | q50 MAE | Baseline MAE | Improvement | q05 coverage | q95 coverage |
+|---|---|---|---|---|---|---|---|
+| SPIKE | 543 | 1,386 $/MWh | 284.5 | 491.8 | **42.2%** | 0.034 ✓ | 0.857 ❌ |
+| LOW | 591 | 2 $/MWh | 16.9 | 27.3 | **38.1%** | 0.074 ✓ | 0.954 ✓ |
+| NORMAL | 466 | 142 $/MWh | 19.8 | 28.5 | **30.4%** | 0.037 ✓ | 0.950 ✓ |
+
+### Notes
+- q95 under-covers on spike stratum (0.857 vs 0.950). Same structural issue as TFT — log-scaling
+  compresses spike region; Phase 4 conditional conformal calibration is the fix.
+- q50 median is systematically under-predicting on spikes: corrects well but not far enough.
+  Expected — quantile regression with symmetric loss doesn't fully capture right-tail skew.
+- Models: `models/lgbm_tactical/lgbm_q{05,50,95}.pkl`
 
 ---
 
