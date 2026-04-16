@@ -259,7 +259,11 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 4. `data/build_tactical_dataset.py` → numpy arrays for Tier 1 LightGBM; X [210k, 24], y [210k, 12], long-format 2.2M rows after horizon expansion
 5. `train/train_lgbm_tactical.py` → 3 LightGBM quantile models (q5/q50/q95), long-format with horizon as feature
 
-**Status (2026-04-16):** Phase 2 complete. LightGBM Tactical Run 001 done — 31.4% MAE reduction on val set, 41.4% on stratified eval. q95 spike under-coverage (0.857 vs 0.950) is structural; Phase 4 conditional conformal calibration is the fix. Next: Phase 3 offline LP backtester / dispatch simulator.
+**Phase 3 (dispatch simulator):**
+6. `eval/dispatch_simulator.py` → rolling MPC LP backtester (scipy HiGHS, 40 kWh/10 kW); evaluates oracle/P5MIN/LightGBM q50 on stratified eval set
+7. `eval/compare_tft_dispatch.py` → TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs
+
+**Status (2026-04-16):** Phase 3 baseline complete. Dispatch Sim Run 001: LightGBM +5.9% overall regret reduction vs P5MIN (low stratum +32.3%; spike neutral −1.8%). TFT comparison: LightGBM ≈ TFT (3.6% vs 3.7% regret) — architecture choice confirmed on practical grounds (5-min cadence, ~10ms inference). Next: Phase 4 conformal calibration (q95 spike under-coverage) and Phase 5 HA wiring.
 
 ---
 
