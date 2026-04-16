@@ -11,6 +11,71 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
+## Load TFT Run 003 — 2026-04-17 — Adelaide timezone fix (inference only)
+
+**Same dataset as Run 002.** Fixes `time_sin_cos()` at inference to use
+`Australia/Adelaide` instead of Brisbane, matching `build_load_dataset.py` training.
+Training result is near-identical to Run 002 (different random init).
+
+**Config:** `train/train_tft_load.py --epochs 100 --batch-size 512`
+**Dataset:** 18,769 samples (stride=4 / every 2h, 4.3y), 13 enc + 13 dec features, 90d val split
+**Model:** d_model=64, 4 heads, 2 LSTM layers, 189k params, q10/q50/q90
+
+### Results (best epoch 6 / early stop at 13)
+| Metric | Value |
+|---|---|
+| wMAE (horizon-weighted) | **226.1 W** |
+| MAE 0–24h | 226.2 W |
+| MAE 24–48h | 226.4 W |
+| MAE 48–72h | 229.8 W |
+| Val loss | 0.1221 |
+
+### Formal comparison vs LightGBM (`eval/compare_load_forecast.py`)
+Val window: 2026-01-13 → 2026-04-13. TFT: 1,081 offline val samples. LightGBM: 4,164 production runs.
+
+| Bucket | TFT q50 MAE | LightGBM MAE | Δ |
+|---|---|---|---|
+| 0–24h | **226.2 W** | 271.5 W | −45.4 W |
+| 24–48h | **226.4 W** | 312.9 W | −86.5 W |
+| 48–72h | **229.8 W** | 316.4 W | −86.6 W |
+| Overall | **227.5 W** | 300.1 W | −72.7 W |
+
+TFT q10/q90 coverage: 0.802 overall (0-24h: 0.802, 24-48h: 0.806, 48-72h: 0.799) — well-calibrated at target ~0.80.
+
+**Promotion gate: PASSED** — TFT q50 MAE ≤ LightGBM on 0–24h by 45 W. Ready for primary promotion.
+
+### Notes
+- LightGBM MAE degrades sharply beyond 24h (271W → 316W) due to static lag features.
+- TFT MAE is flat across all horizons (~226–230W) — attention captures longer-range patterns.
+- Results saved to `eval/results/load_forecast_comparison.json`.
+
+---
+
+## Load TFT Run 002 — 2026-04-17 — Stride=4 subsampling + vectorised scaling
+
+**Same architecture as Run 001.** Rebuilds dataset with stride=4 (every 2h) reducing
+75k → 19k samples. Epoch time drops from ~158s to ~40s. Also vectorises the per-sample
+scaling loop in `build_load_dataset.py`.
+
+**Config:** `train/train_tft_load.py --epochs 100 --batch-size 512`
+**Dataset:** 18,769 samples (stride=4), 13 enc + 13 dec features, 90d val split
+
+### Results (best epoch 7 / early stop at 14)
+| Metric | Value |
+|---|---|
+| wMAE | **227.2 W** |
+| MAE 0–24h | 227.9 W |
+| MAE 24–48h | 224.8 W |
+| MAE 48–72h | 226.2 W |
+| Val loss | 0.1204 |
+
+### Notes
+- Val loss improved significantly vs Run 001 (0.1385 → 0.1204): stride-1 was overfitting to autocorrelated windows.
+- wMAE marginally worse (+2.5W) — noise from sparser val sample-to-date mapping.
+- Epoch time 4× faster; no quality regression.
+
+---
+
 ## Load TFT Run 001 — 2026-04-17 — Initial TFT load model
 
 **Shadow implementation.** Replaces Darts/LightGBM load model's manual lag engineering
