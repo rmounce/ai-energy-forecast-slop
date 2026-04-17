@@ -277,11 +277,29 @@ def main():
     print(f"  Train/val: {len(train_idx):,} / {len(val_idx):,}")
 
     # ── DataLoaders
+    weights_path = PARQUET / "y_load_weights.npy"
+    if weights_path.exists():
+        all_weights  = np.load(weights_path)
+        train_weights = all_weights[train_idx]
+        sampler = torch.utils.data.WeightedRandomSampler(
+            weights=torch.tensor(train_weights, dtype=torch.float64),
+            num_samples=len(train_idx),
+            replacement=True,
+        )
+        print(f"  Sample weights loaded: tau decay active "
+              f"(min={train_weights.min():.4f} max={train_weights.max():.4f})")
+        use_sampler = True
+    else:
+        sampler     = None
+        use_sampler = False
+        print("  No sample weights found — uniform sampling")
+
     train_ds = LoadDataset(X_enc[train_idx], X_dec[train_idx],
                            y[train_idx],     y_raw[train_idx], y_mask[train_idx])
     val_ds   = LoadDataset(X_enc[val_idx],   X_dec[val_idx],
                            y[val_idx],       y_raw[val_idx],   y_mask[val_idx])
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
+                              sampler=sampler, shuffle=(not use_sampler), num_workers=0)
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     n_enc = X_enc.shape[2]
