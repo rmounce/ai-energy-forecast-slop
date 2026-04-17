@@ -84,11 +84,24 @@ Val window: 2026-01-13 → 2026-04-13. Overnight = hours 3–6am Adelaide time.
 
 Run 003/004 baseline (tau=24): bias ≈ −45W, coverage ≈ 0.795.
 
+### Formal comparison vs LightGBM (`eval/compare_load_forecast.py`)
+Val window: 2026-01-13 → 2026-04-13. TFT: 1,081 offline val samples. LightGBM: 4,164 production runs.
+
+| Bucket | TFT q50 MAE | LightGBM MAE | Δ |
+|---|---|---|---|
+| 0–24h | **235.3 W** | 271.5 W | −36.2 W |
+| 24–48h | **234.4 W** | 312.9 W | −78.6 W |
+| 48–72h | **232.4 W** | 316.4 W | −84.0 W |
+| Overall | **234.0 W** | 300.1 W | −66.1 W |
+
+TFT q10/q90 coverage: 0.758 overall (0-24h: 0.743, 24-48h: 0.759, 48-72h: 0.772) — below 0.80 target.
+
 ### Notes
 - Overnight bias halved (−45W → −24W) and non-monotonic pattern across horizons eliminated.
-- Coverage dropped 0.795 → 0.765 (below 0.80 target) — gradient now spread more evenly, interval width less precisely calibrated. Acceptable for shadow mode; may need conformal correction before promotion.
+- Coverage dropped 0.795 → 0.758 (below 0.80 target) — gradient now spread more evenly, interval width less precisely calibrated. Acceptable for shadow mode; may need conformal correction before promotion.
 - Near-term raw MAE cost: +9W vs Run 003 (235W vs 226W) — expected trade-off for spreading gradient across all horizons.
-- **Promotion gate: NOT YET** — overnight bias materially reduced but coverage below 0.80. Re-evaluate after decay weighting is combined with Run 006.
+- **Live observation (2026-04-17):** morning ramp still inverted at 36h — step 72 (6:30am day+2) = 265W q50, step 120 (6:30am day+3) = 262W q50. Confirmed as residual gradient cliff (step 72 gets 22% weight), not a data or code bug. Fix: Run 006 with weight floor.
+- **Promotion gate: NOT YET** — overnight coverage below 0.80, morning ramp inversion at 36h+. Re-evaluate after Run 006.
 
 ---
 
