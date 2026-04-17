@@ -80,27 +80,23 @@ def decoder_local_hours(run_times, dec_steps=144):
     run_times: [N] datetime64[ns] — the start of the decoder window (UTC).
     Returns [N, dec_steps] int8 array of local hours.
     """
-    N = len(run_times)
-    hours = np.empty((N, dec_steps), dtype=np.int8)
-    for i, rt in enumerate(run_times):
-        base = pd.Timestamp(rt, tz="UTC").tz_convert(ADL_TZ)
-        for s in range(dec_steps):
-            t = base + pd.Timedelta(minutes=30 * s)
-            hours[i, s] = t.hour
+    hours = np.empty((len(run_times), dec_steps), dtype=np.int8)
+    bases = pd.to_datetime(run_times, utc=True).tz_convert(ADL_TZ)
+    for s in range(dec_steps):
+        hours[:, s] = (bases + pd.Timedelta(minutes=30 * s)).hour
     return hours
 
 
-def compute_overnight_metrics(preds_W, y_raw, y_mask, local_hours, label, step_range):
+def compute_overnight_metrics(preds_W, y_raw, y_mask, overnight_mask, label, step_range):
     """
     Compute bias, MAE, and q10/q90 coverage for decoder steps in step_range
     that correspond to overnight local hours.
 
+    overnight_mask: [N, dec_steps] bool — precomputed from decoder_local_hours.
     Returns dict with keys: n_steps, bias_W, mae_W, coverage, q50_mean, actual_mean.
     """
     steps = list(step_range)
-    # Mask: valid target AND overnight hour
-    overnight_mask = np.isin(local_hours[:, steps], list(OVERNIGHT_HOURS))
-    valid_mask     = y_mask[:, steps] & overnight_mask
+    valid_mask = y_mask[:, steps] & overnight_mask[:, steps]
 
     if not valid_mask.any():
         return {"label": label, "n_steps": 0, "bias_W": None, "mae_W": None,
@@ -151,11 +147,11 @@ def main():
         scalers = pickle.load(f)
     load_sc = scalers["power_load"]
 
-    X_enc      = np.load(PARQUET / "X_enc_load.npy")
-    X_dec      = np.load(PARQUET / "X_dec_load.npy")
-    y_raw      = np.load(PARQUET / "y_load_raw.npy")
-    y_mask     = np.load(PARQUET / "y_load_mask.npy")
-    run_times  = np.load(PARQUET / "run_times_load.npy")
+    X_enc      = np.load(PARQUET / "X_enc_load.npy",     mmap_mode="r")
+    X_dec      = np.load(PARQUET / "X_dec_load.npy",     mmap_mode="r")
+    y_raw      = np.load(PARQUET / "y_load_raw.npy",     mmap_mode="r")
+    y_mask     = np.load(PARQUET / "y_load_mask.npy",    mmap_mode="r")
+    run_times  = np.load(PARQUET / "run_times_load.npy", mmap_mode="r")
     split      = np.load(PARQUET / "split_indices_load.npz")
     val_idx    = split["val"]
 
@@ -173,9 +169,11 @@ def main():
     preds_W    = load_sc.inverse_transform(
         preds_norm.reshape(-1, 1)
     ).reshape(preds_norm.shape).clip(min=0.0)
+    del preds_norm
 
-    print("Computing local hours for each decoder step (this takes ~30s)...")
-    local_hours = decoder_local_hours(rt_v)
+    print("Computing local hours for each decoder step...")
+    local_hours    = decoder_local_hours(rt_v)
+    overnight_mask = np.isin(local_hours, list(OVERNIGHT_HOURS))
 
     print(f"\nOvernight metrics (hours {sorted(OVERNIGHT_HOURS)}, Adelaide time):")
     print(f"  {'Horizon':<18}  {'n':>8}  {'actual_mean':>11}  {'q50_mean':>8}  "
@@ -184,13 +182,11 @@ def main():
 
     results = []
     for label, step_range in HORIZON_WINDOWS:
-        r = compute_overnight_metrics(preds_W, y_raw_v, y_mask_v, local_hours, label, step_range)
+        r = compute_overnight_metrics(preds_W, y_raw_v, y_mask_v, overnight_mask, label, step_range)
         results.append(r)
 
-    # Overall overnight (all three windows combined)
-    all_steps = list(range(24, 144))
-    r_all = compute_overnight_metrics(preds_W, y_raw_v, y_mask_v, local_hours,
-                                       "overnight_all", range(24, 144))
+    r_all = compute_overnight_metrics(preds_W, y_raw_v, y_mask_v, overnight_mask,
+                                      "overnight_all", range(24, 144))
     results.append(r_all)
 
     RESULTS.mkdir(exist_ok=True)

@@ -244,7 +244,7 @@ def main():
     parser.add_argument("--weight-decay",   type=float, default=1e-4)
     parser.add_argument("--horizon-decay",  type=float, default=48.0,
                         help="Exp decay tau for horizon loss weighting (steps). "
-                             "Default 24 (12h half-weight). 0 = uniform.")
+                             "Default 48 (24h half-weight). 0 = uniform.")
     parser.add_argument("--patience",       type=int,   default=4,
                         help="Early stopping patience (default 4 for fast iteration; "
                              "increase to 7+ for final production runs)")
