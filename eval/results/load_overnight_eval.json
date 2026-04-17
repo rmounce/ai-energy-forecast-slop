@@ -1,0 +1,51 @@
+{
+  "generated": "2026-04-17T08:57:38.226468+00:00",
+  "checkpoint": "models/tft_load/checkpoint_20260417_181610_ep32.pt",
+  "val_start": "2026-01-13T14:00:00",
+  "val_end": "2026-04-13T14:00:00",
+  "n_val": 1081,
+  "overnight_hours": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "metrics": [
+    {
+      "label": "overnight_24h",
+      "n_steps": 8644,
+      "bias_W": -24.2,
+      "mae_W": 68.8,
+      "coverage": 0.761,
+      "q50_mean": 364.2,
+      "actual_mean": 388.4
+    },
+    {
+      "label": "overnight_48h",
+      "n_steps": 8644,
+      "bias_W": -24.3,
+      "mae_W": 69.1,
+      "coverage": 0.7723,
+      "q50_mean": 364.2,
+      "actual_mean": 388.5
+    },
+    {
+      "label": "overnight_72h",
+      "n_steps": 4320,
+      "bias_W": -24.1,
+      "mae_W": 69.5,
+      "coverage": 0.7579,
+      "q50_mean": 364.4,
+      "actual_mean": 388.5
+    },
+    {
+      "label": "overnight_all",
+      "n_steps": 21608,
+      "bias_W": -24.2,
+      "mae_W": 69.1,
+      "coverage": 0.7649,
+      "q50_mean": 364.2,
+      "actual_mean": 388.4
+    }
+  ]
+}

@@ -7,8 +7,9 @@ Architecture: LSTM encoder-decoder with cross-attention (same as TFT price model
   Decoder (144 steps = 72h): weather forecast, calendar features, horizon_norm
   Output: 3-quantile prediction [q10, q50, q90] in Watts
 
-Loss: horizon-weighted quantile loss — weight_h = exp(-h/tau), default tau=24 (12h).
-Short-horizon steps (0–24h) dominate gradients since EMHASS only uses 24-48h.
+Loss: horizon-weighted quantile loss — weight_h = exp(-h/tau), default tau=48 (24h half-life).
+With tau=24 (12h), 48h steps receive only 2% gradient — causing out-of-distribution overnight
+predictions. tau=48 gives 48h steps 14% gradient, halving overnight bias (Run 005 result).
 
 See data/build_load_dataset.py for feature definitions and array shapes.
 
@@ -241,10 +242,12 @@ def main():
     parser.add_argument("--dropout",        type=float, default=0.1)
     parser.add_argument("--lr",             type=float, default=2e-4)
     parser.add_argument("--weight-decay",   type=float, default=1e-4)
-    parser.add_argument("--horizon-decay",  type=float, default=24.0,
+    parser.add_argument("--horizon-decay",  type=float, default=48.0,
                         help="Exp decay tau for horizon loss weighting (steps). "
                              "Default 24 (12h half-weight). 0 = uniform.")
-    parser.add_argument("--patience",       type=int,   default=7)
+    parser.add_argument("--patience",       type=int,   default=4,
+                        help="Early stopping patience (default 4 for fast iteration; "
+                             "increase to 7+ for final production runs)")
     parser.add_argument("--dry-run",        action="store_true",
                         help="5 epochs, batch_size=64, validate shapes")
     args = parser.parse_args()

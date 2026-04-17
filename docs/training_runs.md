@@ -48,7 +48,71 @@ TFT q10/q90 coverage: 0.802 overall (0-24h: 0.802, 24-48h: 0.806, 48-72h: 0.799)
 - LightGBM MAE degrades sharply beyond 24h (271W → 316W) due to static lag features.
 - TFT MAE is flat across all horizons (~226–230W) — attention captures longer-range patterns.
 - Results saved to `eval/results/load_forecast_comparison.json`.
-- **⚠️ Live inference anomaly**: HA shadow shows ~225/235/265W (q10/q50/q90) at 4am overnight, below the historical 2022 minimum (~238W median). Offline val step-8 predictions (382W vs 403W actual) are reasonable. Suspected encoder preprocessing bug in `_execute_tft_load_prediction` — under investigation.
+- **⚠️ Overnight bias identified post-eval**: horizon-weight tau=24 (12h half-life) gives 48h steps only 1.8% gradient. Model's 48h overnight prior drifts below training Q10. See Run 004/005 for diagnosis and fix.
+
+---
+
+## Load TFT Run 005 — 2026-04-17 — horizon-tau=48 (overnight bias fix)
+
+**Same dataset as Run 004.** Fixes the overnight 48h prediction bias identified after Run 003.
+Root cause: `--horizon-decay 24` (12h half-life) gave 48h steps only 1.8% gradient, causing
+the model to extrapolate below its training Q10 for overnight periods. tau=48 (24h half-life)
+raises 48h gradient to 14%, halving the overnight bias.
+
+**Config:** `train/train_tft_load.py --epochs 100 --batch-size 512 --horizon-decay 48`
+**Dataset:** 18,769 samples (stride=4, tau=365d decay weights), 90d val split
+**Model:** d_model=64, 4 heads, 2 LSTM layers, 189k params, q10/q50/q90
+**Note:** `--horizon-decay 48` and `--patience 4` are now the defaults in `train_tft_load.py`.
+
+### Results (best epoch 32 / early stop at 39)
+| Metric | Value |
+|---|---|
+| wMAE (tau=48 weighted, not comparable to Run 003) | **234.2 W** |
+| MAE 0–24h (raw, comparable) | 235.3 W |
+| MAE 24–48h (raw, comparable) | 234.4 W |
+| Val loss | 0.1227 |
+
+### Overnight-stratified evaluation (`eval/eval_load_overnight.py`)
+Val window: 2026-01-13 → 2026-04-13. Overnight = hours 3–6am Adelaide time.
+
+| Horizon window | Actual mean | q50 mean | Bias | MAE | q10/q90 coverage |
+|---|---|---|---|---|---|
+| +24h overnight | 388 W | 364 W | **−24 W** | 69 W | 0.761 |
+| +48h overnight | 388 W | 364 W | **−24 W** | 69 W | 0.772 |
+| +72h overnight | 388 W | 364 W | **−24 W** | 69 W | 0.758 |
+| All overnight | 388 W | 364 W | **−24 W** | 69 W | 0.765 |
+
+Run 003/004 baseline (tau=24): bias ≈ −45W, coverage ≈ 0.795.
+
+### Notes
+- Overnight bias halved (−45W → −24W) and non-monotonic pattern across horizons eliminated.
+- Coverage dropped 0.795 → 0.765 (below 0.80 target) — gradient now spread more evenly, interval width less precisely calibrated. Acceptable for shadow mode; may need conformal correction before promotion.
+- Near-term raw MAE cost: +9W vs Run 003 (235W vs 226W) — expected trade-off for spreading gradient across all horizons.
+- **Promotion gate: NOT YET** — overnight bias materially reduced but coverage below 0.80. Re-evaluate after decay weighting is combined with Run 006.
+
+---
+
+## Load TFT Run 004 — 2026-04-17 — Temporal decay weighting (tau=365d)
+
+**Same dataset rebuild as Run 003.** Adds `exp(-age_days/365)` sample weights via
+`WeightedRandomSampler`. Upweights recent 2025–2026 samples where overnight load is ~350W.
+
+**Config:** `train/train_tft_load.py --epochs 100 --batch-size 512`
+**Dataset:** 18,769 samples (stride=4, tau=365d decay weights added), 90d val split
+**Horizon decay:** tau=24 (unchanged — this is why it didn't fix the overnight bias)
+
+### Results (best epoch 10 / early stop at 17)
+| Metric | Value |
+|---|---|
+| wMAE | **229.9 W** |
+| MAE 0–24h | 231.3 W |
+| MAE 24–48h | 229.8 W |
+| Val loss | 0.1213 |
+
+### Notes
+- Slightly worse than Run 003 on all offline val metrics (+3W overall MAE).
+- Overnight 48h q50 unchanged (237→236W): temporal decay alone cannot fix a 1.8% gradient horizon.
+- Conclusion: tau must be increased (not sample weighting) to fix 48h predictions.
 
 ---
 
