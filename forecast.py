@@ -1665,6 +1665,114 @@ def _execute_tft_load_prediction(historical_df, future_covariates_df):
     return res
 
 
+def _build_combined_forecast_items(p50_df, low_df, high_df, interval_minutes):
+    """
+    Convert three DataFrames (each with 'wholesale_price' in $/kWh) into a list of
+    Amber-compatible forecast dicts. Applies tariffs to each to get general/feed-in price.
+
+    Returns (general_items, feed_in_items) — two lists of dicts with Amber field names.
+    """
+    interval_delta = pd.Timedelta(minutes=interval_minutes)
+    general_items  = []
+    feed_in_items  = []
+
+    frames = {'p50': p50_df.copy(), 'low': low_df.copy(), 'high': high_df.copy()}
+    for key, df in frames.items():
+        if 'wholesale_price' not in df.columns:
+            df.rename(columns={df.columns[0]: 'wholesale_price'}, inplace=True)
+        apply_tariffs_to_forecast(df)
+        frames[key] = df
+
+    for ts in p50_df.index:
+        gp50  = float(frames['p50'].loc[ts, 'general_price'])
+        glow  = float(frames['low'].loc[ts, 'general_price'])
+        ghigh = float(frames['high'].loc[ts, 'general_price'])
+        fp50  = float(frames['p50'].loc[ts, 'feed_in_price'])
+        flow  = float(frames['low'].loc[ts, 'feed_in_price'])
+        fhigh = float(frames['high'].loc[ts, 'feed_in_price'])
+
+        general_items.append({
+            'start_time': ts.isoformat(),
+            'end_time':   (ts + interval_delta).isoformat(),
+            'advanced_price_predicted': round(gp50,  6),
+            'advanced_price_high':      round(ghigh, 6),
+            'advanced_price_low':       round(glow,  6),
+            'per_kwh':                  round(gp50,  6),
+        })
+        feed_in_items.append({
+            'start_time': ts.isoformat(),
+            'end_time':   (ts + interval_delta).isoformat(),
+            'advanced_price_predicted': round(fp50,  6),
+            'advanced_price_high':      round(fhigh, 6),
+            'advanced_price_low':       round(flow,  6),
+            'per_kwh':                  round(fp50,  6),
+        })
+
+    return general_items, feed_in_items
+
+
+def _publish_combined_price_forecasts(tactical_results, tft_results):
+    """
+    Combine Tier 1 (0–55 min, 5-min) and Tier 2 (60 min–72h, 30-min) into two
+    Amber-compatible shadow sensors:
+      sensor.ai_combined_general_price_forecast   — buy/general price
+      sensor.ai_combined_feed_in_price_forecast   — sell/feed-in price
+
+    Tier 1 quantile mapping: q05→low, q50→predicted, q95→high
+    Tier 2 quantile mapping: q30→low, q50→predicted, q70→high
+    """
+    t1_p50  = tactical_results.get('p5min_price')
+    t1_low  = tactical_results.get('p5min_price_q05')
+    t1_high = tactical_results.get('p5min_price_q95')
+    t2_p50  = tft_results.get('tft_price')
+    t2_low  = tft_results.get('tft_price_q30')
+    t2_high = tft_results.get('tft_price_q70')
+
+    if any(df is None for df in [t1_p50, t1_low, t1_high, t2_p50, t2_low, t2_high]):
+        logging.warning("Combined forecast skipped: one or more required model outputs missing.")
+        return
+
+    # Tier 1: all 12 steps
+    t1_end = t1_p50.index[-1]
+    gen_t1, fin_t1 = _build_combined_forecast_items(t1_p50, t1_low, t1_high, 5)
+
+    # Tier 2: steps after Tier 1 ends
+    t2_p50_after  = t2_p50[t2_p50.index > t1_end]
+    t2_low_after  = t2_low[t2_low.index > t1_end]
+    t2_high_after = t2_high[t2_high.index > t1_end]
+
+    if t2_p50_after.empty:
+        logging.warning("Combined forecast: no Tier 2 steps beyond Tier 1 window.")
+        gen_all, fin_all = gen_t1, fin_t1
+    else:
+        gen_t2, fin_t2 = _build_combined_forecast_items(t2_p50_after, t2_low_after, t2_high_after, 30)
+        gen_all = gen_t1 + gen_t2
+        fin_all = fin_t1 + fin_t2
+
+    logging.info(
+        f"Combined forecast: {len(gen_t1)} Tier-1 (5-min) + "
+        f"{len(gen_all) - len(gen_t1)} Tier-2 (30-min) = {len(gen_all)} total intervals"
+    )
+
+    now_iso = datetime.now(pytz.UTC).isoformat()
+    for entity_id, items, label in [
+        ('sensor.ai_combined_general_price_forecast', gen_all, 'AI Combined General Price Forecast'),
+        ('sensor.ai_combined_feed_in_price_forecast', fin_all, 'AI Combined Feed In Price Forecast'),
+    ]:
+        state = round(items[0]['advanced_price_predicted'], 6) if items else 0.0
+        payload = {
+            'state': state,
+            'attributes': {
+                'Forecasts':      items,
+                'last_updated':   now_iso,
+                'friendly_name':  label,
+                'icon':           'mdi:chart-line',
+            },
+        }
+        call_ha_api('POST', f'states/{entity_id}', payload=payload)
+        logging.info(f"Published {entity_id} (state={state}, {len(items)} intervals).")
+
+
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
     WORKER: Executes prediction for a model type (e.g. 'price' or 'load'),
@@ -1767,6 +1875,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
 
     # 2b. Execute Tier 1/2 parallel models (sandboxed — existing forecasts safe on failure)
     if 'price' in models_to_run:
+        tactical_results = {}
         try:
             tactical_results = _execute_tactical_prediction()
             if tactical_results:
@@ -1780,6 +1889,15 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 all_results['tft_price'] = {'forecasts': tft_results, 'type': 'tft_pytorch'}
         except Exception as e:
             logging.error(f"FATAL ERROR in TFT Price shadow execution: {e}", exc_info=True)
+
+        if publish_hass:
+            try:
+                _publish_combined_price_forecasts(
+                    tactical_results if 'p5min_tactical' in all_results else {},
+                    all_results.get('tft_price', {}).get('forecasts', {}),
+                )
+            except Exception as e:
+                logging.error(f"FATAL ERROR in combined forecast publish: {e}", exc_info=True)
 
     if 'load' in models_to_run:
         try:
@@ -1888,7 +2006,11 @@ def apply_tariffs_to_forecast(pred_df):
         pred_df.index = pred_df.index.tz_localize('UTC')
 
     local_tz = pytz.timezone(CONFIG['timezone'])
-    pred_df['local_time'] = pred_df.index.tz_convert(local_tz).time.astype(str)
+    # Floor to 30-min before tariff lookup so 5-min intervals (e.g. 12:25) match the
+    # tariff map keys (e.g. 12:00 / 12:30) rather than falling through to fillna(0).
+    pred_df['local_time'] = (
+        pred_df.index.tz_convert(local_tz).floor('30min').time.astype(str)
+    )
 
     general_tariff_map = tariffs.get('general_tariff', {})
     feed_in_tariff_map = tariffs.get('feed_in_tariff', {})
