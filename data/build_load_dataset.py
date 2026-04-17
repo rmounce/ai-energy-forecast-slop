@@ -136,6 +136,9 @@ def main():
     parser.add_argument("--stride", type=int, default=4,
                         help="Step between sequence start points (default 4 = every 2h). "
                              "Use 1 for dense (original) dataset.")
+    parser.add_argument("--decay-tau", type=float, default=365.0,
+                        help="Exponential decay half-life in days for sample weighting "
+                             "(default 365). Larger = slower decay. 0 = uniform weights.")
     args = parser.parse_args()
 
     if not IN_FILE.exists():
@@ -270,6 +273,18 @@ def main():
         print(f"  Filling {nan_dec:,} NaN decoder values with 0")
         X_dec_all = np.nan_to_num(X_dec_all, nan=0.0)
 
+    # ── Sample decay weights
+    print("Computing sample weights...")
+    if args.decay_tau > 0:
+        latest_t  = run_times.max().astype("datetime64[s]").astype(float)
+        ages_days = (latest_t - run_times.astype("datetime64[s]").astype(float)) / 86400.0
+        weights   = np.exp(-ages_days / args.decay_tau).astype(np.float32)
+        print(f"  tau={args.decay_tau:.0f}d  min_weight={weights.min():.4f}  "
+              f"max_weight={weights.max():.4f}  mean={weights.mean():.4f}")
+    else:
+        weights = np.ones(N, dtype=np.float32)
+        print("  Uniform weights (decay disabled)")
+
     # ── Train / val split (time-based)
     val_cutoff_dt = pd.Timestamp(run_times.max()) - pd.Timedelta(days=args.val_days)
     val_cutoff    = np.datetime64(val_cutoff_dt.to_datetime64(), "ns")
@@ -287,6 +302,7 @@ def main():
     np.save(PARQUET / "y_load_raw.npy",      y_raw_all)
     np.save(PARQUET / "y_load_mask.npy",     y_mask_all)
     np.save(PARQUET / "run_times_load.npy",  run_times)
+    np.save(PARQUET / "y_load_weights.npy",  weights)
     np.savez(PARQUET / "split_indices_load.npz", train=train_idx, val=val_idx)
 
     with open(PARQUET / "load_scalers.pkl", "wb") as f:
@@ -308,6 +324,7 @@ def main():
         "time_end":         str(run_times.max()),
         "min_valid_frac":   args.min_valid_frac,
         "stride":           args.stride,
+        "decay_tau_days":   args.decay_tau,
     }
     with open(PARQUET / "load_dataset_meta.json", "w") as f:
         json.dump(meta, f, indent=2)

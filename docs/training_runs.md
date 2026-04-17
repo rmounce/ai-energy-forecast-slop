@@ -42,12 +42,13 @@ Val window: 2026-01-13 → 2026-04-13. TFT: 1,081 offline val samples. LightGBM:
 
 TFT q10/q90 coverage: 0.802 overall (0-24h: 0.802, 24-48h: 0.806, 48-72h: 0.799) — well-calibrated at target ~0.80.
 
-**Promotion gate: PASSED** — TFT q50 MAE ≤ LightGBM on 0–24h by 45 W. Ready for primary promotion.
+**Promotion gate: PASSED on offline val metrics** — but live HA shadow predictions are suspect (see below). Hold promotion until inference bug is resolved.
 
 ### Notes
 - LightGBM MAE degrades sharply beyond 24h (271W → 316W) due to static lag features.
 - TFT MAE is flat across all horizons (~226–230W) — attention captures longer-range patterns.
 - Results saved to `eval/results/load_forecast_comparison.json`.
+- **⚠️ Live inference anomaly**: HA shadow shows ~225/235/265W (q10/q50/q90) at 4am overnight, below the historical 2022 minimum (~238W median). Offline val step-8 predictions (382W vs 403W actual) are reasonable. Suspected encoder preprocessing bug in `_execute_tft_load_prediction` — under investigation.
 
 ---
 
