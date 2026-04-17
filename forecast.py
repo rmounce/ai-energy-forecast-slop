@@ -1699,13 +1699,16 @@ def _build_combined_forecast_items(p50_df, low_df, high_df, interval_minutes):
             'advanced_price_low':       round(glow,  6),
             'per_kwh':                  round(gp50,  6),
         })
+        # Amber feed-in convention: negative = consumer earns, positive = consumer pays to export.
+        # Our feed_in_price formula gives positive when wholesale is positive, so negate.
+        # Negation also reverses high/low: higher wholesale → more negative → more earning → "high".
         feed_in_items.append({
             'start_time': ts.isoformat(),
             'end_time':   (ts + interval_delta).isoformat(),
-            'advanced_price_predicted': round(fp50,  6),
-            'advanced_price_high':      round(fhigh, 6),
-            'advanced_price_low':       round(flow,  6),
-            'per_kwh':                  round(fp50,  6),
+            'advanced_price_predicted': round(-fp50,  6),
+            'advanced_price_high':      round(-fhigh, 6),
+            'advanced_price_low':       round(-flow,  6),
+            'per_kwh':                  round(-fp50,  6),
         })
 
     return general_items, feed_in_items
