@@ -1057,6 +1057,198 @@ def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, 
     print(SEP + "\n")
 
 
+def _execute_tactical_prediction():
+    """
+    Tier 1 tactical LightGBM: calibrated 0–60 min forecast at 5-min resolution.
+    Returns dict with 'p5min_price', 'p5min_price_q05', 'p5min_price_q95' DataFrames
+    (wholesale price in $/kWh, ready for apply_tariffs_to_forecast).
+    """
+    ROOT = Path(__file__).resolve().parent
+    model_dir = ROOT / "models" / "lgbm_tactical"
+
+    if not (model_dir / "lgbm_q50.pkl").exists():
+        logging.warning("Tactical LightGBM models not found; skipping Tier 1 forecast.")
+        return {}
+
+    logging.info("--- Executing Tier 1 Tactical LightGBM Inference ---")
+
+    try:
+        q05_model = joblib.load(model_dir / "lgbm_q05.pkl")
+        q50_model = joblib.load(model_dir / "lgbm_q50.pkl")
+        q95_model = joblib.load(model_dir / "lgbm_q95.pkl")
+        with open(model_dir / "conformal_deltas.json") as f:
+            conformal = json.load(f)
+    except Exception as e:
+        logging.error(f"Tactical model load failed: {e}")
+        return {}
+
+    # ── Query data ────────────────────────────────────────────────────────────
+    now_utc = datetime.now(pytz.UTC)
+    t_4h = (now_utc - timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    t_now = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    client = InfluxDBClient(**CONFIG['influxdb'])
+    try:
+        p5min_res = client.query(
+            f'SELECT rrp FROM "rp_5m"."aemo_p5min_forecast"'
+            f' WHERE region=\'SA1\' AND time >= \'{t_4h}\' AND time <= \'{t_now}\''
+            f' GROUP BY run_time'
+        )
+        act_res = client.query(
+            f'SELECT price, total_demand FROM "rp_5m"."aemo_dispatch_sa1_5m"'
+            f' WHERE time >= \'{t_4h}\' AND time <= \'{t_now}\''
+        )
+        pv_res = client.query(
+            f'SELECT mean_value FROM "rp_5m"."power_pv_5m"'
+            f' WHERE time >= \'{t_4h}\' AND time <= \'{t_now}\''
+        )
+    finally:
+        client.close()
+
+    # ── Parse P5MIN series (grouped by run_time tag) ─────────────────────────
+    p5min_runs = {}
+    for key in p5min_res.keys():
+        run_time_str = key[1].get('run_time') if len(key) > 1 else None
+        if not run_time_str:
+            continue
+        rows = sorted(list(p5min_res[key]), key=lambda r: r['time'])
+        if len(rows) < 12:
+            continue
+        rt = pd.Timestamp(run_time_str, tz='UTC')
+        p5min_runs[rt] = [float(r['rrp']) for r in rows[:12]]
+
+    if not p5min_runs:
+        logging.error("No P5MIN runs found in InfluxDB; Tier 1 forecast aborted.")
+        return {}
+
+    latest_run_time = max(p5min_runs.keys())
+    p5min_rrp = p5min_runs[latest_run_time]  # [12] $/MWh
+
+    prev_run_time = latest_run_time - pd.Timedelta(minutes=5)
+    p5min_h0_prev = p5min_runs[prev_run_time][0] if prev_run_time in p5min_runs else np.nan
+
+    # ── Parse actual 5m prices ────────────────────────────────────────────────
+    act_rows = list(act_res.get_points()) if act_res else []
+    if act_rows:
+        act_df = pd.DataFrame(act_rows)
+        act_df['time'] = pd.to_datetime(act_df['time'], utc=True)
+        act_df = act_df.set_index('time').rename(columns={'price': 'rrp'}).sort_index()
+    else:
+        act_df = pd.DataFrame(columns=['rrp', 'total_demand'])
+        act_df.index = pd.DatetimeIndex([], tz='UTC')
+
+    # ── Parse PV ─────────────────────────────────────────────────────────────
+    pv_rows = list(pv_res.get_points()) if pv_res else []
+    if pv_rows:
+        pv_df = pd.DataFrame(pv_rows)
+        pv_df['time'] = pd.to_datetime(pv_df['time'], utc=True)
+        pv_df = pv_df.set_index('time').sort_index()
+        pv_series = pv_df['mean_value']
+    else:
+        pv_series = pd.Series(dtype=float)
+
+    # ── Build scalar features at latest_run_time ─────────────────────────────
+    def _asof(series, ts, default=0.0):
+        try:
+            v = series.asof(ts) if len(series) > 0 else np.nan
+            return float(v) if pd.notna(v) else default
+        except Exception:
+            return default
+
+    t1 = latest_run_time - pd.Timedelta(minutes=5)
+    t2 = latest_run_time - pd.Timedelta(minutes=10)
+    t6 = latest_run_time - pd.Timedelta(minutes=30)
+
+    rrp_series = act_df['rrp'] if 'rrp' in act_df.columns else pd.Series(dtype=float)
+    actual_t1  = _asof(rrp_series, t1)
+    actual_t2  = _asof(rrp_series, t2)
+    actual_t6  = _asof(rrp_series, t6)
+
+    divergence_t1 = (actual_t1 - p5min_h0_prev) if not np.isnan(p5min_h0_prev) else 0.0
+
+    if len(rrp_series) >= 6:
+        rrp_to_t1 = rrp_series.loc[:t1]
+        rolling_1h_std = float(rrp_to_t1.tail(12).std()) if len(rrp_to_t1) >= 6 else 0.0
+        rolling_3h_max = float(rrp_to_t1.tail(36).max()) if len(rrp_to_t1) >= 6 else max(p5min_rrp)
+    else:
+        rolling_1h_std = 0.0
+        rolling_3h_max = max(p5min_rrp)
+
+    td_t1  = _asof(act_df['total_demand'] if 'total_demand' in act_df.columns else pd.Series(dtype=float), t1)
+    pv_t1  = _asof(pv_series, t1)
+    residual_demand_t1 = td_t1 - pv_t1  # units match training (MW - W ≈ MW)
+
+    # Time features at run_time (Brisbane AEST, matching training build_tactical_dataset.py)
+    brisbane_tz = pytz.timezone("Australia/Brisbane")
+    rt_bne = latest_run_time.astimezone(brisbane_tz)
+    hour_frac = rt_bne.hour + rt_bne.minute / 60.0
+    hour_sin = float(np.sin(2 * np.pi * hour_frac / 24.0))
+    hour_cos = float(np.cos(2 * np.pi * hour_frac / 24.0))
+    dow_sin  = float(np.sin(2 * np.pi * rt_bne.weekday() / 7.0))
+    dow_cos  = float(np.cos(2 * np.pi * rt_bne.weekday() / 7.0))
+
+    # Base 24-feature vector (no horizon)
+    base_feats = np.array([
+        *p5min_rrp,           # h0..h11  [12]
+        divergence_t1,        # [1]
+        actual_t1,            # [1]
+        actual_t2,            # [1]
+        actual_t6,            # [1]
+        rolling_1h_std,       # [1]
+        rolling_3h_max,       # [1]
+        residual_demand_t1,   # [1]
+        hour_sin,             # [1]
+        hour_cos,             # [1]
+        dow_sin,              # [1]
+        dow_cos,              # [1]
+        0.0,                  # is_imputed_p5min [1]
+    ], dtype=np.float32)     # [24]
+
+    # Expand to [12, 25] with horizon as last feature (matching long-format training)
+    X_long = np.column_stack([
+        np.tile(base_feats, (12, 1)),
+        np.arange(12, dtype=np.float32).reshape(-1, 1),
+    ])
+
+    # ── Predict ───────────────────────────────────────────────────────────────
+    raw_q05 = q05_model.predict(X_long)
+    raw_q50 = q50_model.predict(X_long)
+    raw_q95 = q95_model.predict(X_long)
+
+    # ── Apply conformal calibration per horizon (regime = per-horizon p5min) ──
+    deltas       = conformal['deltas']
+    spike_thresh = conformal['spike_threshold']
+    low_thresh   = conformal['low_threshold']
+
+    cal_q05 = np.empty(12, dtype=float)
+    cal_q95 = np.empty(12, dtype=float)
+    for h_idx in range(12):
+        p5h = p5min_rrp[h_idx]
+        if p5h >= spike_thresh:
+            regime = 'spike'
+        elif p5h < low_thresh or residual_demand_t1 < 0:
+            regime = 'low'
+        else:
+            regime = 'normal'
+        d = deltas[regime]
+        cal_q05[h_idx] = raw_q05[h_idx] - d['delta_q05']
+        cal_q95[h_idx] = raw_q95[h_idx] + d['delta_q95']
+
+    logging.info(
+        f"Tier 1 tactical: run_time={latest_run_time.isoformat()}, "
+        f"h0 q50={raw_q50[0]:.1f} $/MWh, "
+        f"h0 p5min={p5min_rrp[0]:.1f} $/MWh"
+    )
+
+    # ── Build output DataFrames ($/kWh for tariff compatibility) ─────────────
+    intervals = pd.date_range(start=latest_run_time, periods=12, freq='5min', tz='UTC')
+    return {
+        'p5min_price':     pd.DataFrame({'wholesale_price': raw_q50 / 1000.0}, index=intervals),
+        'p5min_price_q05': pd.DataFrame({'wholesale_price': cal_q05 / 1000.0}, index=intervals),
+        'p5min_price_q95': pd.DataFrame({'wholesale_price': cal_q95 / 1000.0}, index=intervals),
+    }
+
+
 def _execute_tft_prediction(historical_df, future_covariates_df):
     """
     TFT Inference Worker: Parallel branch for Run 010.
@@ -1573,8 +1765,15 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         if forecasts:
             all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
 
-    # 2b. Execute TFT Shadow Models (Sandboxed — existing forecasts are safe on failure)
+    # 2b. Execute Tier 1/2 parallel models (sandboxed — existing forecasts safe on failure)
     if 'price' in models_to_run:
+        try:
+            tactical_results = _execute_tactical_prediction()
+            if tactical_results:
+                all_results['p5min_tactical'] = {'forecasts': tactical_results, 'type': 'lgbm_tactical'}
+        except Exception as e:
+            logging.error(f"FATAL ERROR in Tier 1 tactical execution: {e}", exc_info=True)
+
         try:
             tft_results = _execute_tft_prediction(historical_df, adjusted_covariates_for_prediction)
             if tft_results:
