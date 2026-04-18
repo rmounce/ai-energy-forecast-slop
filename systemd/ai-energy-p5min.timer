@@ -1,0 +1,11 @@
+[Unit]
+Description=Fetch AEMO P5MIN forecast every 5 minutes
+
+[Timer]
+# P5MIN updates every 5 minutes. Run at :02 past each 5-min boundary to allow
+# for AEMO publication lag (~1-2 min after each dispatch interval).
+OnCalendar=*:02,07,12,17,22,27,32,37,42,47,52,57:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

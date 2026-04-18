@@ -1000,6 +1000,32 @@ def _get_influx_pd_prices(client, start_time, end_time):
         return pd.DataFrame()
 
 
+def _get_influx_sdo_demand(client, start_time, end_time):
+    """Get SevenDayOutlook scheduled_demand and net_interchange for SA1.
+
+    Returns DataFrame with columns sd_demand, sd_net_interchange (both in MW),
+    indexed by UTC datetime, or empty DataFrame on failure.
+    """
+    start_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+    end_str   = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+    try:
+        q = (f"SELECT last(scheduled_demand) AS sd_demand, "
+             f"last(net_interchange) AS sd_net_interchange "
+             f"FROM \"rp_30m\".\"aemo_sevendayoutlook\" "
+             f"WHERE region='SA1' AND time >= '{start_str}' AND time <= '{end_str}' "
+             f"GROUP BY time(30m) fill(null)")
+        r = client.query(q)
+        if not r or not list(r.get_points()):
+            return pd.DataFrame()
+        df = pd.DataFrame(r.get_points())
+        df['time'] = pd.to_datetime(df['time'], utc=True)
+        df.set_index('time', inplace=True)
+        return df[['sd_demand', 'sd_net_interchange']].fillna(0.0)
+    except Exception as e:
+        logging.warning(f"Failed to get InfluxDB SDO demand: {e}")
+        return pd.DataFrame()
+
+
 def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, dec_index, preds_raw):
     """Print side-by-side diagnostic table for TFT inputs and outputs.
 
@@ -1421,15 +1447,29 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     fut['pd_rrp'] = fut['pd_rrp'].fillna(0.0)
     fut['vic1_pd_rrp'] = fut['vic1_pd_rrp'].fillna(0.0)
     fut['nsw1_pd_rrp'] = fut['nsw1_pd_rrp'].fillna(0.0)
-    
+
+    # SevenDayOutlook: sd_demand + sd_net_interchange (all 144 steps, matches training)
+    sdo_df = _get_influx_sdo_demand(
+        InfluxDBClient(**CONFIG['influxdb']), fut.index.min(), fut.index.max()
+    )
+    if not sdo_df.empty:
+        fut = fut.join(sdo_df, how='left')
+        fut['sd_demand'] = fut['sd_demand'].fillna(0.0)
+        fut['sd_net_interchange'] = fut['sd_net_interchange'].fillna(0.0)
+    else:
+        logging.warning("TFT: SDO data unavailable — sd_demand/sd_net_interchange 0-filled")
+        fut['sd_demand'] = 0.0
+        fut['sd_net_interchange'] = 0.0
+
     fut = pd.concat([fut, time_sin_cos(fut.index)], axis=1)
     fut['horizon_norm'] = np.arange(len(fut)) / 144.0
     fut['covar_missing'] = 0
-    
+
     # Snapshot raw decoder pd_rrp before scaling ($/MWh after unit fix)
     _dec_pd_rrp_raw = fut["pd_rrp"].copy()  # $/MWh (matches training)
 
-    DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp"]
+    DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp",
+                "sd_demand", "sd_net_interchange"]
     # Apply dec scalers
     for feat in DEC_CONT:
         fut[feat] = transform_val(fut[feat], feat)
