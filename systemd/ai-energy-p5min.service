@@ -1,0 +1,8 @@
+[Unit]
+Description=Ingest latest AEMO P5MIN forecast into InfluxDB
+
+[Service]
+User=saltspork
+Type=oneshot
+WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
+ExecStart=/bin/bash -c 'source .venv/bin/activate && python ingest/ingest-p5min.py --fetch'
