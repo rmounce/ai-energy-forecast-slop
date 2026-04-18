@@ -1275,6 +1275,54 @@ def _execute_tactical_prediction():
     }
 
 
+def _apply_pd_debiaser(fut_df, start_t):
+    """
+    Applies the PREDISPATCH debiaser (LGBM) to the first 56 steps of the decoder.
+    Matches the contract in train/train_pd_debiaser.py.
+    """
+    model_path = Path(__file__).resolve().parent / "models" / "pd_debiaser" / "lgbm_final.pkl"
+    if not model_path.exists():
+        return fut_df
+    
+    try:
+        # We use the head(56) which covers the 0-28h predispatch horizon
+        df = fut_df.head(56).copy()
+        if df.empty:
+            return fut_df
+            
+        # run_time is assumed to be start_t - 30min (matching training/eval mapping)
+        run_time = start_t - pd.Timedelta(minutes=30)
+        df['horizon_steps'] = ((df.index - run_time).total_seconds() / 1800).astype(np.float32)
+        
+        # Time features (AEST/Brisbane, no DST — same as time_sin_cos but for local df)
+        t = df.index.tz_convert("Australia/Brisbane")
+        df["hour_sin"]  = np.sin(2 * np.pi * t.hour / 24)
+        df["hour_cos"]  = np.cos(2 * np.pi * t.hour / 24)
+        df["dow_sin"]   = np.sin(2 * np.pi * t.dayofweek / 7)
+        df["dow_cos"]   = np.cos(2 * np.pi * t.dayofweek / 7)
+        df["month_sin"] = np.sin(2 * np.pi * (t.month - 1) / 12)
+        df["month_cos"] = np.cos(2 * np.pi * (t.month - 1) / 12)
+        
+        feats = [
+            "pd_rrp", "pd_demand", "pd_net_interchange", "horizon_steps",
+            "hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos"
+        ]
+        
+        # Load model via joblib (already imported in forecast.py)
+        model = joblib.load(model_path)
+        X = df[feats].astype(np.float32)
+        debiased = model.predict(X)
+        
+        # Use .loc to avoid SettingWithCopy
+        fut_df.loc[df.index, 'pd_rrp'] = debiased.astype(np.float32)
+        logging.info(f"Applied PD debiaser to {len(df)} steps.")
+        
+    except Exception as e:
+        logging.warning(f"PD debiaser failed: {e}")
+        
+    return fut_df
+
+
 def _execute_tft_prediction(historical_df, future_covariates_df):
     """
     TFT Inference Worker: Parallel branch for Run 010.
@@ -1447,6 +1495,9 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     fut['pd_rrp'] = fut['pd_rrp'].fillna(0.0)
     fut['vic1_pd_rrp'] = fut['vic1_pd_rrp'].fillna(0.0)
     fut['nsw1_pd_rrp'] = fut['nsw1_pd_rrp'].fillna(0.0)
+
+    # ── 3.5 Debias PREDISPATCH (Run 011+ contract)
+    fut = _apply_pd_debiaser(fut, start_t)
 
     # SevenDayOutlook: sd_demand + sd_net_interchange (all 144 steps, matches training)
     sdo_df = _get_influx_sdo_demand(
