@@ -36,3 +36,5 @@ models/
 # Explicitly include
 !config.example.json
 !eval/results/*.json
+!eval/results/*.csv
+!eval/results/*.parquet
