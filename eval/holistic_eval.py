@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import json
+import pickle
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -40,9 +41,10 @@ from influxdb import InfluxDBClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-RESULTS_DIR = ROOT / "eval" / "results"
+RESULTS_DIR  = ROOT / "eval" / "results"
 FORECAST_LOG = ROOT / "price_forecast_log.csv"
-INDEX_FILE = RESULTS_DIR / "holistic_eval_index.parquet"
+INDEX_FILE   = RESULTS_DIR / "holistic_eval_index.parquet"
+TFT_FCST_FILE = RESULTS_DIR / "retro_tft_forecasts.pkl"
 
 WINDOW_STEPS = 144        # 72h at 30-min resolution
 INTERVAL_H   = 30 / 60   # 30-min steps
@@ -134,6 +136,25 @@ def load_lgbm_forecasts() -> dict:
     return forecasts
 
 
+def load_tft_forecasts() -> dict:
+    """
+    Load retrospective TFT forecasts from retro_tft_forecasts.pkl.
+    Returns dict: UTC Timestamp → np.ndarray shape (144,) q50 in $/MWh.
+    Returns empty dict if file not found.
+    """
+    if not TFT_FCST_FILE.exists():
+        return {}
+    print("Loading TFT forecast pickle...")
+    t0 = time.time()
+    with open(TFT_FCST_FILE, "rb") as f:
+        data = pickle.load(f)
+    q50_idx = data.get("q50_idx", 2)
+    forecasts = {ts: arr[:, q50_idx] for ts, arr in data["forecasts"].items()}
+    print(f"  Loaded {len(forecasts):,} TFT windows in {time.time()-t0:.1f}s  "
+          f"(q50 index={q50_idx}, quantiles={data.get('quantiles')})")
+    return forecasts
+
+
 # ── Greedy dispatch (fast alternative to rolling LP MPC) ──────────────────────
 
 def greedy_dispatch(forecast_prices_mwh: np.ndarray, actual_prices_mwh: np.ndarray,
@@ -198,10 +219,14 @@ def greedy_dispatch(forecast_prices_mwh: np.ndarray, actual_prices_mwh: np.ndarr
 
 def simulate_window(args: tuple) -> dict | None:
     """
-    Worker function: simulate oracle/lgbm/p5min for one window.
+    Worker function: simulate oracle/lgbm/p5min (and optionally ai) for one window.
     Designed to be called from ProcessPoolExecutor.
+
+    args = (start_ts, stratum, actual_prices, lgbm_fcst, net_load_kw,
+            price_only, dispatch_mode, tft_fcst)
+    tft_fcst: ndarray(144,) in $/MWh or None to skip AI source.
     """
-    start_ts, stratum, actual_prices, lgbm_fcst, net_load_kw, price_only, dispatch_mode = args
+    start_ts, stratum, actual_prices, lgbm_fcst, net_load_kw, price_only, dispatch_mode, tft_fcst = args
 
     net_load = None if price_only else net_load_kw
 
@@ -210,6 +235,8 @@ def simulate_window(args: tuple) -> dict | None:
         lgbm_pnl   = greedy_dispatch(lgbm_fcst,    actual_prices, net_load)
         p5min_fcst = np.full(WINDOW_STEPS, actual_prices[0])
         p5min_pnl  = greedy_dispatch(p5min_fcst,   actual_prices, net_load)
+        ai_pnl     = (greedy_dispatch(tft_fcst, actual_prices, net_load)
+                      if tft_fcst is not None else None)
     else:
         # Import inside worker (subprocess needs its own imports)
         import sys as _sys
@@ -223,6 +250,9 @@ def simulate_window(args: tuple) -> dict | None:
         p5min_fcst = np.full(WINDOW_STEPS, actual_prices[0])
         p5min_pnl  = simulate_mpc(p5min_fcst,   actual_prices, net_load_actuals=net_load,
                                    interval_h=INTERVAL_H)["total_pnl"]
+        ai_pnl     = (simulate_mpc(tft_fcst, actual_prices, net_load_actuals=net_load,
+                                    interval_h=INTERVAL_H)["total_pnl"]
+                      if tft_fcst is not None else None)
 
     return {
         "start_time": start_ts,
@@ -230,6 +260,7 @@ def simulate_window(args: tuple) -> dict | None:
         "oracle_pnl": oracle_pnl,
         "lgbm_pnl":   lgbm_pnl,
         "p5min_pnl":  p5min_pnl,
+        "ai_pnl":     ai_pnl,
     }
 
 
@@ -246,8 +277,17 @@ def classify_window(prices_mwh: np.ndarray) -> str:
 def build_summary(df_raw: pd.DataFrame) -> pd.DataFrame:
     """Build $/day per-stratum summary table from raw per-window results."""
     days_per_window = (WINDOW_STEPS * INTERVAL_H) / 24
-    for col in ("oracle_pnl", "lgbm_pnl", "p5min_pnl"):
+    pnl_cols = ["oracle_pnl", "lgbm_pnl", "p5min_pnl"]
+    if "ai_pnl" in df_raw.columns and df_raw["ai_pnl"].notna().any():
+        pnl_cols.append("ai_pnl")
+    for col in pnl_cols:
         df_raw[col + "_per_day"] = df_raw[col] / days_per_window
+
+    sources = [("oracle",          "oracle_pnl_per_day"),
+               ("lgbm_legacy",     "lgbm_pnl_per_day"),
+               ("p5min_naive",     "p5min_pnl_per_day")]
+    if "ai_pnl_per_day" in df_raw.columns:
+        sources.append(("tier1_tier2_ai", "ai_pnl_per_day"))
 
     rows = []
     strata = [s for s in ["spike", "low", "normal"] if s in df_raw["stratum"].values]
@@ -257,13 +297,16 @@ def build_summary(df_raw: pd.DataFrame) -> pd.DataFrame:
         if sub.empty:
             continue
         lgbm_mean = sub["lgbm_pnl_per_day"].mean()
-        for source, col in [("oracle", "oracle_pnl_per_day"),
-                             ("lgbm_legacy", "lgbm_pnl_per_day"),
-                             ("p5min_naive", "p5min_pnl_per_day")]:
-            mean_val = sub[col].mean()
+        for source, col in sources:
+            if col not in sub.columns:
+                continue
+            sub_valid = sub[sub[col].notna()] if source == "tier1_tier2_ai" else sub
+            if sub_valid.empty:
+                continue
+            mean_val = sub_valid[col].mean()
             vs_lgbm  = (mean_val / max(abs(lgbm_mean), 1e-9) - 1) * 100
             rows.append({
-                "stratum": s, "source": source, "n": len(sub),
+                "stratum": s, "source": source, "n": len(sub_valid),
                 "mean_per_day": round(mean_val, 4),
                 "vs_lgbm_pct": round(vs_lgbm, 1) if source != "lgbm_legacy" else 0.0,
             })
@@ -303,12 +346,16 @@ def main():
                         help="Dispatch algorithm: 'lp' (rolling MPC, accurate) or "
                              "'greedy' (O(N) heuristic, ~100x faster). "
                              "--fast implies --dispatch greedy.")
+    parser.add_argument("--ai-source", action="store_true",
+                        help="Include TFT Tier2 AI source from retro_tft_forecasts.pkl. "
+                             "Re-runs windows that have TFT forecasts; saves *_ai checkpoints.")
     args = parser.parse_args()
 
     dispatch_mode = args.dispatch
-    fast_mode = args.fast
-    ckpt_suffix = "_fast" if fast_mode else ""
-    fast_n = 50  # windows per stratum in fast mode
+    fast_mode     = args.fast
+    ai_source     = args.ai_source
+    ckpt_suffix   = "_fast" if fast_mode else ("_ai" if ai_source else "")
+    fast_n        = 50  # windows per stratum in fast mode
 
     if not INDEX_FILE.exists():
         print(f"ERROR: eval index not found at {INDEX_FILE}")
@@ -365,6 +412,7 @@ def main():
 
         # ── Build work queue ──────────────────────────────────────────────────
         lgbm_forecasts = load_lgbm_forecasts()
+        tft_forecasts  = load_tft_forecasts() if ai_source else {}
         work = []
         skipped = 0
         for stratum in strata_todo:
@@ -379,6 +427,7 @@ def main():
                 if lgbm_fcst is None:
                     skipped += 1
                     continue
+                tft_fcst = tft_forecasts.get(start_ts) if ai_source else None
                 work.append((
                     start_ts,
                     stratum,
@@ -387,6 +436,7 @@ def main():
                     window_data["net_load_kw"],
                     args.price_only,
                     dispatch_mode,
+                    tft_fcst,
                 ))
 
         print(f"\nWork queue: {len(work)} windows ({skipped} skipped), "
@@ -423,7 +473,8 @@ def main():
                 df_s.to_parquet(ckpt, index=False)
                 print(f"  Saved {len(df_s)} {s} rows → {ckpt.name}")
 
-    # ── Merge all checkpoints ─────────────────────────────────────────────────
+    # ── Merge checkpoints ─────────────────────────────────────────────────────
+    # For --ai-source: merge base checkpoints (oracle/lgbm/p5min) + ai checkpoints
     parts = []
     for s in all_strata:
         ckpt = RESULTS_DIR / f"holistic_eval_raw_{s}{ckpt_suffix}.parquet"
@@ -434,6 +485,29 @@ def main():
         sys.exit(1)
 
     df_raw = pd.concat(parts, ignore_index=True)
+
+    # If we just ran the AI source, merge ai_pnl into the base checkpoints for summary
+    if ai_source and "ai_pnl" not in df_raw.columns:
+        base_parts = []
+        for s in all_strata:
+            base_ckpt = RESULTS_DIR / f"holistic_eval_raw_{s}.parquet"
+            if base_ckpt.exists():
+                base_parts.append(pd.read_parquet(base_ckpt))
+        if base_parts:
+            df_base = pd.concat(base_parts, ignore_index=True)
+            ai_col = df_raw[["start_time", "ai_pnl"]].rename(
+                columns={"ai_pnl": "ai_pnl_new"}
+            )
+            df_base["start_time"] = pd.to_datetime(df_base["start_time"], utc=True)
+            ai_col["start_time"]  = pd.to_datetime(ai_col["start_time"], utc=True)
+            df_raw = df_base.merge(ai_col, on="start_time", how="left")
+            df_raw["ai_pnl"] = df_raw["ai_pnl_new"]
+            df_raw.drop(columns=["ai_pnl_new"], inplace=True)
+    elif not ai_source:
+        # Ensure ai_pnl column exists for build_summary (will be skipped if all NaN)
+        if "ai_pnl" not in df_raw.columns:
+            df_raw["ai_pnl"] = np.nan
+
     df_raw.to_parquet(RESULTS_DIR / "holistic_eval_raw.parquet", index=False)
 
     df_summary = build_summary(df_raw)
