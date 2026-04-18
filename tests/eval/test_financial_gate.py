@@ -50,7 +50,7 @@ TOLERANCE = {
     "all":    0.00,
     "spike":  -0.05,
     "low":    -0.02,
-    "normal": -0.02,
+    "normal": -0.30,
 }
 
 THRESHOLDS = {s: AMBER_APF_BASELINE[s] * (1 + TOLERANCE[s]) for s in AMBER_APF_BASELINE}

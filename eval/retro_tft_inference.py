@@ -14,6 +14,8 @@ Output: eval/results/retro_tft_forecasts.pkl
 
 Decoder simplifications vs production:
   - PREDISPATCH: uses stored last() per 30m bucket (no per-window publication-time filtering)
+  - pd_rrp steps 0-55: substituted with OOF-debiased values from debiased_pd_rrp_oof.parquet
+    where available, matching the training contract in build_training_dataset.py:291-306
   - Weather decoder: uses historical actuals (not BOM forecasts) — slightly advantages TFT
   - pd_demand/pd_net_interchange: from PREDISPATCH measurement (same as production)
 
@@ -39,6 +41,7 @@ sys.path.insert(0, str(ROOT / "train"))
 RESULTS_DIR  = ROOT / "eval" / "results"
 INDEX_FILE   = RESULTS_DIR / "holistic_eval_index.parquet"
 OUT_FILE     = RESULTS_DIR / "retro_tft_forecasts.pkl"
+OOF_FILE     = ROOT / "data" / "parquet" / "debiased_pd_rrp_oof.parquet"
 
 WINDOW_STEPS = 144
 ENC_STEPS    = 96
@@ -229,6 +232,7 @@ def build_window_tensors(
     feats_5m: pd.DataFrame,
     scalers: dict,
     log_scale: float,
+    oof_by_run: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """
     Slice enc (96 steps) and dec (144 steps) arrays for one window.
@@ -282,7 +286,22 @@ def build_window_tensors(
     dec_cols = {}
     for feat in DEC_CONT:
         series = bulk.get(feat, pd.Series(dtype=float))
-        dec_cols[feat] = series.reindex(dec_idx).ffill().bfill().fillna(0.0).values
+        dec_cols[feat] = series.reindex(dec_idx).ffill().bfill().fillna(0.0).values.copy()
+
+    # OOF debiased pd_rrp substitution at steps 0-55 — matches training contract
+    # run_time T = start_ts - 30min; decoder step 0 = start_ts = T+30min
+    if oof_by_run is not None:
+        run_time = start_ts - pd.Timedelta(minutes=30)
+        oof_series = oof_by_run.get(run_time)
+        if oof_series is not None:
+            oof_vals = oof_series.reindex(dec_idx[:56])
+            valid = ~oof_vals.isna()
+            if valid.any():
+                dec_cols["pd_rrp"][:56] = np.where(
+                    valid.values,
+                    oof_vals.fillna(0.0).values,
+                    dec_cols["pd_rrp"][:56],
+                )
 
     # Scale decoder continuous features
     for feat in DEC_CONT:
@@ -377,13 +396,29 @@ def main():
     print(f"  5m coverage: {len(bulk['prices_5m'])} points, "
           f"{'computed' if have_5m else 'MISSING — rrp_5m_missing=1 fallback'}")
 
+    # ── Load OOF debiased pd_rrp ──────────────────────────────────────────────
+    oof_by_run = None
+    if OOF_FILE.exists():
+        print(f"Loading OOF debiased pd_rrp from {OOF_FILE.relative_to(ROOT)} ...")
+        oof_df = pd.read_parquet(OOF_FILE)
+        # Ensure run_time is UTC and nanosecond precision for consistent dictionary lookup
+        oof_df["run_time"] = pd.to_datetime(oof_df["run_time"], utc=True).dt.as_unit("ns")
+        oof_by_run = {
+            run_t: grp.set_index("interval_dt")["oof_debiased_rrp"]
+            for run_t, grp in oof_df.groupby("run_time")
+        }
+        print(f"  {len(oof_by_run)} run_times loaded")
+    else:
+        print("WARNING: OOF parquet not found — using raw PREDISPATCH (training mismatch)")
+
     # ── Build tensors for all windows ─────────────────────────────────────────
     print(f"Building encoder/decoder tensors for {len(df_index)} windows...")
     t0 = time.time()
     valid: list[tuple] = []
     skipped = 0
     for row in df_index.itertuples():
-        result = build_window_tensors(row.start_time, bulk, feats_5m, scalers, log_scale)
+        result = build_window_tensors(row.start_time, bulk, feats_5m, scalers, log_scale,
+                                      oof_by_run=oof_by_run)
         if result is None:
             skipped += 1
         else:
