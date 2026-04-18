@@ -48,9 +48,8 @@ The system operates in a cyclical fashion:
 
 3.  **Set up Python Environment:**
     ```bash
-    python3 -m venv .venv
+    uv venv .venv
     source .venv/bin/activate
-    # Use uv for faster, reliable package management
     uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
     ```
 
@@ -87,16 +86,17 @@ python3 forecast.py train-load
 ```
 
 #### 3. Run Predictions
-Generate forecasts and publish them to Home Assistant. This should be run on a recurring schedule (e.g., a cron job every 30 minutes).
+Generate forecasts and publish them to Home Assistant. Run on a recurring schedule — the included systemd timer fires every 30 minutes.
 ```bash
-# Predict price using dynamic handoff and publish to HA
-python3 forecast.py predict-price --publish-hass --dynamic-handoff
+# Run all models (price + load) and publish to HA
+python3 forecast.py predict-all --publish-hass --dynamic-handoff
 
-# Predict load and publish to HA
+# Price only or load only (manual/testing)
+python3 forecast.py predict-price --publish-hass --dynamic-handoff
 python3 forecast.py predict-load --publish-hass
 ```
-*You can run predictions without publishing to HA by omitting the `--publish-hass` flag.*
-*You can specify a custom config file with `--config /path/to/config.json`.*
+*Omit `--publish-hass` to run locally without writing to HA.*
+*Use `--config /path/to/config.json` for a non-default config.*
 
 ## Data Pipeline Configuration
 
@@ -132,7 +132,9 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
 ```
 
 ## Future Work
--   **EMHASS Integration:** Directly pass the generated forecasts to an optimization addon like [EMHASS](https://emhass.readthedocs.io/en/latest/) to automate home energy decisions.
+-   **Holistic dispatch simulation (Phase 6):** Backtest full pipeline profit vs baselines using actual load, PV, and prices from InfluxDB.
+-   **Test framework (Phase 8):** Regression tests against canned fixtures — code correctness gate before model promotion.
+-   **Event-driven service (Phase 7):** Replace systemd timers with a persistent process using HA WebSocket subscriptions; eliminates model cold-start overhead (~30s/run).
 
 ## Acknowledgements
 The initial version of the core `forecast.py` script was generated with assistance from Google's Gemini.

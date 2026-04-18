@@ -15,35 +15,48 @@ The system is located in Adelaide, South Australia (AEMO region SA1), and uses A
 ## High-Level Data Flow
 
 ```
-External Data Sources                    Internal Data Store
-─────────────────────                    ───────────────────
-AEMO (nemosis / NEMWeb)  ──┐
-HA SQLite (statistics)   ──┤──► ingest/*.py ──► InfluxDB (hass db)
-Amber Electric CSV       ──┘                         │
-                                                      │ historical (30m)
-                                                      ▼
-                                             forecast.py  ◄── future covariates from HA:
-                                             (train/predict)    Solcast PV, BOM weather,
-                                                      │         Amber price forecast
-                                                      │
-                             ┌────────────────────────┤
-                             │                        │
-                             ▼                        ▼
-                     predictions.json        HA sensor entities
-                     *_forecast_log.csv      sensor.ai_price_forecast
-                                             sensor.ai_load_forecast
-                                                      │
-                                                      ▼
-                                               EMHASS optimiser
-                                             (MPC day-ahead plan)
-                                                      │
-                                                      ▼
-                                           HA automation reads mpc_*
-                                           entities, calls EMS script
-                                                      │
-                                                      ▼
-                                           Sigenergy inverter / battery
-                                           (charge, discharge, standby, etc.)
+External Sources                             Internal Data Store
+────────────────                             ───────────────────
+AEMO NEMweb (direct scraping):
+  P5MIN        every 5 min   ─────────────► ingest/*.py ──► InfluxDB (hass db)
+  PREDISPATCH  every 30 min  ──────────────────────────────────────┤
+  PD7Day       3×/day        ──────────────────────────────────────┤
+  SevenDayOutlook every 30m  ──────────────────────────────────────┤
+HA → InfluxDB CQs (load, PV, weather):  ─────────────────────────┘
+                                                        │
+                         ┌──────────────────────────────┤
+                         │                              │
+                  every 5 min (Tier 1)          every 30 min (Tier 2)
+                         │                              │
+                         ▼                              ▼
+                  Tactical LightGBM           TFT price (0–72h q5–q99)
+                  (0–60 min q05/50/95)        LightGBM price (legacy)
+                         │                    TFT load / LightGBM load
+                         └──────────┬─────────────────┘
+                                    │ ◄── HA future covariates (Solcast,
+                                    │     BOM weather, Amber dynamic handoff)
+                                    │
+             ┌──────────────────────┤
+             │                      │
+             ▼                      ▼
+     predictions.json       HA sensor entities:
+     *_forecast_log.csv     sensor.ai_p5min_price_forecast  (Tier 1)
+                            sensor.ai_price_forecast        (Tier 2 p50)
+                            sensor.ai_price_forecast_low/high
+                            sensor.ai_load_forecast
+                            sensor.ai_combined_*_price_forecast  (shadow)
+                                    │
+                                    ▼
+                             EMHASS optimiser
+                       day-ahead (72h × 30-min)
+                       MPC (14h × 5-min, re-runs every 5 min)
+                                    │
+                                    ▼
+                        HA automation → EMS script
+                                    │
+                                    ▼
+                        Sigenergy inverter / battery
+                        (charge, discharge, standby)
 ```
 
 ---
@@ -73,7 +86,7 @@ Six pairs of `.service` + `.timer` units drive the pipeline:
 |---|---|---|
 | `ai-energy-pd7day.timer` | 3×/day (07:20, 12:55, 18:05 AEST) | `ingest/ingest-pd7day.py --fetch` |
 | `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch` |
-| `ai-energy-sevendayoutlook.timer` | Every 30 min (`:15` and `:45`) | `ingest/ingest-sevendayoutlook.py --fetch` |
+| `ai-energy-sevendayoutlook.timer` | Every 30 min (`:01` and `:31`) | `ingest/ingest-sevendayoutlook.py --fetch` |
 | `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch` — SA1/VIC1/NSW1 5-min predispatch → `rp_5m.aemo_p5min_forecast` |
 
 All services run as user `saltspork`, `WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority).
@@ -82,7 +95,7 @@ All services run as user `saltspork`, `WorkingDirectory=/home/saltspork/src/ai-e
 
 ## Components
 
-### `forecast.py` — Monolithic Orchestrator (~2,300 lines)
+### `forecast.py` — Monolithic Orchestrator (~3,500 lines)
 
 The core script. All behaviour is driven by subcommands:
 
@@ -106,15 +119,15 @@ The file contains ~28 functions that fall naturally into these logical groups:
 | Group | Functions | Responsibility |
 |---|---|---|
 | **Config / utilities** | `load_config`, `add_time_features`, `add_gst`, `remove_gst` | Shared utilities |
-| **InfluxDB** | `get_historical_data` | Historical data for training and backfill |
 | **HA API** | `call_ha_api`, `get_entity_state` | Generic HA HTTP wrappers |
 | **Data fetching** | `get_amber_spot_price_forecast`, `get_amber_advanced_forecast`, `get_solcast_forecast`, `get_weather_forecast`, `get_aemo_forecast`, `_get_aemo_short_term_forecast`, `_get_aemo_short_term_price_sa1`, `_get_aemo_7_day_outlook_forecast` | Future covariate data from external sources |
 | **Training** | `train_single_model`, `train_models` | Model fitting and serialisation |
-| **Prediction** | `_predict_simple`, `_predict_with_dynamic_handoff`, `_execute_quantile_prediction`, `_execute_single_prediction` | Inference |
+| **Prediction** | `_predict_simple`, `_predict_with_dynamic_handoff`, `_execute_quantile_prediction`, `_execute_single_prediction`, `_execute_tactical_prediction` (Tier 1 LightGBM, 0–60 min), `_execute_tft_prediction` (Tier 2 TFT price), `_execute_tft_load_prediction` (TFT load) | Inference |
 | **Tariffs** | `get_amber_api_scaling_factor`, `get_network_loss_factor`, `_get_tariff_data`, `_create_complete_profile`, `_calculate_amber_api_scaling_factor`, `_calculate_forecasted_network_loss_factor`, `update_tariffs`, `apply_tariffs_to_forecast` | Tariff profile construction and application |
 | **Adjusters** | `update_adjusters`, `apply_covariate_adjustments` | Weather covariate bias correction |
 | **Logging** | `log_forecast_data`, `backfill_actuals`, `_backfill_single_log` | Forecast log CSVs |
-| **Publishing** | `publish_forecast_to_hass`, `publish_adjusted_covariates_to_hass` | Push results to HA |
+| **Publishing** | `publish_forecast_to_hass`, `publish_adjusted_covariates_to_hass`, `_build_combined_forecast_items`, `_publish_combined_price_forecasts` | Push results to HA |
+| **InfluxDB helpers** | `get_historical_data`, `_get_influx_sdo_demand` | InfluxDB queries |
 | **Orchestrators** | `run_predictions`, `main` | Top-level entry points |
 
 Dead code removed: `_publish_covariates_helper` (never called) and `model/` (01–04-*.py exploratory scripts, superseded by `forecast.py`).
@@ -266,7 +279,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 **Phase 4 (conformal calibration):**
 8. `train/calibrate_conformal.py` → conditional conformal δ corrections; `models/lgbm_tactical/conformal_deltas.json`
 
-**Status (2026-04-16):** Phases 1–4 complete. Dispatch Sim Run 001: LightGBM +5.9% overall regret reduction vs P5MIN (low stratum +32.3%; spike neutral −1.8%). TFT comparison: LightGBM ≈ TFT (3.6% vs 3.7% regret) — architecture choice confirmed. Conformal calibration: spike q95 0.750 → 0.821 (inference regime; fundamental limit 0.970 with oracle regime). Next: Phase 5 production routing + Load TFT (see below).
+**Status (2026-04-18):** Phases 1–5 (partial) complete. Dispatch Sim Run 001: LightGBM +5.9% overall regret reduction vs P5MIN (low stratum +32.3%; spike neutral −1.8%). TFT comparison: LightGBM ≈ TFT (3.6% vs 3.7% regret) — architecture choice confirmed. Conformal calibration: spike q95 0.750 → 0.821. Tier 1 and Tier 2 live in production (`sensor.ai_p5min_price_forecast`, `sensor.ai_combined_*_price_forecast`). Phase 5 remaining sub-tasks paused pending Phase 6 (holistic dispatch sim) + Phase 8 (test framework) baseline gate.
 
 ---
 
@@ -287,7 +300,11 @@ A TFT model for household load prediction, intended to shadow and eventually rep
 1. `data/export_load_dataset.py` → pull `power_load_30m`, `power_pv_30m`, weather from InfluxDB → parquet
 2. `data/build_load_dataset.py` → encoder/decoder numpy arrays, MinMax scalers, train/val split
 3. `train/train_tft_load.py` → TFT checkpoint at `models/tft_load/`
-4. Shadow implementation in `forecast.py` → `predict_tft_load()` analogous to `predict_tft_price()`; publishes to `sensor.ai_tft_load_forecast`
+4. Shadow implementation in `forecast.py` → `_execute_tft_load_prediction()`; publishes to `sensor.ai_tft_load_forecast`
+
+**Current production checkpoint:** `models/tft_load/checkpoint_best.pt` (Run 005, epoch 32). Overall MAE 234W.
+
+**Known issue — overnight 48h morning ramp inversion:** Step 72 (6:30am day+2) is predicted lower than step 60 (3:30am day+2), which is physically implausible. Root cause: `HorizonWeightedQuantileLoss` with tau=48 gives step 72 only 22% gradient weight — the model's time-of-day encoding at this horizon is too weak. Run 006 (planned) will add a gradient floor (`--horizon-floor 0.25`) so all steps beyond ~32h retain at least 25% weight. See `docs/tft_load_forecast.md` for full run history and promotion criteria.
 
 ---
 
@@ -368,7 +385,7 @@ HC_PREDICT_URL=https://hc-ping.com/<your-uuid>
 
 ## Known Pain Points
 
-1. **`forecast.py` is a monolith.** At ~2,300 lines it handles training, prediction, tariff management, logging, bias correction, and HA publishing. The natural module boundaries are clear (see table above) but the code is not yet split. Hard to navigate and test.
+1. **`forecast.py` is a monolith.** At ~3,500 lines it handles training, prediction, tariff management, logging, bias correction, HA publishing, and both Tier 1/Tier 2 inference. The natural module boundaries are clear (see table above) but the code is not yet split. Hard to navigate and test. Refactoring is gated on Phase 8 (test framework) to avoid regressions.
 
 2. **`hass/package-emhass.yaml` Jinja complexity.** The EMHASS REST command payload is built entirely in Jinja2 template syntax inside a YAML string. It's ~350 lines of logic that is hard to debug, diff, and maintain.
 

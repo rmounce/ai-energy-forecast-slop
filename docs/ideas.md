@@ -49,37 +49,28 @@ proxy and much simpler to debug.
 
 ## Price Forecasting
 
-### Temporal sample weighting
+### ~~Temporal sample weighting~~ ✅ Done
 
-SA1 market dynamics are evolving (solar penetration, storage growth, VRE volatility).
-Down-weight older training samples with `exp(-age_days / half_life)` via
-`WeightedRandomSampler`. Allows aggressive historical backfilling while keeping recent
-market dynamics dominant. Half-life ~90–120 days is probably right for SA1.
+Event-stratified importance weighting implemented: exponential decay (half-life ~90 days)
+for baseload regime (−$50 to $150), with a 50% floor for extreme events (price < −$50 or
+> $150). Prevents catastrophic forgetting of 2022 energy crisis data while keeping recent
+market dynamics dominant. See plan file for design rationale.
 
-Implementation: add `--temporal-halflife` arg to `train/train_tft_price.py`; compute
-sample ages from `run_times.npy`; pass `WeightedRandomSampler` to the training DataLoader.
-This is a near-term improvement (Step 2d in the plan), not speculative.
+### ~~Quantile calibration — Tier 1~~ ✅ Done (Phase 4)
 
-### Quantile calibration
+Conditional conformal prediction applied to Tier 1 tactical LightGBM. Stratified by
+physical regime (spike / oversupply / normal). Spike q95 coverage 0.750 → 0.821.
+Deltas stored in `models/lgbm_tactical/conformal_deltas.json`.
 
-Are the q10/q50/q90 predictions actually calibrated? If q90 only contains actuals 80% of
-the time, the user's asymmetric dispatch strategy (bias toward q90 for sell threshold) is
-less conservative than intended.
+**Tier 2 TFT calibration still needed** — lower tail (q05/q10) is biased due to
+log-scaling compressing negatives. Do not use Tier 2 q05/q10 for dispatch thresholds
+until Tier 2 conformal calibration is complete. Deferred pending Phase 6+8 gate.
 
-Add a calibration diagnostic to `evaluate_tft.py`: for each quantile q, compute the
-empirical coverage rate `P(actual ≤ pred_q)` and plot/report the calibration curve.
-Well-calibrated quantiles make the dispatch strategy more reliable without any EMHASS
-changes.
+### ~~P5MIN integration~~ ✅ Done (2026-04)
 
-### P5MIN integration (near-term debiased signal)
-
-AEMO P5MIN provides 5-min forecasts for the next 60 min, updated every 5 min. This is
-the data needed to fully replace Amber APF's near-term debiased signal for 0–1h forecasts.
-
-- `aemo_dispatch_sa1_5m` already in InfluxDB via CQ chain — bias correction training ready
-- New `ingest/ingest_p5min.py` fetches from NEMweb `/Reports/Current/P5_MIN_PREDISPATCH/`
-- Resolution cascade at inference: P5MIN (0–1h) → PREDISPATCH (1–28h) → PD7Day (28–72h)
-- See plan file (Step 5) for full design
+Implemented as Tier 1 tactical LightGBM. `ingest/ingest-p5min.py` ingests to
+`rp_5m.aemo_p5min_forecast`. Inference: `_execute_tactical_prediction()` in `forecast.py`.
+Publishes `sensor.ai_p5min_price_forecast` and contributes to `sensor.ai_combined_*_price_forecast`.
 
 ### Ensemble / model averaging
 
@@ -88,38 +79,17 @@ Average predictions from multiple TFT checkpoints (different random seeds, diffe
 and improve quantile calibration. Low implementation cost once the single-model pipeline
 is working.
 
-### VIC1 + NSW1 prices as decoder features (near-term, low effort)
+### ~~VIC1 + NSW1 prices as decoder features~~ ✅ Done (Run 011b)
 
-SA1 has two high-capacity interconnectors:
-- **Heywood** → VIC1 (~650MW, already operating)
-- **Project EnergyConnect** → NSW1 (~800MW, expected full commission ~2026–2027,
-  will be represented in NEM dispatch as a direct SA1↔NSW1 interchange)
+`vic1_pd_rrp` and `nsw1_pd_rrp` added to `DEC_CONTINUOUS` in training dataset and inference.
+Both are populated from `rp_30m.aemo_predispatch_forecast` for VIC1/NSW1 regions.
+EnergyConnect (SA1↔NSW1) expected ~2026–2027; `covar_missing` flag handles sparse NSW1 data.
 
-`net_interchange` is already an encoder feature (the *result* of price differentials)
-but not the *cause*. Adding VIC1 and NSW1 PREDISPATCH forecast prices as decoder features
-gives the model the actual signals driving interchange — useful for spike precursors where
-adjacent region prices lead SA1 convergence, and for constraint events where SA1 diverges.
+### ~~SevenDayOutlook as decoder covariate~~ ✅ Done (Run 011b)
 
-VIC1 and NSW1 data are almost certainly already in InfluxDB (AEMO ingest files cover all
-NEM regions; the SA1 filter is only applied at export time in `export_parquet.py`).
-
-Implementation:
-1. Verify in InfluxDB: `SELECT COUNT(rrp) FROM rp_30m.aemo_predispatch_forecast WHERE region='VIC1'` (and NSW1)
-2. Add VIC1 + NSW1 exports to `data/export_parquet.py` → `aemo_predispatch_vic1.parquet`, `aemo_predispatch_nsw1.parquet`
-3. In `data/build_training_dataset.py`, join both to each decoder step → add `vic1_pd_rrp` and `nsw1_pd_rrp` to `DEC_CONTINUOUS`
-4. Rebuild dataset and retrain — EnergyConnect-era data will have both features populated; pre-commissioning NSW1 data will have sparse/missing NSW1 values, handled by the existing `covar_missing` flag
-
-Note: once EnergyConnect is fully commissioned and SA1↔NSW1 interchange is represented in
-NEM data, also add `nsw1_net_interchange` as an encoder feature alongside the existing
-`net_interchange` (which currently represents the SA1↔VIC1 Heywood flow).
-
-### Multi-region training
-
-`aemo_sevendayoutlook_sa1.parquet` is already ingested and exported but not yet used in
-training. AEMO's 7-day outlook provides scheduled demand and net interchange forecasts for
-28h–7d ahead — this could improve the decoder's long-tail (steps 57–144) considerably,
-particularly for the `pd_demand` and `pd_net_interchange` features that are currently
-zero-padded beyond the PREDISPATCH horizon.
+`sd_demand` and `sd_net_interchange` from `rp_30m.aemo_sevendayoutlook` (SA1 region)
+added to all 144 decoder steps. Fills the gap beyond PREDISPATCH horizon (steps 56–143).
+Ingested by `ingest/ingest-sevendayoutlook.py`, queried at inference via `_get_influx_sdo_demand()`.
 
 ---
 
@@ -137,39 +107,23 @@ The right fix is to standardise on UTC throughout — compute all time features 
 
 Not urgent while models are in shadow mode, but should be resolved before any model is promoted to primary. The load TFT `_time_sin_cos_local()` workaround is a stopgap.
 
-### APScheduler pipeline service
+### Event-driven pipeline service (Phase 7)
 
-Replace the predict/train/Parquet-rebuild systemd timers with a single
-`ai-energy-pipeline.service` using APScheduler. Enables inter-job dependencies
-(e.g. "rebuild Parquet 5 min after PREDISPATCH ingest completes") without systemd
-unit dependency gymnastics. See plan file for full design.
-
-Make this change when TFT goes into production and the Parquet rebuild becomes a
-dependency of the prediction path.
+Replace systemd timers with a single persistent `ai-energy-pipeline.service` using
+HA WebSocket subscriptions and an internal scheduler. Enables: (a) Tier 1 firing within
+~5s of each Amber price update, (b) in-process model caching (eliminates ~30s cold-start),
+(c) natural place to wire HA tail-risk automations. See plan file for full design sketch.
+Deferred until Phase 8 (test framework) is complete.
 
 ---
 
 ## Evaluation & Metrics
 
-### Spike-aware evaluation set
+### ~~Spike-aware evaluation set~~ ✅ Done (Phase 2/3)
 
-**Recommended (external design review, 2026-04-12):** build this before the next significant
-architecture change so future run comparisons are meaningful.
-
-The problem: Run 003 wMAPE=31.2% and Run 005 wMAPE=40.6% are not comparable — the windows
-differed (mild autumn vs volatile late-summer). A durable benchmark removes this ambiguity.
-
-Rather than a rolling last-N-days val window (which may be mild or volatile by chance),
-construct a stratified held-out eval set automatically selected to include:
-- Major spike events (e.g. top 5% of 30-min intervals by volatility / RRP level)
-- Extreme low / negative price events (heavy solar curtailment days)
-- Normal diurnal cycles covering all 4 seasons
-
-Selection criteria should be purely data-driven (no hard-coded dates), so the set is
-stable and reproducible across dataset rebuilds. Candidate approach: rank all PREDISPATCH
-run-times by some spike/volatility score, stratified-sample across deciles and seasons.
-
-This would make `evaluate_tft.py` comparisons meaningful regardless of when training runs.
+Stratified eval sets built for both Tier 1 (1,600 samples: 500 spike ≥$300, 300 low/negative, 800 normal)
+and Tier 2 TFT (900 samples). Generated by `data/build_stratified_eval_tactical.py` and
+`data/build_stratified_eval.py`. Durable across dataset rebuilds.
 
 ### Evaluation metric: nMAPE, revenue-weighted, or dispatch-regret?
 
