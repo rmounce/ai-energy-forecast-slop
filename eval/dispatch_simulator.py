@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-Phase 3 offline LP dispatch simulator.
+Offline LP dispatch simulator (Phase 3 + Phase 6).
 
-Evaluates forecast quality via financial regret on the stratified eval set.
-Compares three dispatch strategies at every run in the 1,600-sample eval set:
+Phase 3 mode (price-only):
+  Compares oracle / P5MIN / lgbm_q50 dispatch strategies on the 1,600-sample
+  stratified tactical eval set.  net_load_actuals=None.
 
-  oracle   — perfect foresight (actual prices used as forecast)
-  p5min    — raw AEMO P5MIN forecast (X[:, 0:12], already in the dataset)
-  lgbm_q50 — Tier 1 LightGBM q50 predictions
+Phase 6 mode (price + load/PV):
+  simulate_mpc() accepts net_load_actuals (kW per 30-min step).  The LP jointly
+  optimises battery dispatch against grid import/export considering actual household
+  net load, isolating price-forecast quality as the variable under test.
 
-Battery model: rolling MPC — at each 5-min step, solve LP over the remaining
-horizon, execute the first action, advance SoC, repeat.
-
-Financial regret = oracle_revenue – strategy_revenue (lower is better).
+Battery model: rolling MPC — at each step, solve LP over remaining horizon,
+execute first action, advance SoC, repeat.
 
 Outputs:
-  eval/results/dispatch_sim_run001.json — per-stratum and aggregate results
+  eval/results/dispatch_sim_run001.json  — Phase 3 results
+  eval/results/holistic_eval_results.csv — Phase 6 results (holistic_eval.py)
 """
 
 import json
@@ -108,21 +109,33 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float) -> tuple[np.ndarray, np
 # ── MPC simulation ───────────────────────────────────────────────────────────
 
 def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
-                 soc_init: float = SOC_INIT_KWH) -> dict:
+                 soc_init: float = SOC_INIT_KWH,
+                 net_load_actuals: np.ndarray | None = None) -> dict:
     """
     Rolling-horizon MPC dispatch simulation.
 
-    At each 5-min step h:
+    At each step h:
       1. Solve LP with forecast_prices[h:] as the forward price curve.
       2. Execute only the first action (c_0, d_0).
-      3. Book revenue against actual_prices[h].
+      3. Book P&L against actual_prices[h].
       4. Advance SoC.
 
-    Returns dict with total revenue ($), final SoC, and per-step actions.
+    net_load_actuals (kW, optional):
+        Actual household net load per step: load_kw − pv_kw.
+        Positive  = household draws from grid.
+        Negative  = household exports to grid (excess PV).
+
+        When provided, P&L accounts for grid import/export costs on top of
+        battery arbitrage.  This is Phase 6 mode — actual load/PV are fixed
+        inputs so only price-forecast quality drives differences across sources.
+
+        When None (default), price-only mode: only battery arbitrage P&L.
+
+    Returns dict with total_pnl ($), final SoC, and per-step actions.
     """
     n = len(actual_prices)
     soc = float(soc_init)
-    total_revenue = 0.0
+    total_pnl = 0.0
     c_actions = np.zeros(n)
     d_actions = np.zeros(n)
 
@@ -131,11 +144,25 @@ def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
         c0 = float(c_plan[0])
         d0 = float(d_plan[0])
 
-        # Revenue at actual (not forecast) price
-        p_kwh = actual_prices[h] / 1000.0
-        revenue = (d0 * EFF_D * p_kwh - c0 * p_kwh
+        p_kwh = actual_prices[h] / 1000.0  # $/kWh
+
+        if net_load_actuals is None:
+            # Price-only mode: battery arbitrage P&L
+            pnl = (d0 * EFF_D * p_kwh - c0 * p_kwh
                    - DEG_PER_KWH * (c0 * EFF_C + d0)) * INTERVAL_H
-        total_revenue += revenue
+        else:
+            # Phase 6 mode: household net load + battery dispatch
+            net_load = float(net_load_actuals[h])
+            # Net grid flow: positive = import (pay), negative = export (earn)
+            grid_kw = net_load + c0 - d0 * EFF_D
+            if grid_kw >= 0:
+                grid_pnl = -grid_kw * p_kwh * INTERVAL_H          # cost to import
+            else:
+                grid_pnl = -grid_kw * p_kwh * INTERVAL_H          # earn from export (negative × negative = positive)
+            degrad_cost = DEG_PER_KWH * (c0 * EFF_C + d0) * INTERVAL_H
+            pnl = grid_pnl - degrad_cost
+
+        total_pnl += pnl
 
         soc = float(np.clip(soc + (c0 * EFF_C - d0) * INTERVAL_H,
                             0.0, CAPACITY_KWH))
@@ -143,7 +170,8 @@ def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
         d_actions[h] = d0
 
     return {
-        "revenue": total_revenue,
+        "revenue": total_pnl,   # kept as "revenue" for backwards compat with run_evaluation()
+        "total_pnl": total_pnl,
         "soc_final": soc,
         "c_kw": c_actions,
         "d_kw": d_actions,
