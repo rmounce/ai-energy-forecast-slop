@@ -41,10 +41,11 @@ from influxdb import InfluxDBClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-RESULTS_DIR  = ROOT / "eval" / "results"
-FORECAST_LOG = ROOT / "price_forecast_log.csv"
-INDEX_FILE   = RESULTS_DIR / "holistic_eval_index.parquet"
-TFT_FCST_FILE = RESULTS_DIR / "retro_tft_forecasts.pkl"
+RESULTS_DIR    = ROOT / "eval" / "results"
+FORECAST_LOG   = ROOT / "price_forecast_log.csv"
+INDEX_FILE     = RESULTS_DIR / "holistic_eval_index.parquet"
+TFT_FCST_FILE  = RESULTS_DIR / "retro_tft_forecasts.pkl"
+TIER1_FCST_FILE = RESULTS_DIR / "retro_tier1_forecasts.pkl"
 
 WINDOW_STEPS = 144        # 72h at 30-min resolution
 INTERVAL_H   = 30 / 60   # 30-min steps
@@ -155,6 +156,33 @@ def load_tft_forecasts() -> dict:
     print(f"  Loaded {len(forecasts):,} TFT windows in {time.time()-t0:.1f}s  "
           f"(q50 index={q50_idx}, quantiles={data.get('quantiles')})")
     return forecasts
+
+
+def load_tier1_forecasts() -> dict:
+    """
+    Load retrospective Tier 1 LGBM forecasts from retro_tier1_forecasts.pkl.
+    Returns dict: UTC Timestamp → np.ndarray shape (2,) in $/MWh.
+      [0] = mean h0..h5 (0–30 min),  [1] = mean h6..h11 (30–60 min)
+    Returns empty dict if file not found.
+    """
+    if not TIER1_FCST_FILE.exists():
+        return {}
+    print("Loading Tier 1 forecast pickle...")
+    t0 = time.time()
+    with open(TIER1_FCST_FILE, "rb") as f:
+        data = pickle.load(f)
+    forecasts = data["forecasts"]
+    print(f"  Loaded {len(forecasts):,} Tier 1 windows in {time.time()-t0:.1f}s")
+    return forecasts
+
+
+def build_hybrid_forecast(tier1: np.ndarray, tft: np.ndarray) -> np.ndarray:
+    """
+    Combine Tier 1 (first 2 steps) and TFT q50 (steps 2–143) into a 144-step forecast.
+    tier1: shape (2,) $/MWh — 0–30 min and 30–60 min averaged
+    tft:   shape (144,) $/MWh — full 72h TFT q50
+    """
+    return np.concatenate([tier1, tft[2:]])
 
 
 # ── Greedy dispatch (fast alternative to rolling LP MPC) ──────────────────────
@@ -276,7 +304,8 @@ def classify_window(prices_mwh: np.ndarray) -> str:
 
 # ── Summary reporting ─────────────────────────────────────────────────────────
 
-def build_summary(df_raw: pd.DataFrame) -> pd.DataFrame:
+def build_summary(df_raw: pd.DataFrame,
+                  ai_label: str = "tft_tier2_q50") -> pd.DataFrame:
     """Build $/day per-stratum summary table from raw per-window results."""
     days_per_window = (WINDOW_STEPS * INTERVAL_H) / 24
     pnl_cols = ["oracle_pnl", "amber_pnl", "p5min_pnl"]
@@ -289,7 +318,7 @@ def build_summary(df_raw: pd.DataFrame) -> pd.DataFrame:
                ("amber_apf_lgbm",  "amber_pnl_per_day"),
                ("p5min_naive",     "p5min_pnl_per_day")]
     if "ai_pnl_per_day" in df_raw.columns:
-        sources.append(("tft_tier2_q50", "ai_pnl_per_day"))
+        sources.append((ai_label, "ai_pnl_per_day"))
 
     rows = []
     strata = [s for s in ["spike", "low", "normal"] if s in df_raw["stratum"].values]
@@ -349,14 +378,35 @@ def main():
                              "'greedy' (O(N) heuristic, ~100x faster). "
                              "--fast implies --dispatch greedy.")
     parser.add_argument("--ai-source", action="store_true",
-                        help="Include TFT Tier2 AI source from retro_tft_forecasts.pkl. "
-                             "Re-runs windows that have TFT forecasts; saves *_ai checkpoints.")
+                        help="Include TFT Tier2 q50 as standalone dispatch signal "
+                             "(retro_tft_forecasts.pkl). Saves *_ai checkpoints.")
+    parser.add_argument("--hybrid-source", action="store_true",
+                        help="Include Tier 1 + TFT Tier 2 hybrid source: Tier 1 LGBM q50 "
+                             "for first 2 steps (0–60 min), TFT q50 for steps 2–143 (1h–72h). "
+                             "Requires both retro_tier1_forecasts.pkl and retro_tft_forecasts.pkl. "
+                             "Saves *_hybrid checkpoints.")
     args = parser.parse_args()
 
-    dispatch_mode = args.dispatch
-    fast_mode     = args.fast
-    ai_source     = args.ai_source
-    ckpt_suffix   = "_fast" if fast_mode else ("_ai" if ai_source else "")
+    if args.ai_source and args.hybrid_source:
+        print("ERROR: --ai-source and --hybrid-source are mutually exclusive.")
+        sys.exit(1)
+
+    dispatch_mode  = args.dispatch
+    fast_mode      = args.fast
+    ai_source      = args.ai_source
+    hybrid_source  = args.hybrid_source
+    any_ai_source  = ai_source or hybrid_source
+
+    if fast_mode:
+        ckpt_suffix = "_fast"
+    elif hybrid_source:
+        ckpt_suffix = "_hybrid"
+    elif ai_source:
+        ckpt_suffix = "_ai"
+    else:
+        ckpt_suffix = ""
+
+    ai_source_label = "tier1_tier2_hybrid" if hybrid_source else "tft_tier2_q50"
     fast_n        = 50  # windows per stratum in fast mode
 
     if not INDEX_FILE.exists():
@@ -414,7 +464,18 @@ def main():
 
         # ── Build work queue ──────────────────────────────────────────────────
         amber_forecasts = load_amber_lgbm_forecasts()
-        tft_forecasts   = load_tft_forecasts() if ai_source else {}
+        tft_forecasts   = load_tft_forecasts() if any_ai_source else {}
+        tier1_forecasts = load_tier1_forecasts() if hybrid_source else {}
+
+        if hybrid_source and not tier1_forecasts:
+            print("ERROR: --hybrid-source requires retro_tier1_forecasts.pkl")
+            print("Run: nice -n 19 python eval/retro_tier1_inference.py")
+            sys.exit(1)
+        if hybrid_source and not tft_forecasts:
+            print("ERROR: --hybrid-source requires retro_tft_forecasts.pkl")
+            print("Run: nice -n 19 python eval/retro_tft_inference.py")
+            sys.exit(1)
+
         work = []
         skipped = 0
         for stratum in strata_todo:
@@ -429,7 +490,19 @@ def main():
                 if amber_fcst is None:
                     skipped += 1
                     continue
-                tft_fcst = tft_forecasts.get(start_ts) if ai_source else None
+
+                if hybrid_source:
+                    t1_fcst  = tier1_forecasts.get(start_ts)
+                    tft_fcst = tft_forecasts.get(start_ts)
+                    if t1_fcst is not None and tft_fcst is not None:
+                        ai_fcst = build_hybrid_forecast(t1_fcst, tft_fcst)
+                    else:
+                        ai_fcst = None
+                elif ai_source:
+                    ai_fcst = tft_forecasts.get(start_ts)
+                else:
+                    ai_fcst = None
+
                 work.append((
                     start_ts,
                     stratum,
@@ -438,7 +511,7 @@ def main():
                     window_data["net_load_kw"],
                     args.price_only,
                     dispatch_mode,
-                    tft_fcst,
+                    ai_fcst,
                 ))
 
         print(f"\nWork queue: {len(work)} windows ({skipped} skipped), "
@@ -476,7 +549,6 @@ def main():
                 print(f"  Saved {len(df_s)} {s} rows → {ckpt.name}")
 
     # ── Merge checkpoints ─────────────────────────────────────────────────────
-    # For --ai-source: merge base checkpoints (oracle/lgbm/p5min) + ai checkpoints
     parts = []
     for s in all_strata:
         ckpt = RESULTS_DIR / f"holistic_eval_raw_{s}{ckpt_suffix}.parquet"
@@ -498,7 +570,7 @@ def main():
 
     df_raw.to_parquet(RESULTS_DIR / "holistic_eval_raw.parquet", index=False)
 
-    df_summary = build_summary(df_raw)
+    df_summary = build_summary(df_raw, ai_label=ai_source_label)
     print_summary(df_summary)
 
     csv_out = RESULTS_DIR / "holistic_eval_results.csv"
