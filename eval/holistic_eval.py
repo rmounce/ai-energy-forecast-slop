@@ -46,8 +46,8 @@ INDEX_FILE = RESULTS_DIR / "holistic_eval_index.parquet"
 WINDOW_STEPS  = 144        # 72h at 30-min resolution
 INTERVAL_H    = 30 / 60   # 30-min steps
 
-SPIKE_THRESH  = 300.0
-LOW_THRESH    = 0.0
+SPIKE_THRESH  = 300.0   # $/MWh
+LOW_THRESH    = -50.0   # $/MWh — genuine curtailment (matches build_holistic_eval_set.py)
 
 
 def load_config():
@@ -87,12 +87,16 @@ def fetch_window_data(client, start_ts: pd.Timestamp) -> dict | None:
     load   = query_30m_series(client, "power_load_30m",  "mean_value", start_iso, end_iso)
     pv     = query_30m_series(client, "power_pv_30m",    "mean_value", start_iso, end_iso)
 
-    if len(prices) < WINDOW_STEPS:
-        return None  # incomplete window
+    # Require at least 80% of steps; gaps are forward-filled
+    if len(prices) < WINDOW_STEPS * 0.80:
+        return None
 
     # Align to uniform 30-min grid
     idx = pd.date_range(start_ts, periods=WINDOW_STEPS, freq="30min", tz="UTC")
-    prices_arr = prices.reindex(idx).ffill().bfill().values.astype(np.float64)
+    prices_aligned = prices.reindex(idx).ffill().bfill()
+    if prices_aligned.isna().sum() > WINDOW_STEPS * 0.05:
+        return None  # too many leading/trailing NaN even after fill
+    prices_arr = prices_aligned.ffill().bfill().values.astype(np.float64)
 
     # Load/PV in Watts → convert to kW
     load_kw = load.reindex(idx).ffill().bfill().fillna(0.0).values / 1000.0
@@ -118,7 +122,7 @@ def load_lgbm_forecasts() -> dict:
         usecols=["forecast_creation_time", "forecast_target_time", "prediction"],
         dtype_backend="pyarrow",
     )
-    df["forecast_target_time"] = pd.to_datetime(df["forecast_target_time"], utc=True)
+    df["forecast_target_time"] = pd.to_datetime(df["forecast_target_time"], utc=True, format="mixed")
 
     # Group by creation time, find window start = min target time
     grouped = df.groupby("forecast_creation_time")

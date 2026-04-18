@@ -37,8 +37,10 @@ FORECAST_LOG = ROOT / "price_forecast_log.csv"
 WINDOW_STEPS = 144        # 72h at 30-min resolution
 STRIDE_H     = 6          # hours between candidate window starts
 TARGET_PER_STRATUM = 300
-SPIKE_THRESH = 300.0      # $/MWh
-LOW_THRESH   = 0.0        # $/MWh
+SPIKE_THRESH = 300.0      # $/MWh — dispatch price event
+LOW_THRESH   = -50.0      # $/MWh — genuine curtailment (not just cheap solar midday)
+# Note: SA prices are often $0-$50/MWh at midday solar peaks, so using $0 as low
+# threshold left almost no "normal" windows. -$50 captures genuine negative-price events.
 
 # Eval window: start where LightGBM log begins (July 2025), leave gap at end
 EVAL_START = "2025-07-21T00:00:00Z"  # first full day after first forecast log entry
@@ -79,11 +81,11 @@ def load_forecast_log_run_times() -> set:
         dtype_backend="pyarrow",
     )
     df["forecast_target_time"] = pd.to_datetime(
-        df["forecast_target_time"], utc=True
+        df["forecast_target_time"], utc=True, format="mixed"
     )
     # Minimum target time per run = window start
     min_targets = df.groupby(df["forecast_creation_time"])["forecast_target_time"].min()
-    run_starts = set(min_targets.dt.floor("30min").values.astype("datetime64[ns, UTC]"))
+    run_starts = set(min_targets.dt.floor("30min").dt.tz_convert("UTC"))
     print(f"  Found {len(run_starts):,} unique LightGBM forecast runs")
     return run_starts
 
