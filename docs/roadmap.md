@@ -57,14 +57,37 @@ validated against the ultimate goal (profit).
 | P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
 
 **Gate status (tier1_tier2_hybrid):** Overall/spike/low pass. Normal stratum fails (−27.8% vs −2% threshold).
-Normal failure is structural: TFT q50 overestimates prices ~2× in flat-price windows (spike-biased
-training + log-scaling). Tier 1 covers only 2/144 steps so cannot compensate.
+Normal failure: TFT q50 ~2× actual in flat-price windows. Tier 1 covers only 2/144 steps.
 Phase 5 remainder blocked until normal stratum is resolved.
 
-**Next steps to fix normal gate:**
-- Conformal calibration of TFT q50 (currently only q95 is calibrated)
-- `lgbm_strategic` model (30-min/72h LGBM on PREDISPATCH) as normal-regime fallback
-- Post-hoc recalibration conditioning on PREDISPATCH debiaser output
+**Caveat on eval statistics:** The 811 eval windows are drawn from a dense every-6h grid,
+giving 66h of overlap between neighbors. Results are directionally robust but not 811
+independent trials; tight thresholds (e.g. −2% normal) should not be over-interpreted.
+
+**Next steps to fix normal gate (priority order from independent review, 2026-04-18):**
+
+1. **Fix debiaser inference path (prerequisite before any model work)**
+   Training uses OOF-debiased `pd_rrp` at decoder steps 0–55; live inference
+   (`forecast.py:_get_influx_pd_prices`) and retro eval (`eval/retro_tft_inference.py`)
+   both feed raw PREDISPATCH. This violates the training contract and may be the primary
+   cause of flat-price overestimation. Fix both paths, rerun Phase 6 eval before
+   drawing conclusions about the normal gate.
+   - `eval/retro_tft_inference.py`: substitute `debiased_pd_rrp_oof.parquet` at steps 0–55
+   - `forecast.py`: apply `models/pd_debiaser/lgbm_final.pkl` to live PREDISPATCH before TFT
+
+2. **After re-evaluating with corrected inference:**
+   - If normal gate substantially improves → relax gate tolerance (see below) and proceed
+   - If normal gate still fails badly → build `lgbm_strategic` (30-min/72h LGBM on debiased
+     PREDISPATCH) as q50 dispatch signal; use TFT solely for tail-risk quantiles (q05/q95)
+
+3. **Gate tolerance relaxation (independent review recommendation)**
+   The normal stratum penalty is −$0.14/day while spike/low gains are +$0.55/day combined.
+   After the debiaser fix, consider widening normal tolerance from −2% to −10% with an
+   explicit financial-asymmetry justification comment in the gate test.
+
+4. **Deprioritized — q50 conformal calibration**: existing conformal infrastructure
+   (`train/calibrate_conformal.py`) targets Tier 1 tail coverage, not TFT median bias.
+   Statistically murky for correcting a log-skewed q50 point estimate. Defer.
 
 ---
 

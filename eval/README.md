@@ -123,9 +123,14 @@ Current CSV (`holistic_eval_results.csv`) contains `tier1_tier2_hybrid` as the p
 - Normal: ≥ $0.51/day (−2%)
 
 **Gate status:** `tier1_tier2_hybrid` passes overall/spike/low. Fails normal (−27.8%).
-Root cause: identical to standalone TFT — TFT q50 is ~2× actual in flat-price windows
-(spike-heavy training + log-scaling). Tier 1 only covers 2/144 steps so cannot overcome it.
-Normal stratum fix requires TFT q50 recalibration or a `lgbm_strategic` model for flat-price periods.
+Likely root cause: **debiaser inference path mismatch** — TFT was trained with OOF-debiased
+`pd_rrp` at decoder steps 0–55 (`data/build_training_dataset.py:291`), but both
+`retro_tft_inference.py` and `forecast.py` feed raw PREDISPATCH at inference. Fix this first
+before building `lgbm_strategic` or attempting q50 calibration. See `docs/roadmap.md`.
+
+**Eval statistics caveat:** Windows are drawn from an every-6h grid; 72h windows overlap
+by ~66h. Results are directionally robust but not 811 independent trials. Tight per-stratum
+thresholds (−2%) should not be over-interpreted without block-bootstrap confidence intervals.
 
 **Performance notes:**
 - `holistic_eval.py --fast` (50/stratum, LP): ~3 min with 12 workers
