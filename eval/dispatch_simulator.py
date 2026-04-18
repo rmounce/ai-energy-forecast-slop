@@ -51,20 +51,16 @@ LOW_THRESH     = 0.0     # $/MWh
 
 # ── LP dispatch ──────────────────────────────────────────────────────────────
 
-def lp_dispatch(prices_mwh: np.ndarray, soc_init: float) -> tuple[np.ndarray, np.ndarray]:
+def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
+                interval_h: float = INTERVAL_H,
+                capacity_kwh: float = CAPACITY_KWH,
+                max_power_kw: float = MAX_POWER_KW) -> tuple[np.ndarray, np.ndarray]:
     """
     Optimal battery dispatch over a price horizon via LP.
 
     Variables: x = [c_0..c_{n-1}, d_0..d_{n-1}]
       c_h — grid import rate (kW) at step h
       d_h — battery export rate (kW) at step h
-
-    SoC model:
-      SoC[h+1] = soc_init + Σ_{k≤h} (c_k × EFF_C − d_k) × INTERVAL_H
-
-    Objective (minimise −revenue):
-      revenue = Σ_h [(d_h × EFF_D − c_h) × price_kwh_h
-                     − DEG × (c_h × EFF_C + d_h)] × INTERVAL_H
 
     Returns (c_kw, d_kw) arrays of length n.
     Infeasible solves return zero arrays (do nothing).
@@ -75,27 +71,22 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float) -> tuple[np.ndarray, np
 
     p = prices_mwh / 1000.0  # $/kWh
 
-    # Objective: minimise (charge_cost − discharge_revenue + degradation)
     c_obj = np.concatenate([
-        (p + DEG_PER_KWH * EFF_C) * INTERVAL_H,   # charge: pay price + degrade stored
-        (-p * EFF_D + DEG_PER_KWH) * INTERVAL_H,  # discharge: get revenue − degrade drawn
+        (p + DEG_PER_KWH * EFF_C) * interval_h,
+        (-p * EFF_D + DEG_PER_KWH) * interval_h,
     ])
 
-    # SoC constraints via lower-triangular cumsum matrix
     L = np.tril(np.ones((n, n)))
 
-    # SoC[h+1] >= 0:  -EFF_C × Σ_{k≤h} c_k  +  Σ_{k≤h} d_k  ≤  soc_init / INTERVAL_H
-    # (multiplied through by INTERVAL_H already baked in)
-    A_lower = np.hstack([-EFF_C * INTERVAL_H * L,  INTERVAL_H * L])
+    A_lower = np.hstack([-EFF_C * interval_h * L,  interval_h * L])
     b_lower = np.full(n, soc_init)
 
-    # SoC[h+1] ≤ CAPACITY:  EFF_C × Σ c_k − Σ d_k ≤ (CAPACITY − soc_init) / INTERVAL_H
-    A_upper = np.hstack([ EFF_C * INTERVAL_H * L, -INTERVAL_H * L])
-    b_upper = np.full(n, CAPACITY_KWH - soc_init)
+    A_upper = np.hstack([ EFF_C * interval_h * L, -interval_h * L])
+    b_upper = np.full(n, capacity_kwh - soc_init)
 
     A_ub = np.vstack([A_lower, A_upper])
     b_ub  = np.concatenate([b_lower, b_upper])
-    bounds = [(0.0, MAX_POWER_KW)] * (2 * n)
+    bounds = [(0.0, max_power_kw)] * (2 * n)
 
     result = linprog(c_obj, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs",
                      options={"disp": False})
@@ -110,7 +101,10 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float) -> tuple[np.ndarray, np
 
 def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
                  soc_init: float = SOC_INIT_KWH,
-                 net_load_actuals: np.ndarray | None = None) -> dict:
+                 net_load_actuals: np.ndarray | None = None,
+                 interval_h: float = INTERVAL_H,
+                 capacity_kwh: float = CAPACITY_KWH,
+                 max_power_kw: float = MAX_POWER_KW) -> dict:
     """
     Rolling-horizon MPC dispatch simulation.
 
@@ -140,7 +134,10 @@ def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
     d_actions = np.zeros(n)
 
     for h in range(n):
-        c_plan, d_plan = lp_dispatch(forecast_prices[h:], soc)
+        c_plan, d_plan = lp_dispatch(forecast_prices[h:], soc,
+                                     interval_h=interval_h,
+                                     capacity_kwh=capacity_kwh,
+                                     max_power_kw=max_power_kw)
         c0 = float(c_plan[0])
         d0 = float(d_plan[0])
 
@@ -149,23 +146,20 @@ def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
         if net_load_actuals is None:
             # Price-only mode: battery arbitrage P&L
             pnl = (d0 * EFF_D * p_kwh - c0 * p_kwh
-                   - DEG_PER_KWH * (c0 * EFF_C + d0)) * INTERVAL_H
+                   - DEG_PER_KWH * (c0 * EFF_C + d0)) * interval_h
         else:
             # Phase 6 mode: household net load + battery dispatch
             net_load = float(net_load_actuals[h])
             # Net grid flow: positive = import (pay), negative = export (earn)
             grid_kw = net_load + c0 - d0 * EFF_D
-            if grid_kw >= 0:
-                grid_pnl = -grid_kw * p_kwh * INTERVAL_H          # cost to import
-            else:
-                grid_pnl = -grid_kw * p_kwh * INTERVAL_H          # earn from export (negative × negative = positive)
-            degrad_cost = DEG_PER_KWH * (c0 * EFF_C + d0) * INTERVAL_H
+            grid_pnl = -grid_kw * p_kwh * interval_h  # positive when exporting (grid_kw < 0)
+            degrad_cost = DEG_PER_KWH * (c0 * EFF_C + d0) * interval_h
             pnl = grid_pnl - degrad_cost
 
         total_pnl += pnl
 
-        soc = float(np.clip(soc + (c0 * EFF_C - d0) * INTERVAL_H,
-                            0.0, CAPACITY_KWH))
+        soc = float(np.clip(soc + (c0 * EFF_C - d0) * interval_h,
+                            0.0, capacity_kwh))
         c_actions[h] = c0
         d_actions[h] = d0
 
