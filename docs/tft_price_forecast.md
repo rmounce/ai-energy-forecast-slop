@@ -265,7 +265,22 @@ Motivation (Run 007): when a spike is building, 5-min prices jump from $50 → $
 
 ## Production Integration (Shadow Mode)
 
-As of April 2026, the TFT model (Run 010) is running in **Shadow Mode** within the `forecast.py` pipeline. **Run 011b** (debiased decoder, SDO features, expanded quantiles) is in training and will be evaluated for shadow mode promotion once calibration confirms improvement over Run 010.
+Run 011b (debiased decoder, SDO features, q5/10/50/90/95/99) is live in production as of April 2026.
+
+**⚠ Known open issue — debiaser inference path mismatch:**
+Training uses OOF-debiased `pd_rrp` at decoder steps 0–55 (see `data/build_training_dataset.py:291`
+and the table above). However, both live inference (`forecast.py:_get_influx_pd_prices`) and
+retrospective eval (`eval/retro_tft_inference.py`) currently feed **raw PREDISPATCH** to the
+decoder — the debiaser (`models/pd_debiaser/lgbm_final.pkl`) is never applied at inference.
+
+This violates the training contract. The debiaser reduces MAE from 325→65 $/MWh; systematic
+raw PREDISPATCH bias may be the primary cause of TFT q50 overestimating prices in flat-price
+windows (observed in Phase 6 normal stratum failure, −27.8%). **Fix inference before drawing
+conclusions about model quality or building additional models.**
+
+Fix required in:
+- `forecast.py`: apply `lgbm_final.pkl` to live PREDISPATCH before building decoder tensors
+- `eval/retro_tft_inference.py`: substitute `debiased_pd_rrp_oof.parquet` values at steps 0–55
 
 ### Architecture
 - **Worker:** `_execute_tft_prediction` in `forecast.py`.
