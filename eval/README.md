@@ -6,7 +6,9 @@
 |--------|---------|
 | `dispatch_simulator.py` | Rolling MPC LP backtester (scipy HiGHS, 40 kWh/10 kW battery). Phase 3: price-only 5-min. Phase 6: 30-min with net_load_actuals. |
 | `build_holistic_eval_set.py` | Build stratified eval index (spike/low/normal) from InfluxDB + forecast log. |
-| `holistic_eval.py` | Run holistic dispatch simulation: oracle / lgbm_legacy / p5min_naive. Reports $/day by stratum. |
+| `holistic_eval.py` | Run holistic dispatch simulation: oracle / amber_apf_lgbm / p5min_naive. `--ai-source`: add TFT q50. `--hybrid-source`: add Tier 1+TFT hybrid. |
+| `retro_tft_inference.py` | Retrospective TFT Tier 2 batch inference → `retro_tft_forecasts.pkl` ({ts → ndarray(144,6)}). |
+| `retro_tier1_inference.py` | Retrospective Tier 1 LGBM inference → `retro_tier1_forecasts.pkl` ({ts → ndarray(2,)}). Uses parquet P5MIN + actuals; InfluxDB for PV only. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -24,6 +26,7 @@ eval set. This is the financial baseline that gates further pipeline evolution.
 |--------|-----------|-------------|
 | Amber APF + LGBM extrapolation | `amber_apf_lgbm` | `price_forecast_log.csv` — Amber APF seeds first ~14-28h; LightGBM model extends to 72h |
 | TFT Tier 2 q50 dispatch | `tft_tier2_q50` | Retrospective batch inference: `eval/retro_tft_inference.py` |
+| Tier 1 + TFT Tier 2 hybrid | `tier1_tier2_hybrid` | Tier 1 LGBM q50 steps 0–1, TFT q50 steps 2–143. Run `retro_tier1_inference.py` + `retro_tft_inference.py` first. |
 | Oracle | `oracle` | AEMO dispatch actuals — perfect foresight upper bound |
 | P5MIN naive | `p5min_naive` | Window-start price held constant for all 144 steps |
 
@@ -32,8 +35,18 @@ eval set. This is the financial baseline that gates further pipeline evolution.
   Amber's commercial APF drives the short-horizon signal; LGBM extrapolates beyond Amber's range.
   The logged predictions cannot be decomposed back into Amber-only vs LGBM-only components.
 - `tft_tier2_q50` evaluates TFT as a standalone dispatch signal (q50 only). This is *not* how
-  TFT is intended to be used in production — the planned architecture uses `amber_apf_lgbm` for
-  base dispatch and TFT quantiles for tail-risk overrides only.
+  TFT is intended to be used in production.
+- `tier1_tier2_hybrid` is the intended production architecture: Tier 1 LGBM handles the first
+  2 × 30min steps (0–60 min) using P5MIN as primary signal, TFT handles 1h–72h. This is the
+  Amber-independent target architecture.
+
+**Data availability notes:**
+- `rp_5m.aemo_p5min_forecast` in InfluxDB: only retained from **April 12, 2026** onwards
+  (rp_5m retention = 3 years, but ingest of P5MIN to InfluxDB started April 2026).
+  Retrospective P5MIN data for the eval period comes from `data/parquet/aemo_p5min_sa1.parquet`
+  (March 2024 – March 2026). Use this parquet for any retrospective inference, not InfluxDB.
+- `rp_5m.aemo_dispatch_sa1_5m` (5min actuals): parquet covers March 2024 – April 2026.
+- `rp_5m.power_pv_5m`: InfluxDB covers **July 2, 2025 onwards** (eval period starts July 21, 2025).
 
 **Key constraint:** Historical Amber APF forecasts are not stored — only the combined predictions
 are available in `price_forecast_log.csv`. Comparison window: **July 2025 onwards**.
@@ -90,14 +103,18 @@ For each eval window × forecast source:
 
 Output table (printed + saved to `eval/results/holistic_eval_results.csv`):
 
-**Phase 6 results** (811 windows, July 2025–March 2026, price-only LP MPC):
+**Results** (811 windows, July 2025–March 2026, price-only LP MPC):
 
 | Source | Mean $/day | Spike $/day | Low $/day | Normal $/day |
 |--------|-----------|------------|----------|-------------|
 | Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
 | **Amber APF + LGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
-| TFT Tier 2 q50 | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
+| Tier 1 + TFT hybrid | $3.15 (+5.5%) | $7.22 (+5.8%) | $1.04 (+17.1%) | $0.38 (−27.8%) |
+| TFT Tier 2 q50 (standalone) | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
 | P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
+
+*TFT Tier 2 q50 standalone archived in `holistic_eval_raw_{stratum}_ai.parquet`.
+Current CSV (`holistic_eval_results.csv`) contains `tier1_tier2_hybrid` as the primary AI source.*
 
 **Phase 8 financial gate thresholds** (vs Amber APF + LGBM baseline):
 - Overall: ≥ $2.99/day (no regression)
@@ -105,14 +122,14 @@ Output table (printed + saved to `eval/results/holistic_eval_results.csv`):
 - Low: ≥ $0.87/day (−2%)
 - Normal: ≥ $0.51/day (−2%)
 
-**Gate status:** TFT Tier 2 q50 passes overall/spike/low. Fails normal (−21.1%).
-Root cause: TFT q50 is ~2× actual prices in flat-price windows due to spike-heavy training.
-The intended production architecture (Amber APF + LGBM for dispatch, TFT for tail-risk overrides)
-is not yet evaluated — that is the next milestone.
+**Gate status:** `tier1_tier2_hybrid` passes overall/spike/low. Fails normal (−27.8%).
+Root cause: identical to standalone TFT — TFT q50 is ~2× actual in flat-price windows
+(spike-heavy training + log-scaling). Tier 1 only covers 2/144 steps so cannot overcome it.
+Normal stratum fix requires TFT q50 recalibration or a `lgbm_strategic` model for flat-price periods.
 
 **Performance notes:**
 - `holistic_eval.py --fast` (50/stratum, LP): ~3 min with 12 workers
-- Full run (811 windows, LP): ~9 min with 12 workers (`nice -n 19 --workers 12`)
+- Full run (811 windows, LP): ~12 min with 12 workers (`nice -n 19 --workers 12`)
 - `--dispatch greedy` available for development (~100× faster, O(N log N), not for baselines)
 
 ### Simulator validation (optional)

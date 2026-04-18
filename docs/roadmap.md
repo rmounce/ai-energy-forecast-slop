@@ -37,7 +37,7 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 3 | Dispatch simulator baseline | ✅ Done — LightGBM +5.9% regret reduction vs P5MIN |
 | 4 | Conformal calibration (Tier 1) | ✅ Done — spike q95 0.750→0.821 |
 | 5 (partial) | Production routing, combined shadow sensors | ✅ Done — live in HA |
-| **6** | **Holistic dispatch simulation** | **Complete** — oracle/lgbm/p5min/TFT AI all evaluated |
+| **6** | **Holistic dispatch simulation** | **Complete** — oracle/amber_apf_lgbm/p5min/TFT/hybrid all evaluated |
 | **8** | **Test framework** | **Layer 1 complete** (29 tests) — Layer 2 gate enabled, normal stratum failing |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — pending Phase 6+8 |
 | 7 | Event-driven predict service | Deferred — after Phase 8 |
@@ -51,13 +51,20 @@ validated against the ultimate goal (profit).
 | Source | All $/day | Spike $/day | Low $/day | Normal $/day |
 |--------|-----------|------------|----------|-------------|
 | Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
-| **LightGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
-| TFT AI pipeline | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
+| **Amber APF + LGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
+| Tier 1 + TFT hybrid | $3.15 (+5.5%) | $7.22 (+5.8%) | $1.04 (+17.1%) | $0.38 (−27.8%) |
+| TFT Tier 2 q50 (standalone) | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
 | P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
 
-**Gate status:** Overall/spike/low pass. Normal stratum fails (−21.1% vs threshold −2%).
-Known issue: TFT q50 underperforms LightGBM on flat-price (non-spike, non-low) periods.
+**Gate status (tier1_tier2_hybrid):** Overall/spike/low pass. Normal stratum fails (−27.8% vs −2% threshold).
+Normal failure is structural: TFT q50 overestimates prices ~2× in flat-price windows (spike-biased
+training + log-scaling). Tier 1 covers only 2/144 steps so cannot compensate.
 Phase 5 remainder blocked until normal stratum is resolved.
+
+**Next steps to fix normal gate:**
+- Conformal calibration of TFT q50 (currently only q95 is calibrated)
+- `lgbm_strategic` model (30-min/72h LGBM on PREDISPATCH) as normal-regime fallback
+- Post-hoc recalibration conditioning on PREDISPATCH debiaser output
 
 ---
 

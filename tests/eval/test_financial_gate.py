@@ -5,22 +5,27 @@ Baseline: Amber APF + LGBM extrapolation (as-run production model, July 2025–M
   'amber_apf_lgbm' in results: Amber APF seeds first ~14-28h, LightGBM extrapolates to 72h.
   This is NOT a pure LightGBM model — Amber's commercial forecast drives the short horizon.
 
-Gate: TFT Tier 2 (q50 dispatch) must not regress below Amber APF + LGBM by more than:
+Gate: tier1_tier2_hybrid (Tier 1 LGBM q50 for 0–60min, TFT q50 for 1h–72h) must not
+regress below Amber APF + LGBM by more than:
   overall: 0% (must match or beat)
   spike:   5% (high variance — allow small miss)
   low:     2%
   normal:  2%
 
-Phase 6+8 results (811 windows, price-only LP MPC):
-  overall: TFT +6.6%  ✅
-  spike:   TFT +5.8%  ✅
-  low:     TFT +23.6% ✅
-  normal:  TFT -21.1% ❌  known — TFT q50 overestimates prices in flat-price regimes;
-                           root cause: spike-heavy training + log-scaling bias.
-                           Blocks Phase 5 remainder until resolved (hybrid approach planned).
+tier1_tier2_hybrid results (811 windows, price-only LP MPC, July 2025–March 2026):
+  overall: +5.5%  ✅  ($3.15/day vs $2.99 baseline)
+  spike:   +5.8%  ✅  ($7.22/day vs $6.82 baseline)
+  low:     +17.1% ✅  ($1.04/day vs $0.89 baseline)
+  normal:  -27.8% ❌  ($0.38/day vs $0.52 baseline)
+    Root cause: TFT q50 overestimates prices in flat-price regimes (142/144 steps
+    from TFT); spike-heavy training + log-scaling bias. Tier 1 only covers 2 steps.
+    Blocks Phase 5 remainder until resolved.
+
+For reference: tft_tier2_q50 standalone (archived in _ai parquet checkpoints):
+  overall: +6.6%, spike: +5.8%, low: +23.6%, normal: -21.1%
 
 Requires InfluxDB access. Run with: pytest tests/eval/ -v
-To refresh: nice -n 19 python eval/holistic_eval.py --ai-source --price-only --workers 12
+To refresh: nice -n 19 python eval/holistic_eval.py --hybrid-source --price-only --workers 12
 """
 
 from pathlib import Path
@@ -87,23 +92,25 @@ def test_amber_apf_baseline_matches_known_values():
 
 def test_ai_pipeline_meets_financial_gate():
     """
-    TFT Tier 2 q50 dispatch $/day must meet thresholds vs Amber APF + LGBM baseline.
+    tier1_tier2_hybrid $/day must meet thresholds vs Amber APF + LGBM baseline.
+    Hybrid: Tier 1 LGBM q50 for steps 0-1 (0-60 min), TFT q50 for steps 2-143 (1h-72h).
 
     To regenerate results:
-        nice -n 19 python eval/holistic_eval.py --ai-source --price-only --workers 12
+        nice -n 19 python eval/holistic_eval.py --hybrid-source --price-only --workers 12
 
     Current status (811 windows, July 2025–March 2026):
-      overall: $3.18/day (+6.6%)  ✅
+      overall: $3.15/day (+5.5%)  ✅
       spike:   $7.22/day (+5.8%)  ✅
-      low:     $1.10/day (+23.6%) ✅
-      normal:  $0.41/day (-21.1%) ❌  FAILS — TFT q50 ~2× actual in flat-price windows
+      low:     $1.04/day (+17.1%) ✅
+      normal:  $0.38/day (-27.8%) ❌  FAILS — TFT q50 ~2× actual in flat-price windows;
+                                       Tier 1 only covers 2/144 steps, TFT bias dominates.
     """
     if not RESULTS_FILE.exists():
-        pytest.skip("Results file not found — run holistic_eval.py --ai-source first")
+        pytest.skip("Results file not found — run holistic_eval.py --hybrid-source first")
     df = pd.read_csv(RESULTS_FILE)
-    ai_rows = df[df["source"] == "tft_tier2_q50"]
+    ai_rows = df[df["source"] == "tier1_tier2_hybrid"]
     if ai_rows.empty:
-        pytest.skip("tft_tier2_q50 source not yet in holistic_eval results — run with --ai-source")
+        pytest.skip("tier1_tier2_hybrid not in results — run with --hybrid-source")
 
     for stratum, threshold in THRESHOLDS.items():
         row = ai_rows[ai_rows["stratum"] == stratum]
@@ -111,5 +118,5 @@ def test_ai_pipeline_meets_financial_gate():
             continue
         mean_val = row["mean_per_day"].iloc[0]
         assert mean_val >= threshold, (
-            f"tft_tier2_q50 {stratum}: ${mean_val:.4f}/day < threshold ${threshold:.4f}/day"
+            f"tier1_tier2_hybrid {stratum}: ${mean_val:.4f}/day < threshold ${threshold:.4f}/day"
         )
