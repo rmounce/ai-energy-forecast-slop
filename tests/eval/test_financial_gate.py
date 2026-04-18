@@ -80,14 +80,17 @@ def test_lgbm_baseline_matches_known_values():
         )
 
 
-@pytest.mark.skip(
-    reason="AI pipeline source not yet in holistic_eval — enable after Tier 1+2 TFT added"
-)
 def test_ai_pipeline_meets_financial_gate():
     """
-    AI pipeline (Tier 1+2) $/day must meet thresholds vs legacy LightGBM baseline.
+    AI pipeline (Tier 1+2, TFT q50 dispatch) $/day must meet thresholds vs lgbm_legacy baseline.
 
-    Enable after holistic_eval.py is extended with a 'tier1_tier2_ai' source.
+    Run holistic_eval.py --ai-source --price-only --workers 12 to regenerate results.
+
+    Phase 6+8 results (811 windows, July 2025–March 2026):
+      overall: +6.6% vs lgbm  ✅
+      spike:   +5.8%          ✅
+      low:     +23.6%         ✅
+      normal:  -21.1%         ❌  (known — TFT q50 underperforms lgbm on flat-price periods)
     """
     df = pd.read_csv(RESULTS_FILE)
     ai_rows = df[df["source"] == "tier1_tier2_ai"]

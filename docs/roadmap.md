@@ -37,8 +37,8 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 3 | Dispatch simulator baseline | ✅ Done — LightGBM +5.9% regret reduction vs P5MIN |
 | 4 | Conformal calibration (Tier 1) | ✅ Done — spike q95 0.750→0.821 |
 | 5 (partial) | Production routing, combined shadow sensors | ✅ Done — live in HA |
-| **6** | **Holistic dispatch simulation** | **Baseline established** — TFT source pending |
-| **8** | **Test framework** | **Layer 1 complete** (29 tests) — Layer 2 gate wired, pending TFT source |
+| **6** | **Holistic dispatch simulation** | **Complete** — oracle/lgbm/p5min/TFT AI all evaluated |
+| **8** | **Test framework** | **Layer 1 complete** (29 tests) — Layer 2 gate enabled, normal stratum failing |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — pending Phase 6+8 |
 | 7 | Event-driven predict service | Deferred — after Phase 8 |
 
@@ -46,13 +46,18 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 Reason: without a financial baseline and regression tests, pipeline changes cannot be
 validated against the ultimate goal (profit).
 
-**Phase 6 baseline** (July 2025–March 2026, 811 windows, price-only LP MPC):
-- Oracle: $6.00/day all, $11.97/day spike
-- LightGBM legacy: $2.99/day all, $6.82/day spike (positive — Amber APF seeding works)
-- P5MIN naive: ~$0/day (expected)
+**Phase 6 results** (July 2025–March 2026, 811 windows, price-only LP MPC):
 
-Remaining for full Phase 6+8: add Tier 1+2 AI source via retrospective TFT batch
-inference, then enable `test_ai_pipeline_meets_financial_gate`.
+| Source | All $/day | Spike $/day | Low $/day | Normal $/day |
+|--------|-----------|------------|----------|-------------|
+| Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
+| **LightGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
+| TFT AI pipeline | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
+| P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
+
+**Gate status:** Overall/spike/low pass. Normal stratum fails (−21.1% vs threshold −2%).
+Known issue: TFT q50 underperforms LightGBM on flat-price (non-spike, non-low) periods.
+Phase 5 remainder blocked until normal stratum is resolved.
 
 ---
 

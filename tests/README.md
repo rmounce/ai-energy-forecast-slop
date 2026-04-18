@@ -78,7 +78,8 @@ Thresholds (from Phase 6 full run, 811 windows, July 2025–March 2026):
 - Low: ≥ $0.87/day (−2%)
 - Normal: ≥ $0.51/day (−2%)
 
-The `test_ai_pipeline_meets_financial_gate` test is currently **skipped** — it will be enabled
-once holistic_eval.py is extended with a `tier1_tier2_ai` source (retrospective TFT inference).
+The `test_ai_pipeline_meets_financial_gate` test is **enabled**. Results (811 windows, price-only LP MPC):
+- Overall: +6.6% vs lgbm ✅  Spike: +5.8% ✅  Low: +23.6% ✅
+- Normal: −21.1% ❌ — TFT q50 underperforms lgbm on flat-price periods (known open issue)
 
 **Both layers must pass before Phase 5 sub-tasks 4–8 resume.**
