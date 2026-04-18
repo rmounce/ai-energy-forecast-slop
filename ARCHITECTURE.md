@@ -243,6 +243,28 @@ Standalone utility called by the nightly `ai-energy-update-tariffs` service. Smo
 
 ---
 
+### `eval/` — Evaluation and Backtesting
+
+See **[eval/README.md](eval/README.md)** for full documentation including the Phase 6
+holistic dispatch simulation design.
+
+| Script | Purpose |
+|--------|---------|
+| `dispatch_simulator.py` | Rolling MPC LP backtester — price-only today, net_load extension in Phase 6 |
+| `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison (Phase 3) |
+| `compare_load_forecast.py` | Load forecast comparison |
+| `eval_load_overnight.py` | Load TFT overnight ramp diagnostics |
+
+### `tests/` — Test Framework
+
+See **[tests/README.md](tests/README.md)** for full documentation including Phase 8 design
+and fixture capture instructions.
+
+Two layers: fast unit tests (no external deps, <60s) + financial eval gate (requires
+InfluxDB, thresholds set by Phase 6). **Both must pass before Phase 5 sub-tasks 4–8 resume.**
+
+---
+
 ### `data/` and `train/` — TFT Price Model (V4, in development)
 
 A new price forecasting model is being developed to replace the LightGBM+Amber APF approach. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
@@ -380,6 +402,14 @@ The systemd services load secrets from `.env` in the repo root (git-ignored). Th
 # .env
 HC_PREDICT_URL=https://hc-ping.com/<your-uuid>
 ```
+
+---
+
+## Roadmap
+
+See **[docs/roadmap.md](docs/roadmap.md)** for: phase status, design principles, CI/CD gate
+design, training weighting methodology, execution layer (tail-risk overrides), and known
+open issues.
 
 ---
 
