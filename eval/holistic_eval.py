@@ -4,8 +4,8 @@ Phase 6 — Holistic dispatch simulation.
 
 Runs rolling-MPC LP dispatch on a stratified eval set, comparing:
   oracle       — perfect foresight (actual prices as forecast)
-  lgbm_legacy  — as-run legacy LightGBM predictions from price_forecast_log.csv
-                 (Amber APF seeded for first 14-28h, LightGBM extrapolation thereafter)
+  amber_apf_lgbm — as-run predictions from price_forecast_log.csv
+                   (Amber APF seeds first ~14-28h, LightGBM extrapolates to 72h)
   p5min_naive  — window-start price held constant (naive persistence baseline)
 
 Actual household load and PV are used as fixed inputs so that only price-forecast
@@ -108,12 +108,14 @@ def slice_window(bulk: dict, start_ts: pd.Timestamp) -> dict | None:
 
 # ── LightGBM forecast loading ─────────────────────────────────────────────────
 
-def load_lgbm_forecasts() -> dict:
+def load_amber_lgbm_forecasts() -> dict:
     """
-    Load legacy LightGBM forecast log indexed by window start time.
+    Load as-run Amber APF + LGBM extrapolation forecasts from price_forecast_log.csv.
+    These are the production predictions that ran live: Amber APF seeds the first ~14-28h,
+    LightGBM extrapolates the remaining steps to 72h.
     Returns dict: floor-30min Timestamp → np.ndarray shape (144,) in $/MWh.
     """
-    print("Loading LightGBM forecast log...")
+    print("Loading Amber APF + LGBM forecast log...")
     t0 = time.time()
     df = pd.read_csv(
         FORECAST_LOG,
@@ -226,15 +228,15 @@ def simulate_window(args: tuple) -> dict | None:
             price_only, dispatch_mode, tft_fcst)
     tft_fcst: ndarray(144,) in $/MWh or None to skip AI source.
     """
-    start_ts, stratum, actual_prices, lgbm_fcst, net_load_kw, price_only, dispatch_mode, tft_fcst = args
+    start_ts, stratum, actual_prices, amber_fcst, net_load_kw, price_only, dispatch_mode, tft_fcst = args
 
     net_load = None if price_only else net_load_kw
 
     if dispatch_mode == "greedy":
         oracle_pnl = greedy_dispatch(actual_prices, actual_prices, net_load)
-        lgbm_pnl   = greedy_dispatch(lgbm_fcst,    actual_prices, net_load)
+        amber_pnl  = greedy_dispatch(amber_fcst,    actual_prices, net_load)
         p5min_fcst = np.full(WINDOW_STEPS, actual_prices[0])
-        p5min_pnl  = greedy_dispatch(p5min_fcst,   actual_prices, net_load)
+        p5min_pnl  = greedy_dispatch(p5min_fcst,    actual_prices, net_load)
         ai_pnl     = (greedy_dispatch(tft_fcst, actual_prices, net_load)
                       if tft_fcst is not None else None)
     else:
@@ -245,7 +247,7 @@ def simulate_window(args: tuple) -> dict | None:
 
         oracle_pnl = simulate_mpc(actual_prices, actual_prices, net_load_actuals=net_load,
                                    interval_h=INTERVAL_H)["total_pnl"]
-        lgbm_pnl   = simulate_mpc(lgbm_fcst,    actual_prices, net_load_actuals=net_load,
+        amber_pnl  = simulate_mpc(amber_fcst,    actual_prices, net_load_actuals=net_load,
                                    interval_h=INTERVAL_H)["total_pnl"]
         p5min_fcst = np.full(WINDOW_STEPS, actual_prices[0])
         p5min_pnl  = simulate_mpc(p5min_fcst,   actual_prices, net_load_actuals=net_load,
@@ -258,7 +260,7 @@ def simulate_window(args: tuple) -> dict | None:
         "start_time": start_ts,
         "stratum":    stratum,
         "oracle_pnl": oracle_pnl,
-        "lgbm_pnl":   lgbm_pnl,
+        "amber_pnl":  amber_pnl,
         "p5min_pnl":  p5min_pnl,
         "ai_pnl":     ai_pnl,
     }
@@ -277,17 +279,17 @@ def classify_window(prices_mwh: np.ndarray) -> str:
 def build_summary(df_raw: pd.DataFrame) -> pd.DataFrame:
     """Build $/day per-stratum summary table from raw per-window results."""
     days_per_window = (WINDOW_STEPS * INTERVAL_H) / 24
-    pnl_cols = ["oracle_pnl", "lgbm_pnl", "p5min_pnl"]
+    pnl_cols = ["oracle_pnl", "amber_pnl", "p5min_pnl"]
     if "ai_pnl" in df_raw.columns and df_raw["ai_pnl"].notna().any():
         pnl_cols.append("ai_pnl")
     for col in pnl_cols:
         df_raw[col + "_per_day"] = df_raw[col] / days_per_window
 
     sources = [("oracle",          "oracle_pnl_per_day"),
-               ("lgbm_legacy",     "lgbm_pnl_per_day"),
+               ("amber_apf_lgbm",  "amber_pnl_per_day"),
                ("p5min_naive",     "p5min_pnl_per_day")]
     if "ai_pnl_per_day" in df_raw.columns:
-        sources.append(("tier1_tier2_ai", "ai_pnl_per_day"))
+        sources.append(("tft_tier2_q50", "ai_pnl_per_day"))
 
     rows = []
     strata = [s for s in ["spike", "low", "normal"] if s in df_raw["stratum"].values]
@@ -296,19 +298,19 @@ def build_summary(df_raw: pd.DataFrame) -> pd.DataFrame:
         sub = df_raw[mask]
         if sub.empty:
             continue
-        lgbm_mean = sub["lgbm_pnl_per_day"].mean()
+        amber_mean = sub["amber_pnl_per_day"].mean()
         for source, col in sources:
             if col not in sub.columns:
                 continue
-            sub_valid = sub[sub[col].notna()] if source == "tier1_tier2_ai" else sub
+            sub_valid = sub[sub[col].notna()] if source == "tft_tier2_q50" else sub
             if sub_valid.empty:
                 continue
             mean_val = sub_valid[col].mean()
-            vs_lgbm  = (mean_val / max(abs(lgbm_mean), 1e-9) - 1) * 100
+            vs_amber = (mean_val / max(abs(amber_mean), 1e-9) - 1) * 100
             rows.append({
                 "stratum": s, "source": source, "n": len(sub_valid),
                 "mean_per_day": round(mean_val, 4),
-                "vs_lgbm_pct": round(vs_lgbm, 1) if source != "lgbm_legacy" else 0.0,
+                "vs_amber_apf_pct": round(vs_amber, 1) if source != "amber_apf_lgbm" else 0.0,
             })
     return pd.DataFrame(rows)
 
@@ -321,11 +323,11 @@ def print_summary(df_summary: pd.DataFrame):
     for s in [x for x in ["spike", "low", "normal", "all"] if x in strata]:
         sub = df_summary[df_summary["stratum"] == s]
         print(f"\n  [{s.upper():8s}]  n={sub['n'].iloc[0]}")
-        print(f"  {'Source':<14}  {'Mean $/day':>12}  {'vs LightGBM':>12}")
+        print(f"  {'Source':<16}  {'Mean $/day':>12}  {'vs Amber APF':>12}")
         print(f"  {'-'*42}")
         for _, row in sub.iterrows():
-            vs = f"{row['vs_lgbm_pct']:+.1f}%" if row["source"] != "lgbm_legacy" else "baseline"
-            print(f"  {row['source']:<14}  {row['mean_per_day']:>12.4f}  {vs:>12}")
+            vs = f"{row['vs_amber_apf_pct']:+.1f}%" if row["source"] != "amber_apf_lgbm" else "baseline"
+            print(f"  {row['source']:<16}  {row['mean_per_day']:>12.4f}  {vs:>12}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -411,8 +413,8 @@ def main():
             client.close()
 
         # ── Build work queue ──────────────────────────────────────────────────
-        lgbm_forecasts = load_lgbm_forecasts()
-        tft_forecasts  = load_tft_forecasts() if ai_source else {}
+        amber_forecasts = load_amber_lgbm_forecasts()
+        tft_forecasts   = load_tft_forecasts() if ai_source else {}
         work = []
         skipped = 0
         for stratum in strata_todo:
@@ -423,8 +425,8 @@ def main():
                 if window_data is None:
                     skipped += 1
                     continue
-                lgbm_fcst = lgbm_forecasts.get(start_ts.floor("30min"))
-                if lgbm_fcst is None:
+                amber_fcst = amber_forecasts.get(start_ts.floor("30min"))
+                if amber_fcst is None:
                     skipped += 1
                     continue
                 tft_fcst = tft_forecasts.get(start_ts) if ai_source else None
@@ -432,7 +434,7 @@ def main():
                     start_ts,
                     stratum,
                     window_data["actual_prices_mwh"],
-                    lgbm_fcst,
+                    amber_fcst,
                     window_data["net_load_kw"],
                     args.price_only,
                     dispatch_mode,
@@ -486,27 +488,13 @@ def main():
 
     df_raw = pd.concat(parts, ignore_index=True)
 
-    # If we just ran the AI source, merge ai_pnl into the base checkpoints for summary
-    if ai_source and "ai_pnl" not in df_raw.columns:
-        base_parts = []
-        for s in all_strata:
-            base_ckpt = RESULTS_DIR / f"holistic_eval_raw_{s}.parquet"
-            if base_ckpt.exists():
-                base_parts.append(pd.read_parquet(base_ckpt))
-        if base_parts:
-            df_base = pd.concat(base_parts, ignore_index=True)
-            ai_col = df_raw[["start_time", "ai_pnl"]].rename(
-                columns={"ai_pnl": "ai_pnl_new"}
-            )
-            df_base["start_time"] = pd.to_datetime(df_base["start_time"], utc=True)
-            ai_col["start_time"]  = pd.to_datetime(ai_col["start_time"], utc=True)
-            df_raw = df_base.merge(ai_col, on="start_time", how="left")
-            df_raw["ai_pnl"] = df_raw["ai_pnl_new"]
-            df_raw.drop(columns=["ai_pnl_new"], inplace=True)
-    elif not ai_source:
-        # Ensure ai_pnl column exists for build_summary (will be skipped if all NaN)
-        if "ai_pnl" not in df_raw.columns:
-            df_raw["ai_pnl"] = np.nan
+    # Migrate old column name from checkpoints written before the rename
+    if "lgbm_pnl" in df_raw.columns and "amber_pnl" not in df_raw.columns:
+        df_raw = df_raw.rename(columns={"lgbm_pnl": "amber_pnl"})
+
+    # Ensure ai_pnl column exists for build_summary (will be skipped if all NaN)
+    if "ai_pnl" not in df_raw.columns:
+        df_raw["ai_pnl"] = np.nan
 
     df_raw.to_parquet(RESULTS_DIR / "holistic_eval_raw.parquet", index=False)
 

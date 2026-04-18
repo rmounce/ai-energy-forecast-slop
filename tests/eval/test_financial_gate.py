@@ -1,21 +1,26 @@
 """
 Phase 8 Layer 2 — Financial eval gate.
 
-Asserts that the AI pipeline (Tier 1+2) meets or exceeds the legacy LightGBM
-baseline established in the Phase 6 holistic dispatch simulation.
+Baseline: Amber APF + LGBM extrapolation (as-run production model, July 2025–March 2026).
+  'amber_apf_lgbm' in results: Amber APF seeds first ~14-28h, LightGBM extrapolates to 72h.
+  This is NOT a pure LightGBM model — Amber's commercial forecast drives the short horizon.
 
-Thresholds derived from Phase 6 full run (811 windows, July 2025–March 2026,
-price-only LP MPC):
-  lgbm_legacy: spike $6.82/day, low $0.89/day, normal $0.52/day, all $2.99/day
-
-Gate: AI pipeline must not regress below legacy LightGBM by more than:
+Gate: TFT Tier 2 (q50 dispatch) must not regress below Amber APF + LGBM by more than:
   overall: 0% (must match or beat)
-  spike:   5% (spikes have highest variance, allow small miss)
+  spike:   5% (high variance — allow small miss)
   low:     2%
   normal:  2%
 
+Phase 6+8 results (811 windows, price-only LP MPC):
+  overall: TFT +6.6%  ✅
+  spike:   TFT +5.8%  ✅
+  low:     TFT +23.6% ✅
+  normal:  TFT -21.1% ❌  known — TFT q50 overestimates prices in flat-price regimes;
+                           root cause: spike-heavy training + log-scaling bias.
+                           Blocks Phase 5 remainder until resolved (hybrid approach planned).
+
 Requires InfluxDB access. Run with: pytest tests/eval/ -v
-To refresh baseline: run eval/holistic_eval.py, then update LGBM_BASELINE below.
+To refresh: nice -n 19 python eval/holistic_eval.py --ai-source --price-only --workers 12
 """
 
 from pathlib import Path
@@ -27,75 +32,78 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 RESULTS_FILE = ROOT / "eval" / "results" / "holistic_eval_results.csv"
 
 
-# ── Phase 6 baseline (July 2025–March 2026, price-only LP MPC, 811 windows) ──
-LGBM_BASELINE = {
+# ── Phase 6 baseline (Amber APF + LGBM, July 2025–March 2026, price-only LP MPC) ──
+AMBER_APF_BASELINE = {
     "spike":  6.8201,   # $/day
     "low":    0.8912,
     "normal": 0.5196,
     "all":    2.9877,
 }
 
-# Gate: AI pipeline must achieve ≥ baseline × (1 + tolerance)
+# Gate tolerances
 TOLERANCE = {
-    "all":    0.00,   # must not be worse than baseline overall
-    "spike":  -0.05,  # at most 5% worse (high variance)
+    "all":    0.00,
+    "spike":  -0.05,
     "low":    -0.02,
     "normal": -0.02,
 }
 
-THRESHOLDS = {s: LGBM_BASELINE[s] * (1 + TOLERANCE[s]) for s in LGBM_BASELINE}
+THRESHOLDS = {s: AMBER_APF_BASELINE[s] * (1 + TOLERANCE[s]) for s in AMBER_APF_BASELINE}
 
 
 @pytest.mark.skipif(
     not RESULTS_FILE.exists(),
-    reason="Phase 6 baseline results not generated yet — run eval/holistic_eval.py first",
+    reason="Phase 6 results not generated yet — run eval/holistic_eval.py first",
 )
 def test_financial_gate_baseline_sanity():
-    """Sanity check: baseline results file has expected columns and lgbm rows."""
+    """Sanity check: results file has expected columns and amber_apf_lgbm rows."""
     df = pd.read_csv(RESULTS_FILE)
-    for col in ("source", "stratum", "mean_per_day", "vs_lgbm_pct"):
+    for col in ("source", "stratum", "mean_per_day", "vs_amber_apf_pct"):
         assert col in df.columns, f"Missing column: {col}"
-    lgbm_rows = df[df["source"] == "lgbm_legacy"]
-    assert len(lgbm_rows) >= 3, "Expected lgbm_legacy rows for each stratum"
+    amber_rows = df[df["source"] == "amber_apf_lgbm"]
+    assert len(amber_rows) >= 3, "Expected amber_apf_lgbm rows for each stratum"
 
 
 @pytest.mark.skipif(
     not RESULTS_FILE.exists(),
-    reason="Phase 6 baseline results not generated yet",
+    reason="Phase 6 results not generated yet",
 )
-def test_lgbm_baseline_matches_known_values():
+def test_amber_apf_baseline_matches_known_values():
     """
-    Verify the stored Phase 6 baseline matches LGBM_BASELINE constants in this file.
-    If holistic_eval.py is re-run, update LGBM_BASELINE in this test file.
+    Verify stored Amber APF + LGBM baseline matches AMBER_APF_BASELINE constants.
+    If holistic_eval.py is re-run, update AMBER_APF_BASELINE in this file.
     """
     df = pd.read_csv(RESULTS_FILE)
-    lgbm = df[df["source"] == "lgbm_legacy"].set_index("stratum")["mean_per_day"]
-    for stratum, expected in LGBM_BASELINE.items():
-        actual = lgbm.get(stratum)
+    amber = df[df["source"] == "amber_apf_lgbm"].set_index("stratum")["mean_per_day"]
+    for stratum, expected in AMBER_APF_BASELINE.items():
+        actual = amber.get(stratum)
         if actual is None:
             continue
         assert abs(actual - expected) < 0.01, (
-            f"lgbm_legacy {stratum}: stored={actual:.4f}, expected={expected:.4f}. "
-            "Re-run holistic_eval.py changed baseline — update LGBM_BASELINE."
+            f"amber_apf_lgbm {stratum}: stored={actual:.4f}, expected={expected:.4f}. "
+            "Re-run holistic_eval.py changed baseline — update AMBER_APF_BASELINE."
         )
 
 
 def test_ai_pipeline_meets_financial_gate():
     """
-    AI pipeline (Tier 1+2, TFT q50 dispatch) $/day must meet thresholds vs lgbm_legacy baseline.
+    TFT Tier 2 q50 dispatch $/day must meet thresholds vs Amber APF + LGBM baseline.
 
-    Run holistic_eval.py --ai-source --price-only --workers 12 to regenerate results.
+    To regenerate results:
+        nice -n 19 python eval/holistic_eval.py --ai-source --price-only --workers 12
 
-    Phase 6+8 results (811 windows, July 2025–March 2026):
-      overall: +6.6% vs lgbm  ✅
-      spike:   +5.8%          ✅
-      low:     +23.6%         ✅
-      normal:  -21.1%         ❌  (known — TFT q50 underperforms lgbm on flat-price periods)
+    Current status (811 windows, July 2025–March 2026):
+      overall: $3.18/day (+6.6%)  ✅
+      spike:   $7.22/day (+5.8%)  ✅
+      low:     $1.10/day (+23.6%) ✅
+      normal:  $0.41/day (-21.1%) ❌  FAILS — TFT q50 ~2× actual in flat-price windows
     """
+    if not RESULTS_FILE.exists():
+        pytest.skip("Results file not found — run holistic_eval.py --ai-source first")
     df = pd.read_csv(RESULTS_FILE)
-    ai_rows = df[df["source"] == "tier1_tier2_ai"]
+    ai_rows = df[df["source"] == "tft_tier2_q50"]
     if ai_rows.empty:
-        pytest.skip("tier1_tier2_ai source not yet in holistic_eval results")
+        pytest.skip("tft_tier2_q50 source not yet in holistic_eval results — run with --ai-source")
 
     for stratum, threshold in THRESHOLDS.items():
         row = ai_rows[ai_rows["stratum"] == stratum]
@@ -103,5 +111,5 @@ def test_ai_pipeline_meets_financial_gate():
             continue
         mean_val = row["mean_per_day"].iloc[0]
         assert mean_val >= threshold, (
-            f"AI pipeline {stratum}: ${mean_val:.4f}/day < threshold ${threshold:.4f}/day"
+            f"tft_tier2_q50 {stratum}: ${mean_val:.4f}/day < threshold ${threshold:.4f}/day"
         )
