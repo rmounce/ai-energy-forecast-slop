@@ -83,14 +83,27 @@ For each eval window × forecast source:
 
 Output table (printed + saved to `eval/results/holistic_eval_results.csv`):
 
-| Source | Mean $/day | Spike $/day | Low $/day | Normal $/day | vs Baseline |
-|--------|-----------|------------|----------|-------------|-------------|
-| Oracle | ... | ... | ... | ... | +X% |
-| Tier 1+2 AI | ... | ... | ... | ... | +X% |
-| Legacy LightGBM | ... | ... | ... | ... | baseline |
-| P5MIN naive | ... | ... | ... | ... | −X% |
+**Phase 6 baseline results** (811 windows, July 2025–March 2026, price-only LP MPC):
 
-**This table sets the financial thresholds for the Phase 8 eval gate.**
+| Source | Mean $/day | Spike $/day | Low $/day | Normal $/day |
+|--------|-----------|------------|----------|-------------|
+| Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
+| **LightGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
+| P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
+
+Note: Tier 1+2 AI source not yet in holistic_eval — TFT log only has 6 days of
+data (Apr 2026). Retrospective TFT batch inference planned for Phase 6 extension.
+
+**Phase 8 financial gate thresholds** (from this baseline):
+- AI pipeline overall: ≥ $2.99/day (no worse than lgbm_legacy)
+- Spike: ≥ $6.48/day (−5% tolerance)
+- Low: ≥ $0.87/day (−2%)
+- Normal: ≥ $0.51/day (−2%)
+
+**Performance notes:**
+- `holistic_eval.py --fast` (50/stratum, LP): ~3 min with 12 workers
+- Full run (811 windows, LP): ~9 min with 12 workers (`nice -n 19 --workers 12`)
+- `--dispatch greedy` available for development (~100× faster, O(N log N), not for baselines)
 
 ### Simulator validation (optional)
 

@@ -70,11 +70,15 @@ decoder features (13 vs 15). Keeping them prevents recurrence.
 
 ### Layer 2: Financial eval gate
 
-**Depends on Phase 6 baseline. Wire up after `holistic_eval.py` produces results.**
+**Phase 6 baseline is now established. Gate thresholds wired in `tests/eval/test_financial_gate.py`.**
 
-Gate thresholds (set after Phase 6 runs):
-- AI pipeline mean $/day ≥ legacy LightGBM baseline
-- Spike stratum: no worse than legacy − 5%
-- Low/normal stratum: no worse than legacy − 2%
+Thresholds (from Phase 6 full run, 811 windows, July 2025–March 2026):
+- AI pipeline overall: ≥ $2.99/day (legacy LightGBM baseline)
+- Spike: ≥ $6.48/day (−5% tolerance for high variance)
+- Low: ≥ $0.87/day (−2%)
+- Normal: ≥ $0.51/day (−2%)
+
+The `test_ai_pipeline_meets_financial_gate` test is currently **skipped** — it will be enabled
+once holistic_eval.py is extended with a `tier1_tier2_ai` source (retrospective TFT inference).
 
 **Both layers must pass before Phase 5 sub-tasks 4–8 resume.**
