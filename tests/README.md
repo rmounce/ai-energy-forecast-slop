@@ -72,14 +72,17 @@ decoder features (13 vs 15). Keeping them prevents recurrence.
 
 **Phase 6 baseline is now established. Gate thresholds wired in `tests/eval/test_financial_gate.py`.**
 
-Thresholds (from Phase 6 full run, 811 windows, July 2025–March 2026):
-- AI pipeline overall: ≥ $2.99/day (legacy LightGBM baseline)
+Thresholds (vs `amber_apf_lgbm` baseline, 811 windows, July 2025–March 2026):
+- Overall: ≥ $2.99/day (no regression vs amber_apf_lgbm)
 - Spike: ≥ $6.48/day (−5% tolerance for high variance)
 - Low: ≥ $0.87/day (−2%)
 - Normal: ≥ $0.51/day (−2%)
 
-The `test_ai_pipeline_meets_financial_gate` test is **enabled**. Results (811 windows, price-only LP MPC):
-- Overall: +6.6% vs lgbm ✅  Spike: +5.8% ✅  Low: +23.6% ✅
-- Normal: −21.1% ❌ — TFT q50 underperforms lgbm on flat-price periods (known open issue)
+The `test_ai_pipeline_meets_financial_gate` test is **enabled**, testing `tier1_tier2_hybrid`
+(Tier 1 LGBM q50 for 0–60 min, TFT q50 for 1h–72h). Results (811 windows, price-only LP MPC):
+- Overall: +5.5% ✅  Spike: +5.8% ✅  Low: +17.1% ✅
+- Normal: −27.8% ❌ — TFT q50 ~2× actual in flat-price windows (known open issue)
+
+To refresh: `nice -n 19 python eval/holistic_eval.py --hybrid-source --price-only --workers 12`
 
 **Both layers must pass before Phase 5 sub-tasks 4–8 resume.**

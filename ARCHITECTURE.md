@@ -301,7 +301,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 **Phase 4 (conformal calibration):**
 8. `train/calibrate_conformal.py` → conditional conformal δ corrections; `models/lgbm_tactical/conformal_deltas.json`
 
-**Status (2026-04-18):** Phases 1–5 (partial) complete. Dispatch Sim Run 001: LightGBM +5.9% overall regret reduction vs P5MIN (low stratum +32.3%; spike neutral −1.8%). TFT comparison: LightGBM ≈ TFT (3.6% vs 3.7% regret) — architecture choice confirmed. Conformal calibration: spike q95 0.750 → 0.821. Tier 1 and Tier 2 live in production (`sensor.ai_p5min_price_forecast`, `sensor.ai_combined_*_price_forecast`). Phase 5 remaining sub-tasks paused pending Phase 6 (holistic dispatch sim) + Phase 8 (test framework) baseline gate.
+**Status (2026-04-18):** Phases 1–5 (partial) + Phase 6 + Phase 8 (Layer 1) complete. Phase 5 sub-tasks 4–8 paused — financial gate partially passing (normal stratum fails). Dispatch Sim Run 001: `lgbm_tactical` +5.9% overall regret vs P5MIN (low +32.3%; spike neutral −1.8%). Phase 6 holistic eval (811 windows, July 2025–March 2026, `amber_apf_lgbm` baseline): `tier1_tier2_hybrid` overall +5.5% ✅, spike +5.8% ✅, low +17.1% ✅, normal −27.8% ❌. Normal failure: TFT q50 ~2× actual in flat-price windows. Fix needed before Phase 5 resumes. See `docs/roadmap.md` and `eval/README.md`.
 
 ---
 
