@@ -20,16 +20,23 @@ eval set. This is the financial baseline that gates further pipeline evolution.
 
 ### Forecast sources
 
-| Source | How obtained |
-|--------|-------------|
-| Legacy LightGBM + Amber APF seed | Read from `price_forecast_log.csv` — Amber APF seed is embedded in logged predictions as they ran |
-| Tier 1 + Tier 2 AI pipeline | Retrospective inference on InfluxDB data (PREDISPATCH + SDO from March 2025, P5MIN from April 2024) |
-| Oracle | AEMO dispatch actuals from InfluxDB — perfect foresight upper bound |
-| AEMO P5MIN naive | `rp_5m.aemo_p5min_forecast` — short-horizon naive baseline |
+| Source | Identifier | How obtained |
+|--------|-----------|-------------|
+| Amber APF + LGBM extrapolation | `amber_apf_lgbm` | `price_forecast_log.csv` — Amber APF seeds first ~14-28h; LightGBM model extends to 72h |
+| TFT Tier 2 q50 dispatch | `tft_tier2_q50` | Retrospective batch inference: `eval/retro_tft_inference.py` |
+| Oracle | `oracle` | AEMO dispatch actuals — perfect foresight upper bound |
+| P5MIN naive | `p5min_naive` | Window-start price held constant for all 144 steps |
 
-**Key constraint:** Historical Amber APF forecasts are not stored — only the already-seeded
-LightGBM predictions are available via forecast logs. Comparison window: **July 2025 onwards**
-(when the `price_forecast_log.csv` LightGBM log begins).
+**Source terminology:**
+- `amber_apf_lgbm` is the as-run *production* system, not a pure LightGBM model.
+  Amber's commercial APF drives the short-horizon signal; LGBM extrapolates beyond Amber's range.
+  The logged predictions cannot be decomposed back into Amber-only vs LGBM-only components.
+- `tft_tier2_q50` evaluates TFT as a standalone dispatch signal (q50 only). This is *not* how
+  TFT is intended to be used in production — the planned architecture uses `amber_apf_lgbm` for
+  base dispatch and TFT quantiles for tail-risk overrides only.
+
+**Key constraint:** Historical Amber APF forecasts are not stored — only the combined predictions
+are available in `price_forecast_log.csv`. Comparison window: **July 2025 onwards**.
 
 **P5MIN naive in Phase 6:** P5MIN only covers ~1h ahead. For 72h windows at 30-min resolution,
 the naive baseline uses the price at window-start held constant for all 144 steps (persistence
@@ -83,22 +90,25 @@ For each eval window × forecast source:
 
 Output table (printed + saved to `eval/results/holistic_eval_results.csv`):
 
-**Phase 6 baseline results** (811 windows, July 2025–March 2026, price-only LP MPC):
+**Phase 6 results** (811 windows, July 2025–March 2026, price-only LP MPC):
 
 | Source | Mean $/day | Spike $/day | Low $/day | Normal $/day |
 |--------|-----------|------------|----------|-------------|
 | Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
-| **LightGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
+| **Amber APF + LGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
+| TFT Tier 2 q50 | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
 | P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
 
-Note: Tier 1+2 AI source not yet in holistic_eval — TFT log only has 6 days of
-data (Apr 2026). Retrospective TFT batch inference planned for Phase 6 extension.
-
-**Phase 8 financial gate thresholds** (from this baseline):
-- AI pipeline overall: ≥ $2.99/day (no worse than lgbm_legacy)
+**Phase 8 financial gate thresholds** (vs Amber APF + LGBM baseline):
+- Overall: ≥ $2.99/day (no regression)
 - Spike: ≥ $6.48/day (−5% tolerance)
 - Low: ≥ $0.87/day (−2%)
 - Normal: ≥ $0.51/day (−2%)
+
+**Gate status:** TFT Tier 2 q50 passes overall/spike/low. Fails normal (−21.1%).
+Root cause: TFT q50 is ~2× actual prices in flat-price windows due to spike-heavy training.
+The intended production architecture (Amber APF + LGBM for dispatch, TFT for tail-risk overrides)
+is not yet evaluated — that is the next milestone.
 
 **Performance notes:**
 - `holistic_eval.py --fast` (50/stratum, LP): ~3 min with 12 workers
