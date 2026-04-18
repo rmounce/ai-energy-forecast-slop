@@ -18,6 +18,7 @@ test.py
 # price-history.ipynb NEMOSIS
 nemosis_cache/
 data/nemseer_cache/
+data/http_cache.sqlite
 
 # Scratch/working data
 scratch/
