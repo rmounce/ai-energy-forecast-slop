@@ -4,7 +4,9 @@
 
 | Script | Purpose |
 |--------|---------|
-| `dispatch_simulator.py` | Rolling MPC LP backtester (scipy HiGHS, 40 kWh/10 kW battery). Currently price-only. |
+| `dispatch_simulator.py` | Rolling MPC LP backtester (scipy HiGHS, 40 kWh/10 kW battery). Phase 3: price-only 5-min. Phase 6: 30-min with net_load_actuals. |
+| `build_holistic_eval_set.py` | Build stratified eval index (spike/low/normal) from InfluxDB + forecast log. |
+| `holistic_eval.py` | Run holistic dispatch simulation: oracle / lgbm_legacy / p5min_naive. Reports $/day by stratum. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -26,7 +28,12 @@ eval set. This is the financial baseline that gates further pipeline evolution.
 | AEMO P5MIN naive | `rp_5m.aemo_p5min_forecast` — short-horizon naive baseline |
 
 **Key constraint:** Historical Amber APF forecasts are not stored — only the already-seeded
-LightGBM predictions are available via forecast logs. Comparison window: March 2025 onwards.
+LightGBM predictions are available via forecast logs. Comparison window: **July 2025 onwards**
+(when the `price_forecast_log.csv` LightGBM log begins).
+
+**P5MIN naive in Phase 6:** P5MIN only covers ~1h ahead. For 72h windows at 30-min resolution,
+the naive baseline uses the price at window-start held constant for all 144 steps (persistence
+forecast). This is a conservative baseline — a real P5MIN-only system would do better short-term.
 
 ### Eval set construction (`build_holistic_eval_set.py`)
 
@@ -35,11 +42,13 @@ eval set — that predates P5MIN/Tier 1 availability and has no matched load/PV 
 
 **Stratification** (by actual SA1 dispatch price within each 72h window):
 - **Spike:** ≥1 interval with RRP ≥ $300/MWh
-- **Low/negative:** ≥1 interval with RRP ≤ $0/MWh
+- **Low/negative:** ≥1 interval with RRP ≤ −$50/MWh (genuine curtailment)
+  - Note: SA midday prices are routinely $0–$50/MWh due to solar; $0 threshold left only
+    9 normal windows out of 853. −$50 captures genuine negative-price curtailment events.
 - **Normal:** all other windows
 
-Target ~300 windows per stratum. Output: index of (start_time, stratum) tuples saved to
-`eval/results/holistic_eval_index.parquet`.
+Actual index (July 2025 – April 2026): 300 spike, 300 low, 211 normal (811 total).
+Output: `eval/results/holistic_eval_index.parquet`.
 
 ### Simulator enhancement (`dispatch_simulator.py`)
 
