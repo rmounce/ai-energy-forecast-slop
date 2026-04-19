@@ -38,3 +38,4 @@ models/
 !eval/results/*.json
 !eval/results/*.csv
 !eval/results/*.parquet
+!tests/fixtures/*.json
