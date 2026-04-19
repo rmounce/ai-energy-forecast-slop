@@ -200,7 +200,36 @@ is worse than naive from h1 onwards.
 **Output files:** `eval/results/tier1_accuracy_by_horizon.csv`,
 `eval/results/tier1_accuracy_summary.csv`
 
-**Next:** Pass B (dispatch value simulation) — `eval/eval_tier1_dispatch.py` (not yet built).
+---
+
+## Tactical Eval (Pass B) — 5-min Dispatch Value
+
+**Script:** `eval/eval_tier1_dispatch.py`
+
+**Method:** 300 windows/stratum stratified sample, rolling LP MPC (`dispatch_simulator.simulate_mpc`),
+revenue booked against actual prices. NaN actuals filled with P5MIN fallback.
+$/day normalised (window = 60 min = 1/24 day).
+
+**Results** (900 windows, Jul 2025–Mar 2026, price-only LP MPC, seed=42):
+
+| Source | All $/day | Spike $/day | Low $/day | Normal $/day |
+|--------|-----------|------------|----------|-------------|
+| Oracle | $40.30 | $106.58 | $7.21 | $7.12 |
+| **tier1_q50** | **$38.71 (+1.4%)** | **$104.98 (+0.7%)** | **$4.48 (+15.7%)** | **$6.67 (+4.2%)** |
+| p5min_naive | $38.18 | $104.26 | $3.88 | $6.40 |
+| p5min_direct | $38.11 (−0.2%) | $104.33 (+0.1%) | $3.51 (−9.5%) | $6.51 (+1.6%) |
+
+**Gate:** Pass B criteria — Tier 1 dispatch revenue ≥ p5min_naive (no regression).
+**PASSES ✅ all three strata.** Low stratum shows largest gain (+15.7%) — Tier 1
+correctly avoids discharging into negative-price windows. p5min_direct regresses on
+low (−9.5%) because raw P5MIN noise misleads the LP at negative-price horizons.
+
+**Output files:** `eval/results/tier1_dispatch_results.csv`,
+`eval/results/tier1_dispatch_summary.csv`
+
+**Tactical eval complete.** Both Pass A (accuracy) and Pass B (dispatch value) pass.
+Tier 1 is validated for the 5-min/1h tactical role. Combined with Phase 6 (30-min/72h
+strategic), the dual prerequisite for Amber APF replacement is met from an eval standpoint.
 
 ### Simulator validation (optional)
 

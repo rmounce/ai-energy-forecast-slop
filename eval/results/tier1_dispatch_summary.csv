@@ -1,0 +1,17 @@
+stratum,source,mean_revenue_day,vs_naive,skill_vs_naive,n_windows
+all,tier1_q50,38.7111,0.5315,0.0139,900
+all,p5min_direct,38.1132,-0.0664,-0.0017,900
+all,p5min_naive,38.1796,0.0,0.0,900
+all,oracle,40.3028,2.1233,0.0556,900
+spike,tier1_q50,104.9764,0.7143,0.0069,300
+spike,p5min_direct,104.3259,0.0638,0.0006,300
+spike,p5min_naive,104.2621,0.0,0.0,300
+spike,oracle,106.5793,2.3172,0.0222,300
+low,tier1_q50,4.4842,0.6088,0.1571,300
+low,p5min_direct,3.5079,-0.3674,-0.0948,300
+low,p5min_naive,3.8754,0.0,0.0,300
+low,oracle,7.2112,3.3358,0.8608,300
+normal,tier1_q50,6.6727,0.2715,0.0424,300
+normal,p5min_direct,6.5057,0.1045,0.0163,300
+normal,p5min_naive,6.4012,0.0,0.0,300
+normal,oracle,7.118,0.7168,0.112,300
