@@ -52,9 +52,12 @@ the strategic component only. A separate **5-min tactical eval** (Tier 1 LGBM vs
 persistence at 5-min resolution) is required before Amber APF can be switched off in
 production. See `eval/README.md` → "Tactical Eval (Pass A)".
 
-**Tactical eval Pass A result (2026-04-19):** Tier 1 LGBM beats p5min_naive by **+24.4%**
-overall (19–30% by stratum) at all horizons h0–h11. Gate ✅ passes. Pass B (dispatch value
-simulation via `eval_tier1_dispatch.py`) still needed for complete tactical gate.
+**Tactical eval results (2026-04-19):**
+- Pass A (accuracy): Tier 1 beats naive **+24.4%** MAE overall, all horizons h0–h11. ✅
+- Pass B (dispatch): Tier 1 revenue beats naive on all strata (spike +0.7%, low +15.7%, normal +4.2%). ✅
+
+Both tactical gates pass. Combined with Phase 6 (30-min/72h strategic), the eval dual
+prerequisite for Amber APF replacement is met. See `eval/README.md` → "Tactical Eval".
 
 **Note — Amber APF 5-min comparison not yet possible:** Historical Amber APF 5-min forecasts
 were never logged; only the 30-min combined forecast exists in `price_forecast_log.csv`.
