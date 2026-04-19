@@ -78,6 +78,8 @@ logging". Not blocking — naive persistence is the gate baseline, not Amber APF
 
 *Results use frozen actuals parquet (`eval/results/holistic_eval_actuals.parquet`, 2026-04-19). See `eval/export_holistic_actuals.py`.*
 
+Companion net-load run (same 811 windows, load+PV from frozen actuals): oracle $4.73, amber $1.72, hybrid $2.01 (+16.9%). Lower absolute values than price-only because net-load objective replaces pure arbitrage. Results in `eval/results/holistic_eval_results_netload.csv`.
+
 **Gate status (2026-04-19, tier1_tier2_hybrid):** ALL GATES PASS ✅. Phase 5 remainder unblocked.
 
 Debiaser routing: replaced scalar 1000 $/MWh spike guard with upstream LightGBM spike

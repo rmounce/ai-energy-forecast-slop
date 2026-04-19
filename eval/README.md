@@ -124,6 +124,18 @@ run_time to debiaser or raw PREDISPATCH passthrough. See `docs/review_debiaser_s
 *Reproducibility: results use `eval/results/holistic_eval_actuals.parquet` (frozen from
 InfluxDB 2026-04-19). Run `eval/export_holistic_actuals.py` to refresh the snapshot.*
 
+**Companion net-load run** (same 811 windows, frozen actuals, load+PV included):
+
+| Source | Mean $/day | Spike $/day | Low $/day | Normal $/day |
+|--------|-----------|------------|----------|-------------|
+| Oracle | $4.73 | $10.36 | $1.27 | $1.65 |
+| **Amber APF + LGBM (baseline)** | **$1.72** | **$5.21** | **−$0.61** | **$0.05** |
+| **Tier 1 + TFT hybrid** | **$2.01 (+16.9%)** | **$5.70 (+9.5%)** | **−$0.32 (+$0.29 abs)** | **$0.05 (+4.1%)** |
+
+*Net-load results in `eval/results/holistic_eval_results_netload.csv` and `holistic_eval_raw_netload.parquet`.
+Lower absolute values vs price-only because net load cost/revenue replaces pure price arbitrage.
+Gate thresholds and primary results remain price-only (matching the established baseline).*
+
 **Phase 8 financial gate thresholds** (vs Amber APF + LGBM baseline):
 - Overall: ≥ $2.54/day (−15% tolerance)
 - Spike: ≥ $5.46/day (−20% tolerance)
