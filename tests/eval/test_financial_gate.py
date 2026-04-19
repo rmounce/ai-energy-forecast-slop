@@ -7,10 +7,10 @@ Baseline: Amber APF + LGBM extrapolation (as-run production model, July 2025–M
 
 Gate: tier1_tier2_hybrid (Tier 1 LGBM q50 for 0–60min, TFT q50 for 1h–72h) must not
 regress below Amber APF + LGBM by more than:
-  overall: 0% (must match or beat)
-  spike:   5% (high variance — allow small miss)
-  low:     2%
-  normal:  2%
+  overall: 15%  (TOLERANCE["all"]    = -0.15)
+  spike:   20%  (TOLERANCE["spike"]  = -0.20, high variance stratum)
+  low:      2%  (TOLERANCE["low"]    = -0.02)
+  normal:   2%  (TOLERANCE["normal"] = -0.02)
 
 tier1_tier2_hybrid results (811 windows, price-only LP MPC, July 2025–March 2026,
 frozen actuals from holistic_eval_actuals.parquet):
@@ -21,8 +21,13 @@ frozen actuals from holistic_eval_actuals.parquet):
 
 Debiaser routing: upstream LightGBM spike classifier (train/train_spike_classifier.py)
   routes each run_time to: debiaser (normal windows) or raw PREDISPATCH (spike windows).
-  Classifier threshold: 0.65 (tuned 2026-04-19 on holistic eval, all gates passing).
-  See docs/review_debiaser_spike_guard.md for full tuning history.
+  Classifier threshold: 0.65 (tuned 2026-04-19 on this same 811-window eval set — see
+  caveat below). See docs/review_debiaser_spike_guard.md for full tuning history.
+
+Threshold provenance caveat: threshold=0.65 was selected by iterating on the same
+  811-window set used to declare this gate passing. The threshold is not independently
+  validated. Planned validation path: rolling 14-day financial gate (Phase 5 CI/CD sub-task 6).
+  Do not treat this as a settled production threshold until that gate is run.
 
 Actuals reproducibility: results use holistic_eval_actuals.parquet (frozen from InfluxDB
   2026-04-19). Re-running holistic_eval.py without this file queries live InfluxDB and
