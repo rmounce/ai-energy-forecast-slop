@@ -56,12 +56,13 @@ ROOT        = Path(__file__).resolve().parent.parent
 PARQUET_DIR = ROOT / "data" / "parquet"
 MODEL_DIR   = ROOT / "models" / "lgbm_strategic"
 
-WINDOW_STEPS   = 144     # 144 × 30min = 72h
-PD_STEPS       = 56      # steps 0..55 covered by PREDISPATCH
-VAL_DAYS       = 60
-TRAIN_GAP_H    = 1
-QUANTILES      = [0.05, 0.50, 0.95]
-BRISBANE_TZ    = "Australia/Brisbane"
+WINDOW_STEPS          = 144     # 144 × 30min = 72h
+PD_STEPS              = 56      # steps 0..55 covered by PREDISPATCH
+VAL_DAYS              = 60
+TRAIN_GAP_H           = 1
+QUANTILES             = [0.05, 0.50, 0.95]
+BRISBANE_TZ           = "Australia/Brisbane"
+SPIKE_ROUTE_THRESHOLD = 0.65    # matches retro_lgbm_strategic_inference.py
 
 FEATURE_NAMES = (
     ["step_idx", "has_pd_covariate"]
@@ -115,6 +116,25 @@ def load_oof() -> pd.DataFrame:
     return df[["run_time", "interval_dt", "oof_debiased_rrp"]]
 
 
+def load_spike_routing() -> set:
+    """
+    Return set of run_times where prob_spike > threshold (bypass debiaser).
+    Returns empty set if predictions parquet not found.
+    """
+    clf_path = PARQUET_DIR / "spike_clf_predictions.parquet"
+    if not clf_path.exists():
+        print("  WARNING: spike_clf_predictions.parquet not found — OOF debiasing applied to all windows",
+              flush=True)
+        return set()
+    print("Loading spike classifier predictions...", flush=True)
+    df = pd.read_parquet(clf_path)
+    df["run_time"] = pd.to_datetime(df["run_time"], utc=True)
+    bypass = df[df["prob_spike"] > SPIKE_ROUTE_THRESHOLD]["run_time"]
+    print(f"  {len(bypass):,} of {len(df):,} run_times routed to raw bypass "
+          f"({len(bypass)/len(df):.1%})", flush=True)
+    return set(bypass)
+
+
 def load_actuals() -> pd.DataFrame:
     print("Loading 30-min actuals...", flush=True)
     df = pd.read_parquet(PARQUET_DIR / "actuals_sa1.parquet",
@@ -141,6 +161,7 @@ def _time_enc(ts: pd.DatetimeIndex, prefix: str = "") -> pd.DataFrame:
 def build_dataset(pd_df: pd.DataFrame,
                   oof_df: pd.DataFrame,
                   actuals_df: pd.DataFrame,
+                  spike_bypass_rts: set,
                   run_times_subset: np.ndarray | None = None) -> pd.DataFrame:
     """
     Build long-format training table: one row per (run_time, step_idx).
@@ -157,7 +178,17 @@ def build_dataset(pd_df: pd.DataFrame,
         "total_demand":    "pd_demand",
         "net_interchange": "pd_net_interchange",
     })
-    # Fall back to raw PREDISPATCH rrp where OOF is missing
+    # Spike routing: for bypass run_times, use raw PREDISPATCH instead of OOF.
+    # This ensures training/inference consistency — model sees raw prices during
+    # spikes at both train time and inference time (same routing threshold=0.65).
+    if spike_bypass_rts:
+        bypass_mask = pd_df["run_time"].isin(spike_bypass_rts)
+        pd_df.loc[bypass_mask, "pd_rrp_debiased"] = pd_df.loc[bypass_mask, "pd_rrp_raw"].astype("float32")
+        n_bypass_rts = pd_df.loc[bypass_mask, "run_time"].nunique()
+        print(f"  Spike bypass applied to {n_bypass_rts:,} run_times "
+              f"({bypass_mask.sum():,} rows)", flush=True)
+
+    # Fall back to raw PREDISPATCH rrp where OOF is missing (non-spike windows)
     pd_df["pd_rrp_debiased"] = pd_df["pd_rrp_debiased"].fillna(pd_df["pd_rrp_raw"])
 
     all_run_times = np.sort(pd_df["run_time"].unique())
@@ -286,9 +317,10 @@ def main():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     # Load source data
-    pd_df     = load_predispatch()
-    oof_df    = load_oof()
-    actuals_df = load_actuals()
+    pd_df          = load_predispatch()
+    oof_df         = load_oof()
+    actuals_df     = load_actuals()
+    spike_bypass_rts = load_spike_routing()
 
     # Optionally restrict to subset for dry-run
     run_times_subset = None
@@ -298,7 +330,7 @@ def main():
         print(f"DRY RUN: using first {len(run_times_subset):,} run_times", flush=True)
 
     print("\nBuilding long-format dataset...", flush=True)
-    df = build_dataset(pd_df, oof_df, actuals_df, run_times_subset)
+    df = build_dataset(pd_df, oof_df, actuals_df, spike_bypass_rts, run_times_subset)
 
     # Train/val split by run_time
     all_run_times = df["run_time"].unique()
@@ -371,6 +403,9 @@ def main():
         "val_run_time_start": str(pd.DatetimeIndex(val_rts).min()),
         "val_run_time_end":   str(pd.DatetimeIndex(val_rts).max()),
         "dry_run": args.dry_run,
+        "spike_routing": len(spike_bypass_rts) > 0,
+        "spike_route_threshold": SPIKE_ROUTE_THRESHOLD,
+        "n_spike_bypass_rts": len(spike_bypass_rts),
         "lgbm_params": LGBM_BASE_PARAMS,
         "top_features": imps.head(10).to_dict(),
     }

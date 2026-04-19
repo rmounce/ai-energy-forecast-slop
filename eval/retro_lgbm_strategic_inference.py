@@ -5,6 +5,10 @@ Retrospective LightGBM strategic (30-min / 72-hour) inference for holistic eval.
 For each eval window in holistic_eval_index.parquet, runs the LightGBM strategic
 model (q5/q50/q95) using PREDISPATCH + OOF debiased RRP + 30-min actuals.
 
+Spike routing: upstream LightGBM spike classifier (spike_clf_predictions.parquet,
+threshold=0.65) determines whether to apply the OOF debiaser or pass raw PREDISPATCH
+through unchanged — same routing logic as retro_tft_inference.py.
+
 Key alignment:
   start_ts  = window start (first 30-min interval)
   run_time  = start_ts - 30min  (PREDISPATCH run that produced step 0 = start_ts)
@@ -12,9 +16,10 @@ Key alignment:
   step 143  = start_ts + 143 × 30min = run_time + 72h
 
 Data sources (all parquet, no InfluxDB required):
-  aemo_predispatch_sa1.parquet  — PREDISPATCH RRP/demand/net_interchange steps 0-55
-  debiased_pd_rrp_oof.parquet   — OOF-debiased PREDISPATCH RRP for steps 0-55
-  actuals_sa1.parquet           — 30-min actual RRP for lag features
+  aemo_predispatch_sa1.parquet    — PREDISPATCH RRP/demand/net_interchange steps 0-55
+  debiased_pd_rrp_oof.parquet     — OOF-debiased PREDISPATCH RRP for steps 0-55
+  spike_clf_predictions.parquet   — prob_spike per run_time for routing
+  actuals_sa1.parquet             — 30-min actual RRP for lag features
 
 Output: eval/results/retro_lgbm_strategic_forecasts.pkl
   {UTC Timestamp (window start_ts) -> np.ndarray shape (144, 3)} in $/MWh
@@ -36,15 +41,17 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-RESULTS_DIR   = ROOT / "eval" / "results"
-PARQUET_DIR   = ROOT / "data" / "parquet"
-INDEX_FILE    = RESULTS_DIR / "holistic_eval_index.parquet"
-OUT_FILE      = RESULTS_DIR / "retro_lgbm_strategic_forecasts.pkl"
-MODEL_DIR     = ROOT / "models" / "lgbm_strategic"
+RESULTS_DIR      = ROOT / "eval" / "results"
+PARQUET_DIR      = ROOT / "data" / "parquet"
+INDEX_FILE       = RESULTS_DIR / "holistic_eval_index.parquet"
+OUT_FILE         = RESULTS_DIR / "retro_lgbm_strategic_forecasts.pkl"
+MODEL_DIR        = ROOT / "models" / "lgbm_strategic"
+SPIKE_CLF_FILE   = PARQUET_DIR / "spike_clf_predictions.parquet"
 
-WINDOW_STEPS  = 144
-PD_STEPS      = 56
-BRISBANE_TZ   = "Australia/Brisbane"
+WINDOW_STEPS         = 144
+PD_STEPS             = 56
+BRISBANE_TZ          = "Australia/Brisbane"
+SPIKE_ROUTE_THRESHOLD = 0.65  # prob_spike > this → bypass debiaser; matches TFT routing
 
 FEATURE_NAMES = (
     ["step_idx", "has_pd_covariate"]
@@ -108,15 +115,25 @@ def build_window_features(run_time: pd.Timestamp,
                           oof_by_run: pd.Series,
                           actuals_ts: pd.Series,
                           roll_6h: pd.Series,
-                          roll_24h: pd.Series) -> np.ndarray:
+                          roll_24h: pd.Series,
+                          spike_prob_by_run: dict | None = None) -> np.ndarray:
     """
     Build (WINDOW_STEPS, len(FEATURE_NAMES)) feature matrix for one run_time.
     Returns float32 array.
+
+    If spike_prob_by_run is provided and prob_spike > SPIKE_ROUTE_THRESHOLD,
+    raw PREDISPATCH rrp is used instead of OOF-debiased (bypass debiaser).
     """
     step_range = np.arange(WINDOW_STEPS)
     target_dts = pd.DatetimeIndex([
         run_time + pd.Timedelta(minutes=30 * (h + 1)) for h in step_range
     ], tz="UTC")
+
+    # Spike routing: bypass debiaser for windows classified as spike
+    bypass_debiaser = False
+    if spike_prob_by_run is not None:
+        prob = spike_prob_by_run.get(run_time, 0.0)
+        bypass_debiaser = prob > SPIKE_ROUTE_THRESHOLD
 
     # PREDISPATCH covariates (steps 0..55)
     pd_rrp   = np.full(WINDOW_STEPS, np.nan, dtype=np.float32)
@@ -128,13 +145,16 @@ def build_window_features(run_time: pd.Timestamp,
         pd_rows = pd_by_run.loc[run_time]
         for step_idx, row in pd_rows.iterrows():
             if 0 <= step_idx < PD_STEPS:
-                # OOF debiased — fall back to raw if missing
-                iv_dt = run_time + pd.Timedelta(minutes=30 * (step_idx + 1))
-                oof_key = (run_time, iv_dt)
-                if oof_key in oof_by_run.index:
-                    pd_rrp[step_idx] = float(oof_by_run.loc[oof_key])
-                else:
+                if bypass_debiaser:
                     pd_rrp[step_idx] = float(row["rrp"])
+                else:
+                    # OOF debiased — fall back to raw if missing
+                    iv_dt = run_time + pd.Timedelta(minutes=30 * (step_idx + 1))
+                    oof_key = (run_time, iv_dt)
+                    if oof_key in oof_by_run.index:
+                        pd_rrp[step_idx] = float(oof_by_run.loc[oof_key])
+                    else:
+                        pd_rrp[step_idx] = float(row["rrp"])
                 pd_dem[step_idx]   = float(row["total_demand"])
                 pd_netix[step_idx] = float(row["net_interchange"])
                 has_pd[step_idx]   = 1.0
@@ -223,9 +243,23 @@ def main():
           f"({actuals_ts.index.min().date()} – {actuals_ts.index.max().date()})",
           flush=True)
 
+    print("Loading spike classifier predictions...", flush=True)
+    spike_prob_by_run = None
+    if SPIKE_CLF_FILE.exists():
+        clf_df = pd.read_parquet(SPIKE_CLF_FILE)
+        clf_df["run_time"] = pd.to_datetime(clf_df["run_time"], utc=True)
+        spike_prob_by_run = dict(zip(clf_df["run_time"], clf_df["prob_spike"]))
+        n_bypass = (clf_df["prob_spike"] > SPIKE_ROUTE_THRESHOLD).sum()
+        print(f"  {len(spike_prob_by_run):,} run_times, {n_bypass:,} routed to bypass "
+              f"({n_bypass/len(clf_df):.1%}, threshold={SPIKE_ROUTE_THRESHOLD})", flush=True)
+    else:
+        print("  WARNING: spike_clf_predictions.parquet not found — debiaser applied to all windows",
+              flush=True)
+
     # Run inference
     forecasts: dict = {}
     n_missing_pd = 0
+    n_bypassed = 0
     t_start = time.time()
 
     for i, row in enumerate(index.itertuples()):
@@ -234,8 +268,14 @@ def main():
             start_ts = start_ts.tz_localize("UTC")
         run_time = start_ts - pd.Timedelta(minutes=30)
 
+        if spike_prob_by_run is not None:
+            prob = spike_prob_by_run.get(run_time, 0.0)
+            if prob > SPIKE_ROUTE_THRESHOLD:
+                n_bypassed += 1
+
         X = build_window_features(run_time, pd_by_run, oof_by_run,
-                                  actuals_ts, roll_6h, roll_24h)
+                                  actuals_ts, roll_6h, roll_24h,
+                                  spike_prob_by_run=spike_prob_by_run)
 
         X_df = pd.DataFrame(X, columns=FEATURE_NAMES)
 
@@ -262,6 +302,8 @@ def main():
     total = time.time() - t_start
     print(f"\nDone: {len(forecasts):,} windows in {total:.1f}s "
           f"({total/len(forecasts)*1000:.0f}ms/window)")
+    print(f"  Spike bypassed: {n_bypassed}/{len(forecasts)} windows "
+          f"({n_bypassed/len(forecasts):.1%})")
     if n_missing_pd > 0:
         print(f"  WARNING: {n_missing_pd} windows had no PREDISPATCH data")
 
@@ -271,7 +313,8 @@ def main():
         "n_quantiles": 3,
         "quantiles":   [0.05, 0.50, 0.95],
         "description": "LightGBM strategic q5/q50/q95, 30-min/72-hour, "
-                        "PREDISPATCH steps 0-55 + time/lags steps 56-143",
+                        "PREDISPATCH steps 0-55 + time/lags steps 56-143. "
+                        f"Spike routing threshold={SPIKE_ROUTE_THRESHOLD}.",
     }
     with open(OUT_FILE, "wb") as f:
         pickle.dump(out, f, protocol=4)
