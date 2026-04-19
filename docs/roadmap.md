@@ -58,13 +58,18 @@ production. See `docs/ideas.md` → "5-min tactical dispatch eval track".
 |--------|-----------|------------|----------|-------------|
 | Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
 | **Amber APF + LGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
-| Tier 1 + TFT hybrid | $3.15 (+5.5%) | $7.22 (+5.8%) | $1.04 (+17.1%) | $0.38 (−27.8%) |
-| TFT Tier 2 q50 (standalone) | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
+| Tier 1 + TFT hybrid (debiased + spike guard) | $3.22 (+7.8%) | $7.34 (+7.6%) | $1.08 (+21.1%) | $0.41 (−21.7%) |
+| TFT Tier 2 q50 (standalone, archived) | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
 | P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
 
-**Gate status (tier1_tier2_hybrid):** Overall/spike/low pass. Normal stratum fails (−27.8% vs −2% threshold).
-Normal failure: TFT q50 ~2× actual in flat-price windows. Tier 1 covers only 2/144 steps.
-Phase 5 remainder blocked until normal stratum is resolved.
+**Gate status (2026-04-19, tier1_tier2_hybrid):** Overall/spike/low pass. Normal stratum
+fails (−21.7% vs −2% threshold). Phase 5 remainder blocked until normal stratum resolves.
+
+Normal root cause: debiaser spike guard (1000 $/MWh) blocks correction of PREDISPATCH
+overestimates > 1000 in flat-price windows. Without spike guard: normal +4.8% ✅ but
+spike −16.4% ❌. The spike guard threshold is a heuristic — needs principled derivation
+from training residuals or retraining with spike-aware loss. See TODO in
+`eval/retro_tft_inference.py`.
 
 **Caveat on eval statistics:** The 811 eval windows are drawn from a dense every-6h grid,
 giving 66h of overlap between neighbors. Results are directionally robust but not 811
