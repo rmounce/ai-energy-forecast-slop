@@ -1311,11 +1311,20 @@ def _apply_pd_debiaser(fut_df, start_t):
         # Load model via joblib (already imported in forecast.py)
         model = joblib.load(model_path)
         X = df[feats].astype(np.float32)
-        debiased = model.predict(X)
-        
-        # Use .loc to avoid SettingWithCopy
-        fut_df.loc[df.index, 'pd_rrp'] = debiased.astype(np.float32)
-        logging.info(f"Applied PD debiaser to {len(df)} steps.")
+        debiased = model.predict(X).astype(np.float32)
+
+        # Spike guard: keep raw pd_rrp where |price| > threshold.
+        # Debiaser is undertrained on rare spike events and suppresses them to the mean.
+        # TODO: 300 $/MWh is a rough heuristic — should be derived from debiaser training
+        #       residuals (e.g. 95th percentile of actual RRP) or the model retrained
+        #       with spike-aware loss weighting.
+        SPIKE_GUARD = 1000.0
+        raw = fut_df.loc[df.index, 'pd_rrp'].values.astype(np.float32)
+        apply_mask = np.abs(raw) <= SPIKE_GUARD
+        fut_df.loc[df.index, 'pd_rrp'] = np.where(apply_mask, debiased, raw)
+        n_debiased = int(apply_mask.sum())
+        n_spiked   = int((~apply_mask).sum())
+        logging.info(f"Applied PD debiaser: {n_debiased} steps debiased, {n_spiked} spike-guarded.")
         
     except Exception as e:
         logging.warning(f"PD debiaser failed: {e}")

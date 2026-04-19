@@ -290,17 +290,26 @@ def build_window_tensors(
 
     # OOF debiased pd_rrp substitution at steps 0-55 — matches training contract
     # run_time T = start_ts - 30min; decoder step 0 = start_ts = T+30min
+    # Spike guard: raw pd_rrp passes through unchanged where |price| > threshold.
+    # Debiaser is undertrained on rare spike events and suppresses them to the mean.
+    # TODO: 300 $/MWh is a rough heuristic — should be derived from the debiaser's
+    #       training residuals (e.g. 95th percentile of actual RRP in training set),
+    #       or the model retrained with spike-aware loss weighting.
+    SPIKE_GUARD_THRESHOLD = 1000.0
     if oof_by_run is not None:
-        run_time = start_ts - pd.Timedelta(minutes=30)
+        # Normalise to ns so keys match OOF dict (parquet timestamps may be datetime64[us])
+        run_time = (start_ts - pd.Timedelta(minutes=30)).as_unit("ns")
         oof_series = oof_by_run.get(run_time)
         if oof_series is not None:
-            oof_vals = oof_series.reindex(dec_idx[:56])
-            valid = ~oof_vals.isna()
+            oof_vals = oof_series.reindex(dec_idx.as_unit("ns")[:56])
+            raw_pd = dec_cols["pd_rrp"][:56]
+            is_spike = np.abs(raw_pd) > SPIKE_GUARD_THRESHOLD
+            valid = ~oof_vals.isna() & ~is_spike
             if valid.any():
                 dec_cols["pd_rrp"][:56] = np.where(
                     valid.values,
                     oof_vals.fillna(0.0).values,
-                    dec_cols["pd_rrp"][:56],
+                    raw_pd,
                 )
 
     # Scale decoder continuous features
@@ -401,8 +410,10 @@ def main():
     if OOF_FILE.exists():
         print(f"Loading OOF debiased pd_rrp from {OOF_FILE.relative_to(ROOT)} ...")
         oof_df = pd.read_parquet(OOF_FILE)
-        # Ensure run_time is UTC and nanosecond precision for consistent dictionary lookup
-        oof_df["run_time"] = pd.to_datetime(oof_df["run_time"], utc=True).dt.as_unit("ns")
+        # Normalise both columns to ns precision so dict keys and dec_idx timestamps
+        # match exactly — parquet stores datetime64[us], pd.date_range produces datetime64[ns].
+        oof_df["run_time"]    = pd.to_datetime(oof_df["run_time"],    utc=True).dt.as_unit("ns")
+        oof_df["interval_dt"] = pd.to_datetime(oof_df["interval_dt"], utc=True).dt.as_unit("ns")
         oof_by_run = {
             run_t: grp.set_index("interval_dt")["oof_debiased_rrp"]
             for run_t, grp in oof_df.groupby("run_time")

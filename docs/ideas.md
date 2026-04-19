@@ -5,6 +5,40 @@ Not prioritised — captured here so they don't get lost.
 
 ---
 
+## Evaluation
+
+### 5-min tactical dispatch eval track
+
+The current holistic eval (Phase 6) simulates dispatch at 30-min resolution over 72h windows.
+This has two important limitations:
+
+1. **Intra-interval volatility is invisible.** In production, EMHASS re-runs every ~5 minutes
+   on the confirmed dispatch price. The battery captures within-interval price oscillations
+   (e.g. spike for 2 × 5-min then crash) that a 30-min simulation cannot model.
+
+2. **The immediate decision is almost always oracle-quality.** After the first ~30 seconds of
+   each 5-min interval, EMHASS receives the confirmed actual price and re-plans. So 90% of
+   the time, the *current interval* battery action is driven by the confirmed price — not
+   the Tier 1 or TFT forecast. The 30-min eval treats step 0 as a forecasted quantity,
+   which is more pessimistic than reality.
+
+A separate 5-min tactical eval would:
+- Replay actual 5-min dispatch prices (SA1 AEMO dispatch)
+- Evaluate Tier 1 LGBM forecast quality at 5-min/1h horizon
+- Use greedy or short-horizon LP dispatch (full 72h MPC is overkill at 5-min resolution)
+- Measure how much value Tier 1 adds vs a naive persistence baseline at short horizons
+
+**Why this matters for Amber APF replacement:**
+Amber APF bundles two capabilities: (a) the real-time confirmed price feed for the current
+interval, and (b) a longer-horizon forecast (14-28h APF, LGBM to 72h). Replacing it requires
+matching *both*. Even if TFT matches Amber APF on 30-min/72h strategic performance,
+Tier 1 must also be validated tactically before Amber APF can be switched off.
+
+**Prerequisite for production switch:** a passing 5-min tactical eval gate (Tier 1 vs naive
+persistence at 5-min resolution) alongside the existing 30-min/72h strategic gate.
+
+---
+
 ## Battery Dispatch
 
 ### Spike-aware discharge (EMHASS-side, near-term)
