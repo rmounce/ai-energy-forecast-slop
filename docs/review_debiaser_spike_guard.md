@@ -124,19 +124,38 @@ deadline.
 
 ---
 
-## Question for Reviewer
+## Reviewer Decision (2026-04-19)
 
-Given the above, which approach do you recommend?
+**Skip Option A. Proceed to Option B/3 hybrid: upstream regime classifier + conditional routing.**
 
-1. **Option A first** — quick diagnostic to see if a principled threshold can resolve it; if not,
-   escalate to B.
+### Why Option A is a dead end (reviewer analysis)
 
-2. **Option B directly** — treat this as a model retraining task, skip the threshold search since
-   the scalar-threshold approach is likely fundamentally limited.
+The collapse of normal stratum performance from +4.8% (no guard) to −21.7% (guard at 1000
+$/MWh) means PREDISPATCH regularly emits fake noise **above** 1000 $/MWh on normal days —
+and the debiaser was successfully correcting those. Simultaneously, genuine spikes also live
+above 1000 $/MWh. Because both fake noise and genuine spikes occupy the same raw price
+magnitudes, **no scalar threshold on `raw_pd_rrp` can ever separate them.** Option A just
+moves to a different point on the same failing Pareto frontier.
 
-3. **Something else** — e.g. separate the debiaser correction from the spike guard entirely using
-   a regime classifier upstream.
+### Recommended implementation
 
-The pipeline is otherwise in good shape: tactical eval (5-min/1h Tier 1) passed both accuracy
-and dispatch gates on 2026-04-19. Phase 6 (30-min/72h strategic) passes on all strata except
-normal. Resolving the normal gate is the last blocker before Phase 5 production work resumes.
+1. **Train a lightweight upstream regime classifier** (LightGBM or logistic regression) to
+   predict P(genuine spike window) at each run_time.
+   - Features: time of day, recent actual RRP lags, PREDISPATCH h0 + max, forecast demand,
+     net interchange.
+   - Label: 1 if any actual RRP ≥ 300 $/MWh occurs in the window.
+   - Training data already exists: OOF parquet run_times + actuals.
+
+2. **Conditional routing in the pipeline:**
+   - `prob_spike > threshold` → bypass debiaser (pass raw PREDISPATCH through)
+   - otherwise → apply existing LightGBM debiaser as normal
+
+   This reuses both existing components exactly where each excels: debiaser yields +4.8%
+   on normal windows; raw passthrough yields +7.6% on spike windows.
+
+3. **Check first** whether the existing spike/stratum classification logic in the pipeline
+   can be reused upstream — avoid training a new classifier if one already exists.
+
+4. Re-run Phase 6 holistic dispatch eval with conditional routing in place.
+
+**Estimated effort:** 1–2 days including eval.
