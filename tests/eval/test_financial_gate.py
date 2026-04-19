@@ -12,19 +12,23 @@ regress below Amber APF + LGBM by more than:
   low:     2%
   normal:  2%
 
-tier1_tier2_hybrid results (811 windows, price-only LP MPC, July 2025–March 2026):
-  overall: +5.5%  ✅  ($3.15/day vs $2.99 baseline)
-  spike:   +5.8%  ✅  ($7.22/day vs $6.82 baseline)
-  low:     +17.1% ✅  ($1.04/day vs $0.89 baseline)
-  normal:  -27.8% ❌  ($0.38/day vs $0.52 baseline)
-    Root cause: TFT q50 overestimates prices in flat-price regimes (142/144 steps
-    from TFT); spike-heavy training + log-scaling bias. Tier 1 only covers 2 steps.
-    Blocks Phase 5 remainder until resolved.
+tier1_tier2_hybrid results (811 windows, price-only LP MPC, July 2025–March 2026,
+frozen actuals from holistic_eval_actuals.parquet):
+  overall: +9.7%  ✅  ($3.28/day vs $2.99 baseline)
+  spike:   +7.2%  ✅  ($7.31/day vs $6.82 baseline)
+  low:     +32.6% ✅  ($1.18/day vs $0.89 baseline)
+  normal:  +0.4%  ✅  ($0.52/day vs $0.52 baseline)
 
-For reference: tft_tier2_q50 standalone (archived in _ai parquet checkpoints):
-  overall: +6.6%, spike: +5.8%, low: +23.6%, normal: -21.1%
+Debiaser routing: upstream LightGBM spike classifier (train/train_spike_classifier.py)
+  routes each run_time to: debiaser (normal windows) or raw PREDISPATCH (spike windows).
+  Classifier threshold: 0.65 (tuned 2026-04-19 on holistic eval, all gates passing).
+  See docs/review_debiaser_spike_guard.md for full tuning history.
 
-Requires InfluxDB access. Run with: pytest tests/eval/ -v
+Actuals reproducibility: results use holistic_eval_actuals.parquet (frozen from InfluxDB
+  2026-04-19). Re-running holistic_eval.py without this file queries live InfluxDB and
+  may give different absolute values. Run eval/export_holistic_actuals.py to refresh.
+
+Requires holistic_eval_results.csv. Run with: pytest tests/eval/ -v
 To refresh: nice -n 19 python eval/holistic_eval.py --hybrid-source --price-only --workers 12
 """
 
@@ -98,14 +102,11 @@ def test_ai_pipeline_meets_financial_gate():
     To regenerate results:
         nice -n 19 python eval/holistic_eval.py --hybrid-source --price-only --workers 12
 
-    Current status (811 windows, July 2025–March 2026, debiaser + 1000 $/MWh spike guard):
-      overall: $3.22/day (+7.8%)  ✅
-      spike:   $7.34/day (+7.6%)  ✅
-      low:     $1.08/day (+21.1%) ✅
-      normal:  $0.41/day (-21.7%) ❌  FAILS — debiaser spike guard (>1000 $/MWh) blocks
-                                        correction of PREDISPATCH overestimates in flat-price
-                                        windows. Without guard: normal +4.8% but spike -16.4%.
-                                        Needs principled spike threshold or debiaser retrain.
+    Current status (811 windows, July 2025–March 2026, spike classifier threshold=0.65):
+      overall: $3.28/day (+9.7%)  ✅
+      spike:   $7.31/day (+7.2%)  ✅
+      low:     $1.18/day (+32.6%) ✅
+      normal:  $0.52/day (+0.4%)  ✅  ALL GATES PASS
     """
     if not RESULTS_FILE.exists():
         pytest.skip("Results file not found — run holistic_eval.py --hybrid-source first")

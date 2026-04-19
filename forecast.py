@@ -1275,26 +1275,94 @@ def _execute_tactical_prediction():
     }
 
 
-def _apply_pd_debiaser(fut_df, start_t):
+def _apply_pd_debiaser(fut_df, start_t, historical_df=None):
     """
     Applies the PREDISPATCH debiaser (LGBM) to the first 56 steps of the decoder.
     Matches the contract in train/train_pd_debiaser.py.
+
+    Routing: upstream spike classifier decides whether to apply debiaser or pass raw
+    PREDISPATCH through. Replaces the old scalar price threshold (1000 $/MWh).
+    Falls back to scalar threshold if spike classifier not available.
     """
     model_path = Path(__file__).resolve().parent / "models" / "pd_debiaser" / "lgbm_final.pkl"
     if not model_path.exists():
         return fut_df
-    
+
     try:
-        # We use the head(56) which covers the 0-28h predispatch horizon
+        # We use head(56) which covers the 0-28h predispatch horizon
         df = fut_df.head(56).copy()
         if df.empty:
             return fut_df
-            
-        # run_time is assumed to be start_t - 30min (matching training/eval mapping)
+
         run_time = start_t - pd.Timedelta(minutes=30)
+
+        # ── Spike classifier routing ──────────────────────────────────────────
+        # Predict P(genuine spike window) to decide whether to bypass debiaser.
+        # If classifier unavailable, fall back to scalar threshold.
+        bypass_debiaser = False
+        clf_path = Path(__file__).resolve().parent / "models" / "spike_classifier" / "lgbm_spike_clf.pkl"
+        if clf_path.exists() and historical_df is not None and not historical_df.empty:
+            try:
+                with open(clf_path, "rb") as f:
+                    clf_bundle = joblib.load(f)
+                clf_model = clf_bundle["model"]
+                clf_features = clf_bundle["features"]
+                clf_threshold = clf_bundle.get("default_threshold", 0.35)
+
+                # Build classifier feature vector for this run_time
+                rrp_col = "rrp" if "rrp" in historical_df.columns else None
+                hist_rrp = historical_df[rrp_col].sort_index() if rrp_col else pd.Series(dtype=float)
+
+                def _get_lag(rt, offset):
+                    target = rt - offset
+                    idx = hist_rrp.index.get_indexer([target], method="nearest")
+                    if idx[0] >= 0:
+                        actual_t = hist_rrp.index[idx[0]]
+                        if abs((actual_t - target).total_seconds()) <= 900:
+                            return float(hist_rrp.iloc[idx[0]])
+                    return np.nan
+
+                rt30 = pd.Timedelta(minutes=30)
+                pd_dec = df["pd_rrp"].dropna()
+                pd_demand_dec = df["pd_demand"].dropna() if "pd_demand" in df else pd.Series(dtype=float)
+
+                rt_brisbane = run_time.tz_convert("Australia/Brisbane")
+                clf_x = {
+                    "pd_rrp_h0": float(pd_dec.iloc[0]) if len(pd_dec) > 0 else 0.0,
+                    "pd_rrp_max": float(pd_dec.max()) if len(pd_dec) > 0 else 0.0,
+                    "pd_rrp_p90": float(pd_dec.quantile(0.9)) if len(pd_dec) > 0 else 0.0,
+                    "pd_demand_max": float(pd_demand_dec.max()) if len(pd_demand_dec) > 0 else 0.0,
+                    "pd_net_interchange_h0": float(df["pd_net_interchange"].iloc[0]) if "pd_net_interchange" in df and not df["pd_net_interchange"].isna().all() else 0.0,
+                    "actual_rrp_lag1": _get_lag(run_time, 1 * rt30),
+                    "actual_rrp_lag2": _get_lag(run_time, 2 * rt30),
+                    "actual_rrp_lag4": _get_lag(run_time, 4 * rt30),
+                    "actual_rrp_lag8": _get_lag(run_time, 8 * rt30),
+                    "actual_rrp_max_6h": float(hist_rrp[hist_rrp.index >= run_time - pd.Timedelta(hours=6)].max()) if len(hist_rrp) > 0 else np.nan,
+                    "actual_rrp_max_24h": float(hist_rrp[hist_rrp.index >= run_time - pd.Timedelta(hours=24)].max()) if len(hist_rrp) > 0 else np.nan,
+                    "hour_sin": float(np.sin(2 * np.pi * rt_brisbane.hour / 24)),
+                    "hour_cos": float(np.cos(2 * np.pi * rt_brisbane.hour / 24)),
+                    "dow_sin": float(np.sin(2 * np.pi * rt_brisbane.dayofweek / 7)),
+                    "dow_cos": float(np.cos(2 * np.pi * rt_brisbane.dayofweek / 7)),
+                    "month_sin": float(np.sin(2 * np.pi * (rt_brisbane.month - 1) / 12)),
+                    "month_cos": float(np.cos(2 * np.pi * (rt_brisbane.month - 1) / 12)),
+                }
+                X_clf = np.array([[clf_x.get(f, 0.0) for f in clf_features]], dtype=np.float32)
+                prob_spike = float(clf_model.predict_proba(X_clf)[0, 1])
+                bypass_debiaser = prob_spike > clf_threshold
+                logging.info(f"Spike classifier: prob_spike={prob_spike:.3f}, threshold={clf_threshold}, bypass={bypass_debiaser}")
+            except Exception as clf_err:
+                logging.warning(f"Spike classifier failed ({clf_err}); using scalar fallback")
+                bypass_debiaser = float(df["pd_rrp"].abs().max()) > 1000.0
+        else:
+            # Scalar fallback: bypass if any step > 1000 $/MWh
+            bypass_debiaser = float(df["pd_rrp"].abs().max()) > 1000.0
+
+        if bypass_debiaser:
+            logging.info("PD debiaser bypassed (spike window routed to raw PREDISPATCH).")
+            return fut_df
+
+        # ── Apply debiaser ─────────────────────────────────────────────────────
         df['horizon_steps'] = ((df.index - run_time).total_seconds() / 1800).astype(np.float32)
-        
-        # Time features (AEST/Brisbane, no DST — same as time_sin_cos but for local df)
         t = df.index.tz_convert("Australia/Brisbane")
         df["hour_sin"]  = np.sin(2 * np.pi * t.hour / 24)
         df["hour_cos"]  = np.cos(2 * np.pi * t.hour / 24)
@@ -1302,33 +1370,20 @@ def _apply_pd_debiaser(fut_df, start_t):
         df["dow_cos"]   = np.cos(2 * np.pi * t.dayofweek / 7)
         df["month_sin"] = np.sin(2 * np.pi * (t.month - 1) / 12)
         df["month_cos"] = np.cos(2 * np.pi * (t.month - 1) / 12)
-        
+
         feats = [
             "pd_rrp", "pd_demand", "pd_net_interchange", "horizon_steps",
             "hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos"
         ]
-        
-        # Load model via joblib (already imported in forecast.py)
         model = joblib.load(model_path)
         X = df[feats].astype(np.float32)
         debiased = model.predict(X).astype(np.float32)
+        fut_df.loc[df.index, 'pd_rrp'] = debiased
+        logging.info(f"Applied PD debiaser: {len(debiased)} steps debiased.")
 
-        # Spike guard: keep raw pd_rrp where |price| > threshold.
-        # Debiaser is undertrained on rare spike events and suppresses them to the mean.
-        # TODO: 300 $/MWh is a rough heuristic — should be derived from debiaser training
-        #       residuals (e.g. 95th percentile of actual RRP) or the model retrained
-        #       with spike-aware loss weighting.
-        SPIKE_GUARD = 1000.0
-        raw = fut_df.loc[df.index, 'pd_rrp'].values.astype(np.float32)
-        apply_mask = np.abs(raw) <= SPIKE_GUARD
-        fut_df.loc[df.index, 'pd_rrp'] = np.where(apply_mask, debiased, raw)
-        n_debiased = int(apply_mask.sum())
-        n_spiked   = int((~apply_mask).sum())
-        logging.info(f"Applied PD debiaser: {n_debiased} steps debiased, {n_spiked} spike-guarded.")
-        
     except Exception as e:
         logging.warning(f"PD debiaser failed: {e}")
-        
+
     return fut_df
 
 
@@ -1506,7 +1561,7 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     fut['nsw1_pd_rrp'] = fut['nsw1_pd_rrp'].fillna(0.0)
 
     # ── 3.5 Debias PREDISPATCH (Run 011+ contract)
-    fut = _apply_pd_debiaser(fut, start_t)
+    fut = _apply_pd_debiaser(fut, start_t, historical_df=hist)
 
     # SevenDayOutlook: sd_demand + sd_net_interchange (all 144 steps, matches training)
     sdo_df = _get_influx_sdo_demand(

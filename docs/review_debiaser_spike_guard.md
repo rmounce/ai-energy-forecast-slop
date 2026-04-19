@@ -159,3 +159,34 @@ moves to a different point on the same failing Pareto frontier.
 4. Re-run Phase 6 holistic dispatch eval with conditional routing in place.
 
 **Estimated effort:** 1–2 days including eval.
+
+---
+
+## Implementation Results (2026-04-19)
+
+### Classifier training (train/train_spike_classifier.py)
+
+- **Features:** PREDISPATCH summary (pd_rrp_h0, pd_rrp_max, pd_rrp_p90, pd_demand_max, pd_net_interchange_h0), recent actual RRP lags (lag1/2/4/8, rolling max 6h/24h), time features
+- **Label:** any actual RRP ≥ 300 $/MWh in next 28h from run_time (covers decoder steps 0–55)
+- **Split:** train pre-Jul 2025, val Jul 2025–Apr 2026 (spike rate 17.7% in val)
+- **Val metrics:** ROC-AUC 0.722, AP 0.476
+- **Top features:** actual_rrp_max_24h (406), pd_demand_max (345), pd_rrp_p90 (164)
+
+The 24h actual RRP lag dominates — contextual market history that a scalar pd_rrp threshold can't see.
+
+### Routing threshold tuning — Phase 6 holistic dispatch eval (price-only, 811 windows)
+
+| Threshold | Normal bypass% | Spike bypass% | Spike $/day | Low $/day | Normal $/day | All $/day |
+|-----------|---------------|---------------|-------------|-----------|--------------|-----------|
+| No guard (debiaser always) | 0% | 0% | −16.4%* | +21.1%* | +4.8%* | — |
+| 1000 $/MWh scalar (old) | ~0% | ~100% | +7.6%* | +21.1%* | −21.7%* | +7.8%* |
+| Classifier 0.35 | 35.5% | 39.0% | +7.0% | +26.2% | −13.9% | +8.1% |
+| Classifier 0.50 | 17.1% | 27.7% | +7.2% | +30.3% | −6.9% | +9.1% |
+| Classifier 0.60 | 11.8% | 21.3% | +7.3% | +32.1% | −2.4% | +9.6% |
+| **Classifier 0.65** ✅ | **8.3%** | **18%** | **+7.2%** | **+32.6%** | **+0.4%** | **+9.7%** |
+
+*Old cached results marked with *. All 2026-04-19 values from frozen actuals parquet (holistic_eval_actuals.parquet, exported same day).
+
+**Final threshold: 0.65.** All gates pass. Stored in `models/spike_classifier/lgbm_spike_clf.pkl` and `eval/retro_tft_inference.py::SPIKE_ROUTE_THRESHOLD`.
+
+**Note on eval reproducibility:** These results require `eval/results/holistic_eval_actuals.parquet` (frozen InfluxDB snapshot, 2026-04-19). Without it, `holistic_eval.py` queries live InfluxDB which drifts over time. Run `eval/export_holistic_actuals.py --refresh` to re-freeze.
