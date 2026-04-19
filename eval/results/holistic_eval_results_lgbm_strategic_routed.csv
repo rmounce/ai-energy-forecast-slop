@@ -1,0 +1,17 @@
+stratum,source,n,mean_per_day,vs_amber_apf_pct
+spike,oracle,300,11.9734,75.6
+spike,amber_apf_lgbm,300,6.8201,0.0
+spike,p5min_naive,300,0.1687,-97.5
+spike,lgbm_strategic,300,4.2609,-37.5
+low,oracle,300,2.7655,210.3
+low,amber_apf_lgbm,300,0.8912,0.0
+low,p5min_naive,300,-0.0083,-100.9
+low,lgbm_strategic,300,0.7868,-11.7
+normal,oracle,211,2.1167,307.4
+normal,amber_apf_lgbm,211,0.5196,0.0
+normal,p5min_naive,211,0.1325,-74.5
+normal,lgbm_strategic,211,0.5904,13.6
+all,oracle,811,6.0028,100.9
+all,amber_apf_lgbm,811,2.9877,0.0
+all,p5min_naive,811,0.0938,-96.9
+all,lgbm_strategic,811,2.0208,-32.4
