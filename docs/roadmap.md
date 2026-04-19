@@ -50,7 +50,11 @@ validated against the ultimate goal (profit).
 confirmed-price feed *and* a longer-horizon forecast. The 30-min/72h Phase 6 eval validates
 the strategic component only. A separate **5-min tactical eval** (Tier 1 LGBM vs naive
 persistence at 5-min resolution) is required before Amber APF can be switched off in
-production. See `docs/ideas.md` → "5-min tactical dispatch eval track".
+production. See `eval/README.md` → "Tactical Eval (Pass A)".
+
+**Tactical eval Pass A result (2026-04-19):** Tier 1 LGBM beats p5min_naive by **+24.4%**
+overall (19–30% by stratum) at all horizons h0–h11. Gate ✅ passes. Pass B (dispatch value
+simulation via `eval_tier1_dispatch.py`) still needed for complete tactical gate.
 
 **Phase 6 results** (July 2025–March 2026, 811 windows, price-only LP MPC):
 

@@ -124,8 +124,9 @@ def main():
 
         p5min_rrp = p5min_runs[run_time]   # list[12]
 
-        # Actual rrp at each of the 12 intervals (h0=+5min … h11=+60min)
-        intervals = [run_time + pd.Timedelta(minutes=5 * (h + 1)) for h in range(OUTPUT_STEPS)]
+        # Actual rrp at each of the 12 intervals (h0=run_time, h1=+5min … h11=+55min)
+        # Target definition from build_tactical_dataset.py: t_target = run_time + h*5min
+        intervals = [run_time + pd.Timedelta(minutes=5 * h) for h in range(OUTPUT_STEPS)]
         actual_rrp = np.array([
             act_rrp_dict.get(iv.replace(second=0, microsecond=0), np.nan)
             for iv in intervals
@@ -137,7 +138,7 @@ def main():
             continue
         if n_missing > 0:
             n_skip_partial += 1
-            continue   # skip windows with any missing actual for clean MAE
+            # Don't skip — accumulate per-step errors only where actual is available
 
         stratum = classify_window(actual_rrp)
 
@@ -163,16 +164,18 @@ def main():
         }
 
         for h in range(OUTPUT_STEPS):
+            if np.isnan(actual_rrp[h]):
+                continue
             for src, pred_arr in preds_by_source.items():
                 errors[(stratum, h, src)].append(abs(pred_arr[h] - actual_rrp[h]))
-            # Oracle MAE = 0 by definition; include as sanity check
             errors[(stratum, h, "oracle")].append(0.0)
 
     elapsed = time.time() - t0
     total = len(run_times_eval)
-    n_processed = total - n_skip_no_actuals - n_skip_partial
+    n_processed = total - n_skip_no_actuals
     print(f"\nDone: {n_processed:,}/{total:,} windows in {elapsed:.1f}s  "
-          f"(skipped: {n_skip_no_actuals} no-actuals, {n_skip_partial} partial)")
+          f"(skipped {n_skip_no_actuals} no-actuals; {n_skip_partial} partial — "
+          f"per-step NaN excluded)")
 
     # Build MAE table
     strata = ["all", "spike", "low", "normal"]

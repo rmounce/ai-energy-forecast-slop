@@ -9,6 +9,7 @@
 | `holistic_eval.py` | Run holistic dispatch simulation: oracle / amber_apf_lgbm / p5min_naive. `--ai-source`: add TFT q50. `--hybrid-source`: add Tier 1+TFT hybrid. |
 | `retro_tft_inference.py` | Retrospective TFT Tier 2 batch inference → `retro_tft_forecasts.pkl` ({ts → ndarray(144,6)}). |
 | `retro_tier1_inference.py` | Retrospective Tier 1 LGBM inference → `retro_tier1_forecasts.pkl` ({ts → ndarray(2,)}). Uses parquet P5MIN + actuals; InfluxDB for PV only. |
+| `eval_tier1_accuracy.py` | **Pass A tactical eval**: MAE per horizon h0-h11 for Tier 1 vs p5min_direct/naive/oracle. Outputs `tier1_accuracy_by_horizon.csv` + `tier1_accuracy_summary.csv`. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -143,6 +144,63 @@ thresholds (−2%) should not be over-interpreted without block-bootstrap confid
 - `holistic_eval.py --fast` (50/stratum, LP): ~3 min with 12 workers
 - Full run (811 windows, LP): ~12 min with 12 workers (`nice -n 19 --workers 12`)
 - `--dispatch greedy` available for development (~100× faster, O(N log N), not for baselines)
+
+---
+
+## Tactical Eval (Pass A) — 5-min Forecast Accuracy
+
+**Goal:** Validate Tier 1 LGBM at 5-min/1h resolution, required prerequisite for Amber APF
+replacement alongside Phase 6.
+
+**Script:** `eval/eval_tier1_accuracy.py`
+
+**Data:** `data/parquet/aemo_p5min_sa1.parquet` + `data/parquet/actuals_sa1_5m.parquet`
+(no InfluxDB required; price-only first pass, PV excluded).
+
+**Sources compared:**
+
+| Source | Description |
+|--------|-------------|
+| `tier1_q50` | Tier 1 LGBM q50 corrections applied to P5MIN |
+| `p5min_direct` | Raw P5MIN rrp unchanged |
+| `p5min_naive` | Persistence: h0 price held constant for all 12 horizons |
+| `oracle` | Actual 5-min rrp at each interval |
+
+**Stratum classification:** based on actual rrp over the 12-step window.
+Same thresholds as Phase 6: spike ≥ $300/MWh, low ≤ −$50/MWh.
+
+**Actuals coverage note:** `actuals_sa1_5m.parquet` has ~88% per-interval coverage in the
+Jul 2025–Mar 2026 eval period (clustered gaps from ingest outages). MAE is computed per
+horizon step using only windows where that step's actual is available.
+
+**Results** (Jul 2025–Mar 2026, ~77k windows, per-step NaN excluded):
+
+| Source | All MAE | Spike MAE | Low MAE | Normal MAE | Skill vs naive |
+|--------|---------|-----------|---------|------------|----------------|
+| Oracle | $0.0 | $0.0 | $0.0 | $0.0 | +100% |
+| **tier1_q50** | **$32.3** | **$356.5** | **$34.8** | **$15.5** | **+24.4%** |
+| p5min_naive | $42.8 | $441.4 | $45.2 | $22.1 | — |
+| p5min_direct | $46.2 | $517.1 | $46.0 | $22.1 | −8.0% |
+
+**Per-horizon MAE (stratum=all):**
+
+| Horizon | tier1_q50 | p5min_direct | p5min_naive |
+|---------|-----------|--------------|-------------|
+| h0 (0 min) | $25.9 | $33.7 | $33.7 |
+| h1 (5 min) | $26.8 | $37.9 | $34.8 |
+| h3 (15 min) | $29.1 | $40.4 | $37.8 |
+| h5 (25 min) | $31.5 | $43.7 | $41.9 |
+| h7 (35 min) | $34.0 | $46.9 | $45.6 |
+| h11 (55 min) | $39.2 | $62.7 | $51.9 |
+
+**Gate:** Pass A criteria — Tier 1 MAE < p5min_naive at h1–h5. **PASSES ✅ on all 12
+horizons, all strata.** Tier 1 beats naive by 19–30% depending on stratum; p5min_direct
+is worse than naive from h1 onwards.
+
+**Output files:** `eval/results/tier1_accuracy_by_horizon.csv`,
+`eval/results/tier1_accuracy_summary.csv`
+
+**Next:** Pass B (dispatch value simulation) — `eval/eval_tier1_dispatch.py` (not yet built).
 
 ### Simulator validation (optional)
 

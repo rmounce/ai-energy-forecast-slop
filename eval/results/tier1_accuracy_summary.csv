@@ -1,0 +1,17 @@
+stratum,source,mae_all_horizons,mae_h1_h11,skill_vs_naive
+all,tier1_q50,32.321,32.9014,0.2441
+all,p5min_direct,46.1718,47.3043,-0.0799
+all,p5min_naive,42.7575,43.5796,0.0
+all,oracle,0.0,0.0,1.0
+spike,tier1_q50,356.5395,360.6164,0.1923
+spike,p5min_direct,517.1175,531.6728,-0.1715
+spike,p5min_naive,441.4218,449.1171,0.0
+spike,oracle,0.0,0.0,1.0
+low,tier1_q50,34.803,35.6472,0.2306
+low,p5min_direct,45.9915,46.7506,-0.0168
+low,p5min_naive,45.2318,45.9228,0.0
+low,oracle,0.0,0.0,1.0
+normal,tier1_q50,15.4578,15.8291,0.3
+normal,p5min_direct,22.0707,22.5508,0.0005
+normal,p5min_naive,22.0818,22.5629,0.0
+normal,oracle,0.0,0.0,1.0
