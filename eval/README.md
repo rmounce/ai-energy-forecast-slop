@@ -175,9 +175,24 @@ routing — the OOF debiaser suppresses genuine high PREDISPATCH prices during s
 Normal stratum is notably strong (+13.4% vs amber), matching the expectation that a
 PREDISPATCH-grounded LightGBM corrects normal-period overestimates cleanly.
 
-**Next step:** Apply spike classifier routing (same threshold=0.65 as TFT hybrid) to
-bypass the debiaser on spike-classified windows. Results pending in
-`holistic_eval_results_lgbm_strategic_routed.csv`.
+**Pass 2 results — consistent spike routing** (routing applied in both training and inference;
+14,603/56,434 run_times bypass debiaser at threshold=0.65):
+
+| Source | Mean $/day | Spike $/day | Low $/day | Normal $/day |
+|--------|-----------|------------|----------|-------------|
+| Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
+| Amber APF + LGBM (baseline) | $2.99 | $6.82 | $0.89 | $0.52 |
+| **lgbm_strategic (routed)** | **$2.02 (−32.4%)** | **$4.26 (−37.5%)** | **$0.79 (−11.7%)** | **$0.59 (+13.6%)** |
+
+*Results in `eval/results/holistic_eval_results_lgbm_strategic_routed.csv`.*
+
+**Key finding (Pass 2):** Consistent routing made spike performance *worse* (−37.5% vs −31.7%
+without routing). Normal stratum held steady (+13.6%). This indicates the problem is not
+train/inference distribution mismatch — the LightGBM strategic model has a structural
+limitation for spike events. Likely causes: (1) no attention/memory mechanism to propagate
+spike information beyond the 28h PREDISPATCH coverage window; (2) training the model on a
+bimodal PREDISPATCH distribution (OOF-debiased vs raw 5000 $/MWh) creates hard-to-separate
+tree splits. The TFT hybrid remains the better architecture for spike handling.
 
 **Eval statistics caveat:** Windows are drawn from an every-6h grid; 72h windows overlap
 by ~66h. Results are directionally robust but not 811 independent trials. Tight per-stratum
