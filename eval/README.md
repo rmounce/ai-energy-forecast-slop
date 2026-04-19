@@ -147,6 +147,38 @@ Gate thresholds and primary results remain price-only (matching the established 
 Previous results (scalar 1000 $/MWh spike guard): normal −21.7% ❌. Root cause and
 resolution documented in `docs/review_debiaser_spike_guard.md`.
 
+---
+
+### LightGBM Strategic Model (exploration track, 2026-04-19)
+
+**Goal:** Compare a pure LightGBM 30-min/72-hour model against TFT to diagnose whether
+TFT's long-horizon shape anomalies reflect a structural problem or are incidental.
+
+**Architecture:** Single LightGBM quantile model (q5/q50/q95) trained in long format —
+one row per `(run_time, step_idx)`. Features: `step_idx`, OOF-debiased PREDISPATCH for
+steps 0–55 (28h), time+lag features for all 144 steps. Training script:
+`train/train_lgbm_strategic.py`. Val MAE: $39.87/MWh (all steps, last 60 days).
+
+**Pass 1 results — no spike routing** (OOF-debiased PREDISPATCH applied uniformly):
+
+| Source | Mean $/day | Spike $/day | Low $/day | Normal $/day |
+|--------|-----------|------------|----------|-------------|
+| Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
+| Amber APF + LGBM (baseline) | $2.99 | $6.82 | $0.89 | $0.52 |
+| Tier 1 + TFT hybrid | $3.28 (+9.7%) | $7.31 (+7.2%) | $1.18 (+32.6%) | $0.52 (+0.4%) |
+| **lgbm_strategic (no routing)** | **$2.17 (−27.5%)** | **$4.66 (−31.7%)** | **$0.78 (−12.2%)** | **$0.59 (+13.4%)** |
+
+*Results in `eval/results/holistic_eval_results_lgbm_strategic.csv`.*
+
+**Key finding:** The spike failure is the same root cause as TFT before spike classifier
+routing — the OOF debiaser suppresses genuine high PREDISPATCH prices during spike windows.
+Normal stratum is notably strong (+13.4% vs amber), matching the expectation that a
+PREDISPATCH-grounded LightGBM corrects normal-period overestimates cleanly.
+
+**Next step:** Apply spike classifier routing (same threshold=0.65 as TFT hybrid) to
+bypass the debiaser on spike-classified windows. Results pending in
+`holistic_eval_results_lgbm_strategic_routed.csv`.
+
 **Eval statistics caveat:** Windows are drawn from an every-6h grid; 72h windows overlap
 by ~66h. Results are directionally robust but not 811 independent trials. Tight per-stratum
 thresholds (−2%) should not be over-interpreted without block-bootstrap confidence intervals.

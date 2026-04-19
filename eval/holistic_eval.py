@@ -44,8 +44,9 @@ sys.path.insert(0, str(ROOT))
 RESULTS_DIR    = ROOT / "eval" / "results"
 FORECAST_LOG   = ROOT / "price_forecast_log.csv"
 INDEX_FILE     = RESULTS_DIR / "holistic_eval_index.parquet"
-TFT_FCST_FILE  = RESULTS_DIR / "retro_tft_forecasts.pkl"
-TIER1_FCST_FILE = RESULTS_DIR / "retro_tier1_forecasts.pkl"
+TFT_FCST_FILE      = RESULTS_DIR / "retro_tft_forecasts.pkl"
+TIER1_FCST_FILE    = RESULTS_DIR / "retro_tier1_forecasts.pkl"
+LGBM_STRAT_FILE    = RESULTS_DIR / "retro_lgbm_strategic_forecasts.pkl"
 ACTUALS_FILE   = RESULTS_DIR / "holistic_eval_actuals.parquet"
 
 WINDOW_STEPS = 144        # 72h at 30-min resolution
@@ -177,6 +178,24 @@ def load_tft_forecasts() -> dict:
     forecasts = {ts: arr[:, q50_idx] for ts, arr in data["forecasts"].items()}
     print(f"  Loaded {len(forecasts):,} TFT windows in {time.time()-t0:.1f}s  "
           f"(q50 index={q50_idx}, quantiles={data.get('quantiles')})")
+    return forecasts
+
+
+def load_lgbm_strategic_forecasts() -> dict:
+    """
+    Load retrospective LightGBM strategic forecasts from retro_lgbm_strategic_forecasts.pkl.
+    Returns dict: UTC Timestamp → np.ndarray shape (144,) q50 in $/MWh.
+    Returns empty dict if file not found.
+    """
+    if not LGBM_STRAT_FILE.exists():
+        return {}
+    print("Loading LightGBM strategic forecast pickle...")
+    t0 = time.time()
+    with open(LGBM_STRAT_FILE, "rb") as f:
+        data = pickle.load(f)
+    q50_col = data.get("quantiles", [0.05, 0.50, 0.95]).index(0.50)
+    forecasts = {ts: arr[:, q50_col] for ts, arr in data["forecasts"].items()}
+    print(f"  Loaded {len(forecasts):,} windows in {time.time()-t0:.1f}s")
     return forecasts
 
 
@@ -407,17 +426,23 @@ def main():
                              "for first 2 steps (0–60 min), TFT q50 for steps 2–143 (1h–72h). "
                              "Requires both retro_tier1_forecasts.pkl and retro_tft_forecasts.pkl. "
                              "Saves *_hybrid checkpoints.")
+    parser.add_argument("--lgbm-strategic", action="store_true",
+                        help="Include LightGBM strategic (30-min/72-hour) as AI source. "
+                             "Requires retro_lgbm_strategic_forecasts.pkl. "
+                             "Saves *_lgbm_strategic checkpoints.")
     args = parser.parse_args()
 
-    if args.ai_source and args.hybrid_source:
-        print("ERROR: --ai-source and --hybrid-source are mutually exclusive.")
+    n_ai_flags = sum([args.ai_source, args.hybrid_source, args.lgbm_strategic])
+    if n_ai_flags > 1:
+        print("ERROR: --ai-source, --hybrid-source, --lgbm-strategic are mutually exclusive.")
         sys.exit(1)
 
-    dispatch_mode  = args.dispatch
-    fast_mode      = args.fast
-    ai_source      = args.ai_source
-    hybrid_source  = args.hybrid_source
-    any_ai_source  = ai_source or hybrid_source
+    dispatch_mode    = args.dispatch
+    fast_mode        = args.fast
+    ai_source        = args.ai_source
+    hybrid_source    = args.hybrid_source
+    lgbm_strategic   = args.lgbm_strategic
+    any_ai_source    = ai_source or hybrid_source or lgbm_strategic
 
     if fast_mode:
         ckpt_suffix = "_fast"
@@ -425,10 +450,17 @@ def main():
         ckpt_suffix = "_hybrid"
     elif ai_source:
         ckpt_suffix = "_ai"
+    elif lgbm_strategic:
+        ckpt_suffix = "_lgbm_strategic"
     else:
         ckpt_suffix = ""
 
-    ai_source_label = "tier1_tier2_hybrid" if hybrid_source else "tft_tier2_q50"
+    if hybrid_source:
+        ai_source_label = "tier1_tier2_hybrid"
+    elif lgbm_strategic:
+        ai_source_label = "lgbm_strategic"
+    else:
+        ai_source_label = "tft_tier2_q50"
     fast_n        = 50  # windows per stratum in fast mode
 
     if not INDEX_FILE.exists():
@@ -488,9 +520,10 @@ def main():
                 client.close()
 
         # ── Build work queue ──────────────────────────────────────────────────
-        amber_forecasts = load_amber_lgbm_forecasts()
-        tft_forecasts   = load_tft_forecasts() if any_ai_source else {}
-        tier1_forecasts = load_tier1_forecasts() if hybrid_source else {}
+        amber_forecasts        = load_amber_lgbm_forecasts()
+        tft_forecasts          = load_tft_forecasts() if (ai_source or hybrid_source) else {}
+        tier1_forecasts        = load_tier1_forecasts() if hybrid_source else {}
+        lgbm_strat_forecasts   = load_lgbm_strategic_forecasts() if lgbm_strategic else {}
 
         if hybrid_source and not tier1_forecasts:
             print("ERROR: --hybrid-source requires retro_tier1_forecasts.pkl")
@@ -499,6 +532,10 @@ def main():
         if hybrid_source and not tft_forecasts:
             print("ERROR: --hybrid-source requires retro_tft_forecasts.pkl")
             print("Run: nice -n 19 python eval/retro_tft_inference.py")
+            sys.exit(1)
+        if lgbm_strategic and not lgbm_strat_forecasts:
+            print("ERROR: --lgbm-strategic requires retro_lgbm_strategic_forecasts.pkl")
+            print("Run: nice -n 19 python eval/retro_lgbm_strategic_inference.py")
             sys.exit(1)
 
         work = []
@@ -525,6 +562,8 @@ def main():
                         ai_fcst = None
                 elif ai_source:
                     ai_fcst = tft_forecasts.get(start_ts)
+                elif lgbm_strategic:
+                    ai_fcst = lgbm_strat_forecasts.get(start_ts)
                 else:
                     ai_fcst = None
 

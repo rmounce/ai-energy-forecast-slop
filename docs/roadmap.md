@@ -39,6 +39,7 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 5 (partial) | Production routing, combined shadow sensors | ✅ Done — live in HA |
 | **6** | **Holistic dispatch simulation** | **Complete** — oracle/amber_apf_lgbm/p5min/TFT/hybrid all evaluated |
 | **8** | **Test framework** | **Complete** (42 tests passing) — Layer 2 financial gate passing ✅ |
+| 9 | LightGBM strategic model (30-min/72-hour) | **In progress** — TFT comparison; spike routing pending |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — pending Phase 6+8 |
 | 7 | Event-driven predict service | Deferred — after Phase 8 |
 
@@ -79,6 +80,12 @@ logging". Not blocking — naive persistence is the gate baseline, not Amber APF
 *Results use frozen actuals parquet (`eval/results/holistic_eval_actuals.parquet`, 2026-04-19). See `eval/export_holistic_actuals.py`.*
 
 Companion net-load run (same 811 windows, load+PV from frozen actuals): oracle $4.73, amber $1.72, hybrid $2.01 (+16.9%). Lower absolute values than price-only because net-load objective replaces pure arbitrage. Results in `eval/results/holistic_eval_results_netload.csv`.
+
+**Phase 9 — LightGBM strategic (in progress, 2026-04-20):** Training a 30-min/72-hour LightGBM
+model to compare directly against TFT, motivated by concerns about TFT long-horizon shape behaviour.
+Pass 1 (no spike routing): overall −27.5% vs amber — spike failure mirrors TFT pre-spike-classifier
+(debiaser suppresses genuine spike signal). Normal stratum strong: +13.4%. Spike routing (same
+threshold=0.65 classifier) pending. See `eval/README.md` → "LightGBM Strategic Model".
 
 **Gate status (2026-04-19, tier1_tier2_hybrid):** ALL GATES PASS ✅. Phase 5 remainder unblocked.
 
