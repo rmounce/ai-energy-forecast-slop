@@ -59,10 +59,51 @@ def main():
     else:
         logging.warning("Tier 1 returned empty results — tactical_output.json not written")
 
-    logging.info("Running Tier 2 TFT prediction (requires InfluxDB)...")
+    logging.info("Running Tier 2 TFT prediction (requires InfluxDB + external APIs)...")
     try:
-        historical_df, future_covariates_df = fc.get_historical_data()
-        tft_results = fc._execute_tft_prediction(historical_df, future_covariates_df)
+        from influxdb import InfluxDBClient
+        from datetime import datetime, timedelta
+        import pytz
+
+        now = datetime.now(pytz.UTC)
+        minute = 30 if now.minute >= 30 else 0
+        forecast_start = now.replace(minute=minute, second=0, microsecond=0)
+        history_start = forecast_start - timedelta(days=fc.CONFIG['prediction_history_days'])
+        history_end   = forecast_start - timedelta(minutes=30)
+
+        client = InfluxDBClient(**fc.CONFIG['influxdb'])
+        try:
+            historical_df = fc.get_historical_data(client, history_start, history_end)
+        finally:
+            client.close()
+
+        if historical_df.empty:
+            raise ValueError("get_historical_data returned empty DataFrame")
+
+        future_sources = {
+            'solcast': fc.get_solcast_forecast(),
+            'weather': fc.get_weather_forecast(),
+            'aemo':    fc.get_aemo_forecast(),
+        }
+        future_covariates_df = __import__('pandas').concat(
+            future_sources.values(), axis=1
+        ).sort_index()
+
+        all_feature_cols = set()
+        for model_name in fc.CONFIG.get('models', {}):
+            all_feature_cols.update(fc.CONFIG['models'][model_name].get('feature_cols', []))
+        available_cols = [c for c in all_feature_cols if c in historical_df.columns]
+        historical_covariates_df = historical_df[available_cols]
+
+        combined = __import__('pandas').concat([historical_covariates_df, future_covariates_df])
+        combined.index = __import__('pandas').to_datetime(combined.index, utc=True)
+        combined = combined[~combined.index.duplicated(keep='last')].sort_index()
+        combined = fc.add_time_features(combined)
+        adjusted = fc.apply_covariate_adjustments(combined)
+        adjusted.ffill(inplace=True)
+        adjusted.bfill(inplace=True)
+
+        tft_results = fc._execute_tft_prediction(historical_df, adjusted)
     except Exception as e:
         logging.error(f"Tier 2 failed: {e}")
         tft_results = {}

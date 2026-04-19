@@ -1,0 +1,2600 @@
+{
+  "tft_price_q30": [
+    {
+      "timestamp": "2026-04-19T05:00:00+00:00",
+      "wholesale_price": -0.012882728576660157,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T05:30:00+00:00",
+      "wholesale_price": -0.013311982154846191,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T06:00:00+00:00",
+      "wholesale_price": -0.002041640281677246,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T06:30:00+00:00",
+      "wholesale_price": 0.029790794372558594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T07:00:00+00:00",
+      "wholesale_price": 0.0711778564453125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T07:30:00+00:00",
+      "wholesale_price": 0.09971819305419923,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T08:00:00+00:00",
+      "wholesale_price": 0.10825453186035157,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T08:30:00+00:00",
+      "wholesale_price": 0.10418008422851563,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T09:00:00+00:00",
+      "wholesale_price": 0.09484847259521484,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T09:30:00+00:00",
+      "wholesale_price": 0.08413812255859375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T10:00:00+00:00",
+      "wholesale_price": 0.07641084289550781,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T10:30:00+00:00",
+      "wholesale_price": 0.07505828094482422,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T11:00:00+00:00",
+      "wholesale_price": 0.07921502685546875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T11:30:00+00:00",
+      "wholesale_price": 0.07976918029785156,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T12:00:00+00:00",
+      "wholesale_price": 0.07998264312744141,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T12:30:00+00:00",
+      "wholesale_price": 0.07952600860595703,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T13:00:00+00:00",
+      "wholesale_price": 0.0797420883178711,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T13:30:00+00:00",
+      "wholesale_price": 0.08132516479492187,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T14:00:00+00:00",
+      "wholesale_price": 0.08253227233886719,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T14:30:00+00:00",
+      "wholesale_price": 0.08156480407714843,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T15:00:00+00:00",
+      "wholesale_price": 0.08141397094726563,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T15:30:00+00:00",
+      "wholesale_price": 0.08008212280273437,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T16:00:00+00:00",
+      "wholesale_price": 0.08241465759277344,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T16:30:00+00:00",
+      "wholesale_price": 0.08328469085693359,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T17:00:00+00:00",
+      "wholesale_price": 0.07838493347167969,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T17:30:00+00:00",
+      "wholesale_price": 0.08273270416259766,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T18:00:00+00:00",
+      "wholesale_price": 0.07954611968994141,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T18:30:00+00:00",
+      "wholesale_price": 0.07638455200195313,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T19:00:00+00:00",
+      "wholesale_price": 0.0762324447631836,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T19:30:00+00:00",
+      "wholesale_price": 0.07375403594970703,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T20:00:00+00:00",
+      "wholesale_price": 0.06828668212890625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T20:30:00+00:00",
+      "wholesale_price": 0.0672239227294922,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T21:00:00+00:00",
+      "wholesale_price": 0.059008285522460936,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T21:30:00+00:00",
+      "wholesale_price": 0.04021464538574219,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T22:00:00+00:00",
+      "wholesale_price": 0.017306892395019532,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T22:30:00+00:00",
+      "wholesale_price": -0.0017276787757873535,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T23:00:00+00:00",
+      "wholesale_price": -0.011808042526245116,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T23:30:00+00:00",
+      "wholesale_price": -0.021307432174682617,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T00:00:00+00:00",
+      "wholesale_price": -0.032698474884033206,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T00:30:00+00:00",
+      "wholesale_price": -0.03258577728271484,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T01:00:00+00:00",
+      "wholesale_price": -0.033481842041015626,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T01:30:00+00:00",
+      "wholesale_price": -0.03542629623413086,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T02:00:00+00:00",
+      "wholesale_price": -0.03417778015136719,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T02:30:00+00:00",
+      "wholesale_price": -0.034552043914794925,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T03:00:00+00:00",
+      "wholesale_price": -0.03177716827392578,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T03:30:00+00:00",
+      "wholesale_price": -0.03157667350769043,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T04:00:00+00:00",
+      "wholesale_price": -0.036581817626953124,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T04:30:00+00:00",
+      "wholesale_price": -0.03077949333190918,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T05:00:00+00:00",
+      "wholesale_price": -0.011372901916503907,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T05:30:00+00:00",
+      "wholesale_price": 0.0017636561393737794,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T06:00:00+00:00",
+      "wholesale_price": 0.023940509796142578,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T06:30:00+00:00",
+      "wholesale_price": 0.05755994033813477,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T07:00:00+00:00",
+      "wholesale_price": 0.09401393127441406,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T07:30:00+00:00",
+      "wholesale_price": 0.11651850891113281,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T08:00:00+00:00",
+      "wholesale_price": 0.11560875701904297,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T08:30:00+00:00",
+      "wholesale_price": 0.10801480102539063,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T09:00:00+00:00",
+      "wholesale_price": 0.10040192413330078,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T09:30:00+00:00",
+      "wholesale_price": 0.0845369644165039,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T10:00:00+00:00",
+      "wholesale_price": 0.0785692138671875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T10:30:00+00:00",
+      "wholesale_price": 0.07777903747558594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T11:00:00+00:00",
+      "wholesale_price": 0.07707759094238281,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T11:30:00+00:00",
+      "wholesale_price": 0.0734931411743164,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T12:00:00+00:00",
+      "wholesale_price": 0.05972135162353515,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T12:30:00+00:00",
+      "wholesale_price": 0.05460619354248047,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T13:00:00+00:00",
+      "wholesale_price": 0.050147781372070314,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T13:30:00+00:00",
+      "wholesale_price": 0.046564285278320315,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T14:00:00+00:00",
+      "wholesale_price": 0.04172022247314453,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T14:30:00+00:00",
+      "wholesale_price": 0.03535828018188476,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T15:00:00+00:00",
+      "wholesale_price": 0.028847902297973634,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T15:30:00+00:00",
+      "wholesale_price": 0.023779706954956056,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T16:00:00+00:00",
+      "wholesale_price": 0.022957813262939452,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T16:30:00+00:00",
+      "wholesale_price": 0.020319936752319336,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T17:00:00+00:00",
+      "wholesale_price": 0.018656272888183594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T17:30:00+00:00",
+      "wholesale_price": 0.011779017448425293,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T18:00:00+00:00",
+      "wholesale_price": 0.011304903030395507,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T18:30:00+00:00",
+      "wholesale_price": 0.03423850631713867,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T19:00:00+00:00",
+      "wholesale_price": 0.05573120498657227,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T19:30:00+00:00",
+      "wholesale_price": 0.07429576110839843,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T20:00:00+00:00",
+      "wholesale_price": 0.090623046875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T20:30:00+00:00",
+      "wholesale_price": 0.10316548156738281,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T21:00:00+00:00",
+      "wholesale_price": 0.11208302307128906,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T21:30:00+00:00",
+      "wholesale_price": 0.11508759307861328,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T22:00:00+00:00",
+      "wholesale_price": 0.09263859558105468,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T22:30:00+00:00",
+      "wholesale_price": 0.07214710235595703,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T23:00:00+00:00",
+      "wholesale_price": 0.071322509765625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T23:30:00+00:00",
+      "wholesale_price": 0.05785489654541016,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T00:00:00+00:00",
+      "wholesale_price": 0.044258087158203126,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T00:30:00+00:00",
+      "wholesale_price": 0.010792922973632813,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T01:00:00+00:00",
+      "wholesale_price": -0.004188559055328369,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T01:30:00+00:00",
+      "wholesale_price": -0.016472095489501952,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T02:00:00+00:00",
+      "wholesale_price": -0.02738260078430176,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T02:30:00+00:00",
+      "wholesale_price": -0.03751622772216797,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T03:00:00+00:00",
+      "wholesale_price": -0.04408100891113281,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T03:30:00+00:00",
+      "wholesale_price": -0.048085018157958986,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T04:00:00+00:00",
+      "wholesale_price": -0.04937992477416992,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T04:30:00+00:00",
+      "wholesale_price": -0.04741942596435547,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T05:00:00+00:00",
+      "wholesale_price": -0.04303404235839844,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T05:30:00+00:00",
+      "wholesale_price": -0.036102954864501956,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T06:00:00+00:00",
+      "wholesale_price": -0.02657923889160156,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T06:30:00+00:00",
+      "wholesale_price": -0.01003392219543457,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T07:00:00+00:00",
+      "wholesale_price": 0.0006311559677124024,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T07:30:00+00:00",
+      "wholesale_price": 0.012562372207641602,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T08:00:00+00:00",
+      "wholesale_price": 0.023670223236083983,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T08:30:00+00:00",
+      "wholesale_price": 0.03130897521972656,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T09:00:00+00:00",
+      "wholesale_price": 0.03558304977416992,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T09:30:00+00:00",
+      "wholesale_price": 0.03807330703735352,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T10:00:00+00:00",
+      "wholesale_price": 0.0386875114440918,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T10:30:00+00:00",
+      "wholesale_price": 0.04089715576171875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T11:00:00+00:00",
+      "wholesale_price": 0.04095484924316406,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T11:30:00+00:00",
+      "wholesale_price": 0.04042604064941406,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T12:00:00+00:00",
+      "wholesale_price": 0.03925142669677734,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T12:30:00+00:00",
+      "wholesale_price": 0.03381406402587891,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T13:00:00+00:00",
+      "wholesale_price": 0.024741533279418946,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T13:30:00+00:00",
+      "wholesale_price": 0.018072431564331054,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T14:00:00+00:00",
+      "wholesale_price": 0.010126140594482422,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T14:30:00+00:00",
+      "wholesale_price": 0.0038362812995910646,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T15:00:00+00:00",
+      "wholesale_price": 0.00013658523559570312,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T15:30:00+00:00",
+      "wholesale_price": -0.0017544865608215333,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T16:00:00+00:00",
+      "wholesale_price": -0.0034409880638122557,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T16:30:00+00:00",
+      "wholesale_price": -0.00402724027633667,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T17:00:00+00:00",
+      "wholesale_price": -0.005343503952026367,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T17:30:00+00:00",
+      "wholesale_price": -0.006764795780181885,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T18:00:00+00:00",
+      "wholesale_price": -0.008776159286499023,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T18:30:00+00:00",
+      "wholesale_price": -0.010558705329895019,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T19:00:00+00:00",
+      "wholesale_price": -0.013903183937072754,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T19:30:00+00:00",
+      "wholesale_price": -0.016714454650878906,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T20:00:00+00:00",
+      "wholesale_price": -0.02104400444030762,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T20:30:00+00:00",
+      "wholesale_price": -0.023130619049072265,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T21:00:00+00:00",
+      "wholesale_price": -0.003144235610961914,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T21:30:00+00:00",
+      "wholesale_price": 0.019368818283081055,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T22:00:00+00:00",
+      "wholesale_price": 0.04224620819091797,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T22:30:00+00:00",
+      "wholesale_price": 0.06115151977539063,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T23:00:00+00:00",
+      "wholesale_price": 0.07604126739501953,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T23:30:00+00:00",
+      "wholesale_price": 0.08632388305664063,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T00:00:00+00:00",
+      "wholesale_price": 0.08006878662109375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T00:30:00+00:00",
+      "wholesale_price": 0.07463317108154296,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T01:00:00+00:00",
+      "wholesale_price": 0.07226927947998046,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T01:30:00+00:00",
+      "wholesale_price": 0.07111770629882813,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T02:00:00+00:00",
+      "wholesale_price": 0.05940313339233398,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T02:30:00+00:00",
+      "wholesale_price": 0.052286075592041015,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T03:00:00+00:00",
+      "wholesale_price": 0.03730625152587891,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T03:30:00+00:00",
+      "wholesale_price": 0.029543201446533204,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T04:00:00+00:00",
+      "wholesale_price": 0.028037837982177734,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T04:30:00+00:00",
+      "wholesale_price": 0.0281820068359375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    }
+  ],
+  "tft_price": [
+    {
+      "timestamp": "2026-04-19T05:00:00+00:00",
+      "wholesale_price": -0.008848608016967774,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T05:30:00+00:00",
+      "wholesale_price": -0.012653940200805664,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T06:00:00+00:00",
+      "wholesale_price": -0.0010981035232543945,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T06:30:00+00:00",
+      "wholesale_price": 0.03524353790283203,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T07:00:00+00:00",
+      "wholesale_price": 0.08184544372558594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T07:30:00+00:00",
+      "wholesale_price": 0.11361296844482421,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T08:00:00+00:00",
+      "wholesale_price": 0.12398829650878906,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T08:30:00+00:00",
+      "wholesale_price": 0.11975257873535156,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T09:00:00+00:00",
+      "wholesale_price": 0.10938523101806641,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T09:30:00+00:00",
+      "wholesale_price": 0.09710612487792969,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T10:00:00+00:00",
+      "wholesale_price": 0.08874020385742187,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T10:30:00+00:00",
+      "wholesale_price": 0.08693793487548829,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T11:00:00+00:00",
+      "wholesale_price": 0.09105133819580079,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T11:30:00+00:00",
+      "wholesale_price": 0.09154978942871093,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T12:00:00+00:00",
+      "wholesale_price": 0.09183773803710937,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T12:30:00+00:00",
+      "wholesale_price": 0.09136406707763672,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T13:00:00+00:00",
+      "wholesale_price": 0.0918694610595703,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T13:30:00+00:00",
+      "wholesale_price": 0.09328076171875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T14:00:00+00:00",
+      "wholesale_price": 0.09537921142578125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T14:30:00+00:00",
+      "wholesale_price": 0.0952891845703125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T15:00:00+00:00",
+      "wholesale_price": 0.09607081604003906,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T15:30:00+00:00",
+      "wholesale_price": 0.09545160675048828,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T16:00:00+00:00",
+      "wholesale_price": 0.09825681304931641,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T16:30:00+00:00",
+      "wholesale_price": 0.10042306518554688,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T17:00:00+00:00",
+      "wholesale_price": 0.09660935974121093,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T17:30:00+00:00",
+      "wholesale_price": 0.10314315032958984,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T18:00:00+00:00",
+      "wholesale_price": 0.10126625061035156,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T18:30:00+00:00",
+      "wholesale_price": 0.09894039916992188,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T19:00:00+00:00",
+      "wholesale_price": 0.09967387390136719,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T19:30:00+00:00",
+      "wholesale_price": 0.09888926696777343,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T20:00:00+00:00",
+      "wholesale_price": 0.09495553588867188,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T20:30:00+00:00",
+      "wholesale_price": 0.09571682739257813,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T21:00:00+00:00",
+      "wholesale_price": 0.08964905548095703,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T21:30:00+00:00",
+      "wholesale_price": 0.07166396331787109,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T22:00:00+00:00",
+      "wholesale_price": 0.046051010131835934,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T22:30:00+00:00",
+      "wholesale_price": 0.021257850646972658,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T23:00:00+00:00",
+      "wholesale_price": 0.010801377296447754,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T23:30:00+00:00",
+      "wholesale_price": 0.001298511028289795,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T00:00:00+00:00",
+      "wholesale_price": -0.011778903007507325,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T00:30:00+00:00",
+      "wholesale_price": -0.01078188705444336,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T01:00:00+00:00",
+      "wholesale_price": -0.01257749366760254,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T01:30:00+00:00",
+      "wholesale_price": -0.015113260269165039,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T02:00:00+00:00",
+      "wholesale_price": -0.014099664688110351,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T02:30:00+00:00",
+      "wholesale_price": -0.014182963371276856,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T03:00:00+00:00",
+      "wholesale_price": -0.01124448585510254,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T03:30:00+00:00",
+      "wholesale_price": -0.011594446182250976,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T04:00:00+00:00",
+      "wholesale_price": -0.01609483528137207,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T04:30:00+00:00",
+      "wholesale_price": -0.011005496978759766,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T05:00:00+00:00",
+      "wholesale_price": 0.005429506301879883,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T05:30:00+00:00",
+      "wholesale_price": 0.01908534049987793,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T06:00:00+00:00",
+      "wholesale_price": 0.04681965255737305,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T06:30:00+00:00",
+      "wholesale_price": 0.08884939575195312,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T07:00:00+00:00",
+      "wholesale_price": 0.13169375610351564,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T07:30:00+00:00",
+      "wholesale_price": 0.1563927764892578,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T08:00:00+00:00",
+      "wholesale_price": 0.15168817138671875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T08:30:00+00:00",
+      "wholesale_price": 0.13927586364746095,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T09:00:00+00:00",
+      "wholesale_price": 0.12665418243408202,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T09:30:00+00:00",
+      "wholesale_price": 0.10463240051269532,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T10:00:00+00:00",
+      "wholesale_price": 0.0959208984375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T10:30:00+00:00",
+      "wholesale_price": 0.09422715759277343,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T11:00:00+00:00",
+      "wholesale_price": 0.09351683807373047,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T11:30:00+00:00",
+      "wholesale_price": 0.08815423583984375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T12:00:00+00:00",
+      "wholesale_price": 0.07301579284667968,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T12:30:00+00:00",
+      "wholesale_price": 0.0686436767578125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T13:00:00+00:00",
+      "wholesale_price": 0.061952903747558595,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T13:30:00+00:00",
+      "wholesale_price": 0.05808648300170898,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T14:00:00+00:00",
+      "wholesale_price": 0.053293109893798825,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T14:30:00+00:00",
+      "wholesale_price": 0.04767330932617188,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T15:00:00+00:00",
+      "wholesale_price": 0.04176384735107422,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T15:30:00+00:00",
+      "wholesale_price": 0.037515987396240236,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T16:00:00+00:00",
+      "wholesale_price": 0.037759567260742186,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T16:30:00+00:00",
+      "wholesale_price": 0.03526302337646484,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T17:00:00+00:00",
+      "wholesale_price": 0.03325510787963867,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T17:30:00+00:00",
+      "wholesale_price": 0.024840782165527344,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T18:00:00+00:00",
+      "wholesale_price": 0.024130918502807616,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T18:30:00+00:00",
+      "wholesale_price": 0.05967983627319336,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T19:00:00+00:00",
+      "wholesale_price": 0.093373046875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T19:30:00+00:00",
+      "wholesale_price": 0.1210299072265625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T20:00:00+00:00",
+      "wholesale_price": 0.14425738525390625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T20:30:00+00:00",
+      "wholesale_price": 0.16162704467773437,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T21:00:00+00:00",
+      "wholesale_price": 0.17500358581542969,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T21:30:00+00:00",
+      "wholesale_price": 0.1826568603515625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T22:00:00+00:00",
+      "wholesale_price": 0.16178799438476563,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T22:30:00+00:00",
+      "wholesale_price": 0.13571804809570312,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T23:00:00+00:00",
+      "wholesale_price": 0.13501960754394532,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T23:30:00+00:00",
+      "wholesale_price": 0.11719920349121093,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T00:00:00+00:00",
+      "wholesale_price": 0.09812237548828125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T00:30:00+00:00",
+      "wholesale_price": 0.03893597412109375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T01:00:00+00:00",
+      "wholesale_price": 0.01362781047821045,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T01:30:00+00:00",
+      "wholesale_price": -0.00043642044067382813,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T02:00:00+00:00",
+      "wholesale_price": -0.008892202377319336,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T02:30:00+00:00",
+      "wholesale_price": -0.01558774757385254,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T03:00:00+00:00",
+      "wholesale_price": -0.018847875595092774,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T03:30:00+00:00",
+      "wholesale_price": -0.020880760192871092,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T04:00:00+00:00",
+      "wholesale_price": -0.02121718978881836,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T04:30:00+00:00",
+      "wholesale_price": -0.019723012924194337,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T05:00:00+00:00",
+      "wholesale_price": -0.017702823638916017,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T05:30:00+00:00",
+      "wholesale_price": -0.014157299995422363,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T06:00:00+00:00",
+      "wholesale_price": -0.009120326042175293,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T06:30:00+00:00",
+      "wholesale_price": 0.005189824104309082,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T07:00:00+00:00",
+      "wholesale_price": 0.022457113265991212,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T07:30:00+00:00",
+      "wholesale_price": 0.044291690826416014,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T08:00:00+00:00",
+      "wholesale_price": 0.06257566452026367,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T08:30:00+00:00",
+      "wholesale_price": 0.07363429260253906,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T09:00:00+00:00",
+      "wholesale_price": 0.07755144500732422,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T09:30:00+00:00",
+      "wholesale_price": 0.07831450653076172,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T10:00:00+00:00",
+      "wholesale_price": 0.07582639312744141,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T10:30:00+00:00",
+      "wholesale_price": 0.07127627563476563,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T11:00:00+00:00",
+      "wholesale_price": 0.06652165985107422,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T11:30:00+00:00",
+      "wholesale_price": 0.06153250885009766,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T12:00:00+00:00",
+      "wholesale_price": 0.05661685562133789,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T12:30:00+00:00",
+      "wholesale_price": 0.04782624816894531,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T13:00:00+00:00",
+      "wholesale_price": 0.03265004348754883,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T13:30:00+00:00",
+      "wholesale_price": 0.022380401611328125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T14:00:00+00:00",
+      "wholesale_price": 0.012363574981689452,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T14:30:00+00:00",
+      "wholesale_price": 0.00534827470779419,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T15:00:00+00:00",
+      "wholesale_price": 0.0015132737159729004,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T15:30:00+00:00",
+      "wholesale_price": -0.0004119229316711426,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T16:00:00+00:00",
+      "wholesale_price": -0.002001063823699951,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T16:30:00+00:00",
+      "wholesale_price": -0.0024878883361816404,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T17:00:00+00:00",
+      "wholesale_price": -0.003134114742279053,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T17:30:00+00:00",
+      "wholesale_price": -0.004381670951843262,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T18:00:00+00:00",
+      "wholesale_price": -0.004651322364807129,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T18:30:00+00:00",
+      "wholesale_price": -0.004205052852630615,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T19:00:00+00:00",
+      "wholesale_price": -0.00484656572341919,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T19:30:00+00:00",
+      "wholesale_price": -0.005283958911895752,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T20:00:00+00:00",
+      "wholesale_price": -0.006674180030822754,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T20:30:00+00:00",
+      "wholesale_price": -0.009903108596801758,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T21:00:00+00:00",
+      "wholesale_price": 0.011924049377441407,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T21:30:00+00:00",
+      "wholesale_price": 0.04843085861206055,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T22:00:00+00:00",
+      "wholesale_price": 0.08745513153076172,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T22:30:00+00:00",
+      "wholesale_price": 0.11802579498291016,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T23:00:00+00:00",
+      "wholesale_price": 0.139506103515625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T23:30:00+00:00",
+      "wholesale_price": 0.15189703369140625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T00:00:00+00:00",
+      "wholesale_price": 0.1432604675292969,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T00:30:00+00:00",
+      "wholesale_price": 0.13543276977539062,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T01:00:00+00:00",
+      "wholesale_price": 0.1316795654296875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T01:30:00+00:00",
+      "wholesale_price": 0.12967576599121095,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T02:00:00+00:00",
+      "wholesale_price": 0.11277816009521484,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T02:30:00+00:00",
+      "wholesale_price": 0.10170195770263672,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T03:00:00+00:00",
+      "wholesale_price": 0.0780262451171875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T03:30:00+00:00",
+      "wholesale_price": 0.06535285949707031,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T04:00:00+00:00",
+      "wholesale_price": 0.06097366333007812,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T04:30:00+00:00",
+      "wholesale_price": 0.059951812744140624,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    }
+  ],
+  "tft_price_q70": [
+    {
+      "timestamp": "2026-04-19T05:00:00+00:00",
+      "wholesale_price": 0.004240708351135254,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T05:30:00+00:00",
+      "wholesale_price": 0.008590822219848632,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T06:00:00+00:00",
+      "wholesale_price": 0.022638702392578126,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T06:30:00+00:00",
+      "wholesale_price": 0.06604864501953125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T07:00:00+00:00",
+      "wholesale_price": 0.11297474670410156,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T07:30:00+00:00",
+      "wholesale_price": 0.13963555908203126,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T08:00:00+00:00",
+      "wholesale_price": 0.14506781005859376,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T08:30:00+00:00",
+      "wholesale_price": 0.13875950622558594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T09:00:00+00:00",
+      "wholesale_price": 0.12861572265625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T09:30:00+00:00",
+      "wholesale_price": 0.11692706298828125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T10:00:00+00:00",
+      "wholesale_price": 0.10875874328613282,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T10:30:00+00:00",
+      "wholesale_price": 0.10709799957275391,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T11:00:00+00:00",
+      "wholesale_price": 0.11106775665283203,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T11:30:00+00:00",
+      "wholesale_price": 0.11131270599365234,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T12:00:00+00:00",
+      "wholesale_price": 0.11146851348876953,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T12:30:00+00:00",
+      "wholesale_price": 0.11169406127929687,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T13:00:00+00:00",
+      "wholesale_price": 0.1131546630859375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T13:30:00+00:00",
+      "wholesale_price": 0.11561738586425781,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T14:00:00+00:00",
+      "wholesale_price": 0.1188094253540039,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T14:30:00+00:00",
+      "wholesale_price": 0.12000120544433594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T15:00:00+00:00",
+      "wholesale_price": 0.12151405334472656,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T15:30:00+00:00",
+      "wholesale_price": 0.12155595397949219,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T16:00:00+00:00",
+      "wholesale_price": 0.12494446563720703,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T16:30:00+00:00",
+      "wholesale_price": 0.12760711669921876,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T17:00:00+00:00",
+      "wholesale_price": 0.12495362091064453,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T17:30:00+00:00",
+      "wholesale_price": 0.13302226257324218,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T18:00:00+00:00",
+      "wholesale_price": 0.1316900939941406,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T18:30:00+00:00",
+      "wholesale_price": 0.13021290588378906,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T19:00:00+00:00",
+      "wholesale_price": 0.13264724731445313,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T19:30:00+00:00",
+      "wholesale_price": 0.13291587829589843,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T20:00:00+00:00",
+      "wholesale_price": 0.130840576171875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T20:30:00+00:00",
+      "wholesale_price": 0.13329225158691407,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T21:00:00+00:00",
+      "wholesale_price": 0.12955938720703125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T21:30:00+00:00",
+      "wholesale_price": 0.1112788314819336,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T22:00:00+00:00",
+      "wholesale_price": 0.08285153198242187,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T22:30:00+00:00",
+      "wholesale_price": 0.05383005523681641,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T23:00:00+00:00",
+      "wholesale_price": 0.04046836090087891,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-19T23:30:00+00:00",
+      "wholesale_price": 0.027301753997802734,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T00:00:00+00:00",
+      "wholesale_price": 0.01061969566345215,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T00:30:00+00:00",
+      "wholesale_price": 0.010314130783081054,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T01:00:00+00:00",
+      "wholesale_price": 0.008141077041625977,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T01:30:00+00:00",
+      "wholesale_price": 0.005846865177154541,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T02:00:00+00:00",
+      "wholesale_price": 0.007556169033050537,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T02:30:00+00:00",
+      "wholesale_price": 0.008553264617919921,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T03:00:00+00:00",
+      "wholesale_price": 0.012876813888549804,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T03:30:00+00:00",
+      "wholesale_price": 0.013653044700622558,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T04:00:00+00:00",
+      "wholesale_price": 0.01101524543762207,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T04:30:00+00:00",
+      "wholesale_price": 0.016600791931152343,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T05:00:00+00:00",
+      "wholesale_price": 0.03910165786743164,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T05:30:00+00:00",
+      "wholesale_price": 0.05728261566162109,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T06:00:00+00:00",
+      "wholesale_price": 0.09213433837890625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T06:30:00+00:00",
+      "wholesale_price": 0.13620388793945312,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T07:00:00+00:00",
+      "wholesale_price": 0.17228546142578124,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T07:30:00+00:00",
+      "wholesale_price": 0.18638410949707032,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T08:00:00+00:00",
+      "wholesale_price": 0.1763731689453125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T08:30:00+00:00",
+      "wholesale_price": 0.16570339965820313,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T09:00:00+00:00",
+      "wholesale_price": 0.1569757080078125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T09:30:00+00:00",
+      "wholesale_price": 0.13696014404296875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T10:00:00+00:00",
+      "wholesale_price": 0.1290104522705078,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T10:30:00+00:00",
+      "wholesale_price": 0.12753526306152344,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T11:00:00+00:00",
+      "wholesale_price": 0.12550711059570313,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T11:30:00+00:00",
+      "wholesale_price": 0.1199736328125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T12:00:00+00:00",
+      "wholesale_price": 0.10284659576416015,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T12:30:00+00:00",
+      "wholesale_price": 0.0986971206665039,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T13:00:00+00:00",
+      "wholesale_price": 0.09604764556884765,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T13:30:00+00:00",
+      "wholesale_price": 0.09553717803955078,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T14:00:00+00:00",
+      "wholesale_price": 0.09296356201171875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T14:30:00+00:00",
+      "wholesale_price": 0.08823397827148438,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T15:00:00+00:00",
+      "wholesale_price": 0.08151210021972656,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T15:30:00+00:00",
+      "wholesale_price": 0.07678978729248047,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T16:00:00+00:00",
+      "wholesale_price": 0.07726614379882812,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T16:30:00+00:00",
+      "wholesale_price": 0.07375756072998046,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T17:00:00+00:00",
+      "wholesale_price": 0.07056027984619141,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T17:30:00+00:00",
+      "wholesale_price": 0.058309356689453126,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T18:00:00+00:00",
+      "wholesale_price": 0.059142871856689455,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T18:30:00+00:00",
+      "wholesale_price": 0.10801558685302734,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T19:00:00+00:00",
+      "wholesale_price": 0.1507361297607422,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T19:30:00+00:00",
+      "wholesale_price": 0.18342120361328124,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T20:00:00+00:00",
+      "wholesale_price": 0.20778167724609375,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T20:30:00+00:00",
+      "wholesale_price": 0.22383348083496094,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T21:00:00+00:00",
+      "wholesale_price": 0.23418623352050782,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T21:30:00+00:00",
+      "wholesale_price": 0.24376876831054686,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T22:00:00+00:00",
+      "wholesale_price": 0.2162968292236328,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T22:30:00+00:00",
+      "wholesale_price": 0.18438108825683594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T23:00:00+00:00",
+      "wholesale_price": 0.17972628784179687,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-20T23:30:00+00:00",
+      "wholesale_price": 0.15614306640625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T00:00:00+00:00",
+      "wholesale_price": 0.1323741455078125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T00:30:00+00:00",
+      "wholesale_price": 0.06511758422851563,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T01:00:00+00:00",
+      "wholesale_price": 0.034640586853027344,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T01:30:00+00:00",
+      "wholesale_price": 0.01764378547668457,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T02:00:00+00:00",
+      "wholesale_price": 0.009679162979125976,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T02:30:00+00:00",
+      "wholesale_price": 0.004961063861846924,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T03:00:00+00:00",
+      "wholesale_price": 0.0041228985786437985,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T03:30:00+00:00",
+      "wholesale_price": 0.00427401065826416,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T04:00:00+00:00",
+      "wholesale_price": 0.00638688325881958,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T04:30:00+00:00",
+      "wholesale_price": 0.009926197052001953,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T05:00:00+00:00",
+      "wholesale_price": 0.01498391342163086,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T05:30:00+00:00",
+      "wholesale_price": 0.02195579147338867,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T06:00:00+00:00",
+      "wholesale_price": 0.03281231307983398,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T06:30:00+00:00",
+      "wholesale_price": 0.05867961120605469,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T07:00:00+00:00",
+      "wholesale_price": 0.09531712341308594,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T07:30:00+00:00",
+      "wholesale_price": 0.13403672790527343,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T08:00:00+00:00",
+      "wholesale_price": 0.16556230163574218,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T08:30:00+00:00",
+      "wholesale_price": 0.18470388793945314,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T09:00:00+00:00",
+      "wholesale_price": 0.1931278839111328,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T09:30:00+00:00",
+      "wholesale_price": 0.1960323181152344,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T10:00:00+00:00",
+      "wholesale_price": 0.19439878845214845,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T10:30:00+00:00",
+      "wholesale_price": 0.1892666473388672,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T11:00:00+00:00",
+      "wholesale_price": 0.181672607421875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T11:30:00+00:00",
+      "wholesale_price": 0.1714743957519531,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T12:00:00+00:00",
+      "wholesale_price": 0.15961196899414062,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T12:30:00+00:00",
+      "wholesale_price": 0.14418031311035157,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T13:00:00+00:00",
+      "wholesale_price": 0.11738561248779297,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T13:30:00+00:00",
+      "wholesale_price": 0.09946120452880859,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T14:00:00+00:00",
+      "wholesale_price": 0.08141493225097657,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T14:30:00+00:00",
+      "wholesale_price": 0.06873406982421874,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T15:00:00+00:00",
+      "wholesale_price": 0.06061258697509766,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T15:30:00+00:00",
+      "wholesale_price": 0.055708087921142575,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T16:00:00+00:00",
+      "wholesale_price": 0.0505460205078125,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T16:30:00+00:00",
+      "wholesale_price": 0.04746376419067383,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T17:00:00+00:00",
+      "wholesale_price": 0.04358129119873047,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T17:30:00+00:00",
+      "wholesale_price": 0.038947898864746096,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T18:00:00+00:00",
+      "wholesale_price": 0.03574969100952148,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T18:30:00+00:00",
+      "wholesale_price": 0.034470947265625,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T19:00:00+00:00",
+      "wholesale_price": 0.030873348236083984,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T19:30:00+00:00",
+      "wholesale_price": 0.028774930953979493,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T20:00:00+00:00",
+      "wholesale_price": 0.02603328514099121,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T20:30:00+00:00",
+      "wholesale_price": 0.020601110458374025,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T21:00:00+00:00",
+      "wholesale_price": 0.060890064239501954,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T21:30:00+00:00",
+      "wholesale_price": 0.12369253540039063,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T22:00:00+00:00",
+      "wholesale_price": 0.17756085205078126,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T22:30:00+00:00",
+      "wholesale_price": 0.20912619018554687,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T23:00:00+00:00",
+      "wholesale_price": 0.2245297088623047,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-21T23:30:00+00:00",
+      "wholesale_price": 0.22901043701171875,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T00:00:00+00:00",
+      "wholesale_price": 0.21080853271484376,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T00:30:00+00:00",
+      "wholesale_price": 0.19653977966308595,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T01:00:00+00:00",
+      "wholesale_price": 0.1897267303466797,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T01:30:00+00:00",
+      "wholesale_price": 0.18578233337402345,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T02:00:00+00:00",
+      "wholesale_price": 0.1665626983642578,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T02:30:00+00:00",
+      "wholesale_price": 0.15428327941894532,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T03:00:00+00:00",
+      "wholesale_price": 0.12735671997070314,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T03:30:00+00:00",
+      "wholesale_price": 0.11304024505615234,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T04:00:00+00:00",
+      "wholesale_price": 0.11151922607421876,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    },
+    {
+      "timestamp": "2026-04-22T04:30:00+00:00",
+      "wholesale_price": 0.11319754791259766,
+      "general_tariff": 0.0,
+      "feed_in_tariff": 0.0
+    }
+  ]
+}
