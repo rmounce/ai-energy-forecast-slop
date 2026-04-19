@@ -56,6 +56,12 @@ production. See `eval/README.md` → "Tactical Eval (Pass A)".
 overall (19–30% by stratum) at all horizons h0–h11. Gate ✅ passes. Pass B (dispatch value
 simulation via `eval_tier1_dispatch.py`) still needed for complete tactical gate.
 
+**Note — Amber APF 5-min comparison not yet possible:** Historical Amber APF 5-min forecasts
+were never logged; only the 30-min combined forecast exists in `price_forecast_log.csv`.
+Comparing Tier 1 directly against Amber APF at 5-min resolution requires new ingest logging
+(~1–2 months accumulation). Documented in `docs/ideas.md` → "Amber APF 5-min forecast
+logging". Not blocking — naive persistence is the gate baseline, not Amber APF.
+
 **Phase 6 results** (July 2025–March 2026, 811 windows, price-only LP MPC):
 
 | Source | All $/day | Spike $/day | Low $/day | Normal $/day |
