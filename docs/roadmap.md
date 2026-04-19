@@ -46,6 +46,12 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 Reason: without a financial baseline and regression tests, pipeline changes cannot be
 validated against the ultimate goal (profit).
 
+**Amber APF replacement prerequisite (beyond Phase 6+8):** Amber APF bundles a real-time
+confirmed-price feed *and* a longer-horizon forecast. The 30-min/72h Phase 6 eval validates
+the strategic component only. A separate **5-min tactical eval** (Tier 1 LGBM vs naive
+persistence at 5-min resolution) is required before Amber APF can be switched off in
+production. See `docs/ideas.md` → "5-min tactical dispatch eval track".
+
 **Phase 6 results** (July 2025–March 2026, 811 windows, price-only LP MPC):
 
 | Source | All $/day | Spike $/day | Low $/day | Normal $/day |
