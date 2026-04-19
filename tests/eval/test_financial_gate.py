@@ -98,11 +98,14 @@ def test_ai_pipeline_meets_financial_gate():
     To regenerate results:
         nice -n 19 python eval/holistic_eval.py --hybrid-source --price-only --workers 12
 
-    Current status (811 windows, July 2025–March 2026):
-      overall: $2.69/day (-10.0%) ❌  (Previously +5.5% — debiaser regression)
-      spike:   $5.70/day (-16.4%) ❌  (Previously +5.8% — debiaser suppressed real spikes)
-      low:     $1.19/day (+33.2%) ✅
-      normal:  $0.54/day (+4.8%)  ✅  (FIXED — previously -27.8%)
+    Current status (811 windows, July 2025–March 2026, debiaser + 1000 $/MWh spike guard):
+      overall: $3.22/day (+7.8%)  ✅
+      spike:   $7.34/day (+7.6%)  ✅
+      low:     $1.08/day (+21.1%) ✅
+      normal:  $0.41/day (-21.7%) ❌  FAILS — debiaser spike guard (>1000 $/MWh) blocks
+                                        correction of PREDISPATCH overestimates in flat-price
+                                        windows. Without guard: normal +4.8% but spike -16.4%.
+                                        Needs principled spike threshold or debiaser retrain.
     """
     if not RESULTS_FILE.exists():
         pytest.skip("Results file not found — run holistic_eval.py --hybrid-source first")
