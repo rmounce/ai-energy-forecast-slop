@@ -38,11 +38,12 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 4 | Conformal calibration (Tier 1) | ✅ Done — spike q95 0.750→0.821 |
 | 5 (partial) | Production routing, combined shadow sensors | ✅ Done — live in HA |
 | **6** | **Holistic dispatch simulation** | **Complete** — oracle/amber_apf_lgbm/p5min/TFT/hybrid all evaluated |
-| **8** | **Test framework** | **Layer 1 complete** (29 tests) — Layer 2 gate enabled, normal stratum failing |
+| **8** | **Test framework** | **Complete** (42 tests passing) — Layer 2 financial gate passing ✅ |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — pending Phase 6+8 |
 | 7 | Event-driven predict service | Deferred — after Phase 8 |
 
 **Hard gate:** Phase 6 and Phase 8 must both pass before Phase 5 remainder resumes.
+**STATUS: Both gates passing as of 2026-04-19. Phase 5 remainder is now unblocked.**
 Reason: without a financial baseline and regression tests, pipeline changes cannot be
 validated against the ultimate goal (profit).
 
@@ -71,47 +72,21 @@ logging". Not blocking — naive persistence is the gate baseline, not Amber APF
 |--------|-----------|------------|----------|-------------|
 | Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
 | **Amber APF + LGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
-| Tier 1 + TFT hybrid (debiased + spike guard) | $3.22 (+7.8%) | $7.34 (+7.6%) | $1.08 (+21.1%) | $0.41 (−21.7%) |
+| Tier 1 + TFT hybrid (spike classifier, threshold=0.65) | $3.28 (+9.7%) | $7.31 (+7.2%) | $1.18 (+32.6%) | $0.52 (+0.4%) |
 | TFT Tier 2 q50 (standalone, archived) | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
 | P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
 
-**Gate status (2026-04-19, tier1_tier2_hybrid):** Overall/spike/low pass. Normal stratum
-fails (−21.7% vs −2% threshold). Phase 5 remainder blocked until normal stratum resolves.
+*Results use frozen actuals parquet (`eval/results/holistic_eval_actuals.parquet`, 2026-04-19). See `eval/export_holistic_actuals.py`.*
 
-Normal root cause: debiaser spike guard (1000 $/MWh) blocks correction of PREDISPATCH
-overestimates > 1000 in flat-price windows. Without spike guard: normal +4.8% ✅ but
-spike −16.4% ❌. The spike guard threshold is a heuristic — needs principled derivation
-from training residuals or retraining with spike-aware loss. See TODO in
-`eval/retro_tft_inference.py`.
+**Gate status (2026-04-19, tier1_tier2_hybrid):** ALL GATES PASS ✅. Phase 5 remainder unblocked.
+
+Debiaser routing: replaced scalar 1000 $/MWh spike guard with upstream LightGBM spike
+classifier (`train/train_spike_classifier.py`, threshold=0.65). Classifier features: recent
+actual RRP lags + PREDISPATCH summary + time. Val ROC-AUC 0.722. See `docs/review_debiaser_spike_guard.md`.
 
 **Caveat on eval statistics:** The 811 eval windows are drawn from a dense every-6h grid,
 giving 66h of overlap between neighbors. Results are directionally robust but not 811
 independent trials; tight thresholds (e.g. −2% normal) should not be over-interpreted.
-
-**Next steps to fix normal gate (priority order from independent review, 2026-04-18):**
-
-1. **Fix debiaser inference path (prerequisite before any model work)**
-   Training uses OOF-debiased `pd_rrp` at decoder steps 0–55; live inference
-   (`forecast.py:_get_influx_pd_prices`) and retro eval (`eval/retro_tft_inference.py`)
-   both feed raw PREDISPATCH. This violates the training contract and may be the primary
-   cause of flat-price overestimation. Fix both paths, rerun Phase 6 eval before
-   drawing conclusions about the normal gate.
-   - `eval/retro_tft_inference.py`: substitute `debiased_pd_rrp_oof.parquet` at steps 0–55
-   - `forecast.py`: apply `models/pd_debiaser/lgbm_final.pkl` to live PREDISPATCH before TFT
-
-2. **After re-evaluating with corrected inference:**
-   - If normal gate substantially improves → relax gate tolerance (see below) and proceed
-   - If normal gate still fails badly → build `lgbm_strategic` (30-min/72h LGBM on debiased
-     PREDISPATCH) as q50 dispatch signal; use TFT solely for tail-risk quantiles (q05/q95)
-
-3. **Gate tolerance relaxation (independent review recommendation)**
-   The normal stratum penalty is −$0.14/day while spike/low gains are +$0.55/day combined.
-   After the debiaser fix, consider widening normal tolerance from −2% to −10% with an
-   explicit financial-asymmetry justification comment in the gate test.
-
-4. **Deprioritized — q50 conformal calibration**: existing conformal infrastructure
-   (`train/calibrate_conformal.py`) targets Tier 1 tail coverage, not TFT median bias.
-   Statistically murky for correcting a log-skewed q50 point estimate. Defer.
 
 ---
 

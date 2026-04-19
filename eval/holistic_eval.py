@@ -46,6 +46,7 @@ FORECAST_LOG   = ROOT / "price_forecast_log.csv"
 INDEX_FILE     = RESULTS_DIR / "holistic_eval_index.parquet"
 TFT_FCST_FILE  = RESULTS_DIR / "retro_tft_forecasts.pkl"
 TIER1_FCST_FILE = RESULTS_DIR / "retro_tier1_forecasts.pkl"
+ACTUALS_FILE   = RESULTS_DIR / "holistic_eval_actuals.parquet"
 
 WINDOW_STEPS = 144        # 72h at 30-min resolution
 INTERVAL_H   = 30 / 60   # 30-min steps
@@ -76,6 +77,27 @@ def query_bulk_30m(client, measurement, field, start_iso, end_iso) -> pd.Series:
     df = pd.DataFrame(rows)
     df["time"] = pd.to_datetime(df["time"], utc=True)
     return df.set_index("time")["val"].sort_index()
+
+
+def load_frozen_actuals() -> dict | None:
+    """
+    Load frozen actuals snapshot from holistic_eval_actuals.parquet if it exists.
+    Returns the same dict format as fetch_bulk_data(), or None if not found.
+    Run eval/export_holistic_actuals.py to create the snapshot.
+    """
+    if not ACTUALS_FILE.exists():
+        return None
+    print(f"Loading frozen actuals from {ACTUALS_FILE.name} ...")
+    t0 = time.time()
+    df = pd.read_parquet(ACTUALS_FILE)
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    idx = df.set_index("time")
+    print(f"  {len(df):,} rows ({df['time'].min().date()} → {df['time'].max().date()}, {time.time()-t0:.1f}s)")
+    return {
+        "prices":   idx["price_mwh"],
+        "load_kw":  idx["load_kw"],
+        "pv_kw":    idx["pv_kw"],
+    }
 
 
 def fetch_bulk_data(client, start_iso: str, end_iso: str) -> dict:
@@ -449,18 +471,21 @@ def main():
     if not strata_todo:
         print("All requested strata have checkpoints. Merging and reporting.")
     else:
-        # ── Bulk InfluxDB fetch ───────────────────────────────────────────────
-        todo_windows = df_index[df_index["stratum"].isin(strata_todo)]
-        bulk_start = todo_windows["start_time"].min().strftime("%Y-%m-%dT%H:%M:%SZ")
-        # Fetch to last window + 72h
-        bulk_end = (todo_windows["start_time"].max() +
-                    pd.Timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        client = InfluxDBClient(**config["influxdb"])
-        try:
-            bulk = fetch_bulk_data(client, bulk_start, bulk_end)
-        finally:
-            client.close()
+        # ── Bulk data: frozen parquet (preferred) or InfluxDB ────────────────
+        bulk = load_frozen_actuals()
+        if bulk is None:
+            print("WARNING: holistic_eval_actuals.parquet not found — querying InfluxDB.")
+            print("         Results will not be reproducible. Run eval/export_holistic_actuals.py")
+            print("         to freeze the data.")
+            todo_windows = df_index[df_index["stratum"].isin(strata_todo)]
+            bulk_start = todo_windows["start_time"].min().strftime("%Y-%m-%dT%H:%M:%SZ")
+            bulk_end = (todo_windows["start_time"].max() +
+                        pd.Timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            client = InfluxDBClient(**config["influxdb"])
+            try:
+                bulk = fetch_bulk_data(client, bulk_start, bulk_end)
+            finally:
+                client.close()
 
         # ── Build work queue ──────────────────────────────────────────────────
         amber_forecasts = load_amber_lgbm_forecasts()

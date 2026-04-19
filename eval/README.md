@@ -110,16 +110,19 @@ Output table (printed + saved to `eval/results/holistic_eval_results.csv`):
 |--------|-----------|------------|----------|-------------|
 | Oracle | $6.00 | $11.97 | $2.77 | $2.12 |
 | **Amber APF + LGBM (baseline)** | **$2.99** | **$6.82** | **$0.89** | **$0.52** |
-| Tier 1 + TFT hybrid (with debiaser + spike guard) | $3.22 (+7.8%) | $7.34 (+7.6%) | $1.08 (+21.1%) | $0.41 (−21.7%) |
+| **Tier 1 + TFT hybrid (spike classifier, threshold=0.65)** | **$3.28 (+9.7%)** | **$7.31 (+7.2%)** | **$1.18 (+32.6%)** | **$0.52 (+0.4%)** |
 | TFT Tier 2 q50 (standalone, archived) | $3.18 (+6.6%) | $7.22 (+5.8%) | $1.10 (+23.6%) | $0.41 (−21.1%) |
 | P5MIN naive | $0.09 | $0.17 | −$0.01 | $0.13 |
 
 *TFT Tier 2 q50 standalone archived in `holistic_eval_raw_{stratum}_ai.parquet`.
 Current CSV (`holistic_eval_results.csv`) contains `tier1_tier2_hybrid` as the primary AI source.*
 
-*Debiaser configuration: OOF debiased `pd_rrp` at steps 0–55; spike guard passes raw
-`pd_rrp` through unchanged where `|price| > 1000 $/MWh`. Spike guard is a heuristic —
-see TODOs in `eval/retro_tft_inference.py` and `forecast.py`.*
+*Debiaser configuration: OOF debiased `pd_rrp` at steps 0–55; upstream LightGBM spike
+classifier (`models/spike_classifier/lgbm_spike_clf.pkl`, threshold=0.65) routes each
+run_time to debiaser or raw PREDISPATCH passthrough. See `docs/review_debiaser_spike_guard.md`.*
+
+*Reproducibility: results use `eval/results/holistic_eval_actuals.parquet` (frozen from
+InfluxDB 2026-04-19). Run `eval/export_holistic_actuals.py` to refresh the snapshot.*
 
 **Phase 8 financial gate thresholds** (vs Amber APF + LGBM baseline):
 - Overall: ≥ $2.54/day (−15% tolerance)
@@ -127,14 +130,10 @@ see TODOs in `eval/retro_tft_inference.py` and `forecast.py`.*
 - Low: ≥ $0.87/day (−2%)
 - Normal: ≥ $0.51/day (−2%)
 
-**Gate status (2026-04-19):** `tier1_tier2_hybrid` passes overall (+7.8%), spike (+7.6%),
-low (+21.1%). **Fails normal (−21.7%).**
+**Gate status (2026-04-19): ALL GATES PASS ✅.** Phase 5 remainder unblocked.
 
-Normal stratum root cause: debiaser spike guard at 1000 $/MWh blocks correction of
-PREDISPATCH overestimates in that range during flat-price windows. Without spike guard,
-normal improved to +4.8% but spike regressed to −16.4%. A principled spike-aware
-threshold (derived from training residuals) or retraining with spike-aware loss weighting
-is needed. See TODO in `eval/retro_tft_inference.py`. See `docs/roadmap.md`.
+Previous results (scalar 1000 $/MWh spike guard): normal −21.7% ❌. Root cause and
+resolution documented in `docs/review_debiaser_spike_guard.md`.
 
 **Eval statistics caveat:** Windows are drawn from an every-6h grid; 72h windows overlap
 by ~66h. Results are directionally robust but not 811 independent trials. Tight per-stratum
