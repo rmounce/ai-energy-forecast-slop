@@ -42,8 +42,6 @@ RESULTS_DIR  = ROOT / "eval" / "results"
 INDEX_FILE   = RESULTS_DIR / "holistic_eval_index.parquet"
 OUT_FILE     = RESULTS_DIR / "retro_tft_forecasts.pkl"
 OOF_FILE     = ROOT / "data" / "parquet" / "debiased_pd_rrp_oof.parquet"
-SPIKE_CLF_FILE = ROOT / "data" / "parquet" / "spike_clf_predictions.parquet"
-SPIKE_ROUTE_THRESHOLD = 0.65  # prob_spike > this → bypass debiaser; tuned 2026-04-19
 
 WINDOW_STEPS = 144
 ENC_STEPS    = 96
@@ -235,8 +233,6 @@ def build_window_tensors(
     scalers: dict,
     log_scale: float,
     oof_by_run: dict | None = None,
-    spike_prob_by_run: dict | None = None,
-    spike_route_threshold: float = 0.35,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """
     Slice enc (96 steps) and dec (144 steps) arrays for one window.
@@ -292,35 +288,21 @@ def build_window_tensors(
         series = bulk.get(feat, pd.Series(dtype=float))
         dec_cols[feat] = series.reindex(dec_idx).ffill().bfill().fillna(0.0).values.copy()
 
-    # OOF debiased pd_rrp substitution at steps 0-55 — matches training contract
-    # run_time T = start_ts - 30min; decoder step 0 = start_ts = T+30min
-    # Routing: upstream spike classifier decides whether to apply debiaser or
-    # pass raw PREDISPATCH through unchanged. Replaces the old scalar price threshold
-    # (1000 $/MWh) which couldn't separate genuine spikes from PREDISPATCH noise.
+    # OOF debiased pd_rrp at steps 0-55 — unified debiaser already incorporates
+    # prob_spike, so we apply it directly with no routing override.
     if oof_by_run is not None:
-        run_time = (start_ts - pd.Timedelta(minutes=30)).as_unit("ns")
-
-        bypass_debiaser = False
-        if spike_prob_by_run is not None:
-            prob = spike_prob_by_run.get(run_time, 0.0)
-            bypass_debiaser = prob > spike_route_threshold
-        else:
-            # Fallback: scalar threshold (legacy behaviour if no classifier available)
-            raw_pd_h0 = dec_cols["pd_rrp"][0] if len(dec_cols["pd_rrp"]) > 0 else 0.0
-            bypass_debiaser = abs(float(raw_pd_h0)) > 1000.0
-
-        if not bypass_debiaser:
-            oof_series = oof_by_run.get(run_time)
-            if oof_series is not None:
-                oof_vals = oof_series.reindex(dec_idx.as_unit("ns")[:56])
-                raw_pd = dec_cols["pd_rrp"][:56]
-                valid = ~oof_vals.isna()
-                if valid.any():
-                    dec_cols["pd_rrp"][:56] = np.where(
-                        valid.values,
-                        oof_vals.fillna(0.0).values,
-                        raw_pd,
-                    )
+        run_time  = (start_ts - pd.Timedelta(minutes=30)).as_unit("ns")
+        oof_series = oof_by_run.get(run_time)
+        if oof_series is not None:
+            oof_vals = oof_series.reindex(dec_idx.as_unit("ns")[:56])
+            raw_pd   = dec_cols["pd_rrp"][:56]
+            valid    = ~oof_vals.isna()
+            if valid.any():
+                dec_cols["pd_rrp"][:56] = np.where(
+                    valid.values,
+                    oof_vals.fillna(0.0).values,
+                    raw_pd,
+                )
 
     # Scale decoder continuous features
     for feat in DEC_CONT:
@@ -432,19 +414,6 @@ def main():
     else:
         print("WARNING: OOF parquet not found — using raw PREDISPATCH (training mismatch)")
 
-    # ── Load spike classifier predictions ────────────────────────────────────
-    spike_prob_by_run = None
-    if SPIKE_CLF_FILE.exists():
-        print(f"Loading spike classifier predictions from {SPIKE_CLF_FILE.relative_to(ROOT)} ...")
-        clf_df = pd.read_parquet(SPIKE_CLF_FILE)
-        clf_df["run_time"] = pd.to_datetime(clf_df["run_time"], utc=True).dt.as_unit("ns")
-        spike_prob_by_run = dict(zip(clf_df["run_time"], clf_df["prob_spike"]))
-        n_spike = (clf_df["prob_spike"] > SPIKE_ROUTE_THRESHOLD).sum()
-        print(f"  {len(spike_prob_by_run):,} run_times, {n_spike:,} routed to bypass "
-              f"({n_spike/len(clf_df):.1%}, threshold={SPIKE_ROUTE_THRESHOLD})")
-    else:
-        print("WARNING: spike_clf_predictions.parquet not found — using scalar fallback")
-
     # ── Build tensors for all windows ─────────────────────────────────────────
     print(f"Building encoder/decoder tensors for {len(df_index)} windows...")
     t0 = time.time()
@@ -452,9 +421,7 @@ def main():
     skipped = 0
     for row in df_index.itertuples():
         result = build_window_tensors(row.start_time, bulk, feats_5m, scalers, log_scale,
-                                      oof_by_run=oof_by_run,
-                                      spike_prob_by_run=spike_prob_by_run,
-                                      spike_route_threshold=SPIKE_ROUTE_THRESHOLD)
+                                      oof_by_run=oof_by_run)
         if result is None:
             skipped += 1
         else:

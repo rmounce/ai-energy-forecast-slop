@@ -44,8 +44,9 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-PARQUET_DIR = ROOT / "data" / "parquet"
-MODELS_DIR  = ROOT / "models" / "pd_debiaser"
+PARQUET_DIR    = ROOT / "data" / "parquet"
+MODELS_DIR     = ROOT / "models" / "pd_debiaser"
+SPIKE_CLF_FILE = PARQUET_DIR / "spike_clf_predictions.parquet"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 K_FOLDS       = 5
@@ -60,6 +61,7 @@ FEATURES = [
     "hour_sin", "hour_cos",
     "dow_sin",  "dow_cos",
     "month_sin", "month_cos",
+    "prob_spike",  # spike classifier P(genuine spike) per run_time — enables smooth correction
 ]
 TARGET = "actual_rrp"
 
@@ -125,6 +127,19 @@ def build_features(pd_df: pd.DataFrame, actuals: pd.DataFrame,
     tf = time_features(unique_intervals)
     tf.index.name = "interval_dt"
     df = df.merge(tf.reset_index(), on="interval_dt", how="left")
+
+    # Spike classifier probability per run_time
+    if SPIKE_CLF_FILE.exists():
+        clf_df = pd.read_parquet(SPIKE_CLF_FILE)
+        clf_df["run_time"] = pd.to_datetime(clf_df["run_time"], utc=True)
+        spike_prob = clf_df.set_index("run_time")["prob_spike"]
+        df["prob_spike"] = df["run_time"].map(spike_prob).fillna(0.0).astype(np.float32)
+        n_matched = df["run_time"].isin(spike_prob.index).sum()
+        print(f"  Joined spike classifier: {clf_df.run_time.nunique():,} run_times matched "
+              f"({n_matched:,}/{len(df):,} rows, mean prob={df['prob_spike'].mean():.3f})")
+    else:
+        print("  WARNING: spike_clf_predictions.parquet not found — prob_spike=0.0 for all rows")
+        df["prob_spike"] = np.float32(0.0)
 
     # Drop rows with NaN in any feature or target
     required = FEATURES + [TARGET]
