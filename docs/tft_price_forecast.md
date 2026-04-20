@@ -265,28 +265,20 @@ Motivation (Run 007): when a spike is building, 5-min prices jump from $50 → $
 
 ## Production Integration (Shadow Mode)
 
-**Run 011b** (debiased decoder, SDO features, q5/10/50/90/95/99) was live in production as of April 2026.
-**Run 012** (unified debiaser — see below) is the current checkpoint as of 2026-04-20.
+**Run 011b** (debiased decoder, SDO features, q5/10/50/90/95/99, binary spike routing at threshold=0.65) is the active production checkpoint as of 2026-04-20.
 
-### Unified PREDISPATCH Debiaser (Run 012+, 2026-04-20)
+### Unified Debiaser Experiment (Runs 012 + 013 — ABANDONED 2026-04-20)
 
-The debiaser pipeline was restructured to eliminate the binary spike routing threshold:
+The unified debiaser experiment (adding `prob_spike` as an 11th debiaser feature to eliminate the binary routing threshold) was trialled in Runs 012 and 013. Both failed:
 
-**Previous architecture (Run 011b):**
-- OOF-debiased `pd_rrp` used uniformly at training (suppressed spike signals)
-- At inference: spike classifier → if `prob_spike > 0.65` → bypass debiaser (raw PREDISPATCH); else → apply debiaser
-- Problem: train/inference distribution mismatch — TFT decoder never saw high raw pd_rrp during training
+- **Run 012** (lr=2e-4): converged at epoch 2; 72h nMAPE 82%. Holistic eval: All −28.3%, Normal −44.5%.
+- **Run 013** (lr=5e-5, patience=15): 72h nMAPE diverged to ~103% by epoch 10, partially recovered to 96% by epoch 21. Still worse than Run 011b.
 
-**Current architecture (Run 012+):**
-- `prob_spike` added as 11th feature to `train_pd_debiaser.py`
-- Debiaser learns a smooth correction: full compression at prob_spike≈0, approaching raw values at prob_spike≈1
-- OOF parquet regenerated; spike-window bias flipped from −967 to +153 $/MWh (amplifying rather than suppressing)
-- No routing threshold — `forecast.py` and `retro_tft_inference.py` apply the debiaser model uniformly
-- TFT retrained on the new OOF parquet so decoder training matches inference distribution
+**Root cause:** `pw_wMAPE` training objective (tau=14 steps, 28h weight=0.02×) actively drives the model to sacrifice 72h accuracy for near-horizon gains. This is a training objective problem — no LR or patience change can fix a misaligned loss. The bimodal OOF distribution (spike windows ~5000 $/MWh vs normal 0–500 $/MWh) compounds the difficulty.
 
-**Scalers co-location fix:** `train_tft_price.py` now copies `data/parquet/scalers.pkl` to
-`models/tft_price/scalers.pkl` on every best-checkpoint save. Previously the inference path
-loaded stale scalers, causing silent miscaling when the dataset was rebuilt (discovered 2026-04-20).
+**Binary routing retained:** Run 011b + spike classifier (threshold=0.65, `train/train_spike_classifier.py`) achieves +9.7% overall vs baseline and is structurally sound.
+
+**Scalers co-location fix (permanent):** `train_tft_price.py` now copies `data/parquet/scalers.pkl` to `models/tft_price/scalers.pkl` on every best-checkpoint save. See `memory/project_tft_dataset_coupling.md`.
 
 ### Architecture
 - **Worker:** `_execute_tft_prediction` in `forecast.py`.
@@ -350,7 +342,8 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 8. ✅ 51,623 training samples; 431 stratified eval hold-out; VAL_DAYS=60
 9. ✅ Phase 1a: PREDISPATCH debiaser (`train/train_pd_debiaser.py`) — OOF MAE 325→65 $/MWh overall, spike 1125→182 $/MWh (commit ee2f415)
 10. ✅ Phase 1b: Run 011 — OOF debiased decoder + SDO features + q5/10/50/90/95/99 (commit 26b9cb5). Run 011b: lr=1e-4, patience=15.
-11. ✅ Unified debiaser (Run 012, 2026-04-20): prob_spike as debiaser feature; binary routing threshold eliminated; TFT retrained on new OOF. Scalers co-location fix in train_tft_price.py.
+11. ~~Unified debiaser (Runs 012+013, 2026-04-20): ABANDONED~~ — pw_wMAPE objective destroys 72h accuracy when PD7Day sparse. Binary routing (Run 011b) retained. Scalers co-location fix in train_tft_price.py is permanent.
+12. **Phase 7 (active):** Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder features. `pd_rrp` becomes PREDISPATCH-only (0-filled after accordion); new `pd7_rrp` covers all 144 steps; `covar_missing` renamed `predispatch_active` (flipped polarity); `pd7_generation_hour` added. Decoder 15→18 features. Gate: Rolling MPC Eval (75-day window, SoC carryover). See plan file.
 
 ### Current training setup (`train/train_tft_price.py`)
 
