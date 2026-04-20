@@ -331,7 +331,7 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 
 ## Current Status and Next Steps
 
-### Complete (as of 2026-04-16)
+### Complete / Current (as of 2026-04-20)
 1. ✅ AEMO ingest: PREDISPATCH, PD7Day, SevenDayOutlook, P5MIN → InfluxDB (systemd timers)
 2. ✅ Parquet ML cache: `data/export_parquet.py` — SA1/VIC1/NSW1 PD + 5m volatility agg + actuals
 3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py` — 20 enc / 15 dec features
@@ -343,7 +343,7 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 9. ✅ Phase 1a: PREDISPATCH debiaser (`train/train_pd_debiaser.py`) — OOF MAE 325→65 $/MWh overall, spike 1125→182 $/MWh (commit ee2f415)
 10. ✅ Phase 1b: Run 011 — OOF debiased decoder + SDO features + q5/10/50/90/95/99 (commit 26b9cb5). Run 011b: lr=1e-4, patience=15.
 11. ~~Unified debiaser (Runs 012+013, 2026-04-20): ABANDONED~~ — pw_wMAPE objective destroys 72h accuracy when PD7Day sparse. Binary routing (Run 011b) retained. Scalers co-location fix in train_tft_price.py is permanent.
-12. **Phase 7 (active):** Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder features. `pd_rrp` becomes PREDISPATCH-only (0-filled after accordion); new `pd7_rrp` covers all 144 steps; `covar_missing` renamed `predispatch_active` (flipped polarity); `pd7_generation_hour` added. Decoder 15→18 features. Gate: Rolling MPC Eval (75-day window, SoC carryover). See plan file.
+12. **Phase 7:** Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder features. `pd_rrp` becomes PREDISPATCH-only (0-filled after accordion); new `pd7_rrp` covers all 144 steps; `covar_missing` renamed `predispatch_active` (flipped polarity); `pd7_generation_hour` and `pd7_available` added. Decoder 15→18 features. **Run 014 completed** with the new decoder and produced a valid 18-feature checkpoint, but the interim holistic eval failed badly (**−35.3% overall vs amber_apf_lgbm**). Rolling MPC eval still remains the real gate. See `docs/training_runs.md`.
 
 ### Current training setup (`train/train_tft_price.py`)
 
@@ -352,6 +352,11 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 - **Loss:** Horizon-weighted masked quantile loss: `weight_h = exp(-h / tau)`, tau=14 steps (7h).
   Short-horizon steps dominate gradients; 4h weight=0.56, 16h weight=0.10, 28h weight=0.02.
 - **Early stopping:** pw_wMAPE (price+horizon weighted nMAPE); fallback val_loss when NaN
+
+**Next ablation agreed after Run 014:** keep Run 014 as the clean Phase 7 input-change comparison,
+then test **Run 015 with flat wMAPE / no horizon decay** so the loss matches the 72h financial gate
+more directly. Run 014's failed interim eval strengthens this direction: the architecture/input
+change alone was not enough. Do not fold that objective change into Run 014 retroactively.
 
 ### Run 006 evaluation (Stratified Eval Set — fixed benchmark, Apr 2026)
 

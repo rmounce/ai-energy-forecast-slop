@@ -11,6 +11,72 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
+## TFT Price Run 014 — 2026-04-20 — Enhanced Input TFT (parallel PREDISPATCH + PD7Day decoder)
+
+**COMPLETE — EVAL PENDING.** First Phase 7 run with the expanded 18-feature decoder:
+`pd_rrp` is now PREDISPATCH-only (0-filled beyond step 56), `pd7_rrp` carries the
+latest PD7Day run across all 144 steps, `covar_missing` is replaced by
+`predispatch_active`, and the decoder adds `pd7_generation_hour` + `pd7_available`.
+This run intentionally kept the existing `pw_wMAPE` objective (`tau=14`) so the
+architecture/input change could be evaluated in isolation against Run 011b.
+
+### Config
+| Parameter | Value |
+|---|---|
+| Target Scaling | Log-Scaling (scale=60.0) |
+| Quantiles | [0.05, 0.10, 0.50, 0.90, 0.95, 0.99] |
+| Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | pw_wMAPE, patience=7 |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | 54,404 samples (51,623 train, 2,211 val, 431 eval), 20 enc / **18 dec** features |
+| Key change | Phase 7 decoder contract: parallel `pd_rrp` + `pd7_rrp`, `predispatch_active`, `pd7_generation_hour`, `pd7_available` |
+
+### Training outcome
+- Best epoch: **4** (early stop epoch 11, patience=7)
+- Best pw_wMAPE: **42.04%**
+- Best val_loss: **0.0555**
+- nMAPE (all): **62.20%**
+- nMAPE (4h): **41.35%**  |  16h: **45.69%**  |  28h: **45.71%**  |  72h: **71.83%**
+
+### Interpretation
+
+Run 014 did **not** repeat the catastrophic Run 012/013 failure mode. The 72h nMAPE stayed
+in the ~68–72% range through training rather than diverging toward 100%, so the Phase 7
+decoder expansion appears trainable. However, the run still peaked early (epoch 4) and did
+not clearly solve the long-horizon objective issue; the existing `tau=14` horizon weighting
+continues to de-emphasise the far horizon relative to the financial gate.
+
+**Checkpoint status:** `models/tft_price/checkpoint_best.pt` now contains the 18-feature
+decoder contract (`n_dec=18`, `meta.dec_features` updated accordingly). Interim holistic eval
+against Run 011b is the next gate.
+
+### Interim holistic eval (vs amber_apf_lgbm baseline)
+| Stratum | Run 011b + binary routing | Run 014 enhanced input |
+|---|---|---|
+| All | **+9.7%** | **−35.3%** |
+| Spike | **+7.2%** | **−37.1%** |
+| Low | **+32.6%** | **−34.1%** |
+| Normal | **+0.4%** | **−3.1%** |
+
+*Results saved to `eval/results/holistic_eval_results_tft014_enhanced_input.csv` and
+`eval/results/holistic_eval_raw_tft014_enhanced_input.parquet`. Canonical
+`holistic_eval_results.csv` remains restored to the frozen Run 011b baseline.*
+
+**Gate result:** FAILED. Phase 7 decoder expansion alone regressed badly on the interim holistic
+gate, despite training stably. This does not look like the Run 012/013 catastrophic 72h-collapse
+mode; instead it looks like a train/eval objective mismatch surviving the architecture change.
+That makes the flat-wMAPE Run 015 ablation the immediate next step rather than optional cleanup.
+
+### Next ablation (agreed with implementer)
+
+**Run 015:** repeat Run 014 dataset/architecture with **flat wMAPE** (no horizon decay;
+`tau=None` / `tau=∞`). Rationale: the financial/dispatch gate treats the full 72h vector as
+consequential, so `tau=14` is structurally misaligned with the eval objective. Run 014 is kept
+as the apples-to-apples Phase 7 comparison; Run 015 isolates the objective change.
+
+---
+
 ## TFT Price Run 012 — 2026-04-20 — Unified debiaser (prob_spike as decoder feature)
 
 **COMPLETE — FAILED.** Retrain on same dataset as Run 011b, with one structural change: the OOF

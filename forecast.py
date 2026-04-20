@@ -951,9 +951,6 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
 def _get_influx_pd_prices(client, start_time, end_time):
     """Get TFT decoder price covariates from InfluxDB, matching training structure.
 
-    Steps 0-55 (0.5h-28h): PREDISPATCH rrp for SA1, VIC1, NSW1.
-    Steps 56-143 (28-72h): PD7Day rrp for SA1 only (VIC1/NSW1 = 0 per training).
-
     Returns DataFrame with columns pd_rrp, vic1_pd_rrp, nsw1_pd_rrp (all $/MWh),
     indexed by UTC datetime, or empty DataFrame on failure.
     """
@@ -972,32 +969,57 @@ def _get_influx_pd_prices(client, start_time, end_time):
                 df.set_index('time', inplace=True)
                 pd_frames[col] = df['rrp']
 
-        # PD7Day for SA1 (covers 28h-72h horizon)
-        q7 = (f"SELECT last(rrp) AS rrp FROM \"rp_30m\".\"aemo_pd7day_forecast\" "
-              f"WHERE region='SA1' AND time >= '{start_str}' AND time <= '{end_str}' "
-              f"GROUP BY time(30m) fill(null)")
-        r7 = client.query(q7)
-        if r7 and list(r7.get_points()):
-            df7 = pd.DataFrame(r7.get_points())
-            df7['time'] = pd.to_datetime(df7['time'], utc=True)
-            df7.set_index('time', inplace=True)
-            pd7_rrp = df7['rrp']
-            # Merge: PREDISPATCH takes priority; PD7Day fills where PREDISPATCH is absent
-            if 'pd_rrp' in pd_frames:
-                pd_frames['pd_rrp'] = pd_frames['pd_rrp'].combine_first(pd7_rrp)
-            else:
-                pd_frames['pd_rrp'] = pd7_rrp
-
         if not pd_frames:
             return pd.DataFrame()
-        result = pd.DataFrame(pd_frames)
-        client.close()
-        return result
+        return pd.DataFrame(pd_frames)
     except Exception as e:
         logging.warning(f"Failed to get InfluxDB PD prices: {e}")
-        try: client.close()
-        except Exception: pass
         return pd.DataFrame()
+
+
+def _get_influx_latest_pd7day_prices(client, forecast_run_time, dec_index):
+    """Fetch the latest PD7Day run published at or before forecast_run_time.
+
+    Returns (pd7_df, pd7_run_time) where pd7_df has column pd7_rrp indexed by
+    dec_index. pd7_run_time is the selected run timestamp or None if unavailable.
+    """
+    if len(dec_index) == 0:
+        return pd.DataFrame(), None
+
+    start_str = dec_index.min().strftime('%Y-%m-%dT%H:%M:%SZ')
+    end_str   = (dec_index.max() + pd.Timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    try:
+        q = (
+            f"SELECT rrp FROM \"rp_30m\".\"aemo_pd7day_forecast\" "
+            f"WHERE region='SA1' AND time >= '{start_str}' AND time < '{end_str}' "
+            f"GROUP BY run_time"
+        )
+        result = client.query(q)
+        runs = {}
+        for key in result.keys():
+            run_time_str = key[1].get("run_time") if len(key) > 1 else None
+            if not run_time_str:
+                continue
+            run_time = pd.Timestamp(run_time_str, tz="UTC")
+            if run_time > forecast_run_time:
+                continue
+            rows = list(result[key])
+            if not rows:
+                continue
+            df = pd.DataFrame(rows)
+            df["time"] = pd.to_datetime(df["time"], utc=True)
+            runs[run_time] = df.set_index("time")["rrp"].sort_index()
+
+        if not runs:
+            return pd.DataFrame(index=dec_index), None
+
+        latest_run_time = max(runs)
+        pd7_df = pd.DataFrame({"pd7_rrp": runs[latest_run_time].reindex(dec_index)})
+        return pd7_df, latest_run_time
+    except Exception as e:
+        logging.warning(f"Failed to get latest InfluxDB PD7Day prices: {e}")
+        return pd.DataFrame(index=dec_index), None
 
 
 def _get_influx_sdo_demand(client, start_time, end_time):
@@ -1024,6 +1046,37 @@ def _get_influx_sdo_demand(client, start_time, end_time):
     except Exception as e:
         logging.warning(f"Failed to get InfluxDB SDO demand: {e}")
         return pd.DataFrame()
+
+
+def _select_tft_decoder_features(fut, dec_feature_names):
+    """Project the full decoder frame into the checkpoint's expected feature layout."""
+    if dec_feature_names is None:
+        dec_feature_names = [
+            "pd_rrp", "pd_demand", "pd_net_interchange",
+            "vic1_pd_rrp", "nsw1_pd_rrp", "pd7_rrp",
+            "sd_demand", "sd_net_interchange",
+            "hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos",
+            "horizon_norm", "predispatch_active", "pd7_generation_hour", "pd7_available",
+        ]
+
+    dec = fut.copy()
+    if "covar_missing" in dec_feature_names:
+        combined_available = np.maximum(
+            dec.get("predispatch_active", pd.Series(0.0, index=dec.index)).values,
+            ((dec.get("pd7_available", pd.Series(0.0, index=dec.index)).values > 0) &
+             (dec.get("pd7_rrp", pd.Series(0.0, index=dec.index)).values != 0)).astype(np.float32),
+        )
+        dec["covar_missing"] = 1.0 - combined_available
+        dec["pd_rrp"] = np.where(
+            dec.get("predispatch_active", pd.Series(0.0, index=dec.index)).values > 0,
+            dec["pd_rrp"].values,
+            dec.get("pd7_rrp", pd.Series(0.0, index=dec.index)).values,
+        )
+
+    missing = [feat for feat in dec_feature_names if feat not in dec.columns]
+    for feat in missing:
+        dec[feat] = 0.0
+    return dec[dec_feature_names].values.astype(np.float32), dec_feature_names
 
 
 def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, dec_index, preds_raw):
@@ -1389,7 +1442,7 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         logging.warning("TFTPriceModel could not be imported. TFT shadow mode disabled.")
         return {}
 
-    logging.info("--- Executing TFT Parallel Inference (Run 010) ---")
+    logging.info("--- Executing TFT Parallel Inference (Phase 7 decoder) ---")
 
     # ── 1. Load Model and Scalers
     paths = CONFIG['paths']
@@ -1402,6 +1455,7 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         checkpoint = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
         meta = checkpoint.get("meta", {})
         m_cfg = checkpoint.get("model_config", {})
+        dec_feature_names = meta.get("dec_features") or meta.get("dec_feature_names")
         
         # Load the model class with correct architecture from checkpoint
         model = TFTPriceModel(
@@ -1519,13 +1573,25 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     #
     # Primary source: InfluxDB (reliable, ingested every 30 min).
     # Supplement: AEMO viz API short-term price forecast (more recent but unreliable).
-    influx_pd_prices = _get_influx_pd_prices(
-        InfluxDBClient(**CONFIG['influxdb']), fut.index.min(), fut.index.max()
-    )
+    forecast_run_time = start_t - pd.Timedelta(minutes=30)
+    client = InfluxDBClient(**CONFIG['influxdb'])
+    try:
+        influx_pd_prices = _get_influx_pd_prices(client, fut.index.min(), fut.index.max())
+        pd7_df, pd7_run_time = _get_influx_latest_pd7day_prices(client, forecast_run_time, fut.index)
+        sdo_df = _get_influx_sdo_demand(client, fut.index.min(), fut.index.max())
+    finally:
+        client.close()
+
     if not influx_pd_prices.empty:
         fut = fut.join(influx_pd_prices, how='left')
     else:
-        for c in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']: fut[c] = 0.0
+        for c in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']:
+            fut[c] = np.nan
+
+    if not pd7_df.empty:
+        fut = fut.join(pd7_df, how='left')
+    else:
+        fut['pd7_rrp'] = np.nan
 
     # Supplement with viz API for short-horizon steps (more current if available)
     viz_prices = _get_aemo_short_term_price_forecast()
@@ -1542,21 +1608,30 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     }, inplace=True)
 
     # Ensure columns exist even if all sources failed
-    for c in ['pd_rrp', 'vic1_pd_rrp', 'nsw1_pd_rrp']:
-        if c not in fut.columns: fut[c] = 0.0
+    for c in ['pd_rrp', 'pd_demand', 'pd_net_interchange', 'vic1_pd_rrp', 'nsw1_pd_rrp', 'pd7_rrp']:
+        if c not in fut.columns:
+            fut[c] = np.nan
 
-    # Fill remaining NaNs (steps outside all data sources)
-    fut['pd_rrp'] = fut['pd_rrp'].fillna(0.0)
-    fut['vic1_pd_rrp'] = fut['vic1_pd_rrp'].fillna(0.0)
-    fut['nsw1_pd_rrp'] = fut['nsw1_pd_rrp'].fillna(0.0)
+    predispatch_active = fut['pd_rrp'].notna().astype(np.float32)
+    predispatch_active.iloc[56:] = 0.0
 
     # ── 3.5 Debias PREDISPATCH (Run 011+ contract)
     fut = _apply_pd_debiaser(fut, start_t, historical_df=hist)
 
+    # Match training layout exactly: pd_rrp/VIC1/NSW1 are PREDISPATCH-only.
+    fut.loc[fut.index[56:], 'pd_rrp'] = 0.0
+    fut.loc[fut.index[56:], 'vic1_pd_rrp'] = 0.0
+    fut.loc[fut.index[56:], 'nsw1_pd_rrp'] = 0.0
+
+    # Fill remaining NaNs after availability flags are captured.
+    fut['pd_rrp'] = fut['pd_rrp'].fillna(0.0)
+    fut['pd_demand'] = fut['pd_demand'].fillna(0.0)
+    fut['pd_net_interchange'] = fut['pd_net_interchange'].fillna(0.0)
+    fut['vic1_pd_rrp'] = fut['vic1_pd_rrp'].fillna(0.0)
+    fut['nsw1_pd_rrp'] = fut['nsw1_pd_rrp'].fillna(0.0)
+    fut['pd7_rrp'] = fut['pd7_rrp'].fillna(0.0)
+
     # SevenDayOutlook: sd_demand + sd_net_interchange (all 144 steps, matches training)
-    sdo_df = _get_influx_sdo_demand(
-        InfluxDBClient(**CONFIG['influxdb']), fut.index.min(), fut.index.max()
-    )
     if not sdo_df.empty:
         fut = fut.join(sdo_df, how='left')
         fut['sd_demand'] = fut['sd_demand'].fillna(0.0)
@@ -1567,19 +1642,33 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         fut['sd_net_interchange'] = 0.0
 
     fut = pd.concat([fut, time_sin_cos(fut.index)], axis=1)
-    fut['horizon_norm'] = np.arange(len(fut)) / 144.0
-    fut['covar_missing'] = 0
+    fut['horizon_norm'] = np.arange(len(fut), dtype=np.float32) / max(len(fut) - 1, 1)
+    fut['predispatch_active'] = predispatch_active.values
+    if pd7_run_time is not None:
+        pd7_gen_hour = pd7_run_time.tz_convert("Australia/Brisbane").hour / 23.0
+        fut['pd7_generation_hour'] = np.float32(pd7_gen_hour)
+        fut['pd7_available'] = np.float32(1.0)
+    else:
+        logging.warning("TFT: PD7Day run unavailable — pd7_rrp 0-filled, pd7_available=0")
+        fut['pd7_generation_hour'] = np.float32(0.0)
+        fut['pd7_available'] = np.float32(0.0)
 
-    # Snapshot raw decoder pd_rrp before scaling ($/MWh after unit fix)
-    _dec_pd_rrp_raw = fut["pd_rrp"].copy()  # $/MWh (matches training)
+    # Snapshot combined decoder price signal before scaling for debug/visualisation.
+    _dec_price_raw = pd.Series(
+        np.where(fut["predispatch_active"].values > 0, fut["pd_rrp"].values, fut["pd7_rrp"].values),
+        index=fut.index,
+    )
 
     DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp",
-                "sd_demand", "sd_net_interchange"]
+                "pd7_rrp", "sd_demand", "sd_net_interchange"]
     # Apply dec scalers
     for feat in DEC_CONT:
         fut[feat] = transform_val(fut[feat], feat)
 
-    X_dec = fut[DEC_CONT + TIME_COLS + ["horizon_norm", "covar_missing"]].values.astype(np.float32)
+    X_dec, active_dec_features = _select_tft_decoder_features(
+        fut,
+        dec_feature_names,
+    )
 
     # ── 5. Inference
     with torch.no_grad():
@@ -1620,7 +1709,7 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     # Publish the merged PREDISPATCH/PD7Day prices as a separate HA entity so they
     # can be visualised alongside the TFT quantile forecasts for debugging.
     res['aemo_price_forecast'] = pd.DataFrame(
-        {'wholesale_price': _dec_pd_rrp_raw.values / 1000.0},
+        {'wholesale_price': _dec_price_raw.values / 1000.0},
         index=fut.index,
     )
 
@@ -1629,12 +1718,15 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
             enc_rrp_raw=_enc_rrp_raw,
             enc_load_raw=_enc_load_raw,
             enc_5m_missing=_enc_5m_missing,
-            dec_pd_rrp_raw=_dec_pd_rrp_raw,
+            dec_pd_rrp_raw=_dec_price_raw,
             dec_index=fut.index,
             preds_raw=preds_raw,
         )
 
-    logging.info(f"TFT Parallel Inference complete. Steps: {len(preds_raw)}")
+    logging.info(
+        f"TFT Parallel Inference complete. Steps: {len(preds_raw)} "
+        f"(decoder_width={len(active_dec_features)})"
+    )
     return res
 
 

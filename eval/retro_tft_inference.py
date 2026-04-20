@@ -28,6 +28,7 @@ import json
 import pickle
 import sys
 import time
+import bisect
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,11 @@ RESULTS_DIR  = ROOT / "eval" / "results"
 INDEX_FILE   = RESULTS_DIR / "holistic_eval_index.parquet"
 OUT_FILE     = RESULTS_DIR / "retro_tft_forecasts.pkl"
 OOF_FILE     = ROOT / "data" / "parquet" / "debiased_pd_rrp_oof.parquet"
+PD_SA1_FILE  = ROOT / "data" / "parquet" / "aemo_predispatch_sa1.parquet"
+PD_VIC1_FILE = ROOT / "data" / "parquet" / "aemo_predispatch_vic1.parquet"
+PD_NSW1_FILE = ROOT / "data" / "parquet" / "aemo_predispatch_nsw1.parquet"
+PD7_FILE     = ROOT / "data" / "parquet" / "aemo_pd7day_sa1.parquet"
+SDO_FILE     = ROOT / "data" / "parquet" / "aemo_sevendayoutlook_sa1.parquet"
 
 WINDOW_STEPS = 144
 ENC_STEPS    = 96
@@ -124,42 +130,10 @@ def fetch_bulk(client, start_iso: str, end_iso: str) -> dict:
     print("  fetching 5m prices...")
     prices_5m = _q5m(client, start_iso, end_iso)
 
-    # Decoder: PREDISPATCH + PD7Day (target-time indexed, last() per 30m bucket)
-    print("  fetching PREDISPATCH (SA1/VIC1/NSW1) + PD7Day ...")
-    pd_sa1  = q("aemo_predispatch_forecast", "rrp",
-                tag_key="region", tag_val="SA1",  agg="last")
-    pd_vic1 = q("aemo_predispatch_forecast", "rrp",
-                tag_key="region", tag_val="VIC1", agg="last")
-    pd_nsw1 = q("aemo_predispatch_forecast", "rrp",
-                tag_key="region", tag_val="NSW1", agg="last")
-    pd7     = q("aemo_pd7day_forecast",      "rrp",
-                tag_key="region", tag_val="SA1",  agg="last")
-    pd_dem  = q("aemo_predispatch_forecast", "total_demand",
-                tag_key="region", tag_val="SA1",  agg="last")
-    pd_ni   = q("aemo_predispatch_forecast", "net_interchange",
-                tag_key="region", tag_val="SA1",  agg="last")
-
-    # Decoder: SevenDayOutlook
-    print("  fetching SevenDayOutlook...")
-    sdo_dem = q("aemo_sevendayoutlook", "scheduled_demand",
-                tag_key="region", tag_val="SA1", agg="last")
-    sdo_ni  = q("aemo_sevendayoutlook", "net_interchange",
-                tag_key="region", tag_val="SA1", agg="last")
-
-    # pd_rrp: PREDISPATCH primary, PD7Day fills gaps beyond 28h
-    pd_rrp = pd_sa1.combine_first(pd7)
-
     print(f"  done in {time.time() - t0:.1f}s")
     return {
         "enc":               enc,
         "prices_5m":         prices_5m,
-        "pd_rrp":            pd_rrp,
-        "vic1_pd_rrp":       pd_vic1,
-        "nsw1_pd_rrp":       pd_nsw1,
-        "pd_demand":         pd_dem,
-        "pd_net_interchange": pd_ni,
-        "sd_demand":         sdo_dem,
-        "sd_net_interchange": sdo_ni,
     }
 
 
@@ -212,9 +186,12 @@ ENC_FEATURES = ENC_CONT + TIME_COLS + ["rrp_5m_missing"]   # 20 features
 DEC_CONT = [
     "pd_rrp", "pd_demand", "pd_net_interchange",
     "vic1_pd_rrp", "nsw1_pd_rrp",
+    "pd7_rrp",
     "sd_demand", "sd_net_interchange",
 ]
-DEC_FEATURES = DEC_CONT + TIME_COLS + ["horizon_norm", "covar_missing"]  # 15 features
+DEC_FEATURES = DEC_CONT + TIME_COLS + [
+    "horizon_norm", "predispatch_active", "pd7_generation_hour", "pd7_available"
+]  # 18 features
 
 
 def _transform(vals: np.ndarray, feat: str, scalers: dict, log_scale: float) -> np.ndarray:
@@ -226,17 +203,68 @@ def _transform(vals: np.ndarray, feat: str, scalers: dict, log_scale: float) -> 
     return s.transform(vals.reshape(-1, 1)).flatten()
 
 
+def select_decoder_features(dec_cols: dict, dec_feature_names: list[str] | None) -> np.ndarray:
+    """Project full decoder features into the checkpoint's expected layout."""
+    if dec_feature_names is None:
+        dec_feature_names = DEC_FEATURES
+
+    cols = {k: np.array(v, copy=True) for k, v in dec_cols.items()}
+    if "covar_missing" in dec_feature_names:
+        pd_active = cols.get("predispatch_active", np.zeros(WINDOW_STEPS, dtype=np.float32))
+        pd7_avail = cols.get("pd7_available", np.zeros(WINDOW_STEPS, dtype=np.float32))
+        pd7_rrp = cols.get("pd7_rrp", np.zeros(WINDOW_STEPS, dtype=np.float32))
+        combined_available = np.maximum(
+            pd_active,
+            ((pd7_avail > 0) & (pd7_rrp != 0)).astype(np.float32),
+        )
+        cols["covar_missing"] = 1.0 - combined_available
+        cols["pd_rrp"] = np.where(pd_active > 0, cols["pd_rrp"], pd7_rrp)
+
+    for feat in dec_feature_names:
+        cols.setdefault(feat, np.zeros(WINDOW_STEPS, dtype=np.float32))
+    return np.stack([cols[f] for f in dec_feature_names], axis=1).astype(np.float32)
+
+
+def load_decoder_sources() -> dict:
+    """Load run-aligned decoder covariates from parquet for publication-time-correct lookup."""
+    print("Loading decoder parquet sources...")
+
+    def _read(path: Path) -> pd.DataFrame:
+        df = pd.read_parquet(path)
+        df["run_time"] = pd.to_datetime(df["run_time"], utc=True).dt.as_unit("ns")
+        df["interval_dt"] = pd.to_datetime(df["interval_dt"], utc=True).dt.as_unit("ns")
+        return df.sort_values(["run_time", "interval_dt"])
+
+    pd_sa1 = _read(PD_SA1_FILE)
+    pd_vic1 = _read(PD_VIC1_FILE)
+    pd_nsw1 = _read(PD_NSW1_FILE)
+    pd7 = _read(PD7_FILE)
+    sdo = _read(SDO_FILE)
+
+    return {
+        "pd_grouped": pd_sa1.groupby("run_time", sort=False),
+        "vic1_grouped": pd_vic1.groupby("run_time", sort=False),
+        "nsw1_grouped": pd_nsw1.groupby("run_time", sort=False),
+        "pd7_grouped": pd7.groupby("run_time", sort=False),
+        "pd7_run_times_sorted": sorted(pd7["run_time"].unique()),
+        "sdo_grouped": sdo.groupby("run_time", sort=False),
+        "sdo_run_times_sorted": sorted(sdo["run_time"].unique()),
+    }
+
+
 def build_window_tensors(
     start_ts: pd.Timestamp,
     bulk: dict,
+    decoder_sources: dict,
     feats_5m: pd.DataFrame,
     scalers: dict,
     log_scale: float,
+    dec_feature_names: list[str] | None = None,
     oof_by_run: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """
     Slice enc (96 steps) and dec (144 steps) arrays for one window.
-    Returns (X_enc [96, 20], X_dec [144, 15]) or None if data is insufficient.
+    Returns (X_enc [96, 20], X_dec [144, 18]) or None if data is insufficient.
     """
     enc_idx = pd.date_range(
         start_ts - pd.Timedelta(hours=ENC_STEPS * 0.5),
@@ -283,15 +311,26 @@ def build_window_tensors(
     X_enc = np.stack([enc_cols[f] for f in ENC_FEATURES], axis=1).astype(np.float32)
 
     # ── Decoder ───────────────────────────────────────────────────────────────
-    dec_cols = {}
-    for feat in DEC_CONT:
-        series = bulk.get(feat, pd.Series(dtype=float))
-        dec_cols[feat] = series.reindex(dec_idx).ffill().bfill().fillna(0.0).values.copy()
+    run_time = (start_ts - pd.Timedelta(minutes=30)).as_unit("ns")
+    dec_cols = {feat: np.zeros(WINDOW_STEPS, dtype=np.float32) for feat in DEC_CONT}
+    predispatch_active = np.zeros(WINDOW_STEPS, dtype=np.float32)
+    pd7_generation_hour = np.zeros(WINDOW_STEPS, dtype=np.float32)
+    pd7_available = np.zeros(WINDOW_STEPS, dtype=np.float32)
 
-    # OOF debiased pd_rrp at steps 0-55 — unified debiaser already incorporates
-    # prob_spike, so we apply it directly with no routing override.
+    try:
+        pd_run = decoder_sources["pd_grouped"].get_group(run_time)
+        pd_sub = (pd_run.set_index("interval_dt")
+                  .reindex(dec_idx[:56])[["rrp", "total_demand", "net_interchange"]])
+        valid_pd = ~pd_sub["rrp"].isna()
+        dec_cols["pd_rrp"][:56] = pd_sub["rrp"].fillna(0.0).values
+        dec_cols["pd_demand"][:56] = pd_sub["total_demand"].fillna(0.0).values
+        dec_cols["pd_net_interchange"][:56] = pd_sub["net_interchange"].fillna(0.0).values
+        predispatch_active[:56] = valid_pd.astype(np.float32).values
+    except KeyError:
+        pass
+
+    # OOF debiased pd_rrp at steps 0-55.
     if oof_by_run is not None:
-        run_time  = (start_ts - pd.Timedelta(minutes=30)).as_unit("ns")
         oof_series = oof_by_run.get(run_time)
         if oof_series is not None:
             oof_vals = oof_series.reindex(dec_idx.as_unit("ns")[:56])
@@ -304,6 +343,42 @@ def build_window_tensors(
                     raw_pd,
                 )
 
+    for group_name, feat_name in [("vic1_grouped", "vic1_pd_rrp"), ("nsw1_grouped", "nsw1_pd_rrp")]:
+        try:
+            adj_run = decoder_sources[group_name].get_group(run_time)
+            adj_sub = (adj_run.set_index("interval_dt")
+                       .reindex(dec_idx[:56])["rrp"])
+            dec_cols[feat_name][:56] = adj_sub.fillna(0.0).values
+        except KeyError:
+            pass
+
+    bisect_idx = bisect.bisect_right(decoder_sources["pd7_run_times_sorted"], run_time) - 1
+    if bisect_idx >= 0:
+        pd7_run_time = decoder_sources["pd7_run_times_sorted"][bisect_idx]
+        try:
+            pd7_run = decoder_sources["pd7_grouped"].get_group(pd7_run_time)
+            pd7_sub = (pd7_run.set_index("interval_dt")
+                       .reindex(dec_idx)["rrp"])
+            dec_cols["pd7_rrp"][:] = pd7_sub.fillna(0.0).values
+            pd7_generation_hour[:] = np.float32(
+                pd7_run_time.tz_convert("Australia/Brisbane").hour / 23.0
+            )
+            pd7_available[:] = np.float32(1.0)
+        except KeyError:
+            pass
+
+    bisect_sdo = bisect.bisect_right(decoder_sources["sdo_run_times_sorted"], run_time) - 1
+    if bisect_sdo >= 0:
+        sdo_run_time = decoder_sources["sdo_run_times_sorted"][bisect_sdo]
+        try:
+            sdo_run = decoder_sources["sdo_grouped"].get_group(sdo_run_time)
+            sdo_sub = (sdo_run.set_index("interval_dt")
+                       .reindex(dec_idx)[["scheduled_demand", "net_interchange"]])
+            dec_cols["sd_demand"][:] = sdo_sub["scheduled_demand"].fillna(0.0).values
+            dec_cols["sd_net_interchange"][:] = sdo_sub["net_interchange"].fillna(0.0).values
+        except KeyError:
+            pass
+
     # Scale decoder continuous features
     for feat in DEC_CONT:
         dec_cols[feat] = _transform(dec_cols[feat], feat, scalers, log_scale)
@@ -312,10 +387,12 @@ def build_window_tensors(
     tc_dec = time_sin_cos(dec_idx)
     for col in TIME_COLS:
         dec_cols[col] = tc_dec[col].values
-    dec_cols["horizon_norm"] = np.arange(WINDOW_STEPS, dtype=np.float32) / WINDOW_STEPS
-    dec_cols["covar_missing"] = np.zeros(WINDOW_STEPS, dtype=np.float32)
+    dec_cols["horizon_norm"] = np.arange(WINDOW_STEPS, dtype=np.float32) / max(WINDOW_STEPS - 1, 1)
+    dec_cols["predispatch_active"] = predispatch_active
+    dec_cols["pd7_generation_hour"] = pd7_generation_hour
+    dec_cols["pd7_available"] = pd7_available
 
-    X_dec = np.stack([dec_cols[f] for f in DEC_FEATURES], axis=1).astype(np.float32)
+    X_dec = select_decoder_features(dec_cols, dec_feature_names)
 
     return X_enc, X_dec
 
@@ -354,6 +431,7 @@ def main():
     log_scale = meta.get("log_scale_factor", 60.0)
     quantiles = meta.get("quantiles", [0.05, 0.10, 0.50, 0.90, 0.95, 0.99])
     q50_idx   = quantiles.index(0.5) if 0.5 in quantiles else 2
+    dec_feature_names = meta.get("dec_features") or meta.get("dec_feature_names")
 
     model = TFTPriceModel(
         n_enc=m_cfg["n_enc"], n_dec=m_cfg["n_dec"],
@@ -368,6 +446,8 @@ def main():
         scalers = pickle.load(f)
     s_targ = scalers.get("target_rrp", "log")
     print(f"  Model: n_enc={m_cfg['n_enc']}, n_dec={m_cfg['n_dec']}, quantiles={quantiles}")
+
+    decoder_sources = load_decoder_sources()
 
     # ── Load eval index ───────────────────────────────────────────────────────
     df_index = pd.read_parquet(INDEX_FILE)
@@ -420,8 +500,16 @@ def main():
     valid: list[tuple] = []
     skipped = 0
     for row in df_index.itertuples():
-        result = build_window_tensors(row.start_time, bulk, feats_5m, scalers, log_scale,
-                                      oof_by_run=oof_by_run)
+        result = build_window_tensors(
+            row.start_time,
+            bulk,
+            decoder_sources,
+            feats_5m,
+            scalers,
+            log_scale,
+            dec_feature_names=dec_feature_names,
+            oof_by_run=oof_by_run,
+        )
         if result is None:
             skipped += 1
         else:
@@ -444,7 +532,7 @@ def main():
         batch = valid[bi * batch_size : (bi + 1) * batch_size]
         ts_list     = [w[0] for w in batch]
         X_enc_batch = np.stack([w[1] for w in batch])   # (B, 96, 20)
-        X_dec_batch = np.stack([w[2] for w in batch])   # (B, 144, 15)
+        X_dec_batch = np.stack([w[2] for w in batch])   # (B, 144, 18)
 
         with torch.no_grad():
             preds_norm = model(
