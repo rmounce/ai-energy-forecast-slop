@@ -9,11 +9,21 @@ Implements Option B (run-aligned) covariate construction from Sinclair et al. 20
     target:  actuals_rrp[T+30min : T+72h]   → [144]
     mask:    valid[T+30min : T+72h]          → [144] bool
 
-Decoder covariate sources (Option B for PREDISPATCH, Option A for PD7Day):
-  Steps   1–56  (T+30min to T+28h):  PREDISPATCH run issued AT T
-  Steps  57–144 (T+28.5h to T+72h):  Most recent PD7Day run ≤ T
-    (PD7Day is 3×/day; nearest run is at most ~8h stale; horizon bias is small
-     relative to the 7-day PD7Day horizon — fully acceptable for the long tail.)
+Decoder covariate sources — Phase 7 Enhanced Input (parallel signals):
+  pd_rrp / pd_demand / pd_net_interchange / vic1_pd_rrp / nsw1_pd_rrp:
+    Steps   1–56  (T+30min to T+28h):  PREDISPATCH run issued AT T
+    Steps  57–144 (T+28.5h to T+72h):  0-filled (PREDISPATCH-only features)
+  pd7_rrp:
+    Steps   1–144 (T+30min to T+72h):  Most recent PD7Day run ≤ T (all steps)
+    Provides a continuous price baseline signal even where PREDISPATCH is absent.
+  predispatch_active:
+    1 where PREDISPATCH data is present for that step, 0 otherwise.
+    Teaches the TFT when to trust pd_rrp vs fall back to pd7_rrp.
+  pd7_generation_hour:
+    Hour of day the PD7Day run was published (7, 12, or 18 AEST → normalised /23).
+    Encodes diurnal bias between the three daily PD7Day publications.
+  pd7_available:
+    1 if a PD7Day run existed at or before T, 0 otherwise (pre-2026-02 training data).
 
 Masked loss: mask[h] = 1 where BOTH forecast covariate AND actual target exist.
   - PREDISPATCH steps may be unavailable for runs near the PREDISPATCH horizon cutoff
@@ -112,17 +122,25 @@ ENC_5M_MISSING_IDX = len(ENC_CONTINUOUS) + len(TIME_FEATURES)          # index o
 LOG_SCALE_FACTOR = 60.0  # reference price for log-scaling: log1p(x/60)
 
 # Decoder: forecast covariates (PREDISPATCH/PD7Day/SDO) + time + horizon
+# Phase 7: pd7_rrp added as parallel PD7Day signal across all 144 steps.
+# pd_rrp is now PREDISPATCH-only (0-filled steps 56-143); pd7_rrp carries PD7Day.
 DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange",
                   "vic1_pd_rrp", "nsw1_pd_rrp",
+                  "pd7_rrp",                        # NEW: PD7Day rrp, all 144 steps
                   "sd_demand", "sd_net_interchange"]
-DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + ["horizon_norm", "covar_missing"]  # 15 features
+DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + [
+    "horizon_norm",
+    "predispatch_active",   # 1 where PREDISPATCH present (replaces covar_missing, flipped)
+    "pd7_generation_hour",  # PD7Day run hour normalised /23 (0 if no PD7Day)
+    "pd7_available",        # 1 if a PD7Day run existed at T, 0 for pre-2026-02 samples
+]  # 18 features total
 
 # VIC1/NSW1 data only covers steps 0-55 (PREDISPATCH horizon); steps 56-143 are 0-filled.
-# Track these by name so scalers are fitted on the right slice.
 ADJ_REGION_FEATURES = {"vic1_pd_rrp", "nsw1_pd_rrp"}
 # SDO features available from ~2025-03-22; 0-filled for earlier runs.
-# Scalers fitted on SDO-valid steps only (tracked per sample in sdo_covar_mask).
 SDO_FEATURES        = {"sd_demand", "sd_net_interchange"}
+# PD7Day price feature: log-scaled like pd_rrp; fitted on PD7Day-available steps only.
+PD7_FEATURES        = {"pd7_rrp"}
 
 
 # ─── Time encoding helpers ──────────────────────────────────────────────────
@@ -319,19 +337,26 @@ def build_samples(actuals: pd.DataFrame,
             except KeyError:
                 pass   # no matching run — stays 0
 
-        # -- PD7Day (indices 56..143 = steps h=57..144)
+        # -- PD7Day: pd7_rrp for ALL 144 steps (parallel to pd_rrp; pd_rrp stays 0 for 56-143)
+        pd7_rrp_idx    = DEC_CONTINUOUS.index("pd7_rrp")
+        pd7_gen_hr_idx = len(DEC_CONTINUOUS) + len(TIME_FEATURES) + 2  # after horizon_norm+predispatch_active
+        pd7_avail_idx  = len(DEC_CONTINUOUS) + len(TIME_FEATURES) + 3
         bisect_idx = bisect.bisect_right(pd7day_run_times_sorted, run_t) - 1
         if bisect_idx >= 0:
             pd7day_run_t = pd7day_run_times_sorted[bisect_idx]
             try:
                 pd7_run = pd7_grouped.get_group(pd7day_run_t)
                 pd7_sub = (pd7_run.set_index("interval_dt")
-                           .reindex(dec_intervals[56:])["rrp"])
+                           .reindex(dec_intervals)["rrp"])   # all 144 steps
                 valid_pd7 = ~pd7_sub.isna()
-                dec_arr[56:, 0] = pd7_sub.fillna(0.0).values
-                mask_arr[56:]   = valid_pd7.values
+                dec_arr[:, pd7_rrp_idx] = pd7_sub.fillna(0.0).values
+                mask_arr[56:]           = valid_pd7.values[56:]  # PREDISPATCH mask owns 0-55
+                gen_hour = pd7day_run_t.tz_convert("Australia/Brisbane").hour
+                dec_arr[:, pd7_gen_hr_idx] = np.float32(gen_hour) / 23.0
+                dec_arr[:, pd7_avail_idx]  = np.float32(1.0)
             except KeyError:
                 pass
+        # pd7_available=0 and pd7_generation_hour=0 stay at default for pre-PD7Day samples
 
         # -- SevenDayOutlook (all 144 steps): sd_demand + sd_net_interchange
         # Uses most recent SDO run ≤ run_t (same bisect pattern as PD7Day).
@@ -353,7 +378,7 @@ def build_samples(actuals: pd.DataFrame,
                     pass   # no SDO run ≤ run_t (shouldn't happen after 2025-03)
 
         covar_mask = mask_arr.copy()
-        dec_arr[:, n_cont + 7] = (~covar_mask).astype(np.float32)
+        dec_arr[:, n_cont + 7] = covar_mask.astype(np.float32)  # predispatch_active (1=present)
 
         # -- Targets: actual RRP (sets mask to False where actuals unavailable)
         target_actual = actuals.loc[
@@ -400,6 +425,11 @@ def build_samples(actuals: pd.DataFrame,
     print(f"  SDO coverage: {sdo_covar_mask.mean():.1%} of all steps "
           f"({sdo_covar_mask[:, :56].mean():.1%} PREDISPATCH, "
           f"{sdo_covar_mask[:, 56:].mean():.1%} PD7Day)")
+    pd7_rrp_col = DEC_CONTINUOUS.index("pd7_rrp")
+    pd7_cov = (X_dec[:, :, pd7_rrp_col] != 0.0).mean()
+    pd7_avail_frac = X_dec[:, 0, DEC_FEATURES.index("pd7_available")].mean()
+    print(f"  PD7Day coverage: {pd7_avail_frac:.1%} of samples have PD7Day; "
+          f"{pd7_cov:.1%} of all decoder steps non-zero")
 
     return (X_enc,
             X_dec,
@@ -432,7 +462,7 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_tr
 
     def fit_one(name, values):
         # Use log-scaling for rrp and targets if requested
-        is_rrp = any(x in name for x in ["rrp", "target_rrp", "pd_rrp"])
+        is_rrp = any(x in name for x in ["rrp", "target_rrp", "pd_rrp", "pd7_rrp"])
         if target_scaling == "log" and is_rrp:
             scalers[name] = "log"
             v = values
@@ -460,21 +490,29 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_tr
             fit_one(feat, valid_vals)
         else:
             fit_one(feat, X_enc_train[:, :, j])
+    pd7_avail_idx_dec = DEC_FEATURES.index("pd7_available")
+    pd7_available_train = X_dec_train[:, 0, pd7_avail_idx_dec].astype(bool)  # [N] constant per sample
+
     for j, feat in enumerate(DEC_CONTINUOUS):
         if feat in ADJ_REGION_FEATURES:
-            # VIC1/NSW1 only valid in steps 0-55 (PREDISPATCH horizon);
-            # steps 56-143 are 0-filled — exclude to avoid biasing the scaler.
+            # VIC1/NSW1 only valid in steps 0-55 (PREDISPATCH horizon).
             pd_mask = y_covar_mask_train[:, :56]
             valid_covars = X_dec_train[:, :56, j][pd_mask]
         elif feat in SDO_FEATURES:
             # SDO available from ~2025-03-22; 0-filled before that.
-            # Use sdo_covar_mask to fit only on valid SDO steps.
             if sdo_covar_mask_train is not None and sdo_covar_mask_train.any():
                 valid_covars = X_dec_train[:, :, j][sdo_covar_mask_train]
             else:
-                # No SDO data in train split — fit on all (will be near-constant 0s)
                 valid_covars = X_dec_train[:, :, j].reshape(-1)
                 print(f"    WARNING: no SDO data in train split for {feat}")
+        elif feat in PD7_FEATURES:
+            # pd7_rrp: fit only on samples where PD7Day was available (post-2026-02).
+            # Broadcast pd7_available [N] → [N, 144] mask, then intersect with covar mask.
+            pd7_mask = pd7_available_train[:, np.newaxis] & y_covar_mask_train
+            valid_covars = X_dec_train[:, :, j][pd7_mask]
+            if len(valid_covars) == 0:
+                print(f"    WARNING: no PD7Day data in train split for {feat} — scaler fitted on zeros")
+                valid_covars = np.array([0.0])
         else:
             valid_covars = X_dec_train[:, :, j][y_covar_mask_train]
         fit_one(feat, valid_covars)
@@ -508,16 +546,23 @@ def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers,
         else:
             X_enc_n[:, :, j] = transform(X_enc_n[:, :, j], scalers[feat]).reshape(X_enc_n[:, :, j].shape)
 
+    pd7_avail_idx_dec = DEC_FEATURES.index("pd7_available")
+    pd7_available = X_dec_n[:, 0, pd7_avail_idx_dec].astype(bool)  # [N]
+
     for j, feat in enumerate(DEC_CONTINUOUS):
         if feat in ADJ_REGION_FEATURES:
             view = X_dec_n[:, :56, j]
             pd_mask = y_covar_mask[:, :56]
             view[pd_mask] = transform(view[pd_mask], scalers[feat])
         elif feat in SDO_FEATURES:
-            # Transform only valid SDO steps; leave 0-filled missing steps as 0.
             view = X_dec_n[:, :, j]
             if sdo_covar_mask is not None and sdo_covar_mask.any():
                 view[sdo_covar_mask] = transform(view[sdo_covar_mask], scalers[feat])
+        elif feat in PD7_FEATURES:
+            view = X_dec_n[:, :, j]
+            pd7_mask = pd7_available[:, np.newaxis] & y_covar_mask
+            if pd7_mask.any():
+                view[pd7_mask] = transform(view[pd7_mask], scalers[feat])
         else:
             view = X_dec_n[:, :, j]
             view[y_covar_mask] = transform(view[y_covar_mask], scalers[feat])
