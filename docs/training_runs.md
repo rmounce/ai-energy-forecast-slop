@@ -11,6 +11,83 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ---
 
+## TFT Price Run 012 — 2026-04-20 — Unified debiaser (prob_spike as decoder feature)
+
+**In progress.** Retrain on same dataset as Run 011b, with one structural change: the OOF
+PREDISPATCH debiaser now takes `prob_spike` as an 11th feature (see PD Debiaser Run 002 below).
+Spike-classified windows in the decoder training data now receive higher (less suppressed) `pd_rrp`
+values, closing the train/inference distribution gap that existed in Run 011/011b.
+
+**Motivation:** Run 011b used binary spike routing at inference only — debiased OOF for training,
+raw PREDISPATCH bypass at inference for prob_spike > 0.65. The decoder never trained on high raw
+pd_rrp inputs, causing out-of-distribution predictions during spike windows.
+
+### Config
+| Parameter | Value |
+|---|---|
+| Target Scaling | Log-Scaling (scale=60.0) |
+| Quantiles | [0.05, 0.10, 0.50, 0.90, 0.95, 0.99] |
+| Optimizer | AdamW lr=2e-4, weight_decay=1e-4 |
+| Scheduler | ReduceLROnPlateau factor=0.5, patience=2 |
+| Early stopping | pw_wMAPE, patience=7 |
+| d_model / heads / layers | 64 / 4 / 2 |
+| Dataset | 54,404 samples (51,623 train, 2,211 val, 431 eval) — same split as Run 011b |
+| Key change | `debiased_pd_rrp_oof.parquet` regenerated with unified debiaser (Run 002) |
+
+### Training outcome
+*(in progress — results pending)*
+
+### Holistic eval (vs amber_apf_lgbm baseline)
+*(pending — will compare against Run 011b: All +9.7%, Spike +7.2%, Low +32.6%, Normal +0.4%)*
+
+---
+
+## PD Debiaser Run 002 — 2026-04-20 — Unified debiaser (prob_spike feature)
+
+**Replaces binary spike routing with smooth correction.** Added `prob_spike` (spike classifier
+output per run_time) as an 11th input feature to the LightGBM debiaser. The model now learns
+the appropriate correction level for each spike probability value rather than applying a hard
+bypass at a tuned threshold (previously 0.65). Eliminates the magic number.
+
+**Root cause addressed:** Prior architecture had a train/inference mismatch for spike windows —
+OOF debiased uniformly during training, raw PREDISPATCH at inference when prob_spike > 0.65.
+The unified debiaser is trained with `prob_spike` as a feature; both training and inference use
+the same correction path.
+
+### Config
+| Parameter | Value |
+|---|---|
+| Base features (10) | pd_rrp, pd_demand, pd_net_interchange, horizon_steps, hour/dow/month sin/cos |
+| New feature | prob_spike (from spike_clf_predictions.parquet, fill 0.0 if absent) |
+| Objective | regression_l1 (MAE) — robust to spike outliers |
+| n_estimators | 1000 (early stopping, patience=50) |
+| num_leaves | 127, feature_fraction=0.8, bagging_fraction=0.8 |
+| OOF folds | 5 (time-ordered, split by interval_dt) |
+| Training data | aemo_predispatch_sa1.parquet + actuals_sa1.parquet (3,067,043 rows) |
+
+### OOF validation metrics
+| Category | N | Raw bias | Debiased bias | Raw MAE | Debiased MAE |
+|---|---|---|---|---|---|
+| Overall | 3,067,043 | −266.5 | +26.0 | 325.7 | **62.0** $/MWh |
+| Horizon 1–6 (0–3h) | 331,563 | −123.6 | +25.5 | 177.0 | 58.7 |
+| Horizon 7–16 (3.5–8h) | 552,512 | −177.8 | +25.9 | 231.7 | 61.3 |
+| Horizon 17–32 (8.5–16h) | 882,544 | −244.1 | +26.6 | 307.3 | 63.1 |
+| Horizon 33–56 (16.5–28h) | 952,135 | −349.9 | +27.8 | 417.0 | 65.5 |
+| Regime: baseload | 2,180,675 | −70.0 | −7.1 | 94.9 | 28.0 |
+| Regime: spike | 687,226 | −967.1 | **+153.1** | 1124.9 | 173.1 |
+| Regime: oversupply | 199,142 | −0.7 | −49.9 | 95.3 | 51.0 |
+
+**Key:** Spike regime debiased bias flipped from deeply negative (suppressed) to +153 $/MWh —
+the debiaser now outputs *higher* values for spike-classified windows rather than compressing them.
+Overall MAE improvement unchanged (325 → 62 $/MWh).
+
+### Outputs
+- `data/parquet/debiased_pd_rrp_oof.parquet` — regenerated (3,067,043 rows)
+- `models/pd_debiaser/lgbm_final.pkl` — updated final model
+- `models/pd_debiaser/metrics.json` — updated
+
+---
+
 ## Load TFT Run 003 — 2026-04-17 — Adelaide timezone fix (inference only)
 
 **Same dataset as Run 002.** Fixes `time_sin_cos()` at inference to use
