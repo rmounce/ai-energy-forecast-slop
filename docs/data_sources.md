@@ -134,10 +134,21 @@ Decoder: Solcast PV forecast + BOM weather forecast + calendar (72h).
 
 ### MPC: 14h × 5-min
 
-- Runs every 5 min (HA automation `minutes: /5`)
-- First re-run triggered at ~:00:30 into each interval when amber2mqtt updates spot price
+- Uses a 14h horizon with 5-minute periods
+- First re-plan in each 5-minute cycle is triggered at approximately `:00:30` when the
+  confirmed spot price update lands (timing floats slightly with source latency)
+- Additional MPC re-plans then occur at roughly `:01:30`, `:02:30`, `:03:30`, and `:04:30`
+  before the next 5-minute boundary
 - Inputs: `sensor.amber_5min_forecasts_extended_general_price` (Amber APF), DH load/PV (interpolated 30→5 min), current SOC
 - DH→MPC handoff: `periods_into_30min = (utcnow.minute % 30) // 5` skips elapsed 5-min sub-intervals — correctly "backdates" plan to start of current interval
+
+### Battery action timing
+
+- Battery action updates are asynchronous to MPC solves
+- Action is refreshed on the 5-minute boundaries (`:00:00`, `:05:00`, …) even if MPC has not
+  produced a newer plan yet
+- If a fresh MPC plan arrives between boundaries and changes the requested action, the battery
+  controller can update immediately; otherwise it keeps following the most recent plan
 
 ### 5-min/30-min scheduling inaccuracy in combined shadow sensor
 

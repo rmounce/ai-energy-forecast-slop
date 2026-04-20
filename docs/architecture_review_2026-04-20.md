@@ -12,10 +12,15 @@ Single-household energy management system in Adelaide, SA1 (AEMO NEM). Hardware:
 
 1. Every 30 minutes: `forecast.py` runs TFT + LightGBM price/load models → writes `predictions.json`
 2. Simultaneously: EMHASS day-ahead optimiser (72h × 30-min) builds an initial battery schedule
-3. Every 5 minutes: EMHASS MPC re-plans with latest 14h × 5-min view, executes one dispatch step
-4. HA automation reads EMHASS MPC output → sets Sigenergy inverter mode (charge/discharge/standby)
+3. EMHASS MPC maintains a 14h × 5-min plan on a staggered intra-interval cadence:
+   approximately `:00:30` after each 5-minute boundary when the confirmed spot price lands,
+   then again around `:01:30`, `:02:30`, `:03:30`, and `:04:30` before the next 5-minute
+   boundary. The exact `:00:30` timing floats slightly with upstream update latency.
+4. HA battery-control automation is asynchronous to MPC solves: it updates battery action at
+   `:00:00`, `:05:00`, etc., or earlier if a newer MPC plan arrives and changes the commanded
+   action. If MPC has not refreshed yet, the battery keeps following the most recent plan.
 
-**Key insight:** the 14h MPC is the primary decision maker. The 72h day-ahead plan is an initial schedule that the 5-min MPC replans continuously. In practice, dispatch decisions at hours 30–72 of the 72h forecast are almost never executed as planned — they are revised many times before they matter.
+**Key insight:** the 14h MPC is the primary decision maker. The 72h day-ahead plan is an initial schedule that the 5-min MPC refreshes repeatedly within each 5-minute interval and replans continuously across the day. In practice, dispatch decisions at hours 30–72 of the 72h forecast are almost never executed as planned — they are revised many times before they matter.
 
 ---
 
