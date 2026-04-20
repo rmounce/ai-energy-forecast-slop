@@ -13,7 +13,7 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ## TFT Price Run 014 — 2026-04-20 — Enhanced Input TFT (parallel PREDISPATCH + PD7Day decoder)
 
-**COMPLETE — EVAL PENDING.** First Phase 7 run with the expanded 18-feature decoder:
+**COMPLETE — INTERIM GATE FAILED.** First Phase 7 run with the expanded 18-feature decoder:
 `pd_rrp` is now PREDISPATCH-only (0-filled beyond step 56), `pd7_rrp` carries the
 latest PD7Day run across all 144 steps, `covar_missing` is replaced by
 `predispatch_active`, and the decoder adds `pd7_generation_hour` + `pd7_available`.
@@ -48,8 +48,10 @@ not clearly solve the long-horizon objective issue; the existing `tau=14` horizo
 continues to de-emphasise the far horizon relative to the financial gate.
 
 **Checkpoint status:** `models/tft_price/checkpoint_best.pt` now contains the 18-feature
-decoder contract (`n_dec=18`, `meta.dec_features` updated accordingly). Interim holistic eval
-against Run 011b is the next gate.
+decoder contract (`n_dec=18`, `meta.dec_features` updated accordingly). This means the
+default local checkpoint path no longer matches the documented Run 011b incumbent. Treat
+Run 011b as the evaluated production baseline, but do not assume `checkpoint_best.pt`
+still points to it after 2026-04-20 training activity.
 
 ### Interim holistic eval (vs amber_apf_lgbm baseline)
 | Stratum | Run 011b + binary routing | Run 014 enhanced input |
@@ -74,6 +76,13 @@ That makes the flat-wMAPE Run 015 ablation the immediate next step rather than o
 `tau=None` / `tau=∞`). Rationale: the financial/dispatch gate treats the full 72h vector as
 consequential, so `tau=14` is structurally misaligned with the eval objective. Run 014 is kept
 as the apples-to-apples Phase 7 comparison; Run 015 isolates the objective change.
+
+### Commands and logs
+
+- Dataset rebuild: `source .venv/bin/activate && PYTHONUNBUFFERED=1 nice -n 19 python data/build_training_dataset.py 2>&1 | tee /tmp/dataset_build_phase7.log`
+- Training: `source .venv/bin/activate && PYTHONUNBUFFERED=1 nice -n 19 python train/train_tft_price.py 2>&1 | tee /tmp/tft_run014_phase7.log`
+- Retro inference: `source .venv/bin/activate && PYTHONUNBUFFERED=1 nice -n 19 python eval/retro_tft_inference.py --overwrite 2>&1 | tee /tmp/retro_tft_run014.log`
+- Holistic eval: `source .venv/bin/activate && PYTHONUNBUFFERED=1 nice -n 19 python eval/holistic_eval.py --hybrid-source --price-only --workers 12 2>&1 | tee /tmp/holistic_eval_run014.log`
 
 ---
 
