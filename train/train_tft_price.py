@@ -552,6 +552,9 @@ def main():
                 "quantiles": QUANTILES,
             }
             torch.save(ckpt, MODELS_DIR / "checkpoint_best.pt")
+            # Keep scalers co-located with the checkpoint so inference always uses matching scalers
+            import shutil as _shutil
+            _shutil.copy2(PARQUET_DIR / "scalers.pkl", MODELS_DIR / "scalers.pkl")
             # Also save a timestamped copy so previous bests are never overwritten
             import datetime as _dt
             _ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
