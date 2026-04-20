@@ -349,6 +349,16 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 with the Run 014 18-feature checkpoint. The evaluated incumbent is still Run 011b, but that is
 now a logical status, not a guarantee about the file currently sitting at the default path.
 
+**Artifact state after Run 015 cleanup:** preserved experiment snapshots now exist for the
+recent failed Phase 7 runs:
+`models/tft_price/checkpoint_run014_phase7_best.pt`,
+`models/tft_price/scalers_run014_phase7.pkl`,
+`models/tft_price/checkpoint_run015_flat_wmape_best.pt`,
+`models/tft_price/scalers_run015_flat_wmape.pkl`.
+The evaluated incumbent remains Run 011b, but the live/default path has not yet been
+re-pointed back to an explicit incumbent pair because the exact scaler pairing should be
+verified before changing operational defaults.
+
 ### Current training setup (`train/train_tft_price.py`)
 
 - **Optimizer:** AdamW (lr=1e-4, weight_decay=1e-4)
