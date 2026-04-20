@@ -41,7 +41,7 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | **8** | **Test framework** | **Complete** (42 tests passing) — Layer 2 financial gate passing ✅ |
 | 9 | LightGBM strategic model (30-min/72-hour) | **Complete** — TFT wins on spikes; LightGBM wins on normal. Archived as exploration. |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — deprioritised; Phase 7 active |
-| **7** | **Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder** | **Active** — Run 014 complete, interim eval failed (−35.3%); Run 015 flat-wMAPE ablation next |
+| **7** | **Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder** | **Active** — Run 014 failed interim eval (−35.3%); Run 015 flat-wMAPE ablation also failed harder (−65.9%) |
 
 **Hard gate:** Phase 6 and Phase 8 must both pass before Phase 5 remainder resumes.
 **STATUS: Both gates passing as of 2026-04-19. Phase 5 remainder is now unblocked.**
