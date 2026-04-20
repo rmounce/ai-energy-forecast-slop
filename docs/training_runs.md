@@ -35,10 +35,29 @@ pd_rrp inputs, causing out-of-distribution predictions during spike windows.
 | Key change | `debiased_pd_rrp_oof.parquet` regenerated with unified debiaser (Run 002) |
 
 ### Training outcome
-*(in progress — results pending)*
+- Best epoch: **2** (early stop epoch 9, patience=7)
+- Best pw_wMAPE: **38.97%** (vs Run 011b: 42.38% — better)
+- Best val_loss: **0.05145**
+- nMAPE (4h): 40.75%  |  16h: 42.82%  |  28h: 43.63%  |  72h: 82.23%
 
-### Holistic eval (vs amber_apf_lgbm baseline)
-*(pending — will compare against Run 011b: All +9.7%, Spike +7.2%, Low +32.6%, Normal +0.4%)*
+**⚠ Scalers co-location bug discovered during eval (2026-04-20):** `train_tft_price.py` loads scalers
+from `data/parquet/scalers.pkl` but saves the checkpoint to `models/tft_price/`. Inference reads
+from `models/tft_price/scalers.pkl`. When the dataset was rebuilt with the new unified debiaser OOF,
+`data/parquet/scalers.pkl` was updated but `models/tft_price/scalers.pkl` remained stale (Apr 18).
+The `pd_rrp` scaler was fitted on the old OOF distribution, causing silent mis-scaling of spike-window
+decoder inputs at inference — manifesting as All −28.3%, Normal −44.5% in the first eval attempt.
+**Fix:** `train_tft_price.py` now copies scalers alongside every best-checkpoint save.
+
+### Holistic eval (vs amber_apf_lgbm baseline) — three-way comparison
+| Config | All | Spike | Low | Normal |
+|---|---|---|---|---|
+| Run 011b + binary routing (prior best) | +9.7% | +7.2% | +32.6% | +0.4% |
+| Run 011b + unified debiaser (no retrain) | −9.9% | −16.2% | +31.9% | +4.2% |
+| **Run 012 + unified debiaser (scalers fixed)** | **pending** | **pending** | **pending** | **pending** |
+
+*Run 011b + unified debiaser result confirms the unified debiaser requires a paired TFT retrain —
+dropping it onto the old model creates a new train/inference mismatch (TFT trained on suppressed OOF,
+now sees partially-corrected spike inputs it never encountered).*
 
 ---
 

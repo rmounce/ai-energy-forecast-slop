@@ -265,22 +265,28 @@ Motivation (Run 007): when a spike is building, 5-min prices jump from $50 → $
 
 ## Production Integration (Shadow Mode)
 
-Run 011b (debiased decoder, SDO features, q5/10/50/90/95/99) is live in production as of April 2026.
+**Run 011b** (debiased decoder, SDO features, q5/10/50/90/95/99) was live in production as of April 2026.
+**Run 012** (unified debiaser — see below) is the current checkpoint as of 2026-04-20.
 
-**⚠ Known open issue — debiaser inference path mismatch:**
-Training uses OOF-debiased `pd_rrp` at decoder steps 0–55 (see `data/build_training_dataset.py:291`
-and the table above). However, both live inference (`forecast.py:_get_influx_pd_prices`) and
-retrospective eval (`eval/retro_tft_inference.py`) currently feed **raw PREDISPATCH** to the
-decoder — the debiaser (`models/pd_debiaser/lgbm_final.pkl`) is never applied at inference.
+### Unified PREDISPATCH Debiaser (Run 012+, 2026-04-20)
 
-This violates the training contract. The debiaser reduces MAE from 325→65 $/MWh; systematic
-raw PREDISPATCH bias may be the primary cause of TFT q50 overestimating prices in flat-price
-windows (observed in Phase 6 normal stratum failure, −27.8%). **Fix inference before drawing
-conclusions about model quality or building additional models.**
+The debiaser pipeline was restructured to eliminate the binary spike routing threshold:
 
-Fix required in:
-- `forecast.py`: apply `lgbm_final.pkl` to live PREDISPATCH before building decoder tensors
-- `eval/retro_tft_inference.py`: substitute `debiased_pd_rrp_oof.parquet` values at steps 0–55
+**Previous architecture (Run 011b):**
+- OOF-debiased `pd_rrp` used uniformly at training (suppressed spike signals)
+- At inference: spike classifier → if `prob_spike > 0.65` → bypass debiaser (raw PREDISPATCH); else → apply debiaser
+- Problem: train/inference distribution mismatch — TFT decoder never saw high raw pd_rrp during training
+
+**Current architecture (Run 012+):**
+- `prob_spike` added as 11th feature to `train_pd_debiaser.py`
+- Debiaser learns a smooth correction: full compression at prob_spike≈0, approaching raw values at prob_spike≈1
+- OOF parquet regenerated; spike-window bias flipped from −967 to +153 $/MWh (amplifying rather than suppressing)
+- No routing threshold — `forecast.py` and `retro_tft_inference.py` apply the debiaser model uniformly
+- TFT retrained on the new OOF parquet so decoder training matches inference distribution
+
+**Scalers co-location fix:** `train_tft_price.py` now copies `data/parquet/scalers.pkl` to
+`models/tft_price/scalers.pkl` on every best-checkpoint save. Previously the inference path
+loaded stale scalers, causing silent miscaling when the dataset was rebuilt (discovered 2026-04-20).
 
 ### Architecture
 - **Worker:** `_execute_tft_prediction` in `forecast.py`.
@@ -343,7 +349,8 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 7. ✅ Stratified eval benchmark: `data/build_stratified_eval.py` — fixed set, durable across runs
 8. ✅ 51,623 training samples; 431 stratified eval hold-out; VAL_DAYS=60
 9. ✅ Phase 1a: PREDISPATCH debiaser (`train/train_pd_debiaser.py`) — OOF MAE 325→65 $/MWh overall, spike 1125→182 $/MWh (commit ee2f415)
-10. ✅ Phase 1b: Run 011 — OOF debiased decoder + SDO features + q5/10/50/90/95/99 (commit 26b9cb5). Run 011b retraining in progress (lr=1e-4, patience=15).
+10. ✅ Phase 1b: Run 011 — OOF debiased decoder + SDO features + q5/10/50/90/95/99 (commit 26b9cb5). Run 011b: lr=1e-4, patience=15.
+11. ✅ Unified debiaser (Run 012, 2026-04-20): prob_spike as debiaser feature; binary routing threshold eliminated; TFT retrained on new OOF. Scalers co-location fix in train_tft_price.py.
 
 ### Current training setup (`train/train_tft_price.py`)
 
