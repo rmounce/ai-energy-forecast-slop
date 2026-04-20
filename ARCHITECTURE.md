@@ -271,7 +271,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 
 **Summary:**
 - Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` + time encodings (6) + `rrp_5m_missing` flag (1)
-- Decoder: 144 steps (72h) × 15 features — SA1 OOF-debiased PREDISPATCH/PD7Day (price, demand, interchange) + VIC1/NSW1 PREDISPATCH prices + SevenDayOutlook demand/interchange (all 144 steps) + time encodings (6) + `horizon_norm` + `covar_missing` flag (1) *(Run 011b — Phase 7 will expand to 18 features with parallel PD7Day signal; see `docs/tft_price_forecast.md`)*
+- Decoder: 144 steps (72h) × 18 features — PREDISPATCH-only `pd_rrp`/demand/interchange for steps 0–55, parallel `pd7_rrp` across all 144 steps, VIC1/NSW1 PREDISPATCH prices, SevenDayOutlook demand/interchange, time encodings (6), `horizon_norm`, `predispatch_active`, `pd7_generation_hour`, `pd7_available` *(Phase 7 dataset + Run 014 checkpoint; active production model remains Run 011b until eval gate passes)*
 - Covariate construction: Option B (run-aligned) — each training sample uses the PREDISPATCH run issued at the encoder/decoder boundary, exactly matching inference
 - Masked loss: each decoder step independently masked; handles variable PREDISPATCH horizon and growing PD7Day history
 - Stratified eval benchmark: 900 fixed samples (spike + low/negative + seasonal normal) for durable cross-run comparison
@@ -301,7 +301,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 **Phase 4 (conformal calibration):**
 8. `train/calibrate_conformal.py` → conditional conformal δ corrections; `models/lgbm_tactical/conformal_deltas.json`
 
-**Status (2026-04-20):** Phases 1–9 + Phase 6 + Phase 8 complete. All financial gates pass — `tier1_tier2_hybrid` (Run 011b + binary spike routing) overall +9.7% vs amber_apf_lgbm baseline ✅. Active production model: Run 011b checkpoint. Phase 7 (Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder features) now active; gate is the Rolling MPC Eval (replacing one-shot 72h holistic eval). See `docs/roadmap.md` and `docs/tft_price_forecast.md`.
+**Status (2026-04-20):** Phases 1–9 + Phase 6 + Phase 8 complete. All financial gates pass — `tier1_tier2_hybrid` (Run 011b + binary spike routing) overall +9.7% vs amber_apf_lgbm baseline ✅. Active production model: Run 011b checkpoint. Phase 7 decoder expansion has now been trained once (Run 014, 18-feature checkpoint), but the interim holistic eval failed badly (**−35.3% overall vs amber_apf_lgbm**), so Run 011b remains the incumbent. Next planned ablation after Run 014 is flat wMAPE (Run 015) to remove the `tau=14` horizon-decay mismatch. See `docs/roadmap.md`, `docs/tft_price_forecast.md`, and `docs/training_runs.md`.
 
 ---
 
