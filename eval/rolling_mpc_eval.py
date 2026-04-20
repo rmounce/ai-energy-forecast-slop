@@ -55,6 +55,7 @@ from retro_tft_inference import (  # noqa: E402
 )
 from retro_tier1_inference import build_features as build_tier1_features  # noqa: E402
 from train_tft_price import TFTPriceModel  # noqa: E402
+from data.build_tactical_dataset import FEATURE_NAMES as TACTICAL_FEATURE_NAMES  # noqa: E402
 
 PARQUET_DIR = ROOT / "data" / "parquet"
 RESULTS_DIR = ROOT / "eval" / "results"
@@ -288,7 +289,11 @@ class ForecastProviders:
             np.tile(feats, (TACTICAL_STEPS, 1)),
             np.arange(TACTICAL_STEPS, dtype=np.float32).reshape(-1, 1),
         ])
-        q50_raw = self.q50_model.predict(X_long).astype(np.float64)
+        X_long_df = pd.DataFrame(
+            X_long,
+            columns=list(TACTICAL_FEATURE_NAMES) + ["horizon"],
+        )
+        q50_raw = self.q50_model.predict(X_long_df).astype(np.float64)
         idx = pd.date_range(start=run_time, periods=TACTICAL_STEPS, freq="5min", tz="UTC")
         series = pd.Series(q50_raw, index=idx)
         self._tier1_cache[run_time] = series
