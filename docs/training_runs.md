@@ -13,7 +13,7 @@ across runs. Use the Delta column (TFT vs LightGBM on the same window) as the pr
 
 ## TFT Price Run 012 — 2026-04-20 — Unified debiaser (prob_spike as decoder feature)
 
-**In progress.** Retrain on same dataset as Run 011b, with one structural change: the OOF
+**COMPLETE — FAILED.** Retrain on same dataset as Run 011b, with one structural change: the OOF
 PREDISPATCH debiaser now takes `prob_spike` as an 11th feature (see PD Debiaser Run 002 below).
 Spike-classified windows in the decoder training data now receive higher (less suppressed) `pd_rrp`
 values, closing the train/inference distribution gap that existed in Run 011/011b.
@@ -68,12 +68,54 @@ may require lower LR and more patience to fit well.
 `models/tft_price/scalers.pkl` but proved to be a red herring — `pd_rrp` uses a fixed log transform,
 not a fitted scaler, so old and new were identical. Run 012 is genuinely this bad.
 
-**Next step (Run 013):** Retrain with `--lr 5e-5 --patience 15` to give the model more capacity
-to fit the new bimodal OOF distribution. If still failing, reconsider whether the bimodal training
-signal (spike windows at raw 5000 $/MWh vs non-spike at OOF 0-500 $/MWh) is learnable by this
-architecture without structural changes.
+**Run 013 outcome:** Also failed — see Run 013 entry below. Unified debiaser direction abandoned.
+**Prior best remains Run 011b + binary routing.**
 
-**Prior best remains Run 011b + binary routing** until Run 013 validates the unified debiaser approach.
+---
+
+## TFT Price Run 013 — 2026-04-20 — Unified debiaser, lower LR
+
+**COMPLETE — FAILED.** Retry of Run 012 with `--lr 5e-5 --patience 15` to address early convergence.
+Early stopping at epoch 21 (patience=15 exhausted). Best at epoch 6.
+
+### Config
+| Parameter | Value |
+|---|---|
+| All params | Same as Run 012 |
+| Optimizer | AdamW **lr=5e-5** (vs 2e-4 in Run 012), weight_decay=1e-4 |
+| Early stopping | pw_wMAPE, **patience=15** (vs 7 in Run 012) |
+
+### Training outcome
+
+| Epoch | 4h nMAPE | 16h nMAPE | 28h nMAPE | 72h nMAPE | Unweighted | pw_wMAPE | LR |
+|---|---|---|---|---|---|---|---|
+| 1 | 56.7% | 55.3% | 55.2% | 59.4% | 57.9% | 51.26% | 5e-5 |
+| **6 (best)** | **40.6%** | **44.5%** | **44.7%** | **90.3%** | **73.5%** | **39.40%** | 5e-5 |
+| 10 | 41.3% | 45.5% | 45.6% | 103.4% | 82.1% | 40.00% | 2.5e-5 |
+| 21 (final) | 40.9% | 45.3% | 45.2% | 95.7% | 77.1% | 39.73% | 1.56e-6 |
+
+- Best pw_wMAPE: **39.40%** at epoch 6 (slightly worse than Run 012's 38.97%)
+- LR decayed 5× over 21 epochs (scheduler patience=2); model stalled after epoch 6
+- 72h nMAPE peaked at 103% (epoch 10), partially recovered to 96% as LR decayed — never usable
+
+### Diagnosis
+
+Lower LR did not fix the problem. The same failure mode as Run 012 occurred: pw_wMAPE improves by
+sacrificing long-horizon accuracy, because the training metric weights 28h+ steps at <2% each.
+The 72h nMAPE diverging to ~100% while 4h improves to ~40% is the training objective working as
+designed — it is not a hyperparameter problem.
+
+**Root cause (confirmed):** `pw_wMAPE` with tau=14 steps is misaligned with the unified debiaser
+architecture. The bimodal OOF distribution (spike windows ~5000 $/MWh, normal windows 0–500 $/MWh)
+gives the TFT a hard learning problem at long horizons, but the training metric doesn't reward
+solving it. No LR or patience change can address a misaligned objective.
+
+**Direction change:** Unified debiaser + single TFT architecture abandoned. See
+`docs/architecture_review_2026-04-20.md` for full assessment. The likely path forward is splitting
+into two decoupled models (0–28h PREDISPATCH model for MPC; 28–72h PD7Day model for day-ahead
+SoC planning) with separate, aligned loss functions.
+
+**Active checkpoint remains Run 011b + binary routing (+9.7% holistic eval).**
 
 ---
 

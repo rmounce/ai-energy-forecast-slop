@@ -40,8 +40,8 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | **6** | **Holistic dispatch simulation** | **Complete** — oracle/amber_apf_lgbm/p5min/TFT/hybrid all evaluated |
 | **8** | **Test framework** | **Complete** (42 tests passing) — Layer 2 financial gate passing ✅ |
 | 9 | LightGBM strategic model (30-min/72-hour) | **Complete** — TFT wins on spikes; LightGBM wins on normal. Archived as exploration. |
-| 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — pending Phase 6+8 |
-| 7 | Event-driven predict service | Deferred — after Phase 8 |
+| 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — deprioritised; Phase 7 active |
+| **7** | **Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder** | **Active** — Run 014 target; Rolling MPC Eval as gate |
 
 **Hard gate:** Phase 6 and Phase 8 must both pass before Phase 5 remainder resumes.
 **STATUS: Both gates passing as of 2026-04-19. Phase 5 remainder is now unblocked.**
