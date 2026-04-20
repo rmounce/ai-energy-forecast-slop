@@ -22,6 +22,11 @@ data/http_cache.sqlite
 
 # Scratch/working data
 scratch/
+.codex
+.codex/
+
+# Local eval scratch artifacts
+eval/results/holistic_eval_raw_*_hybrid.parquet.run*
 
 # ML data files (rebuilt from InfluxDB via data/export_parquet.py)
 data/parquet/

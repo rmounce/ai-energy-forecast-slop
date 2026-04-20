@@ -144,6 +144,13 @@ frozen incumbent baseline snapshot.*
 repair the Phase 7 regression; it amplified it. As a result, flat wMAPE should be treated as
 an explicitly rejected ablation for the current Phase 7 setup, not the new default.
 
+**Important caveat:** this rejection is specific to the **current data regime and gate**.
+PD7Day coverage in training is still sparse in the 28h–72h region, and the present holistic
+eval penalises the full 72h forecast vector through one-shot dispatch simulation. If PD7Day
+history becomes materially denser, or if the 30m/72h tier is later evaluated primarily as a
+strategic `soc_final` guide for the downstream 5m/14h MPC tier rather than as a standalone
+72h dispatch driver, flat weighting may still be worth revisiting.
+
 ### Artifact handling
 
 - Preserved Run 014 snapshot before launch:
