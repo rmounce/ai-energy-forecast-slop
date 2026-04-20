@@ -357,10 +357,10 @@ now a logical status, not a guarantee about the file currently sitting at the de
   Short-horizon steps dominate gradients; 4h weight=0.56, 16h weight=0.10, 28h weight=0.02.
 - **Early stopping:** pw_wMAPE (price+horizon weighted nMAPE); fallback val_loss when NaN
 
-**Next ablation agreed after Run 014:** keep Run 014 as the clean Phase 7 input-change comparison,
-then test **Run 015 with flat wMAPE / no horizon decay** so the loss matches the 72h financial gate
-more directly. Run 014's failed interim eval strengthens this direction: the architecture/input
-change alone was not enough. Do not fold that objective change into Run 014 retroactively.
+**Run 015 result:** the flat-wMAPE / no-horizon-decay ablation was run and **failed more badly
+than Run 014** on the interim dispatch gate (**−65.9% overall vs amber_apf_lgbm**, versus
+Run 014 at **−35.3%**). That makes flat weighting a rejected ablation for the current Phase 7
+setup rather than the new default.
 
 ### Run 006 evaluation (Stratified Eval Set — fixed benchmark, Apr 2026)
 

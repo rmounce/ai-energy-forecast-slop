@@ -301,7 +301,7 @@ A new price forecasting model is being developed to replace the LightGBM+Amber A
 **Phase 4 (conformal calibration):**
 8. `train/calibrate_conformal.py` → conditional conformal δ corrections; `models/lgbm_tactical/conformal_deltas.json`
 
-**Status (2026-04-20):** Phases 1–9 + Phase 6 + Phase 8 complete. All financial gates pass — `tier1_tier2_hybrid` (Run 011b + binary spike routing) overall +9.7% vs amber_apf_lgbm baseline ✅. Active production model: Run 011b checkpoint. Phase 7 decoder expansion has now been trained once (Run 014, 18-feature checkpoint), but the interim holistic eval failed badly (**−35.3% overall vs amber_apf_lgbm**), so Run 011b remains the incumbent. Next planned ablation after Run 014 is flat wMAPE (Run 015) to remove the `tau=14` horizon-decay mismatch. See `docs/roadmap.md`, `docs/tft_price_forecast.md`, and `docs/training_runs.md`.
+**Status (2026-04-20):** Phases 1–9 + Phase 6 + Phase 8 complete. All financial gates pass — `tier1_tier2_hybrid` (Run 011b + binary spike routing) overall +9.7% vs amber_apf_lgbm baseline ✅. Active production model: Run 011b checkpoint. Phase 7 decoder expansion has now been trained twice: Run 014 (18-feature checkpoint) failed the interim holistic eval (**−35.3% overall vs amber_apf_lgbm**), and the follow-up flat-wMAPE ablation Run 015 failed even harder (**−65.9% overall**). Run 011b therefore remains the incumbent, and flat horizon weighting is not promoted. See `docs/roadmap.md`, `docs/tft_price_forecast.md`, and `docs/training_runs.md`.
 
 ---
 

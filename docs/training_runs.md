@@ -86,6 +86,75 @@ as the apples-to-apples Phase 7 comparison; Run 015 isolates the objective chang
 
 ---
 
+## TFT Price Run 015 — 2026-04-20 — Flat wMAPE ablation (no horizon decay)
+
+**COMPLETE — FAILED.** Direct follow-up to Run 014. Keeps the Phase 7 decoder/input contract
+unchanged (18-feature decoder with parallel PREDISPATCH + PD7Day) and changes only the
+training objective: horizon decay disabled so every decoder step contributes equally to the
+masked quantile loss.
+
+### Motivation
+
+Run 014 showed that the decoder expansion is trainable, but the interim financial gate still
+failed badly. The agreed next ablation is to remove the `tau=14` horizon weighting because the
+dispatch/EMHASS gate treats the full 72h vector as consequential. This run isolates objective
+alignment without changing decoder inputs, the debiaser, or routing.
+
+### Planned config delta vs Run 014
+| Parameter | Value |
+|---|---|
+| Decoder contract | Same as Run 014 (18 features) |
+| Loss | **Flat masked quantile loss** (`--horizon-decay 0`) |
+| All other hyperparameters | Same as Run 014 unless noted otherwise |
+
+### Command and log
+
+- Training: `source .venv/bin/activate && PYTHONUNBUFFERED=1 nice -n 19 python train/train_tft_price.py --horizon-decay 0 2>&1 | tee /tmp/tft_run015_flat_wmape.log`
+
+### Training outcome
+
+- Best epoch: **2** (early stop epoch 9, patience=7)
+- Best val loss: **0.0950**
+- Best pw_wMAPE: **60.31%**
+- wMAPE / nMAPE (all): **62.70%**
+- nMAPE (4h): **44.90%**  |  16h: **46.10%**  |  28h: **45.79%**  |  72h: **72.57%**
+
+### Initial interpretation
+
+Flat weighting did **not** produce an obvious training-space win over Run 014. Best epoch
+arrived even earlier (epoch 2 vs epoch 4), `72h` remained effectively unchanged, and the
+shorter buckets were slightly worse than Run 014 at the best checkpoint. That said, the loss
+definition changed enough that the training metrics alone are not the gate; the real question
+is whether the resulting forecast vector performs better under dispatch simulation.
+
+### Interim holistic eval (vs amber_apf_lgbm baseline)
+| Stratum | Run 014 enhanced input | Run 015 flat wMAPE |
+|---|---|---|
+| All | **−35.3%** | **−65.9%** |
+| Spike | **−37.1%** | **−71.0%** |
+| Low | **−34.1%** | **−46.9%** |
+| Normal | **−3.1%** | **−18.1%** |
+
+*Results saved to `eval/results/holistic_eval_results_tft015_flat_wmape.csv` and
+`eval/results/holistic_eval_raw_tft015_flat_wmape.parquet`. Canonical
+`holistic_eval_results.csv` and `holistic_eval_raw.parquet` were restored afterward to the
+frozen incumbent baseline snapshot.*
+
+**Gate result:** FAILED, and materially worse than Run 014. Flat horizon weighting did not
+repair the Phase 7 regression; it amplified it. As a result, flat wMAPE should be treated as
+an explicitly rejected ablation for the current Phase 7 setup, not the new default.
+
+### Artifact handling
+
+- Preserved Run 014 snapshot before launch:
+  `models/tft_price/checkpoint_run014_phase7_best.pt`
+  `models/tft_price/scalers_run014_phase7.pkl`
+- Preserved Run 015 snapshot after training:
+  `models/tft_price/checkpoint_run015_flat_wmape_best.pt`
+  `models/tft_price/scalers_run015_flat_wmape.pkl`
+
+---
+
 ## TFT Price Run 012 — 2026-04-20 — Unified debiaser (prob_spike as decoder feature)
 
 **COMPLETE — FAILED.** Retrain on same dataset as Run 011b, with one structural change: the OOF
