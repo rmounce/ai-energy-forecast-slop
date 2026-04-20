@@ -334,7 +334,7 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 ### Complete / Current (as of 2026-04-20)
 1. ✅ AEMO ingest: PREDISPATCH, PD7Day, SevenDayOutlook, P5MIN → InfluxDB (systemd timers)
 2. ✅ Parquet ML cache: `data/export_parquet.py` — SA1/VIC1/NSW1 PD + 5m volatility agg + actuals
-3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py` — 20 enc / 15 dec features
+3. ✅ Run-aligned dataset builder: `data/build_training_dataset.py` — 20 enc / 18 dec features (Phase 7 layout)
 4. ✅ Training script: `train/train_tft_price.py` — AdamW + ReduceLROnPlateau + horizon-weighted loss
 5. ✅ Rolling-origin evaluation: `train/evaluate_tft.py` — nMAPE (all/base/spike) + quantile calibration
 6. ✅ NEMSEER/NEMWeb backfill: `ingest/backfill_predispatch_nemseer.py` — 2022–2026 full backfill
@@ -344,6 +344,10 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 10. ✅ Phase 1b: Run 011 — OOF debiased decoder + SDO features + q5/10/50/90/95/99 (commit 26b9cb5). Run 011b: lr=1e-4, patience=15.
 11. ~~Unified debiaser (Runs 012+013, 2026-04-20): ABANDONED~~ — pw_wMAPE objective destroys 72h accuracy when PD7Day sparse. Binary routing (Run 011b) retained. Scalers co-location fix in train_tft_price.py is permanent.
 12. **Phase 7:** Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder features. `pd_rrp` becomes PREDISPATCH-only (0-filled after accordion); new `pd7_rrp` covers all 144 steps; `covar_missing` renamed `predispatch_active` (flipped polarity); `pd7_generation_hour` and `pd7_available` added. Decoder 15→18 features. **Run 014 completed** with the new decoder and produced a valid 18-feature checkpoint, but the interim holistic eval failed badly (**−35.3% overall vs amber_apf_lgbm**). Rolling MPC eval still remains the real gate. See `docs/training_runs.md`.
+
+**Operational note:** the latest local training run overwrote `models/tft_price/checkpoint_best.pt`
+with the Run 014 18-feature checkpoint. The evaluated incumbent is still Run 011b, but that is
+now a logical status, not a guarantee about the file currently sitting at the default path.
 
 ### Current training setup (`train/train_tft_price.py`)
 
