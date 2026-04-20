@@ -10,6 +10,7 @@
 | `retro_tft_inference.py` | Retrospective TFT Tier 2 batch inference → `retro_tft_forecasts.pkl` ({ts → ndarray(144,6)}). |
 | `retro_tier1_inference.py` | Retrospective Tier 1 LGBM inference → `retro_tier1_forecasts.pkl` ({ts → ndarray(2,)}). Uses parquet P5MIN + actuals; InfluxDB for PV only. |
 | `eval_tier1_accuracy.py` | **Pass A tactical eval**: MAE per horizon h0-h11 for Tier 1 vs p5min_direct/naive/oracle. Outputs `tier1_accuracy_by_horizon.csv` + `tier1_accuracy_summary.csv`. |
+| `rolling_mpc_eval.py` | **Track A rolling MPC eval**: contiguous 5-min, price-only, SoC-carrying backtest scaffold for the execution-focused near horizon. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -294,3 +295,31 @@ strategic), the dual prerequisite for Amber APF replacement is met from an eval 
 HA's history database has recent actual battery dispatch (SOC, charge/discharge power).
 Cross-check simulator output against 1–2 weeks of real HA history to validate battery
 model fidelity before relying on holistic eval numbers.
+
+---
+
+## Rolling MPC Eval (planned)
+
+The next evaluation layer is a contiguous rolling MPC backtest that carries SoC forward and
+operates on the same `14h × 5-min` decision horizon as production. This is intentionally split
+into two tracks.
+
+### Track A — Model A / execution track
+
+- Goal: evaluate the execution-relevant near horizon with the longest available history
+- Cadence: `5-minute` stepping, continuous SoC carryover
+- Forecast semantics: current interval price treated as known; first hour from Tier 1 tactical
+  forecast; remaining horizon supplied by a near-horizon strategic extension and repeated into
+  5-minute slots where needed
+- History: use the dense-history PREDISPATCH/P5MIN/actuals window rather than waiting on PD7Day
+
+### Track B — full Phase 7 / planning track
+
+- Goal: evaluate the intended stitched Tier1+Tier2 architecture under rolling MPC
+- Cadence: `5-minute` stepping, continuous SoC carryover
+- Forecast semantics: Tier 1 supplies the first 12 five-minute steps; Tier 2 30-minute steps
+  are repeated across 6 × 5-minute slots for the rest of the 14h horizon
+- History: starts at `2026-02-09` because PD7Day is required for the current Phase 7 Tier 2
+
+Recommended build order: **Track A first**, then Track B once the core rolling machinery and
+reporting format are stable.

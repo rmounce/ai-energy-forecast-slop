@@ -42,6 +42,8 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 9 | LightGBM strategic model (30-min/72-hour) | **Complete** — TFT wins on spikes; LightGBM wins on normal. Archived as exploration. |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — deprioritised; Phase 7 active |
 | **7** | **Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder** | **Active** — Run 014 failed interim eval (−35.3%); Run 015 flat-wMAPE ablation also failed harder (−65.9%) |
+| **10A** | **Rolling MPC Eval — Model A / execution track** | **In progress** — `eval/rolling_mpc_eval.py` added; first price-only 5-min rolling backtest wiring in place |
+| **10B** | **Rolling MPC Eval — full Phase 7 / planning track** | **Planned** — shorter-history stitched Tier1+Tier2 backtest from first PD7Day availability (`2026-02-09`) |
 
 **Hard gate:** Phase 6 and Phase 8 must both pass before Phase 5 remainder resumes.
 **STATUS: Both gates passing as of 2026-04-19. Phase 5 remainder is now unblocked.**
@@ -96,6 +98,50 @@ actual RRP lags + PREDISPATCH summary + time. Val ROC-AUC 0.722. See `docs/revie
 **Caveat on eval statistics:** The 811 eval windows are drawn from a dense every-6h grid,
 giving 66h of overlap between neighbors. Results are directionally robust but not 811
 independent trials; tight thresholds (e.g. −2% normal) should not be over-interpreted.
+
+---
+
+## Rolling MPC Eval: Two-Track Plan
+
+The one-shot 72h holistic eval remains useful as a coarse regression screen, but it does not
+match how EMHASS actually operates. The production controller uses a 14h × 5-min MPC that
+replans repeatedly while carrying SoC forward. To align evaluation with that destination, the
+rolling backtest is split into two tracks.
+
+### Track 10A — Model A / execution track
+
+**Purpose:** evaluate the part of the architecture that most directly influences executed
+dispatch decisions.
+
+- Time step: `5 minutes`
+- Horizon presented to MPC: `14h × 5-min`
+- Forecast contract: Tier 1 native `5m / 60min` forecast for the first 12 steps, then a
+  near-horizon strategic extension for the remaining horizon, expanded from `30m` steps into
+  repeated `5m` slots as needed
+- Statefulness: continuous SoC carryover across the whole backtest
+- Refresh semantics: current-interval price treated as known; forecast path refreshed on the
+  eval timescale when new forecast-bearing source data is available
+- Historical scope: use the longest dense-history window available (PREDISPATCH/P5MIN/actuals),
+  not constrained by PD7Day availability
+
+**Why first:** this track directly tests the execution-facing component, gives far more history
+ than the PD7Day-constrained full Phase 7 setup, and should be the first rolling gate to build.
+
+### Track 10B — Full Phase 7 / planning track
+
+**Purpose:** evaluate the stitched strategic architecture in the form closest to the intended
+ production system.
+
+- Time step: `5 minutes`
+- Horizon presented to MPC: `14h × 5-min`
+- Forecast contract: Tier 1 `5m / 60min` + Tier 2 `30m / 72h`, with each Tier 2 30-minute
+  step repeated across six 5-minute slots
+- Statefulness: continuous SoC carryover
+- Historical scope: starts at **`2026-02-09`**, the first date where PD7Day exists, so the
+  planning-layer inputs are actually exercised
+
+**Interpretation:** this track is the closest match to the desired production architecture, but
+it has much shorter historical coverage and therefore lower statistical power.
 
 ---
 
