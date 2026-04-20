@@ -53,11 +53,27 @@ decoder inputs at inference — manifesting as All −28.3%, Normal −44.5% in 
 |---|---|---|---|---|
 | Run 011b + binary routing (prior best) | +9.7% | +7.2% | +32.6% | +0.4% |
 | Run 011b + unified debiaser (no retrain) | −9.9% | −16.2% | +31.9% | +4.2% |
-| **Run 012 + unified debiaser (scalers fixed)** | **pending** | **pending** | **pending** | **pending** |
+| **Run 012 + unified debiaser** | **−28.3%** | **−29.9%** | **−9.6%** | **−44.5%** |
 
-*Run 011b + unified debiaser result confirms the unified debiaser requires a paired TFT retrain —
-dropping it onto the old model creates a new train/inference mismatch (TFT trained on suppressed OOF,
-now sees partially-corrected spike inputs it never encountered).*
+*Results in `eval/results/holistic_eval_results_tft012_unified_debiaser.csv`.*
+
+**Key finding:** Run 012 is worse than the no-retrain case — the TFT retrain itself is the problem,
+not just the debiaser change. The normal stratum collapse (−44.5%) indicates a fundamentally broken
+model, not spike-routing confusion. Root cause: Run 012 converged at epoch 2 with training loss still
+falling steeply (0.070→0.058 over 9 epochs) — the model barely trained on the new bimodal OOF
+distribution. The new distribution (spike windows have high raw pd_rrp instead of suppressed OOF)
+may require lower LR and more patience to fit well.
+
+**Scaler bug note:** The catastrophic first eval attempt (All −28.3%) was attributed to a stale
+`models/tft_price/scalers.pkl` but proved to be a red herring — `pd_rrp` uses a fixed log transform,
+not a fitted scaler, so old and new were identical. Run 012 is genuinely this bad.
+
+**Next step (Run 013):** Retrain with `--lr 5e-5 --patience 15` to give the model more capacity
+to fit the new bimodal OOF distribution. If still failing, reconsider whether the bimodal training
+signal (spike windows at raw 5000 $/MWh vs non-spike at OOF 0-500 $/MWh) is learnable by this
+architecture without structural changes.
+
+**Prior best remains Run 011b + binary routing** until Run 013 validates the unified debiaser approach.
 
 ---
 
