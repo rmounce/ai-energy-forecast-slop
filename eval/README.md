@@ -318,6 +318,8 @@ Current outputs:
 - `{prefix}_daily_regimes.csv`: realized daily price regime labels (`spike` / `low` / `normal`)
 - `{prefix}_regime_summary.csv`: aggregate results by source and realized regime
 - `{prefix}_regime_summary_vs_baseline.csv`: regime-level deltas vs the chosen baseline
+- `{prefix}_spike_band_summary.csv`: aggregate results by source and spike severity bucket
+- `{prefix}_spike_band_summary_vs_baseline.csv`: spike-severity deltas vs the chosen baseline
 - `{prefix}_coverage.csv`: expected vs executed steps by source, useful for spotting missing
   forecast coverage. Includes skip counters for missing actuals, missing forecast curves, invalid
   forecast curves, and repaired-curve counts when present.
@@ -342,20 +344,35 @@ Current outputs:
 Recommended build order: **Track A first**, then Track B once the core rolling machinery and
 reporting format are stable.
 
-**Observed Track A result (6-week sample, 2025-07-21 → 2025-09-01):**
-- `amber_apf_lgbm`: **$2.523/day**
-- `model_a_hybrid`: **$2.585/day** (**+2.4%** vs amber)
-- `p5min_naive`: **~$0/day**
+**Observed Track A results so far:**
+- **Window A** (`2025-07-21 → 2025-09-01`):
+  - `amber_apf_lgbm`: **$2.523/day**
+  - `model_a_hybrid`: **$2.585/day** (**+2.4%** vs amber)
+- **Window B** (`2025-09-01 → 2025-10-13`):
+  - `amber_apf_lgbm`: **$2.406/day**
+  - `model_a_hybrid`: **$2.134/day** (**−11.3%** vs amber)
 
-Regime view from `rolling_mpc_eval_tracka_6week_compare_regime_summary_vs_baseline.csv`:
+Window A regime view from `rolling_mpc_eval_tracka_6week_compare_regime_summary_vs_baseline.csv`:
 - `spike`: hybrid better than amber (**$3.601/day** vs **$3.312/day**, +8.7%)
 - `low`: near tie with slight hybrid edge (**$1.576/day** vs **$1.562/day**, +0.9%)
 - `normal`: hybrid worse than amber (**$1.556/day** vs **$1.963/day**, −20.8%)
+
+Window B regime view from `rolling_mpc_eval_tracka_followup_6week_regime_summary_vs_baseline.csv`:
+- `low`: hybrid worse than amber (**$1.446/day** vs **$1.521/day**, −4.9%)
+- `normal`: hybrid worse than amber (**$1.446/day** vs **$1.704/day**, −15.2%)
+- `spike`: hybrid worse than amber (**$4.073/day** vs **$4.617/day**, −11.8%)
+
+Window B spike-band view from `rolling_mpc_eval_tracka_followup_6week_spikebands_spike_band_summary_vs_baseline.csv`:
+- `spike_moderate`: hybrid worse than amber (**$4.361/day** vs **$4.701/day**, −7.2%)
+- `spike_extreme`: hybrid worse than amber on the single extreme day (**$1.195/day** vs **$3.782/day**)
+
+**Current reading:** Track 10A is useful but mixed. The hybrid does not yet show a robust,
+window-stable edge over Amber on the execution track.
 
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
   partially invalid expanded curves
 - `rolling_mpc_eval.py` now normalizes Amber target timestamps to the intended `30min` grid and
   repairs finite gaps before dispatch
-- in the 6-week run, Amber achieved full coverage with **241 repaired curves** and **0 skipped
-  steps**
+- Window A achieved full coverage with **241 repaired curves** and **0 skipped steps**
+- Window B achieved full coverage with **0 repaired curves** and **0 skipped steps**

@@ -527,6 +527,14 @@ def classify_price_regime(prices: pd.Series) -> str:
     return "normal"
 
 
+def classify_spike_band(max_price_mwh: float, regime: str) -> str:
+    if regime != "spike":
+        return regime
+    if max_price_mwh >= 1000.0:
+        return "spike_extreme"
+    return "spike_moderate"
+
+
 def build_daily_regime_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
     if raw_df.empty:
         return pd.DataFrame(
@@ -557,7 +565,11 @@ def build_daily_regime_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
         lambda row: classify_price_regime(pd.Series([row["min_price_mwh"], row["max_price_mwh"]])),
         axis=1,
     )
-    return out[["date", "regime", "max_price_mwh", "min_price_mwh", "mean_price_mwh", "steps"]]
+    out["spike_band"] = out.apply(
+        lambda row: classify_spike_band(float(row["max_price_mwh"]), str(row["regime"])),
+        axis=1,
+    )
+    return out[["date", "regime", "spike_band", "max_price_mwh", "min_price_mwh", "mean_price_mwh", "steps"]]
 
 
 def add_daily_regime_to_summary(
@@ -566,7 +578,7 @@ def add_daily_regime_to_summary(
 ) -> pd.DataFrame:
     if daily_summary_df.empty:
         return daily_summary_df.copy()
-    regime_cols = ["date", "regime", "max_price_mwh", "min_price_mwh"]
+    regime_cols = ["date", "regime", "spike_band", "max_price_mwh", "min_price_mwh"]
     return daily_summary_df.merge(daily_regime_df[regime_cols], on="date", how="left")
 
 
@@ -665,6 +677,35 @@ def build_regime_summary(daily_summary_df: pd.DataFrame) -> pd.DataFrame:
             mean_soc_close_kwh=("soc_close_kwh", "mean"),
         )
         .sort_values(["regime", "source"], kind="stable")
+        .reset_index(drop=True)
+    )
+    return out
+
+
+def build_spike_band_summary(daily_summary_df: pd.DataFrame) -> pd.DataFrame:
+    if daily_summary_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "source",
+                "spike_band",
+                "n_days",
+                "total_pnl",
+                "mean_daily_pnl",
+                "mean_abs_dispatch_kw",
+                "mean_soc_close_kwh",
+            ]
+        )
+
+    out = (
+        daily_summary_df.groupby(["source", "spike_band"], as_index=False)
+        .agg(
+            n_days=("date", "nunique"),
+            total_pnl=("total_pnl", "sum"),
+            mean_daily_pnl=("total_pnl", "mean"),
+            mean_abs_dispatch_kw=("mean_abs_dispatch_kw", "mean"),
+            mean_soc_close_kwh=("soc_close_kwh", "mean"),
+        )
+        .sort_values(["spike_band", "source"], kind="stable")
         .reset_index(drop=True)
     )
     return out
@@ -807,11 +848,14 @@ def main():
     daily_delta_path = RESULTS_DIR / f"{args.output_prefix}_daily_summary_vs_baseline.csv"
     regime_summary_path = RESULTS_DIR / f"{args.output_prefix}_regime_summary.csv"
     regime_delta_path = RESULTS_DIR / f"{args.output_prefix}_regime_summary_vs_baseline.csv"
+    spike_band_summary_path = RESULTS_DIR / f"{args.output_prefix}_spike_band_summary.csv"
+    spike_band_delta_path = RESULTS_DIR / f"{args.output_prefix}_spike_band_summary_vs_baseline.csv"
     daily_summary_df = build_daily_summary(raw_df)
     daily_regime_df = build_daily_regime_summary(raw_df)
     daily_summary_df = add_daily_regime_to_summary(daily_summary_df, daily_regime_df)
     coverage_df = build_coverage_summary(raw_df, start, end, sources, summary_df=summary_df)
     regime_summary_df = build_regime_summary(daily_summary_df)
+    spike_band_summary_df = build_spike_band_summary(daily_summary_df)
     summary_with_deltas_df = add_baseline_deltas(
         summary_df,
         baseline_source=baseline_source,
@@ -829,6 +873,12 @@ def main():
         value_cols=["total_pnl", "mean_daily_pnl", "mean_abs_dispatch_kw", "mean_soc_close_kwh"],
         join_cols=["regime"],
     )
+    spike_band_summary_with_deltas_df = add_baseline_deltas(
+        spike_band_summary_df,
+        baseline_source=baseline_source,
+        value_cols=["total_pnl", "mean_daily_pnl", "mean_abs_dispatch_kw", "mean_soc_close_kwh"],
+        join_cols=["spike_band"],
+    )
     raw_df.to_parquet(raw_path, index=False)
     summary_df.to_csv(summary_path, index=False)
     daily_summary_df.to_csv(daily_summary_path, index=False)
@@ -838,6 +888,8 @@ def main():
     daily_summary_with_deltas_df.to_csv(daily_delta_path, index=False)
     regime_summary_df.to_csv(regime_summary_path, index=False)
     regime_summary_with_deltas_df.to_csv(regime_delta_path, index=False)
+    spike_band_summary_df.to_csv(spike_band_summary_path, index=False)
+    spike_band_summary_with_deltas_df.to_csv(spike_band_delta_path, index=False)
     print(f"Saved raw → {raw_path.relative_to(ROOT)}")
     print(f"Saved summary → {summary_path.relative_to(ROOT)}")
     print(f"Saved daily summary → {daily_summary_path.relative_to(ROOT)}")
@@ -847,6 +899,8 @@ def main():
     print(f"Saved daily summary vs baseline → {daily_delta_path.relative_to(ROOT)}")
     print(f"Saved regime summary → {regime_summary_path.relative_to(ROOT)}")
     print(f"Saved regime summary vs baseline → {regime_delta_path.relative_to(ROOT)}")
+    print(f"Saved spike-band summary → {spike_band_summary_path.relative_to(ROOT)}")
+    print(f"Saved spike-band summary vs baseline → {spike_band_delta_path.relative_to(ROOT)}")
     print(summary_with_deltas_df.to_string(index=False))
     print(coverage_df.to_string(index=False))
 
