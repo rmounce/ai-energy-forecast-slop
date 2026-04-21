@@ -419,6 +419,21 @@ Dual-driven follow-up:
 - the raw parquet now records both `probe_initial_soc_shadow_price_per_kwh` and
   `control_initial_soc_shadow_price_per_kwh` so the policy can be inspected after a run
 
+Window B dual sweep (`rolling_mpc_eval_tracka_followup_6week_dual{05,10,15,25,30}_summary_vs_baseline.csv`):
+- `dual 0.5`: hybrid **$2.134/day** vs amber **$2.406/day** (**−11.3%**)
+- `dual 1.0`: hybrid **$2.140/day** vs amber **$2.411/day** (**−11.3%**)
+- `dual 1.5`: hybrid **$2.256/day** vs amber **$2.364/day** (**−4.6%**)
+- `dual 2.5`: hybrid **$2.236/day** vs amber **$2.360/day** (**−5.3%**)
+- `dual 3.0`: hybrid **$2.245/day** vs amber **$2.363/day** (**−5.0%**)
+
+Interpretation:
+- the dual signal is not useless, but this first adaptive controller still underperforms the
+  best fixed salvage-value proxy (`100 $/MWh`, **−3.3%**)
+- the effective applied terminal values were too small at low scales and still not enough to
+  beat the static proxy at higher scales
+- treat the fixed terminal-value approach as a useful surrogate in Track 10A, not yet as the
+  likely production design endpoint
+
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
   partially invalid expanded curves
