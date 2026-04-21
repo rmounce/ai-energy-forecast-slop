@@ -72,6 +72,7 @@ TACTICAL_MODEL_DIR = ROOT / "models" / "lgbm_tactical"
 
 HORIZON_5M_STEPS = 14 * 12  # 14h × 12 steps/hour = 168
 TACTICAL_STEPS = 12         # 0–60 min at 5-min resolution
+STRATEGIC_HORIZON_5M_STEPS = 72 * 12  # 72h × 12 steps/hour = 864
 
 
 def load_config() -> dict:
@@ -277,18 +278,20 @@ class ForecastProviders:
         self._tier1_cache: dict[pd.Timestamp, pd.Series] = {}
         self._tft_cache: dict[pd.Timestamp, pd.Series] = {}
         self._amber_cache: dict[pd.Timestamp, pd.Series] = {}
+        self._strategic_target_cache: dict[tuple[str, pd.Timestamp, float], float | None] = {}
         self._last_curve_repaired: dict[str, bool] = {}
 
     def curve_was_repaired(self, source: str) -> bool:
         return self._last_curve_repaired.get(source, False)
 
-    def _finalize_curve(self, source: str, values: np.ndarray, current_actual: float) -> np.ndarray | None:
+    def _finalize_curve(self, source: str, values: np.ndarray, current_actual: float,
+                        expected_steps: int = HORIZON_5M_STEPS) -> np.ndarray | None:
         out = np.asarray(values, dtype=np.float64).copy()
         self._last_curve_repaired[source] = False
         if len(out) == 0:
             return None
         out[0] = current_actual
-        if out.shape[0] != HORIZON_5M_STEPS:
+        if out.shape[0] != expected_steps:
             return out
         if np.isfinite(out).all():
             return out
@@ -366,6 +369,48 @@ class ForecastProviders:
         self._amber_cache[creation] = expanded
         return expanded
 
+    def build_strategic_curve(self, source: str, ts: pd.Timestamp) -> np.ndarray | None:
+        idx = pd.date_range(start=ts, periods=STRATEGIC_HORIZON_5M_STEPS, freq="5min", tz="UTC")
+        current_actual = self.current_actual_price(ts)
+        if np.isnan(current_actual):
+            return None
+
+        if source == "amber_apf_lgbm":
+            amber = self.amber_expanded(ts)
+            if amber is None:
+                return None
+            out = amber.reindex(idx).ffill().bfill().values.astype(np.float64)
+            return self._finalize_curve(source, out, current_actual, expected_steps=STRATEGIC_HORIZON_5M_STEPS)
+
+        if source == "model_a_hybrid":
+            tft = self.tft_q50_expanded(ts)
+            if tft is None:
+                return None
+            out = tft.reindex(idx).ffill().bfill().values.astype(np.float64)
+            return self._finalize_curve(source, out, current_actual, expected_steps=STRATEGIC_HORIZON_5M_STEPS)
+
+        return None
+
+    def strategic_soc_target(self, source: str, ts: pd.Timestamp, soc_init_kwh: float) -> float | None:
+        cache_key = (source, ts, round(float(soc_init_kwh), 6))
+        if cache_key in self._strategic_target_cache:
+            return self._strategic_target_cache[cache_key]
+
+        curve = self.build_strategic_curve(source, ts)
+        if curve is None:
+            self._strategic_target_cache[cache_key] = None
+            return None
+
+        strategic = solve_lp_dispatch(curve, soc_init_kwh)
+        soc_path = strategic.get("soc_trajectory_kwh")
+        if soc_path is None or len(soc_path) < HORIZON_5M_STEPS:
+            self._strategic_target_cache[cache_key] = None
+            return None
+
+        target = float(np.clip(soc_path[HORIZON_5M_STEPS - 1], 0.0, CAPACITY_KWH))
+        self._strategic_target_cache[cache_key] = target
+        return target
+
     def build_forecast_curve(self, source: str, ts: pd.Timestamp) -> np.ndarray | None:
         idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
         current_actual = self.current_actual_price(ts)
@@ -405,6 +450,8 @@ def simulate_stepwise(
     soc_init: float,
     terminal_energy_value_per_kwh: float = 0.0,
     dual_terminal_scale: float = 0.0,
+    strategic_soc_handoff: bool = False,
+    strategic_target_mode: str = "exact",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     state = {src: float(soc_init) for src in sources}
     raw_rows = []
@@ -446,8 +493,26 @@ def simulate_stepwise(
             soc_prev = state[src]
             probe_shadow_price_per_kwh = float("nan")
             applied_terminal_energy_value_per_kwh = terminal_energy_value_per_kwh
+            strategic_soc_target_kwh = float("nan")
+            min_terminal_soc_kwh = None
+            max_terminal_soc_kwh = None
+            if strategic_soc_handoff:
+                target = providers.strategic_soc_target(src, ts, soc_prev)
+                if target is not None and np.isfinite(target):
+                    strategic_soc_target_kwh = float(target)
+                    if strategic_target_mode == "floor":
+                        min_terminal_soc_kwh = strategic_soc_target_kwh
+                    elif strategic_target_mode == "exact":
+                        min_terminal_soc_kwh = strategic_soc_target_kwh
+                        max_terminal_soc_kwh = strategic_soc_target_kwh
             if dual_terminal_scale > 0.0:
-                probe = solve_lp_dispatch(curve, state[src], terminal_energy_value_per_kwh=0.0)
+                probe = solve_lp_dispatch(
+                    curve,
+                    state[src],
+                    terminal_energy_value_per_kwh=0.0,
+                    min_terminal_soc_kwh=min_terminal_soc_kwh,
+                    max_terminal_soc_kwh=max_terminal_soc_kwh,
+                )
                 probe_shadow_price_per_kwh = probe["initial_soc_shadow_price_per_kwh"]
                 if np.isfinite(probe_shadow_price_per_kwh):
                     applied_terminal_energy_value_per_kwh = max(
@@ -460,6 +525,8 @@ def simulate_stepwise(
                 curve,
                 state[src],
                 terminal_energy_value_per_kwh=applied_terminal_energy_value_per_kwh,
+                min_terminal_soc_kwh=min_terminal_soc_kwh,
+                max_terminal_soc_kwh=max_terminal_soc_kwh,
             )
             c_plan = solve["charge_kw"]
             d_plan = solve["discharge_kw"]
@@ -481,6 +548,7 @@ def simulate_stepwise(
                 "soc_kwh": state[src],
                 "step_pnl": pnl,
                 "terminal_energy_value_per_kwh": applied_terminal_energy_value_per_kwh,
+                "strategic_soc_target_kwh": strategic_soc_target_kwh,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
@@ -498,6 +566,8 @@ def simulate_stepwise(
             "soc_final_kwh": state[src],
             "terminal_energy_value_per_kwh": terminal_energy_value_per_kwh,
             "dual_terminal_scale": dual_terminal_scale,
+            "strategic_soc_handoff": strategic_soc_handoff,
+            "strategic_target_mode": strategic_target_mode if strategic_soc_handoff else "",
             "skipped_missing_actual": skipped_missing_actual[src],
             "skipped_missing_curve": skipped_missing_curve[src],
             "skipped_invalid_curve": skipped_invalid_curve[src],
@@ -817,6 +887,8 @@ def _simulate_single_source(
         soc_init=soc_init,
         terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
         dual_terminal_scale=args_dict["dual_terminal_scale"],
+        strategic_soc_handoff=args_dict["strategic_soc_handoff"],
+        strategic_target_mode=args_dict["strategic_target_mode"],
     )
 
 
@@ -840,6 +912,8 @@ def simulate_stepwise_parallel(
             soc_init,
             terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
             dual_terminal_scale=args_dict["dual_terminal_scale"],
+            strategic_soc_handoff=args_dict["strategic_soc_handoff"],
+            strategic_target_mode=args_dict["strategic_target_mode"],
         )
 
     raw_frames: list[pd.DataFrame] = []
@@ -906,6 +980,23 @@ def main():
             "solve terminal-energy value to max(0, scale * shadow_price)."
         ),
     )
+    parser.add_argument(
+        "--strategic-soc-handoff",
+        action="store_true",
+        help=(
+            "Derive a 14h terminal SoC target from the source's longer strategic curve and "
+            "pass it into the tactical 14h solve."
+        ),
+    )
+    parser.add_argument(
+        "--strategic-target-mode",
+        choices=["exact", "floor"],
+        default="exact",
+        help=(
+            "How to enforce the derived 14h strategic SoC target: exact terminal target or "
+            "minimum terminal floor."
+        ),
+    )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
     parser.add_argument(
         "--baseline-source",
@@ -929,6 +1020,8 @@ def main():
         parser.error("--dual-terminal-scale must be >= 0")
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
         parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
+    if args.strategic_target_mode and not args.strategic_soc_handoff and args.strategic_target_mode != "exact":
+        parser.error("--strategic-target-mode only applies with --strategic-soc-handoff")
 
     if "model_a_hybrid" in sources and (not args.tft_checkpoint or not args.tft_scalers):
         parser.error("model_a_hybrid requires --tft-checkpoint and --tft-scalers")
@@ -947,6 +1040,7 @@ def main():
     print(f"  Baseline: {baseline_source}")
     print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
     print(f"  Dual terminal scale: {args.dual_terminal_scale:.3f}")
+    print(f"  Strategic SoC handoff: {args.strategic_soc_handoff} ({args.strategic_target_mode})")
     print(f"  Workers: {workers}")
 
     t0 = time.time()

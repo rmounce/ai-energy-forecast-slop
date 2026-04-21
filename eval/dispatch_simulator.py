@@ -68,11 +68,28 @@ def _estimate_initial_soc_shadow_price_per_kwh(result, n: int) -> float:
     return -d_cost_d_soc_init
 
 
+def compute_soc_trajectory(charge_kw: np.ndarray, discharge_kw: np.ndarray,
+                           soc_init: float,
+                           interval_h: float = INTERVAL_H,
+                           capacity_kwh: float = CAPACITY_KWH) -> np.ndarray:
+    """Return end-of-step SoC values for a charge/discharge plan."""
+    charge_kw = np.asarray(charge_kw, dtype=np.float64)
+    discharge_kw = np.asarray(discharge_kw, dtype=np.float64)
+    soc = float(soc_init)
+    out = np.zeros(len(charge_kw), dtype=np.float64)
+    for i, (c_kw, d_kw) in enumerate(zip(charge_kw, discharge_kw)):
+        soc = float(np.clip(soc + (c_kw * EFF_C - d_kw) * interval_h, 0.0, capacity_kwh))
+        out[i] = soc
+    return out
+
+
 def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                       interval_h: float = INTERVAL_H,
                       capacity_kwh: float = CAPACITY_KWH,
                       max_power_kw: float = MAX_POWER_KW,
-                      terminal_energy_value_per_kwh: float = 0.0) -> dict:
+                      terminal_energy_value_per_kwh: float = 0.0,
+                      min_terminal_soc_kwh: float | None = None,
+                      max_terminal_soc_kwh: float | None = None) -> dict:
     """
     Optimal battery dispatch over a price horizon via LP.
 
@@ -84,6 +101,10 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         Salvage value assigned to energy remaining in the battery at the end of
         the horizon. Positive values discourage premature discharge and act as a
         generic "opportunity cost of energy" bias.
+
+    min_terminal_soc_kwh / max_terminal_soc_kwh:
+        Optional terminal SoC constraints at the end of the horizon. When both
+        are set to the same value, the solve enforces an exact terminal target.
 
     Returns a dict containing the optimal actions and LP diagnostics.
     Infeasible solves return zero actions with status metadata.
@@ -117,8 +138,28 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
     A_upper = np.hstack([ EFF_C * interval_h * L, -interval_h * L])
     b_upper = np.full(n, capacity_kwh - soc_init)
 
-    A_ub = np.vstack([A_lower, A_upper])
-    b_ub  = np.concatenate([b_lower, b_upper])
+    A_parts = [A_lower, A_upper]
+    b_parts = [b_lower, b_upper]
+
+    terminal_row_lower = np.hstack([
+        -EFF_C * interval_h * np.ones(n, dtype=np.float64),
+         interval_h * np.ones(n, dtype=np.float64),
+    ])
+    terminal_row_upper = np.hstack([
+         EFF_C * interval_h * np.ones(n, dtype=np.float64),
+        -interval_h * np.ones(n, dtype=np.float64),
+    ])
+    if min_terminal_soc_kwh is not None:
+        min_terminal_soc_kwh = float(np.clip(min_terminal_soc_kwh, 0.0, capacity_kwh))
+        A_parts.append(terminal_row_lower.reshape(1, -1))
+        b_parts.append(np.array([soc_init - min_terminal_soc_kwh], dtype=np.float64))
+    if max_terminal_soc_kwh is not None:
+        max_terminal_soc_kwh = float(np.clip(max_terminal_soc_kwh, 0.0, capacity_kwh))
+        A_parts.append(terminal_row_upper.reshape(1, -1))
+        b_parts.append(np.array([max_terminal_soc_kwh - soc_init], dtype=np.float64))
+
+    A_ub = np.vstack(A_parts)
+    b_ub = np.concatenate(b_parts)
     bounds = [(0.0, max_power_kw)] * (2 * n)
 
     result = linprog(c_obj, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs",
@@ -141,6 +182,9 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         "status": int(result.status),
         "success": bool(result.success),
         "initial_soc_shadow_price_per_kwh": _estimate_initial_soc_shadow_price_per_kwh(result, n),
+        "soc_trajectory_kwh": compute_soc_trajectory(result.x[:n], result.x[n:], soc_init,
+                                                     interval_h=interval_h,
+                                                     capacity_kwh=capacity_kwh),
     }
 
 
@@ -148,7 +192,9 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                 interval_h: float = INTERVAL_H,
                 capacity_kwh: float = CAPACITY_KWH,
                 max_power_kw: float = MAX_POWER_KW,
-                terminal_energy_value_per_kwh: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+                terminal_energy_value_per_kwh: float = 0.0,
+                min_terminal_soc_kwh: float | None = None,
+                max_terminal_soc_kwh: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """
     Backwards-compatible wrapper returning only the action arrays.
     """
@@ -159,6 +205,8 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         capacity_kwh=capacity_kwh,
         max_power_kw=max_power_kw,
         terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
+        min_terminal_soc_kwh=min_terminal_soc_kwh,
+        max_terminal_soc_kwh=max_terminal_soc_kwh,
     )
     return solve["charge_kw"], solve["discharge_kw"]
 
