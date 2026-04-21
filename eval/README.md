@@ -398,6 +398,20 @@ Potential next experiment:
   adds a simple end-of-horizon salvage value for stored energy. This is not yet a dual-driven
   policy, but it is a useful first ablation hook for opportunity-cost-aware dispatch.
 
+Window B salvage-value sweep (`rolling_mpc_eval_tracka_followup_6week_te{0,50,100,150,200}_summary_vs_baseline.csv`):
+- `0 $/MWh`: hybrid **$2.134/day** vs amber **$2.406/day** (**−11.3%**)
+- `50 $/MWh`: hybrid **$2.254/day** vs amber **$2.393/day** (**−5.8%**)
+- `100 $/MWh`: hybrid **$2.306/day** vs amber **$2.385/day** (**−3.3%**)
+- `150 $/MWh`: hybrid **$2.287/day** vs amber **$2.383/day** (**−4.0%**)
+- `200 $/MWh`: hybrid **$2.249/day** vs amber **$2.355/day** (**−4.5%**)
+
+Interpretation:
+- a simple inventory-value bias recovers a large fraction of the hybrid's loss on the bad
+  follow-up window
+- the benefit peaks around **`100 $/MWh`** in this coarse sweep
+- that is strong enough evidence to move from fixed salvage-value sweeps to a more principled
+  dual-driven opportunity-cost variant
+
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
   partially invalid expanded curves
