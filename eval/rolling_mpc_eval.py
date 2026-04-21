@@ -404,6 +404,7 @@ def simulate_stepwise(
     sources: list[str],
     soc_init: float,
     terminal_energy_value_per_kwh: float = 0.0,
+    dual_terminal_scale: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     state = {src: float(soc_init) for src in sources}
     raw_rows = []
@@ -443,10 +444,22 @@ def simulate_stepwise(
                     invalid_curve_logged[src] += 1
                 continue
             soc_prev = state[src]
+            probe_shadow_price_per_kwh = float("nan")
+            applied_terminal_energy_value_per_kwh = terminal_energy_value_per_kwh
+            if dual_terminal_scale > 0.0:
+                probe = solve_lp_dispatch(curve, state[src], terminal_energy_value_per_kwh=0.0)
+                probe_shadow_price_per_kwh = probe["initial_soc_shadow_price_per_kwh"]
+                if np.isfinite(probe_shadow_price_per_kwh):
+                    applied_terminal_energy_value_per_kwh = max(
+                        0.0,
+                        dual_terminal_scale * probe_shadow_price_per_kwh,
+                    )
+                else:
+                    applied_terminal_energy_value_per_kwh = 0.0
             solve = solve_lp_dispatch(
                 curve,
                 state[src],
-                terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
+                terminal_energy_value_per_kwh=applied_terminal_energy_value_per_kwh,
             )
             c_plan = solve["charge_kw"]
             d_plan = solve["discharge_kw"]
@@ -467,8 +480,9 @@ def simulate_stepwise(
                 "soc_prev_kwh": soc_prev,
                 "soc_kwh": state[src],
                 "step_pnl": pnl,
-                "terminal_energy_value_per_kwh": terminal_energy_value_per_kwh,
-                "initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
+                "terminal_energy_value_per_kwh": applied_terminal_energy_value_per_kwh,
+                "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
+                "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
 
         if (i + 1) % 288 == 0:
@@ -483,6 +497,7 @@ def simulate_stepwise(
             "mean_per_day": pnl_totals[src] / n_days,
             "soc_final_kwh": state[src],
             "terminal_energy_value_per_kwh": terminal_energy_value_per_kwh,
+            "dual_terminal_scale": dual_terminal_scale,
             "skipped_missing_actual": skipped_missing_actual[src],
             "skipped_missing_curve": skipped_missing_curve[src],
             "skipped_invalid_curve": skipped_invalid_curve[src],
@@ -801,6 +816,7 @@ def _simulate_single_source(
         sources=[source],
         soc_init=soc_init,
         terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
+        dual_terminal_scale=args_dict["dual_terminal_scale"],
     )
 
 
@@ -823,6 +839,7 @@ def simulate_stepwise_parallel(
             sources,
             soc_init,
             terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
+            dual_terminal_scale=args_dict["dual_terminal_scale"],
         )
 
     raw_frames: list[pd.DataFrame] = []
@@ -880,6 +897,15 @@ def main():
             "Positive values bias the LP toward preserving charge."
         ),
     )
+    parser.add_argument(
+        "--dual-terminal-scale",
+        type=float,
+        default=0.0,
+        help=(
+            "If > 0, probe the LP shadow price of initial SoC each step and set the control "
+            "solve terminal-energy value to max(0, scale * shadow_price)."
+        ),
+    )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
     parser.add_argument(
         "--baseline-source",
@@ -899,6 +925,10 @@ def main():
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
     baseline_source = args.baseline_source.strip() or sources[0]
     args.terminal_energy_value_per_kwh = args.terminal_energy_value_mwh / 1000.0
+    if args.dual_terminal_scale < 0:
+        parser.error("--dual-terminal-scale must be >= 0")
+    if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
+        parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
 
     if "model_a_hybrid" in sources and (not args.tft_checkpoint or not args.tft_scalers):
         parser.error("model_a_hybrid requires --tft-checkpoint and --tft-scalers")
@@ -916,6 +946,7 @@ def main():
     print(f"  Sources: {sources}")
     print(f"  Baseline: {baseline_source}")
     print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
+    print(f"  Dual terminal scale: {args.dual_terminal_scale:.3f}")
     print(f"  Workers: {workers}")
 
     t0 = time.time()

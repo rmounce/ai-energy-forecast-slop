@@ -412,6 +412,13 @@ Interpretation:
 - that is strong enough evidence to move from fixed salvage-value sweeps to a more principled
   dual-driven opportunity-cost variant
 
+Dual-driven follow-up:
+- `rolling_mpc_eval.py` now also supports `--dual-terminal-scale`
+- per MPC step, it first probes the LP with zero terminal value, reads the initial-SoC shadow
+  price, and then re-solves with `terminal_energy_value = max(0, scale * shadow_price)`
+- the raw parquet now records both `probe_initial_soc_shadow_price_per_kwh` and
+  `control_initial_soc_shadow_price_per_kwh` so the policy can be inspected after a run
+
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
   partially invalid expanded curves
