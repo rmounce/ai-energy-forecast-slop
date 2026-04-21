@@ -441,6 +441,23 @@ Independent review checkpoint (2026-04-21):
 - on that reading, the next priority is to align the rolling eval with the described production
   SoC handoff before drawing stronger architectural conclusions from the terminal-value sweeps
 
+Window B strategic-handoff rerun:
+- pre-handoff: hybrid **$2.134/day** vs amber **$2.406/day** (**−11.3%**)
+- handoff `exact`: hybrid **$2.271/day** vs amber **$2.451/day** (**−7.4%**)
+- handoff `floor`: hybrid **$2.271/day** vs amber **$2.450/day** (**−7.3%**)
+
+Interpretation:
+- the reviewer checkpoint was directionally right: adding the strategic `14h` SoC handoff removes
+  a meaningful part of the Window B deficit
+- but it does not remove all of it, so the earlier terminal-value result was not purely an eval
+  artifact
+- the biggest improvement appears on `spike` days; `low` and `normal` remain materially weaker
+
+Operational consequence:
+- Track 10A should now treat the strategic `14h` SoC handoff as part of the aligned baseline
+- any future Option A/B/C experiments should be judged against the **handoff-enabled** setup, not
+  the older no-handoff variant
+
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
   partially invalid expanded curves

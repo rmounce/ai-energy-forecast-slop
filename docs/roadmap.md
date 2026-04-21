@@ -221,6 +221,27 @@ continuing with more surrogate tuning. After that alignment step, re-run the fol
 then reassess whether the remaining gap, if any, calls for LP biasing (A), quantile/risk-policy
 tilt (B), or a combination (C).
 
+**Strategic handoff result (Track 10A, Window B):**
+- pre-handoff: hybrid **$2.134/day** vs amber **$2.406/day** (**−11.3%**)
+- handoff `exact`: hybrid **$2.271/day** vs amber **$2.451/day** (**−7.4%**)
+- handoff `floor`: hybrid **$2.271/day** vs amber **$2.450/day** (**−7.3%**)
+
+**Interpretation:** restoring the strategic `14h` SoC handoff does close a meaningful part of
+the Window B gap, which supports the view that some of the earlier terminal-value benefit was
+compensating for a missing boundary condition in Track 10A. However, the gap does **not**
+disappear. That means the earlier surrogate result was not *only* an eval artifact.
+
+**Regime effect of handoff (Window B, exact mode):**
+- `spike`: hybrid gap improves materially, from **−11.8%** pre-handoff to **−3.2%**
+- `low`: hybrid remains weaker than amber (**−8.7%**)
+- `normal`: hybrid remains weaker than amber (**−13.3%**)
+
+**Current reading:** the strategic handoff should remain part of the rolling-eval baseline from
+this point onward. With that alignment restored, the remaining work is no longer "fix missing
+boundary state"; it is to understand and improve the residual `low` / `normal` weakness, and to
+decide whether the next production-facing mechanism should be quantile/risk-policy tilt (B) or a
+combined approach (C).
+
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
 **241 repaired curves** with **0 skipped steps**; the follow-up 6-week run required **0**
