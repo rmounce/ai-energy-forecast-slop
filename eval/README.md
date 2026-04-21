@@ -10,7 +10,7 @@
 | `retro_tft_inference.py` | Retrospective TFT Tier 2 batch inference → `retro_tft_forecasts.pkl` ({ts → ndarray(144,6)}). |
 | `retro_tier1_inference.py` | Retrospective Tier 1 LGBM inference → `retro_tier1_forecasts.pkl` ({ts → ndarray(2,)}). Uses parquet P5MIN + actuals; InfluxDB for PV only. |
 | `eval_tier1_accuracy.py` | **Pass A tactical eval**: MAE per horizon h0-h11 for Tier 1 vs p5min_direct/naive/oracle. Outputs `tier1_accuracy_by_horizon.csv` + `tier1_accuracy_summary.csv`. |
-| `rolling_mpc_eval.py` | **Track A rolling MPC eval**: contiguous 5-min, price-only, SoC-carrying backtest scaffold for the execution-focused near horizon. |
+| `rolling_mpc_eval.py` | **Track A rolling MPC eval**: contiguous 5-min, price-only, SoC-carrying backtest scaffold for the execution-focused near horizon, with regime, spike-band, coverage, and behavior diagnostics. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -320,6 +320,9 @@ Current outputs:
 - `{prefix}_regime_summary_vs_baseline.csv`: regime-level deltas vs the chosen baseline
 - `{prefix}_spike_band_summary.csv`: aggregate results by source and spike severity bucket
 - `{prefix}_spike_band_summary_vs_baseline.csv`: spike-severity deltas vs the chosen baseline
+- `{prefix}_behavior_summary.csv`: by-regime charge/discharge/SoC posture summary
+- `{prefix}_behavior_summary_vs_baseline.csv`: by-regime behavior deltas vs the chosen baseline,
+  including realized average charge/discharge prices
 - `{prefix}_coverage.csv`: expected vs executed steps by source, useful for spotting missing
   forecast coverage. Includes skip counters for missing actuals, missing forecast curves, invalid
   forecast curves, and repaired-curve counts when present.
@@ -368,6 +371,29 @@ Window B spike-band view from `rolling_mpc_eval_tracka_followup_6week_spikebands
 
 **Current reading:** Track 10A is useful but mixed. The hybrid does not yet show a robust,
 window-stable edge over Amber on the execution track.
+
+Behavioral diagnosis from `rolling_mpc_eval_tracka_followup_6week_behavior_prices_behavior_summary_vs_baseline.csv`:
+- `low`: hybrid charged less than amber and built less end-of-day energy (`soc_delta`
+  **7.50 kWh** vs **10.78 kWh**); average charge price was slightly better than amber, so the
+  loss looks more like weaker inventory build than obviously worse entry timing
+- `normal`: hybrid charged slightly more but discharged less, started with lower SoC, and
+  depleted less over the day (`soc_delta` **−2.64 kWh** vs **−5.17 kWh**); average discharge
+  price was also worse than amber, consistent with weaker monetisation
+- `spike`: hybrid was more active than amber (higher charge, discharge, dispatch intensity, and
+  SoC posture) yet still earned less; average charge price was less negative and average
+  discharge price was lower than amber, pointing to worse spread capture
+
+Working hypothesis:
+- the hybrid is not simply "doing less"
+- on `low` days it appears to under-accumulate energy
+- on `normal` days it appears to monetise stored energy less effectively and maintain a weaker
+  SoC posture
+- on `spike` days it appears active enough, but mistimed relative to amber
+
+Potential next experiment:
+- test an execution-layer opportunity-cost bias using the SoC shadow price / LP dual, so the
+  controller becomes less willing to discharge when the marginal future value of stored energy
+  is high
 
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some

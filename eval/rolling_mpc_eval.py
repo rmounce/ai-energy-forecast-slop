@@ -492,14 +492,23 @@ def build_daily_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
                 "total_pnl",
                 "mean_price_mwh",
                 "mean_abs_dispatch_kw",
+                "charge_energy_kwh",
+                "discharge_energy_kwh",
+                "avg_charge_price_mwh",
+                "avg_discharge_price_mwh",
                 "soc_open_kwh",
                 "soc_close_kwh",
+                "soc_delta_kwh",
             ]
         )
 
     daily = raw_df.copy()
     daily["date"] = pd.to_datetime(daily["time"], utc=True).dt.date
     daily["abs_dispatch_kw"] = daily["charge_kw"].abs() + daily["discharge_kw"].abs()
+    daily["charge_energy_kwh"] = daily["charge_kw"] * INTERVAL_H
+    daily["discharge_energy_kwh"] = daily["discharge_kw"] * INTERVAL_H
+    daily["charge_price_weight"] = daily["actual_price_mwh"] * daily["charge_energy_kwh"]
+    daily["discharge_price_weight"] = daily["actual_price_mwh"] * daily["discharge_energy_kwh"]
 
     out = (
         daily.groupby(["source", "date"], as_index=False)
@@ -508,13 +517,28 @@ def build_daily_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
             total_pnl=("step_pnl", "sum"),
             mean_price_mwh=("actual_price_mwh", "mean"),
             mean_abs_dispatch_kw=("abs_dispatch_kw", "mean"),
+            charge_energy_kwh=("charge_energy_kwh", "sum"),
+            discharge_energy_kwh=("discharge_energy_kwh", "sum"),
+            charge_price_weight=("charge_price_weight", "sum"),
+            discharge_price_weight=("discharge_price_weight", "sum"),
             soc_open_kwh=("soc_prev_kwh", "first"),
             soc_close_kwh=("soc_kwh", "last"),
         )
         .sort_values(["source", "date"], kind="stable")
         .reset_index(drop=True)
     )
-    return out
+    out["avg_charge_price_mwh"] = np.where(
+        out["charge_energy_kwh"] > 0,
+        out["charge_price_weight"] / out["charge_energy_kwh"],
+        np.nan,
+    )
+    out["avg_discharge_price_mwh"] = np.where(
+        out["discharge_energy_kwh"] > 0,
+        out["discharge_price_weight"] / out["discharge_energy_kwh"],
+        np.nan,
+    )
+    out["soc_delta_kwh"] = out["soc_close_kwh"] - out["soc_open_kwh"]
+    return out.drop(columns=["charge_price_weight", "discharge_price_weight"])
 
 
 def classify_price_regime(prices: pd.Series) -> str:
@@ -711,6 +735,45 @@ def build_spike_band_summary(daily_summary_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def build_behavior_summary(daily_summary_df: pd.DataFrame) -> pd.DataFrame:
+    if daily_summary_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "source",
+                "regime",
+                "n_days",
+                "mean_daily_pnl",
+                "mean_charge_energy_kwh",
+                "mean_discharge_energy_kwh",
+                "mean_avg_charge_price_mwh",
+                "mean_avg_discharge_price_mwh",
+                "mean_abs_dispatch_kw",
+                "mean_soc_open_kwh",
+                "mean_soc_close_kwh",
+                "mean_soc_delta_kwh",
+            ]
+        )
+
+    out = (
+        daily_summary_df.groupby(["source", "regime"], as_index=False)
+        .agg(
+            n_days=("date", "nunique"),
+            mean_daily_pnl=("total_pnl", "mean"),
+            mean_charge_energy_kwh=("charge_energy_kwh", "mean"),
+            mean_discharge_energy_kwh=("discharge_energy_kwh", "mean"),
+            mean_avg_charge_price_mwh=("avg_charge_price_mwh", "mean"),
+            mean_avg_discharge_price_mwh=("avg_discharge_price_mwh", "mean"),
+            mean_abs_dispatch_kw=("mean_abs_dispatch_kw", "mean"),
+            mean_soc_open_kwh=("soc_open_kwh", "mean"),
+            mean_soc_close_kwh=("soc_close_kwh", "mean"),
+            mean_soc_delta_kwh=("soc_delta_kwh", "mean"),
+        )
+        .sort_values(["regime", "source"], kind="stable")
+        .reset_index(drop=True)
+    )
+    return out
+
+
 def _simulate_single_source(
     source: str,
     start: pd.Timestamp,
@@ -850,12 +913,15 @@ def main():
     regime_delta_path = RESULTS_DIR / f"{args.output_prefix}_regime_summary_vs_baseline.csv"
     spike_band_summary_path = RESULTS_DIR / f"{args.output_prefix}_spike_band_summary.csv"
     spike_band_delta_path = RESULTS_DIR / f"{args.output_prefix}_spike_band_summary_vs_baseline.csv"
+    behavior_summary_path = RESULTS_DIR / f"{args.output_prefix}_behavior_summary.csv"
+    behavior_delta_path = RESULTS_DIR / f"{args.output_prefix}_behavior_summary_vs_baseline.csv"
     daily_summary_df = build_daily_summary(raw_df)
     daily_regime_df = build_daily_regime_summary(raw_df)
     daily_summary_df = add_daily_regime_to_summary(daily_summary_df, daily_regime_df)
     coverage_df = build_coverage_summary(raw_df, start, end, sources, summary_df=summary_df)
     regime_summary_df = build_regime_summary(daily_summary_df)
     spike_band_summary_df = build_spike_band_summary(daily_summary_df)
+    behavior_summary_df = build_behavior_summary(daily_summary_df)
     summary_with_deltas_df = add_baseline_deltas(
         summary_df,
         baseline_source=baseline_source,
@@ -879,6 +945,22 @@ def main():
         value_cols=["total_pnl", "mean_daily_pnl", "mean_abs_dispatch_kw", "mean_soc_close_kwh"],
         join_cols=["spike_band"],
     )
+    behavior_summary_with_deltas_df = add_baseline_deltas(
+        behavior_summary_df,
+        baseline_source=baseline_source,
+        value_cols=[
+            "mean_daily_pnl",
+            "mean_charge_energy_kwh",
+            "mean_discharge_energy_kwh",
+            "mean_avg_charge_price_mwh",
+            "mean_avg_discharge_price_mwh",
+            "mean_abs_dispatch_kw",
+            "mean_soc_open_kwh",
+            "mean_soc_close_kwh",
+            "mean_soc_delta_kwh",
+        ],
+        join_cols=["regime"],
+    )
     raw_df.to_parquet(raw_path, index=False)
     summary_df.to_csv(summary_path, index=False)
     daily_summary_df.to_csv(daily_summary_path, index=False)
@@ -890,6 +972,8 @@ def main():
     regime_summary_with_deltas_df.to_csv(regime_delta_path, index=False)
     spike_band_summary_df.to_csv(spike_band_summary_path, index=False)
     spike_band_summary_with_deltas_df.to_csv(spike_band_delta_path, index=False)
+    behavior_summary_df.to_csv(behavior_summary_path, index=False)
+    behavior_summary_with_deltas_df.to_csv(behavior_delta_path, index=False)
     print(f"Saved raw → {raw_path.relative_to(ROOT)}")
     print(f"Saved summary → {summary_path.relative_to(ROOT)}")
     print(f"Saved daily summary → {daily_summary_path.relative_to(ROOT)}")
@@ -901,6 +985,8 @@ def main():
     print(f"Saved regime summary vs baseline → {regime_delta_path.relative_to(ROOT)}")
     print(f"Saved spike-band summary → {spike_band_summary_path.relative_to(ROOT)}")
     print(f"Saved spike-band summary vs baseline → {spike_band_delta_path.relative_to(ROOT)}")
+    print(f"Saved behavior summary → {behavior_summary_path.relative_to(ROOT)}")
+    print(f"Saved behavior summary vs baseline → {behavior_delta_path.relative_to(ROOT)}")
     print(summary_with_deltas_df.to_string(index=False))
     print(coverage_df.to_string(index=False))
 

@@ -42,7 +42,7 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 9 | LightGBM strategic model (30-min/72-hour) | **Complete** — TFT wins on spikes; LightGBM wins on normal. Archived as exploration. |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — deprioritised; Phase 7 active |
 | **7** | **Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder** | **Active** — Run 014 failed interim eval (−35.3%); Run 015 flat-wMAPE ablation also failed harder (−65.9%) |
-| **10A** | **Rolling MPC Eval — Model A / execution track** | **In progress** — `eval/rolling_mpc_eval.py` added; two 6-week Track A comparisons completed with regime-aware reporting, yielding mixed results vs amber |
+| **10A** | **Rolling MPC Eval — Model A / execution track** | **In progress** — `eval/rolling_mpc_eval.py` added; two 6-week Track A comparisons plus behavior diagnostics completed, with the follow-up window showing a clear hybrid loss vs amber |
 | **10B** | **Rolling MPC Eval — full Phase 7 / planning track** | **Planned** — shorter-history stitched Tier1+Tier2 backtest from first PD7Day availability (`2026-02-09`) |
 
 **Hard gate:** Phase 6 and Phase 8 must both pass before Phase 5 remainder resumes.
@@ -142,6 +142,33 @@ show a robust, window-stable edge over Amber on the execution track. The main pe
 weakness remains `normal` days, and the earlier apparent spike advantage did not hold in the
 follow-up window.
 
+**Behavioral diagnosis from Window B (`rolling_mpc_eval_tracka_followup_6week_behavior_prices_behavior_summary_vs_baseline.csv`):**
+- `low`: hybrid charged less than amber and ended days with materially less stored energy
+  (`soc_delta` **7.50 kWh** vs **10.78 kWh**), suggesting weaker low-price energy accumulation;
+  average charge price was slightly better than amber, so the issue looks more like under-building
+  inventory than obviously buying at the wrong moments
+- `normal`: hybrid charged slightly more but discharged less, started with lower SoC, and
+  depleted less over the day (`soc_delta` **−2.64 kWh** vs **−5.17 kWh**), consistent with a
+  weaker SoC posture and poorer monetisation of stored energy on ordinary days; realised
+  discharge prices were also worse than amber
+- `spike`: hybrid was **more** active than amber (more charge, more discharge, higher average
+  dispatch, higher opening and closing SoC) yet still earned less; realised charge prices were
+  less negative and realised discharge prices were lower than amber, pointing to timing/forecast-shape
+  errors rather than simple under-activity
+
+**Working hypothesis:** the hybrid's current execution-track weakness is not just "too little
+ dispatch". It appears to combine (1) weaker SoC build on low-price days, (2) less effective
+ monetisation of stored energy on normal days, and (3) mistimed charge/discharge around spike
+ opportunities. The new realised buy/sell price diagnostics strengthen the spike-day mistiming
+ hypothesis: the hybrid is active enough, but captures a worse spread.
+
+**Potential remediation direction:** before changing forecast architecture again, test whether
+the MPC objective can be biased by **opportunity cost of energy**, ideally using the LP dual
+for the SoC constraint (shadow price). The intent is to discourage locally attractive discharge
+when future value-of-energy is high, without hard-coding brittle spike heuristics. This should
+be treated as an execution-layer experiment, not a replacement for Track 10A's forecast
+comparison gate.
+
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
 **241 repaired curves** with **0 skipped steps**; the follow-up 6-week run required **0**
@@ -212,6 +239,13 @@ dynamics dominant. Implemented in `train/train_tft_price.py` and `train/train_lg
 for opportunity cost is the shadow price of the SOC constraint (`constraint.pi` in PuLP).
 EMHASS does not expose this via API. Preferred path: fork/upstream to extract it.
 Fallback: two LP solves with finite difference (2× overhead).
+
+**Why it now matters again:** the latest Track 10A follow-up window suggests the current
+execution weakness is not simply forecast inactivity. On spike days the hybrid moved plenty
+of energy but bought less cheaply and sold less expensively than amber. That makes a
+shadow-price-informed execution bias a credible next experiment: use the marginal future
+value of stored energy to resist premature discharge and improve spread capture, especially
+when near-term forecasts understate downstream opportunity.
 
 ---
 
