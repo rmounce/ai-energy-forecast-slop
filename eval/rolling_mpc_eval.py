@@ -49,7 +49,7 @@ from dispatch_simulator import (  # noqa: E402
     INTERVAL_H,
     MAX_POWER_KW,
     SOC_INIT_KWH,
-    lp_dispatch,
+    solve_lp_dispatch,
 )
 from retro_tft_inference import (  # noqa: E402
     build_5m_features,
@@ -403,6 +403,7 @@ def simulate_stepwise(
     providers: ForecastProviders,
     sources: list[str],
     soc_init: float,
+    terminal_energy_value_per_kwh: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     state = {src: float(soc_init) for src in sources}
     raw_rows = []
@@ -442,7 +443,13 @@ def simulate_stepwise(
                     invalid_curve_logged[src] += 1
                 continue
             soc_prev = state[src]
-            c_plan, d_plan = lp_dispatch(curve, state[src])
+            solve = solve_lp_dispatch(
+                curve,
+                state[src],
+                terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
+            )
+            c_plan = solve["charge_kw"]
+            d_plan = solve["discharge_kw"]
             c0 = float(c_plan[0]) if len(c_plan) else 0.0
             d0 = float(d_plan[0]) if len(d_plan) else 0.0
             p_kwh = actual / 1000.0
@@ -460,6 +467,8 @@ def simulate_stepwise(
                 "soc_prev_kwh": soc_prev,
                 "soc_kwh": state[src],
                 "step_pnl": pnl,
+                "terminal_energy_value_per_kwh": terminal_energy_value_per_kwh,
+                "initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
 
         if (i + 1) % 288 == 0:
@@ -473,6 +482,7 @@ def simulate_stepwise(
             "total_pnl": pnl_totals[src],
             "mean_per_day": pnl_totals[src] / n_days,
             "soc_final_kwh": state[src],
+            "terminal_energy_value_per_kwh": terminal_energy_value_per_kwh,
             "skipped_missing_actual": skipped_missing_actual[src],
             "skipped_missing_curve": skipped_missing_curve[src],
             "skipped_invalid_curve": skipped_invalid_curve[src],
@@ -790,6 +800,7 @@ def _simulate_single_source(
         providers=providers,
         sources=[source],
         soc_init=soc_init,
+        terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
     )
 
 
@@ -805,7 +816,14 @@ def simulate_stepwise_parallel(
         providers = ForecastProviders(argparse.Namespace(**args_dict))
         timestamps = pd.date_range(start=start, end=end - pd.Timedelta(minutes=5), freq="5min", tz="UTC")
         actual_prices = providers.actuals_5m["rrp"].reindex(timestamps)
-        return simulate_stepwise(timestamps, actual_prices, providers, sources, soc_init)
+        return simulate_stepwise(
+            timestamps,
+            actual_prices,
+            providers,
+            sources,
+            soc_init,
+            terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
+        )
 
     raw_frames: list[pd.DataFrame] = []
     summary_frames: list[pd.DataFrame] = []
@@ -853,6 +871,15 @@ def main():
     parser.add_argument("--tft-checkpoint", default="", help="Path to TFT checkpoint for model_a_hybrid")
     parser.add_argument("--tft-scalers", default="", help="Path to matching TFT scalers for model_a_hybrid")
     parser.add_argument("--soc-init-kwh", type=float, default=SOC_INIT_KWH)
+    parser.add_argument(
+        "--terminal-energy-value-mwh",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional end-of-horizon salvage value for stored energy, in $/MWh. "
+            "Positive values bias the LP toward preserving charge."
+        ),
+    )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
     parser.add_argument(
         "--baseline-source",
@@ -871,6 +898,7 @@ def main():
     end = pd.Timestamp(args.end, tz="UTC")
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
     baseline_source = args.baseline_source.strip() or sources[0]
+    args.terminal_energy_value_per_kwh = args.terminal_energy_value_mwh / 1000.0
 
     if "model_a_hybrid" in sources and (not args.tft_checkpoint or not args.tft_scalers):
         parser.error("model_a_hybrid requires --tft-checkpoint and --tft-scalers")
@@ -887,6 +915,7 @@ def main():
     print(f"  Steps:  {len(idx):,}")
     print(f"  Sources: {sources}")
     print(f"  Baseline: {baseline_source}")
+    print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
     print(f"  Workers: {workers}")
 
     t0 = time.time()

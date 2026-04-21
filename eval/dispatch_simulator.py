@@ -51,10 +51,28 @@ LOW_THRESH     = 0.0     # $/MWh
 
 # ── LP dispatch ──────────────────────────────────────────────────────────────
 
-def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
-                interval_h: float = INTERVAL_H,
-                capacity_kwh: float = CAPACITY_KWH,
-                max_power_kw: float = MAX_POWER_KW) -> tuple[np.ndarray, np.ndarray]:
+def _estimate_initial_soc_shadow_price_per_kwh(result, n: int) -> float:
+    """Estimate the marginal value of one extra kWh of initial SoC from LP duals."""
+    ineqlin = getattr(result, "ineqlin", None)
+    marginals = getattr(ineqlin, "marginals", None)
+    if marginals is None:
+        return float("nan")
+
+    marginals = np.asarray(marginals, dtype=np.float64)
+    if marginals.shape[0] != 2 * n:
+        return float("nan")
+
+    lower_marginals = marginals[:n]
+    upper_marginals = marginals[n:]
+    d_cost_d_soc_init = float(lower_marginals.sum() - upper_marginals.sum())
+    return -d_cost_d_soc_init
+
+
+def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
+                      interval_h: float = INTERVAL_H,
+                      capacity_kwh: float = CAPACITY_KWH,
+                      max_power_kw: float = MAX_POWER_KW,
+                      terminal_energy_value_per_kwh: float = 0.0) -> dict:
     """
     Optimal battery dispatch over a price horizon via LP.
 
@@ -62,12 +80,24 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
       c_h — grid import rate (kW) at step h
       d_h — battery export rate (kW) at step h
 
-    Returns (c_kw, d_kw) arrays of length n.
-    Infeasible solves return zero arrays (do nothing).
+    terminal_energy_value_per_kwh:
+        Salvage value assigned to energy remaining in the battery at the end of
+        the horizon. Positive values discourage premature discharge and act as a
+        generic "opportunity cost of energy" bias.
+
+    Returns a dict containing the optimal actions and LP diagnostics.
+    Infeasible solves return zero actions with status metadata.
     """
     n = len(prices_mwh)
     if n == 0:
-        return np.zeros(0), np.zeros(0)
+        return {
+            "charge_kw": np.zeros(0),
+            "discharge_kw": np.zeros(0),
+            "objective_value": 0.0,
+            "status": 0,
+            "success": True,
+            "initial_soc_shadow_price_per_kwh": float("nan"),
+        }
 
     p = prices_mwh / 1000.0  # $/kWh
 
@@ -75,6 +105,9 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         (p + DEG_PER_KWH * EFF_C) * interval_h,
         (-p * EFF_D + DEG_PER_KWH) * interval_h,
     ])
+    if terminal_energy_value_per_kwh:
+        c_obj[:n] -= terminal_energy_value_per_kwh * EFF_C * interval_h
+        c_obj[n:] += terminal_energy_value_per_kwh * interval_h
 
     L = np.tril(np.ones((n, n)))
 
@@ -92,9 +125,42 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                      options={"disp": False})
 
     if result.status != 0:
-        return np.zeros(n), np.zeros(n)
+        return {
+            "charge_kw": np.zeros(n),
+            "discharge_kw": np.zeros(n),
+            "objective_value": float("nan"),
+            "status": int(result.status),
+            "success": False,
+            "initial_soc_shadow_price_per_kwh": float("nan"),
+        }
 
-    return result.x[:n], result.x[n:]
+    return {
+        "charge_kw": result.x[:n],
+        "discharge_kw": result.x[n:],
+        "objective_value": float(result.fun),
+        "status": int(result.status),
+        "success": bool(result.success),
+        "initial_soc_shadow_price_per_kwh": _estimate_initial_soc_shadow_price_per_kwh(result, n),
+    }
+
+
+def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
+                interval_h: float = INTERVAL_H,
+                capacity_kwh: float = CAPACITY_KWH,
+                max_power_kw: float = MAX_POWER_KW,
+                terminal_energy_value_per_kwh: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Backwards-compatible wrapper returning only the action arrays.
+    """
+    solve = solve_lp_dispatch(
+        prices_mwh,
+        soc_init,
+        interval_h=interval_h,
+        capacity_kwh=capacity_kwh,
+        max_power_kw=max_power_kw,
+        terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
+    )
+    return solve["charge_kw"], solve["discharge_kw"]
 
 
 # ── MPC simulation ───────────────────────────────────────────────────────────

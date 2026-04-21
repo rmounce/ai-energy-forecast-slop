@@ -394,6 +394,9 @@ Potential next experiment:
 - test an execution-layer opportunity-cost bias using the SoC shadow price / LP dual, so the
   controller becomes less willing to discharge when the marginal future value of stored energy
   is high
+- `rolling_mpc_eval.py` now includes an experimental `--terminal-energy-value-mwh` flag, which
+  adds a simple end-of-horizon salvage value for stored energy. This is not yet a dual-driven
+  policy, but it is a useful first ablation hook for opportunity-cost-aware dispatch.
 
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
