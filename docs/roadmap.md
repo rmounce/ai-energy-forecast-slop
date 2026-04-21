@@ -190,6 +190,26 @@ re-solves using a terminal-energy value proportional to that shadow price. This 
 controller whose inventory bias adapts to the forecast curve instead of staying fixed at one
 hand-tuned salvage value.
 
+**Dual-driven sweep (Window B):**
+- `dual 0.5`: hybrid **$2.134/day** vs amber **$2.406/day** (**−11.3%**)
+- `dual 1.0`: hybrid **$2.140/day** vs amber **$2.411/day** (**−11.3%**)
+- `dual 1.5`: hybrid **$2.256/day** vs amber **$2.364/day** (**−4.6%**)
+- `dual 2.5`: hybrid **$2.236/day** vs amber **$2.360/day** (**−5.3%**)
+- `dual 3.0`: hybrid **$2.245/day** vs amber **$2.363/day** (**−5.0%**)
+
+**Interpretation:** the raw dual signal is directionally useful, but the current
+`probe shadow price → scaled terminal value` controller still does **not** beat the best static
+surrogate (`100 $/MWh`, **−3.3%**). On this window the dual-driven policy appears too weak at
+low scales and not well-shaped enough at higher scales. Treat the static terminal-value trick as
+a **useful surrogate** for missing long-horizon opportunity-cost information in Track 10A, not
+yet as the intended production design.
+
+**Architectural implication:** for the eventual production-facing design, the more promising
+direction is likely to combine the current two-tier SoC-target handoff with an
+**opportunity-cost-aware quantile / risk policy** rather than relying solely on LP terminal-value
+biasing. In other words: Option A was diagnostically useful, but the likely destination now looks
+more like **B** or **B+C**, not a pure A-only controller.
+
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
 **241 repaired curves** with **0 skipped steps**; the follow-up 6-week run required **0**
