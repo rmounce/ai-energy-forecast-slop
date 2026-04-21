@@ -210,6 +210,17 @@ direction is likely to combine the current two-tier SoC-target handoff with an
 biasing. In other words: Option A was diagnostically useful, but the likely destination now looks
 more like **B** or **B+C**, not a pure A-only controller.
 
+**Independent review checkpoint (2026-04-21):** an external review, based on the repo briefing
+alone, concluded that the Track 10A terminal-value experiments are most likely exposing an
+**end-of-horizon artifact** caused by the current eval not modeling the strategic `14h` SoC
+handoff. On that reading, the static `100 $/MWh` surrogate is primarily compensating for a
+missing boundary condition rather than identifying a ready-to-ship production feature.
+
+**Updated priority:** implement the strategic `14h` SoC handoff in the rolling eval before
+continuing with more surrogate tuning. After that alignment step, re-run the follow-up window and
+then reassess whether the remaining gap, if any, calls for LP biasing (A), quantile/risk-policy
+tilt (B), or a combination (C).
+
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
 **241 repaired curves** with **0 skipped steps**; the follow-up 6-week run required **0**

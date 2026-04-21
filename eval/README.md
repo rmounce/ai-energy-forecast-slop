@@ -434,6 +434,13 @@ Interpretation:
 - treat the fixed terminal-value approach as a useful surrogate in Track 10A, not yet as the
   likely production design endpoint
 
+Independent review checkpoint (2026-04-21):
+- an external review, based on the standalone briefing in `docs/independent_review_brief_2026-04-21.md`,
+  judged the static terminal-value win most likely to be an **eval surrogate** for the missing
+  strategic `14h` SoC boundary condition
+- on that reading, the next priority is to align the rolling eval with the described production
+  SoC handoff before drawing stronger architectural conclusions from the terminal-value sweeps
+
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
   partially invalid expanded curves
