@@ -44,3 +44,7 @@ models/
 !eval/results/*.csv
 !eval/results/*.parquet
 !tests/fixtures/*.json
+
+# Exploratory rolling MPC eval outputs
+eval/results/rolling_mpc_eval_*.csv
+eval/results/rolling_mpc_eval_*.parquet
