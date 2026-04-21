@@ -184,6 +184,12 @@ execution policy is a meaningful part of the Track 10A deficit, not just forecas
 The next step is to replace the static proxy with a **dual-driven opportunity-cost policy**
 rather than keep sweeping fixed salvage values.
 
+**Dual-driven variant (now scaffolded in eval):** `eval/rolling_mpc_eval.py` supports
+`--dual-terminal-scale`, which probes the LP's initial-SoC shadow price each step and then
+re-solves using a terminal-energy value proportional to that shadow price. This gives a
+controller whose inventory bias adapts to the forecast curve instead of staying fixed at one
+hand-tuned salvage value.
+
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
 **241 repaired curves** with **0 skipped steps**; the follow-up 6-week run required **0**
