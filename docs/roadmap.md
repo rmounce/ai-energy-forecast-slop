@@ -1,6 +1,6 @@
 # Pipeline Roadmap
 
-**Last updated: 2026-04-18**
+**Last updated: 2026-04-21**
 
 Full architecture: `ARCHITECTURE.md`. Model design rationale: `docs/tft_price_forecast.md`.
 Data sources: `docs/data_sources.md`. Load TFT: `docs/tft_load_forecast.md`.
@@ -42,7 +42,7 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 9 | LightGBM strategic model (30-min/72-hour) | **Complete** — TFT wins on spikes; LightGBM wins on normal. Archived as exploration. |
 | 5 (remainder) | HA tail-risk automations, CI/CD gate, model updates | Paused — deprioritised; Phase 7 active |
 | **7** | **Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder** | **Active** — Run 014 failed interim eval (−35.3%); Run 015 flat-wMAPE ablation also failed harder (−65.9%) |
-| **10A** | **Rolling MPC Eval — Model A / execution track** | **In progress** — `eval/rolling_mpc_eval.py` added; first price-only 5-min rolling backtest wiring in place |
+| **10A** | **Rolling MPC Eval — Model A / execution track** | **In progress** — `eval/rolling_mpc_eval.py` added; 6-week Track A comparison completed with regime-aware reporting (`model_a_hybrid` +2.4% vs amber overall) |
 | **10B** | **Rolling MPC Eval — full Phase 7 / planning track** | **Planned** — shorter-history stitched Tier1+Tier2 backtest from first PD7Day availability (`2026-02-09`) |
 
 **Hard gate:** Phase 6 and Phase 8 must both pass before Phase 5 remainder resumes.
@@ -126,6 +126,21 @@ dispatch decisions.
 
 **Why first:** this track directly tests the execution-facing component, gives far more history
  than the PD7Day-constrained full Phase 7 setup, and should be the first rolling gate to build.
+
+**Current result (6-week sample, 2025-07-21 → 2025-09-01):**
+- Baseline `amber_apf_lgbm`: **$2.523/day**
+- `model_a_hybrid`: **$2.585/day** (**+2.4%**, +$0.062/day)
+- `p5min_naive`: **~$0/day**
+
+**Regime breakdown:**
+- `spike`: hybrid wins (**$3.601/day** vs **$3.312/day**, +8.7%)
+- `low`: near tie, slight hybrid edge (**$1.576/day** vs **$1.562/day**, +0.9%)
+- `normal`: amber wins (**$1.963/day** vs **$1.556/day**, hybrid −20.8%)
+
+**Interpretation:** the hybrid's Track A edge over six weeks comes from stronger spike handling,
+not broad-based dominance. Amber remains stronger in normal regimes. Results are now based on
+full coverage for all sources; Amber required **241 repaired forecast curves** but no skipped
+steps after log-timestamp normalization and curve repair were added.
 
 ### Track 10B — Full Phase 7 / planning track
 

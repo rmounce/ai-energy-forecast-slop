@@ -304,6 +304,24 @@ The next evaluation layer is a contiguous rolling MPC backtest that carries SoC 
 operates on the same `14h × 5-min` decision horizon as production. This is intentionally split
 into two tracks.
 
+`rolling_mpc_eval.py` also supports source-level parallelism via `--workers`, but only across
+forecast sources. Timesteps within a source remain serial because SoC is path-dependent.
+Startup is relatively expensive because each worker loads its own parquet/model state, so
+`--workers > 1` is mainly useful for longer comparative runs rather than short smoke tests.
+
+Current outputs:
+- `{prefix}_raw.parquet`: one row per executed 5-minute step and source
+- `{prefix}_summary.csv`: whole-window totals by source
+- `{prefix}_summary_vs_baseline.csv`: whole-window totals with delta/ratio columns vs the chosen baseline
+- `{prefix}_daily_summary.csv`: per-day PnL / SoC / average dispatch by source
+- `{prefix}_daily_summary_vs_baseline.csv`: per-day deltas vs the chosen baseline source
+- `{prefix}_daily_regimes.csv`: realized daily price regime labels (`spike` / `low` / `normal`)
+- `{prefix}_regime_summary.csv`: aggregate results by source and realized regime
+- `{prefix}_regime_summary_vs_baseline.csv`: regime-level deltas vs the chosen baseline
+- `{prefix}_coverage.csv`: expected vs executed steps by source, useful for spotting missing
+  forecast coverage. Includes skip counters for missing actuals, missing forecast curves, invalid
+  forecast curves, and repaired-curve counts when present.
+
 ### Track A — Model A / execution track
 
 - Goal: evaluate the execution-relevant near horizon with the longest available history
@@ -323,3 +341,21 @@ into two tracks.
 
 Recommended build order: **Track A first**, then Track B once the core rolling machinery and
 reporting format are stable.
+
+**Observed Track A result (6-week sample, 2025-07-21 → 2025-09-01):**
+- `amber_apf_lgbm`: **$2.523/day**
+- `model_a_hybrid`: **$2.585/day** (**+2.4%** vs amber)
+- `p5min_naive`: **~$0/day**
+
+Regime view from `rolling_mpc_eval_tracka_6week_compare_regime_summary_vs_baseline.csv`:
+- `spike`: hybrid better than amber (**$3.601/day** vs **$3.312/day**, +8.7%)
+- `low`: near tie with slight hybrid edge (**$1.576/day** vs **$1.562/day**, +0.9%)
+- `normal`: hybrid worse than amber (**$1.556/day** vs **$1.963/day**, −20.8%)
+
+Amber data-quality note:
+- historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
+  partially invalid expanded curves
+- `rolling_mpc_eval.py` now normalizes Amber target timestamps to the intended `30min` grid and
+  repairs finite gaps before dispatch
+- in the 6-week run, Amber achieved full coverage with **241 repaired curves** and **0 skipped
+  steps**
