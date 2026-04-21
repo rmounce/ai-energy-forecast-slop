@@ -167,7 +167,9 @@ the MPC objective can be biased by **opportunity cost of energy**, ideally using
 for the SoC constraint (shadow price). The intent is to discourage locally attractive discharge
 when future value-of-energy is high, without hard-coding brittle spike heuristics. This should
 be treated as an execution-layer experiment, not a replacement for Track 10A's forecast
-comparison gate.
+comparison gate. `eval/rolling_mpc_eval.py` now has an experimental
+`--terminal-energy-value-mwh` hook to support this ablation with a simple salvage-value proxy
+before wiring in a true dual-driven policy.
 
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
