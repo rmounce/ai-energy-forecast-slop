@@ -171,6 +171,19 @@ comparison gate. `eval/rolling_mpc_eval.py` now has an experimental
 `--terminal-energy-value-mwh` hook to support this ablation with a simple salvage-value proxy
 before wiring in a true dual-driven policy.
 
+**Opportunity-cost sweep (Window B, salvage-value proxy):**
+- `0 $/MWh`: hybrid **$2.134/day** vs amber **$2.406/day** (**−11.3%**)
+- `50 $/MWh`: hybrid **$2.254/day** vs amber **$2.393/day** (**−5.8%**)
+- `100 $/MWh`: hybrid **$2.306/day** vs amber **$2.385/day** (**−3.3%**)
+- `150 $/MWh`: hybrid **$2.287/day** vs amber **$2.383/day** (**−4.0%**)
+- `200 $/MWh`: hybrid **$2.249/day** vs amber **$2.355/day** (**−4.5%**)
+
+**Interpretation:** the salvage-value proxy materially reduced the hybrid's execution gap,
+with the best result at roughly **`100 $/MWh`**. That is enough to establish proof of concept:
+execution policy is a meaningful part of the Track 10A deficit, not just forecast quality.
+The next step is to replace the static proxy with a **dual-driven opportunity-cost policy**
+rather than keep sweeping fixed salvage values.
+
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
 **241 repaired curves** with **0 skipped steps**; the follow-up 6-week run required **0**
