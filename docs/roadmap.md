@@ -248,6 +248,44 @@ the strategic `14h` SoC handoff as the baseline contract and test whether an
 opportunity-cost-aware **upper-tail quantile blend** improves the residual `low` / `normal`
 weakness on handoff-enabled Track 10A before introducing any dynamic posture logic.
 
+**Fixed-blend Option B result (2026-04-23):** the first handoff-enabled fixed-weight sweep is a
+clear negative result. See [docs/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md).
+Blending the hybrid path upward from `q50` toward `q90` made Window B worse at every tested
+weight:
+- `blend 0.25`: hybrid **$2.232/day** vs amber **$2.451/day** (**−8.9%**)
+- `blend 0.50`: hybrid **$1.923/day** vs amber **$2.451/day** (**−21.5%**)
+- `blend 0.75`: hybrid **$1.579/day** vs amber **$2.451/day** (**−35.6%**)
+- `blend 1.00`: hybrid **$1.224/day** vs amber **$2.451/day** (**−50.0%**)
+
+**Updated reading:** this does **not** kill the broader idea of distribution-aware bridge
+signals, but it does rule out the naive version of Option B. Fixed global q50→q90 tilting is
+too blunt and causes the controller to over-preserve inventory, especially on `low` and
+`normal` days. The next experiments should therefore move away from fixed blend sweeps and
+toward:
+- dynamic / selective posture signals
+- alternate bridge contracts
+- simpler strategic-output baselines
+
+**Reviewer follow-up implication (2026-04-23):** the latest follow-up response in
+[docs/codex_review_response_2026-04-23.md](./codex_review_response_2026-04-23.md) sharpens
+that conclusion further. The recommended next move is **not** another full-path quantile tilt.
+Instead, keep the strategic `14h` SoC handoff as the baseline contract and add a
+**dynamic, state-dependent bridge signal** derived from strategic upper-tail value.
+
+**Recommended next experiment:** use the strategic `q50` and `q90` outputs to derive a bounded
+"downstream upside" or "future inventory value" scalar, then apply that scalar through the
+tactical **terminal contract** rather than the entire forecast path. The first production-aligned
+variants to test are:
+- dynamic terminal SoC floor uplift
+- dynamic target band width / posture
+- bounded terminal-energy-value bias that only activates when strategic upside is high
+
+**Current priority order:**
+1. Treat handoff-enabled `q50` as the Track 10A baseline.
+2. Stop running fixed q50→q90 path sweeps.
+3. Prototype a dynamic bridge-contract experiment before revisiting broader stochastic or
+   path-tilt ideas.
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
