@@ -242,6 +242,25 @@ boundary state"; it is to understand and improve the residual `low` / `normal` w
 decide whether the next production-facing mechanism should be quantile/risk-policy tilt (B) or a
 combined approach (C).
 
+**Next planned experiment:** a production-aligned **Option B** path is now documented in
+[docs/option_b_plan_2026-04-22.md](./option_b_plan_2026-04-22.md). The near-term plan is to keep
+the strategic `14h` SoC handoff as the baseline contract and test whether an
+opportunity-cost-aware **upper-tail quantile blend** improves the residual `low` / `normal`
+weakness on handoff-enabled Track 10A before introducing any dynamic posture logic.
+
+**Holistic review implication (2026-04-22):** the latest system-level review in
+[docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
+argues that the repo may now be closer to a local optimum where strategic forecast
+iteration is compensating for an under-specified strategic-to-tactical contract. The
+response note in [docs/review_response_2026-04-22.md](./review_response_2026-04-22.md)
+records the current interpretation:
+- keep the two-timescale framing
+- make rolling MPC eval the primary architecture gate
+- prioritize bridge-contract experiments and scenario-lite / upper-tail-aware posture
+  signals
+- explicitly benchmark simpler strategic outputs, not only richer full-path strategic
+  forecasters
+
 **Data-quality note:** results are now based on full coverage for all sources after adding Amber
 target-time normalization plus finite-gap curve repair. The first 6-week Amber run used
 **241 repaired curves** with **0 skipped steps**; the follow-up 6-week run required **0**
