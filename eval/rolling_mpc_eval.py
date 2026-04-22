@@ -36,6 +36,8 @@ import pandas as pd
 import pytz
 import torch
 
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/ai-energy-forecast-slop-mplconfig")
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "eval"))
@@ -171,6 +173,12 @@ class TFTContext:
     q50_idx: int
 
 
+@dataclass
+class StrategicSolveSummary:
+    target_kwh: float
+    initial_shadow_price_per_kwh: float
+
+
 def _load_tft_context(ckpt_path: Path, scalers_path: Path) -> TFTContext:
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     meta = ckpt.get("meta", {})
@@ -292,7 +300,7 @@ class ForecastProviders:
         self._tier1_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
         self._tft_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
         self._amber_cache: dict[pd.Timestamp, pd.Series] = {}
-        self._strategic_target_cache: dict[tuple[str, pd.Timestamp, float], float | None] = {}
+        self._strategic_solve_cache: dict[tuple[str, pd.Timestamp, float, float], StrategicSolveSummary | None] = {}
         self._last_curve_repaired: dict[str, bool] = {}
 
     def curve_was_repaired(self, source: str) -> bool:
@@ -391,7 +399,7 @@ class ForecastProviders:
         self._amber_cache[creation] = expanded
         return expanded
 
-    def build_strategic_curve(self, source: str, ts: pd.Timestamp) -> np.ndarray | None:
+    def build_strategic_curve(self, source: str, ts: pd.Timestamp, quantile: float = 0.50) -> np.ndarray | None:
         idx = pd.date_range(start=ts, periods=STRATEGIC_HORIZON_5M_STEPS, freq="5min", tz="UTC")
         current_actual = self.current_actual_price(ts)
         if np.isnan(current_actual):
@@ -405,7 +413,7 @@ class ForecastProviders:
             return self._finalize_curve(source, out, current_actual, expected_steps=STRATEGIC_HORIZON_5M_STEPS)
 
         if source == "model_a_hybrid":
-            tft = self.tft_quantile_expanded(ts, 0.50)
+            tft = self.tft_quantile_expanded(ts, quantile)
             if tft is None:
                 return None
             out = tft.reindex(idx).ffill().bfill().values.astype(np.float64)
@@ -413,25 +421,47 @@ class ForecastProviders:
 
         return None
 
-    def strategic_soc_target(self, source: str, ts: pd.Timestamp, soc_init_kwh: float) -> float | None:
-        cache_key = (source, ts, round(float(soc_init_kwh), 6))
-        if cache_key in self._strategic_target_cache:
-            return self._strategic_target_cache[cache_key]
+    def strategic_solve_summary(
+        self,
+        source: str,
+        ts: pd.Timestamp,
+        soc_init_kwh: float,
+        quantile: float = 0.50,
+    ) -> StrategicSolveSummary | None:
+        cache_key = (source, ts, round(float(soc_init_kwh), 6), round(float(quantile), 4))
+        if cache_key in self._strategic_solve_cache:
+            return self._strategic_solve_cache[cache_key]
 
-        curve = self.build_strategic_curve(source, ts)
+        curve = self.build_strategic_curve(source, ts, quantile=quantile)
         if curve is None:
-            self._strategic_target_cache[cache_key] = None
+            self._strategic_solve_cache[cache_key] = None
             return None
 
         strategic = solve_lp_dispatch(curve, soc_init_kwh)
         soc_path = strategic.get("soc_trajectory_kwh")
         if soc_path is None or len(soc_path) < HORIZON_5M_STEPS:
-            self._strategic_target_cache[cache_key] = None
+            self._strategic_solve_cache[cache_key] = None
             return None
 
         target = float(np.clip(soc_path[HORIZON_5M_STEPS - 1], 0.0, CAPACITY_KWH))
-        self._strategic_target_cache[cache_key] = target
-        return target
+        summary = StrategicSolveSummary(
+            target_kwh=target,
+            initial_shadow_price_per_kwh=float(strategic.get("initial_soc_shadow_price_per_kwh", float("nan"))),
+        )
+        self._strategic_solve_cache[cache_key] = summary
+        return summary
+
+    def strategic_soc_target(
+        self,
+        source: str,
+        ts: pd.Timestamp,
+        soc_init_kwh: float,
+        quantile: float = 0.50,
+    ) -> float | None:
+        summary = self.strategic_solve_summary(source, ts, soc_init_kwh, quantile=quantile)
+        if summary is None:
+            return None
+        return summary.target_kwh
 
     def build_forecast_curve(self, source: str, ts: pd.Timestamp) -> np.ndarray | None:
         idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
@@ -478,6 +508,9 @@ def simulate_stepwise(
     dual_terminal_scale: float = 0.0,
     strategic_soc_handoff: bool = False,
     strategic_target_mode: str = "exact",
+    dynamic_bridge_upper_quantile: float = 0.90,
+    dynamic_bridge_target_scale: float = 0.0,
+    dynamic_bridge_terminal_scale: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     state = {src: float(soc_init) for src in sources}
     raw_rows = []
@@ -520,17 +553,73 @@ def simulate_stepwise(
             probe_shadow_price_per_kwh = float("nan")
             applied_terminal_energy_value_per_kwh = terminal_energy_value_per_kwh
             strategic_soc_target_kwh = float("nan")
+            strategic_soc_target_qhi_kwh = float("nan")
+            strategic_target_gap_kwh = 0.0
+            dynamic_target_uplift_kwh = 0.0
+            strategic_shadow_q50_per_kwh = float("nan")
+            strategic_shadow_qhi_per_kwh = float("nan")
+            strategic_shadow_gap_per_kwh = 0.0
+            dynamic_terminal_adder_per_kwh = 0.0
             min_terminal_soc_kwh = None
             max_terminal_soc_kwh = None
             if strategic_soc_handoff:
-                target = providers.strategic_soc_target(src, ts, soc_prev)
-                if target is not None and np.isfinite(target):
-                    strategic_soc_target_kwh = float(target)
+                strategic_q50 = providers.strategic_solve_summary(src, ts, soc_prev, quantile=0.50)
+                if strategic_q50 is not None and np.isfinite(strategic_q50.target_kwh):
+                    strategic_soc_target_kwh = float(strategic_q50.target_kwh)
+                    strategic_shadow_q50_per_kwh = float(strategic_q50.initial_shadow_price_per_kwh)
+
+                    strategic_qhi = None
+                    if (
+                        strategic_target_mode == "band"
+                        or dynamic_bridge_target_scale > 0.0
+                        or dynamic_bridge_terminal_scale > 0.0
+                    ):
+                        strategic_qhi = providers.strategic_solve_summary(
+                            src,
+                            ts,
+                            soc_prev,
+                            quantile=dynamic_bridge_upper_quantile,
+                        )
+                    if strategic_qhi is not None and np.isfinite(strategic_qhi.target_kwh):
+                        strategic_soc_target_qhi_kwh = float(strategic_qhi.target_kwh)
+                        strategic_target_gap_kwh = max(
+                            0.0,
+                            strategic_soc_target_qhi_kwh - strategic_soc_target_kwh,
+                        )
+                        dynamic_target_uplift_kwh = max(
+                            0.0,
+                            dynamic_bridge_target_scale * strategic_target_gap_kwh,
+                        )
+                        strategic_shadow_qhi_per_kwh = float(strategic_qhi.initial_shadow_price_per_kwh)
+                        if np.isfinite(strategic_shadow_q50_per_kwh) and np.isfinite(strategic_shadow_qhi_per_kwh):
+                            strategic_shadow_gap_per_kwh = max(
+                                0.0,
+                                strategic_shadow_qhi_per_kwh - strategic_shadow_q50_per_kwh,
+                            )
+                            dynamic_terminal_adder_per_kwh = max(
+                                0.0,
+                                dynamic_bridge_terminal_scale * strategic_shadow_gap_per_kwh,
+                            )
+
                     if strategic_target_mode == "floor":
-                        min_terminal_soc_kwh = strategic_soc_target_kwh
+                        min_terminal_soc_kwh = min(
+                            CAPACITY_KWH,
+                            strategic_soc_target_kwh + dynamic_target_uplift_kwh,
+                        )
                     elif strategic_target_mode == "exact":
                         min_terminal_soc_kwh = strategic_soc_target_kwh
                         max_terminal_soc_kwh = strategic_soc_target_kwh
+                    elif strategic_target_mode == "band":
+                        min_terminal_soc_kwh = strategic_soc_target_kwh
+                        max_terminal_soc_kwh = min(
+                            CAPACITY_KWH,
+                            strategic_soc_target_kwh + dynamic_target_uplift_kwh,
+                        )
+                        if max_terminal_soc_kwh < min_terminal_soc_kwh:
+                            max_terminal_soc_kwh = min_terminal_soc_kwh
+                    else:
+                        raise ValueError(f"Unsupported strategic_target_mode: {strategic_target_mode}")
+                    applied_terminal_energy_value_per_kwh += dynamic_terminal_adder_per_kwh
             if dual_terminal_scale > 0.0:
                 probe = solve_lp_dispatch(
                     curve,
@@ -575,6 +664,15 @@ def simulate_stepwise(
                 "step_pnl": pnl,
                 "terminal_energy_value_per_kwh": applied_terminal_energy_value_per_kwh,
                 "strategic_soc_target_kwh": strategic_soc_target_kwh,
+                "strategic_soc_target_qhi_kwh": strategic_soc_target_qhi_kwh,
+                "strategic_target_gap_kwh": strategic_target_gap_kwh,
+                "dynamic_target_uplift_kwh": dynamic_target_uplift_kwh,
+                "strategic_shadow_q50_per_kwh": strategic_shadow_q50_per_kwh,
+                "strategic_shadow_qhi_per_kwh": strategic_shadow_qhi_per_kwh,
+                "strategic_shadow_gap_per_kwh": strategic_shadow_gap_per_kwh,
+                "dynamic_terminal_adder_per_kwh": dynamic_terminal_adder_per_kwh,
+                "min_terminal_soc_kwh": min_terminal_soc_kwh,
+                "max_terminal_soc_kwh": max_terminal_soc_kwh,
                 "tier1_quantile_blend": providers.args.tier1_quantile_blend,
                 "tier2_quantile_blend": providers.args.tier2_quantile_blend,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
@@ -586,6 +684,18 @@ def simulate_stepwise(
 
     n_days = max((timestamps.max() - timestamps.min()).total_seconds() / 86400.0, 1e-9)
     for src in sources:
+        src_rows = [row for row in raw_rows if row["source"] == src]
+        src_df = pd.DataFrame(src_rows)
+        mean_dynamic_target_uplift_kwh = float(src_df["dynamic_target_uplift_kwh"].mean()) if not src_df.empty else 0.0
+        max_dynamic_target_uplift_kwh = float(src_df["dynamic_target_uplift_kwh"].max()) if not src_df.empty else 0.0
+        mean_dynamic_terminal_adder_per_kwh = float(src_df["dynamic_terminal_adder_per_kwh"].mean()) if not src_df.empty else 0.0
+        max_dynamic_terminal_adder_per_kwh = float(src_df["dynamic_terminal_adder_per_kwh"].max()) if not src_df.empty else 0.0
+        mean_strategic_target_gap_kwh = float(src_df["strategic_target_gap_kwh"].mean()) if not src_df.empty else 0.0
+        max_strategic_target_gap_kwh = float(src_df["strategic_target_gap_kwh"].max()) if not src_df.empty else 0.0
+        mean_strategic_shadow_gap_per_kwh = float(src_df["strategic_shadow_gap_per_kwh"].mean()) if not src_df.empty else 0.0
+        max_strategic_shadow_gap_per_kwh = float(src_df["strategic_shadow_gap_per_kwh"].max()) if not src_df.empty else 0.0
+        positive_target_uplift_steps = int((src_df["dynamic_target_uplift_kwh"] > 0).sum()) if not src_df.empty else 0
+        positive_terminal_adder_steps = int((src_df["dynamic_terminal_adder_per_kwh"] > 0).sum()) if not src_df.empty else 0
         summary.append({
             "source": src,
             "steps": executed_steps[src],
@@ -596,6 +706,19 @@ def simulate_stepwise(
             "dual_terminal_scale": dual_terminal_scale,
             "strategic_soc_handoff": strategic_soc_handoff,
             "strategic_target_mode": strategic_target_mode if strategic_soc_handoff else "",
+            "dynamic_bridge_upper_quantile": dynamic_bridge_upper_quantile,
+            "dynamic_bridge_target_scale": dynamic_bridge_target_scale,
+            "dynamic_bridge_terminal_scale": dynamic_bridge_terminal_scale,
+            "mean_dynamic_target_uplift_kwh": mean_dynamic_target_uplift_kwh,
+            "max_dynamic_target_uplift_kwh": max_dynamic_target_uplift_kwh,
+            "mean_dynamic_terminal_adder_per_kwh": mean_dynamic_terminal_adder_per_kwh,
+            "max_dynamic_terminal_adder_per_kwh": max_dynamic_terminal_adder_per_kwh,
+            "mean_strategic_target_gap_kwh": mean_strategic_target_gap_kwh,
+            "max_strategic_target_gap_kwh": max_strategic_target_gap_kwh,
+            "mean_strategic_shadow_gap_per_kwh": mean_strategic_shadow_gap_per_kwh,
+            "max_strategic_shadow_gap_per_kwh": max_strategic_shadow_gap_per_kwh,
+            "positive_target_uplift_steps": positive_target_uplift_steps,
+            "positive_terminal_adder_steps": positive_terminal_adder_steps,
             "tier1_quantile_blend": providers.args.tier1_quantile_blend,
             "tier2_quantile_blend": providers.args.tier2_quantile_blend,
             "tier2_upper_quantile": providers.args.tier2_upper_quantile,
@@ -920,6 +1043,9 @@ def _simulate_single_source(
         dual_terminal_scale=args_dict["dual_terminal_scale"],
         strategic_soc_handoff=args_dict["strategic_soc_handoff"],
         strategic_target_mode=args_dict["strategic_target_mode"],
+        dynamic_bridge_upper_quantile=args_dict["dynamic_bridge_upper_quantile"],
+        dynamic_bridge_target_scale=args_dict["dynamic_bridge_target_scale"],
+        dynamic_bridge_terminal_scale=args_dict["dynamic_bridge_terminal_scale"],
     )
 
 
@@ -945,6 +1071,9 @@ def simulate_stepwise_parallel(
             dual_terminal_scale=args_dict["dual_terminal_scale"],
             strategic_soc_handoff=args_dict["strategic_soc_handoff"],
             strategic_target_mode=args_dict["strategic_target_mode"],
+            dynamic_bridge_upper_quantile=args_dict["dynamic_bridge_upper_quantile"],
+            dynamic_bridge_target_scale=args_dict["dynamic_bridge_target_scale"],
+            dynamic_bridge_terminal_scale=args_dict["dynamic_bridge_terminal_scale"],
         )
 
     raw_frames: list[pd.DataFrame] = []
@@ -1046,11 +1175,38 @@ def main():
     )
     parser.add_argument(
         "--strategic-target-mode",
-        choices=["exact", "floor"],
+        choices=["exact", "floor", "band"],
         default="exact",
         help=(
             "How to enforce the derived 14h strategic SoC target: exact terminal target or "
-            "minimum terminal floor."
+            "minimum terminal floor. 'band' sets a minimum q50 target with optional dynamic "
+            "upward headroom derived from the upper strategic quantile."
+        ),
+    )
+    parser.add_argument(
+        "--dynamic-bridge-upper-quantile",
+        type=float,
+        default=0.90,
+        choices=[0.90, 0.95],
+        help="Upper TFT quantile used to derive the dynamic bridge posture signal.",
+    )
+    parser.add_argument(
+        "--dynamic-bridge-target-scale",
+        type=float,
+        default=0.0,
+        help=(
+            "Scale applied to max(0, target_qhi - target_q50) to widen the tactical terminal "
+            "contract. For 'floor' mode this lifts the minimum terminal SoC; for 'band' mode "
+            "it sets upward headroom above the q50 target."
+        ),
+    )
+    parser.add_argument(
+        "--dynamic-bridge-terminal-scale",
+        type=float,
+        default=0.0,
+        help=(
+            "Scale applied to max(0, strategic_shadow_qhi - strategic_shadow_q50) to add a "
+            "bounded dynamic terminal-energy value during the tactical solve."
         ),
     )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
@@ -1080,8 +1236,21 @@ def main():
         parser.error("--dual-terminal-scale must be >= 0")
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
         parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
+    if args.dynamic_bridge_target_scale < 0:
+        parser.error("--dynamic-bridge-target-scale must be >= 0")
+    if args.dynamic_bridge_terminal_scale < 0:
+        parser.error("--dynamic-bridge-terminal-scale must be >= 0")
+    if args.dual_terminal_scale > 0 and args.dynamic_bridge_terminal_scale > 0:
+        parser.error("Use either --dual-terminal-scale or --dynamic-bridge-terminal-scale, not both")
+    if args.terminal_energy_value_mwh != 0.0 and args.dynamic_bridge_terminal_scale > 0:
+        parser.error("Use either --terminal-energy-value-mwh or --dynamic-bridge-terminal-scale, not both")
     if args.strategic_target_mode and not args.strategic_soc_handoff and args.strategic_target_mode != "exact":
         parser.error("--strategic-target-mode only applies with --strategic-soc-handoff")
+    if (
+        (args.dynamic_bridge_target_scale > 0 or args.dynamic_bridge_terminal_scale > 0)
+        and not args.strategic_soc_handoff
+    ):
+        parser.error("Dynamic bridge options require --strategic-soc-handoff")
 
     if "model_a_hybrid" in sources and (not args.tft_checkpoint or not args.tft_scalers):
         parser.error("model_a_hybrid requires --tft-checkpoint and --tft-scalers")
@@ -1101,6 +1270,11 @@ def main():
     print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
     print(f"  Dual terminal scale: {args.dual_terminal_scale:.3f}")
     print(f"  Strategic SoC handoff: {args.strategic_soc_handoff} ({args.strategic_target_mode})")
+    print(
+        f"  Dynamic bridge: qhi=q{int(args.dynamic_bridge_upper_quantile * 100):02d}, "
+        f"target_scale={args.dynamic_bridge_target_scale:.3f}, "
+        f"terminal_scale={args.dynamic_bridge_terminal_scale:.3f}"
+    )
     print(
         f"  Quantile blend: tier1={args.tier1_quantile_blend:.2f}, "
         f"tier2={args.tier2_quantile_blend:.2f}, tier2_qhi=q{int(args.tier2_upper_quantile * 100):02d}"
