@@ -458,6 +458,21 @@ Operational consequence:
 - any future Option A/B/C experiments should be judged against the **handoff-enabled** setup, not
   the older no-handoff variant
 
+Option B implementation status:
+- `rolling_mpc_eval.py` now includes fixed **upper-tail quantile blend** hooks for the
+  handoff-enabled baseline:
+  - `--tier1-quantile-blend`
+  - `--tier2-quantile-blend`
+  - `--tier2-upper-quantile {0.90,0.95}`
+- current Stage B0 semantics:
+  - first hour: tactical effective price = `q50 + w1 * (q95 - q50)`
+  - strategic extension inside the 14h tactical solve =
+    `q50 + w2 * (q_hi - q50)`
+- the strategic `14h` SoC handoff remains unchanged during these sweeps; the blend only changes
+  the price path presented to the 14h tactical LP
+- recommended next step: run fixed-weight sweeps on the handoff-enabled Track 10A baseline before
+  introducing any dynamic posture signal
+
 Amber data-quality note:
 - historical Amber forecasts in `price_forecast_log.csv` showed timestamp jitter and some
   partially invalid expanded curves

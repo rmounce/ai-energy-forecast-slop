@@ -167,6 +167,7 @@ class TFTContext:
     feats_5m: pd.DataFrame
     decoder_sources: dict
     oof_by_run: dict | None
+    quantiles: list[float]
     q50_idx: int
 
 
@@ -229,11 +230,19 @@ def _load_tft_context(ckpt_path: Path, scalers_path: Path) -> TFTContext:
         feats_5m=feats_5m,
         decoder_sources=decoder_sources,
         oof_by_run=oof_by_run,
+        quantiles=list(quantiles),
         q50_idx=q50_idx,
     )
 
 
-def _infer_tft_q50_30m(start_ts: pd.Timestamp, ctx: TFTContext) -> np.ndarray | None:
+def _find_quantile_index(quantiles: list[float], target: float) -> int:
+    for i, q in enumerate(quantiles):
+        if abs(float(q) - float(target)) < 1e-9:
+            return i
+    raise ValueError(f"Quantile {target} not present in {quantiles}")
+
+
+def _infer_tft_quantiles_30m(start_ts: pd.Timestamp, ctx: TFTContext) -> np.ndarray | None:
     tensors = build_window_tensors(
         start_ts=start_ts,
         bulk=ctx.bulk,
@@ -258,7 +267,7 @@ def _infer_tft_q50_30m(start_ts: pd.Timestamp, ctx: TFTContext) -> np.ndarray | 
     else:
         _, q = preds_norm.shape
         preds_raw = ctx.s_targ.inverse_transform(preds_norm.reshape(-1, q)).reshape(preds_norm.shape)
-    return preds_raw[:, ctx.q50_idx].astype(np.float64)
+    return preds_raw.astype(np.float64)
 
 
 class ForecastProviders:
@@ -267,7 +276,12 @@ class ForecastProviders:
         self.actuals_30m = _load_actuals_30m()
         self.pv_5m = _load_pv_5m_from_30m(self.actuals_30m)
         self.p5min_runs, self.p5_run_times_sorted, self.p5_run_times_ns = _load_p5min_runs()
-        self.q50_model = joblib.load(TACTICAL_MODEL_DIR / "lgbm_q50.pkl")
+        self.tactical_models = {
+            0.05: joblib.load(TACTICAL_MODEL_DIR / "lgbm_q05.pkl"),
+            0.50: joblib.load(TACTICAL_MODEL_DIR / "lgbm_q50.pkl"),
+            0.95: joblib.load(TACTICAL_MODEL_DIR / "lgbm_q95.pkl"),
+        }
+        self.args = args
 
         self.amber_runs, self.amber_creation_sorted, self.amber_creation_ns = _load_amber_log_30m()
 
@@ -275,8 +289,8 @@ class ForecastProviders:
         if args.tft_checkpoint and args.tft_scalers:
             self.tft_ctx = _load_tft_context(Path(args.tft_checkpoint), Path(args.tft_scalers))
 
-        self._tier1_cache: dict[pd.Timestamp, pd.Series] = {}
-        self._tft_cache: dict[pd.Timestamp, pd.Series] = {}
+        self._tier1_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
+        self._tft_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
         self._amber_cache: dict[pd.Timestamp, pd.Series] = {}
         self._strategic_target_cache: dict[tuple[str, pd.Timestamp, float], float | None] = {}
         self._last_curve_repaired: dict[str, bool] = {}
@@ -308,13 +322,19 @@ class ForecastProviders:
         except Exception:
             return float("nan")
 
-    def tier1_q50(self, ts: pd.Timestamp) -> pd.Series | None:
+    def _blend_series(self, base: pd.Series, upper: pd.Series, weight: float) -> pd.Series:
+        return base + float(weight) * (upper - base)
+
+    def tier1_quantile(self, ts: pd.Timestamp, quantile: float) -> pd.Series | None:
+        if quantile not in self.tactical_models:
+            raise ValueError(f"Unsupported tactical quantile: {quantile}")
         pos = int(np.searchsorted(self.p5_run_times_ns, ts.value, side="right"))
         if pos == 0:
             return None
         run_time = self.p5_run_times_sorted[pos - 1]
-        if run_time in self._tier1_cache:
-            return self._tier1_cache[run_time]
+        cache_key = (run_time, float(quantile))
+        if cache_key in self._tier1_cache:
+            return self._tier1_cache[cache_key]
 
         p5min_rrp = self.p5min_runs[run_time]
         prev_rt = run_time - pd.Timedelta(minutes=5)
@@ -328,25 +348,27 @@ class ForecastProviders:
             X_long,
             columns=list(TACTICAL_FEATURE_NAMES) + ["horizon"],
         )
-        q50_raw = self.q50_model.predict(X_long_df).astype(np.float64)
+        preds = self.tactical_models[quantile].predict(X_long_df).astype(np.float64)
         idx = pd.date_range(start=run_time, periods=TACTICAL_STEPS, freq="5min", tz="UTC")
-        series = pd.Series(q50_raw, index=idx)
-        self._tier1_cache[run_time] = series
+        series = pd.Series(preds, index=idx)
+        self._tier1_cache[cache_key] = series
         return series
 
-    def tft_q50_expanded(self, ts: pd.Timestamp) -> pd.Series | None:
+    def tft_quantile_expanded(self, ts: pd.Timestamp, quantile: float) -> pd.Series | None:
         if self.tft_ctx is None:
             return None
         anchor = ts.floor("30min")
-        if anchor in self._tft_cache:
-            return self._tft_cache[anchor]
-        q50_30m = _infer_tft_q50_30m(anchor, self.tft_ctx)
-        if q50_30m is None:
+        cache_key = (anchor, float(quantile))
+        if cache_key in self._tft_cache:
+            return self._tft_cache[cache_key]
+        preds_30m = _infer_tft_quantiles_30m(anchor, self.tft_ctx)
+        if preds_30m is None:
             return None
-        idx_30m = pd.date_range(start=anchor, periods=len(q50_30m), freq="30min", tz="UTC")
-        idx_5m = pd.date_range(start=anchor, periods=len(q50_30m) * 6, freq="5min", tz="UTC")
-        series = pd.Series(np.repeat(q50_30m, 6), index=idx_5m)
-        self._tft_cache[anchor] = series
+        q_idx = _find_quantile_index(self.tft_ctx.quantiles, quantile)
+        pred_30m = preds_30m[:, q_idx]
+        idx_5m = pd.date_range(start=anchor, periods=len(pred_30m) * 6, freq="5min", tz="UTC")
+        series = pd.Series(np.repeat(pred_30m, 6), index=idx_5m)
+        self._tft_cache[cache_key] = series
         return series
 
     def amber_expanded(self, ts: pd.Timestamp) -> pd.Series | None:
@@ -383,7 +405,7 @@ class ForecastProviders:
             return self._finalize_curve(source, out, current_actual, expected_steps=STRATEGIC_HORIZON_5M_STEPS)
 
         if source == "model_a_hybrid":
-            tft = self.tft_q50_expanded(ts)
+            tft = self.tft_quantile_expanded(ts, 0.50)
             if tft is None:
                 return None
             out = tft.reindex(idx).ffill().bfill().values.astype(np.float64)
@@ -429,10 +451,14 @@ class ForecastProviders:
             return self._finalize_curve(source, out, current_actual)
 
         if source == "model_a_hybrid":
-            tier1 = self.tier1_q50(ts)
-            tft = self.tft_q50_expanded(ts)
-            if tier1 is None or tft is None:
+            tier1_q50 = self.tier1_quantile(ts, 0.50)
+            tier1_q95 = self.tier1_quantile(ts, 0.95)
+            tft_q50 = self.tft_quantile_expanded(ts, 0.50)
+            tft_qhi = self.tft_quantile_expanded(ts, self.args.tier2_upper_quantile)
+            if tier1_q50 is None or tier1_q95 is None or tft_q50 is None or tft_qhi is None:
                 return None
+            tier1 = self._blend_series(tier1_q50, tier1_q95, self.args.tier1_quantile_blend)
+            tft = self._blend_series(tft_q50, tft_qhi, self.args.tier2_quantile_blend)
             out = pd.Series(index=idx, dtype=np.float64)
             out.loc[idx[:TACTICAL_STEPS]] = tier1.reindex(idx[:TACTICAL_STEPS]).ffill().bfill().values
             later_idx = idx[TACTICAL_STEPS:]
@@ -549,6 +575,8 @@ def simulate_stepwise(
                 "step_pnl": pnl,
                 "terminal_energy_value_per_kwh": applied_terminal_energy_value_per_kwh,
                 "strategic_soc_target_kwh": strategic_soc_target_kwh,
+                "tier1_quantile_blend": providers.args.tier1_quantile_blend,
+                "tier2_quantile_blend": providers.args.tier2_quantile_blend,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
@@ -568,6 +596,9 @@ def simulate_stepwise(
             "dual_terminal_scale": dual_terminal_scale,
             "strategic_soc_handoff": strategic_soc_handoff,
             "strategic_target_mode": strategic_target_mode if strategic_soc_handoff else "",
+            "tier1_quantile_blend": providers.args.tier1_quantile_blend,
+            "tier2_quantile_blend": providers.args.tier2_quantile_blend,
+            "tier2_upper_quantile": providers.args.tier2_upper_quantile,
             "skipped_missing_actual": skipped_missing_actual[src],
             "skipped_missing_curve": skipped_missing_curve[src],
             "skipped_invalid_curve": skipped_invalid_curve[src],
@@ -963,6 +994,31 @@ def main():
     parser.add_argument("--tft-scalers", default="", help="Path to matching TFT scalers for model_a_hybrid")
     parser.add_argument("--soc-init-kwh", type=float, default=SOC_INIT_KWH)
     parser.add_argument(
+        "--tier1-quantile-blend",
+        type=float,
+        default=0.0,
+        help=(
+            "Blend weight for the first-hour tactical path: effective = q50 + w*(q95-q50). "
+            "Range 0..1."
+        ),
+    )
+    parser.add_argument(
+        "--tier2-quantile-blend",
+        type=float,
+        default=0.0,
+        help=(
+            "Blend weight for the 1h..14h strategic extension in model_a_hybrid: effective = "
+            "q50 + w*(q_hi-q50). Range 0..1."
+        ),
+    )
+    parser.add_argument(
+        "--tier2-upper-quantile",
+        type=float,
+        default=0.90,
+        choices=[0.90, 0.95],
+        help="Upper TFT quantile used for the Tier 2 strategic-extension blend.",
+    )
+    parser.add_argument(
         "--terminal-energy-value-mwh",
         type=float,
         default=0.0,
@@ -1016,6 +1072,10 @@ def main():
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
     baseline_source = args.baseline_source.strip() or sources[0]
     args.terminal_energy_value_per_kwh = args.terminal_energy_value_mwh / 1000.0
+    if not 0.0 <= args.tier1_quantile_blend <= 1.0:
+        parser.error("--tier1-quantile-blend must be in [0, 1]")
+    if not 0.0 <= args.tier2_quantile_blend <= 1.0:
+        parser.error("--tier2-quantile-blend must be in [0, 1]")
     if args.dual_terminal_scale < 0:
         parser.error("--dual-terminal-scale must be >= 0")
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
@@ -1041,6 +1101,10 @@ def main():
     print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
     print(f"  Dual terminal scale: {args.dual_terminal_scale:.3f}")
     print(f"  Strategic SoC handoff: {args.strategic_soc_handoff} ({args.strategic_target_mode})")
+    print(
+        f"  Quantile blend: tier1={args.tier1_quantile_blend:.2f}, "
+        f"tier2={args.tier2_quantile_blend:.2f}, tier2_qhi=q{int(args.tier2_upper_quantile * 100):02d}"
+    )
     print(f"  Workers: {workers}")
 
     t0 = time.time()
