@@ -103,6 +103,61 @@ def _load_tariff_profile() -> tuple[dict[str, float], dict[str, float], float]:
 GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = _load_tariff_profile()
 
 
+def _format_duration(seconds: float) -> str:
+    seconds = max(0, int(round(seconds)))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes > 0:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def _progress_path(output_prefix: str, source: str | None = None) -> Path:
+    suffix = f"_{source}" if source else ""
+    return RESULTS_DIR / f"{output_prefix}{suffix}.progress.json"
+
+
+def _write_progress_checkpoint(
+    path: Path,
+    *,
+    source: str | None,
+    steps_completed: int,
+    steps_total: int,
+    elapsed_seconds: float,
+    current_sim_time: pd.Timestamp,
+    completed: bool,
+) -> None:
+    percent_complete = (100.0 * steps_completed / steps_total) if steps_total else 100.0
+    rate_steps_per_second = (steps_completed / elapsed_seconds) if elapsed_seconds > 0 else 0.0
+    remaining_steps = max(0, steps_total - steps_completed)
+    estimated_remaining_seconds = (
+        remaining_steps / rate_steps_per_second if rate_steps_per_second > 0 else None
+    )
+    eta_timestamp = (
+        pd.Timestamp.now(tz="UTC") + pd.to_timedelta(estimated_remaining_seconds, unit="s")
+        if estimated_remaining_seconds is not None
+        else None
+    )
+    payload = {
+        "source": source,
+        "steps_completed": int(steps_completed),
+        "steps_total": int(steps_total),
+        "percent_complete": float(percent_complete),
+        "elapsed_seconds": float(elapsed_seconds),
+        "rate_steps_per_second": float(rate_steps_per_second),
+        "estimated_remaining_seconds": (
+            float(estimated_remaining_seconds) if estimated_remaining_seconds is not None else None
+        ),
+        "eta_timestamp": eta_timestamp.isoformat() if eta_timestamp is not None else None,
+        "current_sim_time": current_sim_time.isoformat(),
+        "completed": bool(completed),
+        "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def _load_actuals_5m() -> pd.DataFrame:
     df = pd.read_parquet(ACTUALS_5M_FILE)
     if df.index.tz is None:
@@ -594,6 +649,8 @@ def simulate_stepwise(
     sources: list[str],
     soc_init: float,
     economic_mode: str = "price_only",
+    output_prefix: str = "",
+    progress_every_steps: int = 72,
     terminal_energy_value_per_kwh: float = 0.0,
     dual_terminal_scale: float = 0.0,
     strategic_soc_handoff: bool = False,
@@ -606,6 +663,11 @@ def simulate_stepwise(
     state = {src: float(soc_init) for src in sources}
     raw_rows = []
     summary = []
+    started_at = time.time()
+    steps_total = len(timestamps)
+    source_progress_paths = {
+        src: (_progress_path(output_prefix, src) if output_prefix else None) for src in sources
+    }
 
     pnl_totals = {src: 0.0 for src in sources}
     executed_steps = {src: 0 for src in sources}
@@ -864,8 +926,31 @@ def simulate_stepwise(
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
 
-        if (i + 1) % 288 == 0:
-            print(f"  {i+1}/{len(timestamps)} steps ({timestamps[i].date()})")
+        if progress_every_steps > 0 and ((i + 1) % progress_every_steps == 0 or (i + 1) == steps_total):
+            elapsed_seconds = time.time() - started_at
+            remaining_steps = max(0, steps_total - (i + 1))
+            seconds_per_step = elapsed_seconds / max(i + 1, 1)
+            eta_seconds = remaining_steps * seconds_per_step
+            eta_ts = pd.Timestamp.now(tz="UTC") + pd.to_timedelta(eta_seconds, unit="s")
+            print(
+                f"  {i+1}/{steps_total} steps ({100.0 * (i+1) / max(steps_total, 1):.1f}%) "
+                f"sim={timestamps[i]} elapsed={_format_duration(elapsed_seconds)} "
+                f"eta={_format_duration(eta_seconds)} finish={eta_ts.isoformat()}",
+                flush=True,
+            )
+            if len(sources) == 1:
+                src = sources[0]
+                progress_path = source_progress_paths[src]
+                if progress_path is not None:
+                    _write_progress_checkpoint(
+                        progress_path,
+                        source=src,
+                        steps_completed=i + 1,
+                        steps_total=steps_total,
+                        elapsed_seconds=elapsed_seconds,
+                        current_sim_time=timestamps[i],
+                        completed=(i + 1) == steps_total,
+                    )
 
     n_days = max((timestamps.max() - timestamps.min()).total_seconds() / 86400.0, 1e-9)
     for src in sources:
@@ -1236,6 +1321,8 @@ def _simulate_single_source(
         sources=[source],
         soc_init=soc_init,
         economic_mode=args_dict["economic_mode"],
+        output_prefix=args_dict["output_prefix"],
+        progress_every_steps=args_dict["progress_every_steps"],
         terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
         dual_terminal_scale=args_dict["dual_terminal_scale"],
         strategic_soc_handoff=args_dict["strategic_soc_handoff"],
@@ -1266,6 +1353,8 @@ def simulate_stepwise_parallel(
             sources,
             soc_init,
             economic_mode=args_dict["economic_mode"],
+            output_prefix=args_dict["output_prefix"],
+            progress_every_steps=args_dict["progress_every_steps"],
             terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
             dual_terminal_scale=args_dict["dual_terminal_scale"],
             strategic_soc_handoff=args_dict["strategic_soc_handoff"],
@@ -1434,6 +1523,15 @@ def main():
         ),
     )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
+    parser.add_argument(
+        "--progress-every-steps",
+        type=int,
+        default=72,
+        help=(
+            "Progress logging/checkpoint cadence in simulated 5-minute steps. "
+            "Use 0 to disable interim progress updates."
+        ),
+    )
     parser.add_argument(
         "--baseline-source",
         default="",

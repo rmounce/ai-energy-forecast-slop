@@ -38,6 +38,8 @@ Parallelism notes:
 - `--economic-mode netload_tariffed` is the first production-fidelity upgrade path for Track A:
   it uses actual 30-minute load/PV expanded to 5-minute net load plus tariffed import/feed-in
   price curves for both the tactical solve and realized PnL
+- `--progress-every-steps` controls how often the script prints elapsed/ETA progress lines and
+  updates `eval/results/<output_prefix>_<source>.progress.json` checkpoint files
 - still validate any new multi-worker run shape on a short pilot before leaving it unattended
 - bridge-contract runs now support `--dynamic-bridge-terminal-scope extra_band`, which applies
   dynamic terminal value only to the terminal energy above the q50 floor inside band mode
