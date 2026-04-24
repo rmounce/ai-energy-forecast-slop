@@ -286,6 +286,27 @@ variants to test are:
 3. Prototype a dynamic bridge-contract experiment before revisiting broader stochastic or
    path-tilt ideas.
 
+**First dynamic bridge result (2026-04-24):** the first completed dynamic bridge-contract
+variants did **not** improve on the handoff-enabled baseline. See
+[docs/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md).
+On Window B:
+- handoff refresh: hybrid **$2.2706/day** vs amber **$2.4511/day** (**−7.4%**)
+- dynamic terminal bridge `scale=1.0`: hybrid **$2.2706/day** vs amber **$2.4511/day**
+- dynamic terminal bridge `scale=2.0`: hybrid **$2.2706/day** vs amber **$2.4511/day**
+- dynamic upward band `scale=1.0`: hybrid **$2.2706/day** vs amber **$2.4511/day**
+
+**Important nuance:** these were not purely dormant code paths. The dynamic terminal adder was
+active on most steps, and the dynamic band sometimes widened materially, but the realized
+economic outcome was unchanged. So the result is best read as **active but non-decisive**, not
+as a configuration bug.
+
+**Updated reading:** this narrows the next-step search further. The simple fixed path tilt is too
+blunt, and these first simple dynamic bridge variants are too weak or too non-binding in the
+current tactical formulation. The next useful work is therefore likely to involve either:
+- a different bridge contract
+- a more structural tactical-control change
+- or a reevaluation of whether Track 10A is the right place to keep iterating these bridge ideas
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
