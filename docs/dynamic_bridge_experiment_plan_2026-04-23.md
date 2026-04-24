@@ -21,6 +21,7 @@ New CLI controls:
 - `--dynamic-bridge-upper-quantile {0.90,0.95}`
 - `--dynamic-bridge-target-scale <float>`
 - `--dynamic-bridge-terminal-scale <float>`
+- `--dynamic-bridge-terminal-scope {all,extra_band}`
 
 The strategic bridge signal is computed from:
 - `target_q50`: 14h terminal SoC target from the strategic q50 curve
@@ -42,6 +43,11 @@ These are then used in two production-aligned ways:
 2. **Dynamic terminal-value bias**
 - added tactical terminal-energy value becomes
   `scale * strategic_shadow_gap_per_kwh`
+
+3. **Scoped terminal-value bias**
+- `all`: terminal value applies to all end-of-horizon stored energy
+- `extra_band`: terminal value applies only to the energy above the q50 floor,
+  bounded by the q50->qhi uplift band
 
 The existing strategic q50 SoC handoff remains the baseline contract.
 
@@ -214,6 +220,13 @@ Current interpretation:
 - further work likely needs either a different bridge contract or a more
   structural tactical-control change
 
+Follow-up implementation now added:
+- `extra_band` terminal scope gives `band` mode a more selective value signal:
+  the LP can value only the terminal energy above the q50 floor instead of
+  all terminal inventory
+- this is closer to the intended "permission + incentive" contract than the
+  earlier `band + terminal(all)` formulation
+
 ---
 
 ## 6. Operational Note For Future Runs
@@ -240,3 +253,14 @@ Rationale:
 Observed process lesson from this batch:
 - `--workers 1` was the stable choice for these detached long runs
 - `PYTHONUNBUFFERED=1` was important so progress was visible in logs
+
+Updated process lesson after the 2026-04-24 pilots:
+- `--mp-start-method auto` now prefers `fork` on Linux and completed a real `2-day` pilot with
+  `--workers 2`
+- multi-worker runs should still be validated on a short pilot before any long batch
+- anything beyond a trivial foreground smoke test should run in detached `tmux`, with:
+  - stdout/stderr logged under `eval/results/`
+  - an explicit `.exitcode` file
+  - a self-closing session or clear session naming
+- direct assistant-attached runs are only appropriate for tiny checks where losing the frontend
+  session would not hide useful progress from the user

@@ -317,6 +317,31 @@ diagnostics that verify dispatch actually changes before any full 6-week rerun:
 - a small raw-output comparator that checks `charge_kw`, `discharge_kw`, and `soc_kwh` deltas
   before promoting a variant to a long run
 
+**Follow-up 2-day pilot result (2026-04-24):** the first two short pilots completed over
+`2025-09-01 -> 2025-09-03` after improving the multi-worker path. See
+[docs/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md).
+Both pilots used `--workers 2 --mp-start-method auto`; on Linux this selected `fork`, emitted
+worker startup diagnostics, and completed cleanly.
+
+Pilot economics:
+- `amber_apf_lgbm`: **$9.598/day**
+- `model_a_hybrid` with `band + dynamic terminal value`: **$9.850/day** (**+2.6%**)
+- `model_a_hybrid` with `floor + dynamic target uplift`: **$9.850/day** (**+2.6%**)
+
+Raw comparison between the two pilot variants showed **0 changed steps** in `charge_kw`,
+`discharge_kw`, `soc_kwh`, and `step_pnl`. The variants changed terminal-contract metadata but
+not executed dispatch relative to each other. This is a useful behavioral result, but not yet a
+promotion signal, because there was no same-window `exact` q50 handoff comparator in this pilot
+batch.
+
+**Immediate next options:**
+- run a same-window handoff-enabled `exact` q50 baseline pilot, then compare raw outputs against
+  `floor` and `band + terminal`
+- if all three are dispatch-identical, run one stronger short-window probe such as `floor`
+  target scale `2.0`, `band + terminal` terminal scale `2.0`, or q95 bridge upper quantile
+- if stronger probes still fail to move useful dispatch, pause bridge-contract tuning and
+  diagnose residual Window B losses against Amber before designing a richer value-curve handoff
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast

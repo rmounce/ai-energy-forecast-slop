@@ -526,6 +526,7 @@ def simulate_stepwise(
     dynamic_bridge_upper_quantile: float = 0.90,
     dynamic_bridge_target_scale: float = 0.0,
     dynamic_bridge_terminal_scale: float = 0.0,
+    dynamic_bridge_terminal_scope: str = "all",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     state = {src: float(soc_init) for src in sources}
     raw_rows = []
@@ -575,6 +576,9 @@ def simulate_stepwise(
             strategic_shadow_qhi_per_kwh = float("nan")
             strategic_shadow_gap_per_kwh = 0.0
             dynamic_terminal_adder_per_kwh = 0.0
+            extra_terminal_energy_floor_kwh = None
+            extra_terminal_energy_cap_kwh = None
+            extra_terminal_energy_value_per_kwh = 0.0
             min_terminal_soc_kwh = None
             max_terminal_soc_kwh = None
             if strategic_soc_handoff:
@@ -634,7 +638,22 @@ def simulate_stepwise(
                             max_terminal_soc_kwh = min_terminal_soc_kwh
                     else:
                         raise ValueError(f"Unsupported strategic_target_mode: {strategic_target_mode}")
-                    applied_terminal_energy_value_per_kwh += dynamic_terminal_adder_per_kwh
+                    if dynamic_bridge_terminal_scope == "all":
+                        applied_terminal_energy_value_per_kwh += dynamic_terminal_adder_per_kwh
+                    elif dynamic_bridge_terminal_scope == "extra_band":
+                        if (
+                            strategic_target_mode == "band"
+                            and dynamic_terminal_adder_per_kwh > 0.0
+                            and dynamic_target_uplift_kwh > 0.0
+                            and np.isfinite(strategic_soc_target_kwh)
+                        ):
+                            extra_terminal_energy_floor_kwh = strategic_soc_target_kwh
+                            extra_terminal_energy_cap_kwh = dynamic_target_uplift_kwh
+                            extra_terminal_energy_value_per_kwh = dynamic_terminal_adder_per_kwh
+                    else:
+                        raise ValueError(
+                            f"Unsupported dynamic_bridge_terminal_scope: {dynamic_bridge_terminal_scope}"
+                        )
             if dual_terminal_scale > 0.0:
                 probe = solve_lp_dispatch(
                     curve,
@@ -655,6 +674,9 @@ def simulate_stepwise(
                 curve,
                 state[src],
                 terminal_energy_value_per_kwh=applied_terminal_energy_value_per_kwh,
+                extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
+                extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
+                extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
                 min_terminal_soc_kwh=min_terminal_soc_kwh,
                 max_terminal_soc_kwh=max_terminal_soc_kwh,
             )
@@ -686,6 +708,10 @@ def simulate_stepwise(
                 "strategic_shadow_qhi_per_kwh": strategic_shadow_qhi_per_kwh,
                 "strategic_shadow_gap_per_kwh": strategic_shadow_gap_per_kwh,
                 "dynamic_terminal_adder_per_kwh": dynamic_terminal_adder_per_kwh,
+                "extra_terminal_energy_value_per_kwh": extra_terminal_energy_value_per_kwh,
+                "extra_terminal_energy_floor_kwh": extra_terminal_energy_floor_kwh,
+                "extra_terminal_energy_cap_kwh": extra_terminal_energy_cap_kwh,
+                "extra_terminal_energy_kwh": solve["extra_terminal_energy_kwh"],
                 "min_terminal_soc_kwh": min_terminal_soc_kwh,
                 "max_terminal_soc_kwh": max_terminal_soc_kwh,
                 "tier1_quantile_blend": providers.args.tier1_quantile_blend,
@@ -724,6 +750,7 @@ def simulate_stepwise(
             "dynamic_bridge_upper_quantile": dynamic_bridge_upper_quantile,
             "dynamic_bridge_target_scale": dynamic_bridge_target_scale,
             "dynamic_bridge_terminal_scale": dynamic_bridge_terminal_scale,
+            "dynamic_bridge_terminal_scope": dynamic_bridge_terminal_scope,
             "mean_dynamic_target_uplift_kwh": mean_dynamic_target_uplift_kwh,
             "max_dynamic_target_uplift_kwh": max_dynamic_target_uplift_kwh,
             "mean_dynamic_terminal_adder_per_kwh": mean_dynamic_terminal_adder_per_kwh,
@@ -1070,6 +1097,7 @@ def _simulate_single_source(
         dynamic_bridge_upper_quantile=args_dict["dynamic_bridge_upper_quantile"],
         dynamic_bridge_target_scale=args_dict["dynamic_bridge_target_scale"],
         dynamic_bridge_terminal_scale=args_dict["dynamic_bridge_terminal_scale"],
+        dynamic_bridge_terminal_scope=args_dict["dynamic_bridge_terminal_scope"],
     )
 
 
@@ -1098,6 +1126,7 @@ def simulate_stepwise_parallel(
             dynamic_bridge_upper_quantile=args_dict["dynamic_bridge_upper_quantile"],
             dynamic_bridge_target_scale=args_dict["dynamic_bridge_target_scale"],
             dynamic_bridge_terminal_scale=args_dict["dynamic_bridge_terminal_scale"],
+            dynamic_bridge_terminal_scope=args_dict["dynamic_bridge_terminal_scope"],
         )
 
     raw_frames: list[pd.DataFrame] = []
@@ -1239,6 +1268,15 @@ def main():
             "bounded dynamic terminal-energy value during the tactical solve."
         ),
     )
+    parser.add_argument(
+        "--dynamic-bridge-terminal-scope",
+        choices=["all", "extra_band"],
+        default="all",
+        help=(
+            "How dynamic terminal value is applied. 'all' values all terminal energy; "
+            "'extra_band' only values the energy above the q50 floor within band mode."
+        ),
+    )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
     parser.add_argument(
         "--baseline-source",
@@ -1279,6 +1317,8 @@ def main():
         parser.error("--dynamic-bridge-target-scale must be >= 0")
     if args.dynamic_bridge_terminal_scale < 0:
         parser.error("--dynamic-bridge-terminal-scale must be >= 0")
+    if args.dynamic_bridge_terminal_scope == "extra_band" and args.strategic_target_mode != "band":
+        parser.error("--dynamic-bridge-terminal-scope=extra_band requires --strategic-target-mode band")
     if args.dual_terminal_scale > 0 and args.dynamic_bridge_terminal_scale > 0:
         parser.error("Use either --dual-terminal-scale or --dynamic-bridge-terminal-scale, not both")
     if args.terminal_energy_value_mwh != 0.0 and args.dynamic_bridge_terminal_scale > 0:
@@ -1312,7 +1352,8 @@ def main():
     print(
         f"  Dynamic bridge: qhi=q{int(args.dynamic_bridge_upper_quantile * 100):02d}, "
         f"target_scale={args.dynamic_bridge_target_scale:.3f}, "
-        f"terminal_scale={args.dynamic_bridge_terminal_scale:.3f}"
+        f"terminal_scale={args.dynamic_bridge_terminal_scale:.3f}, "
+        f"terminal_scope={args.dynamic_bridge_terminal_scope}"
     )
     print(
         f"  Quantile blend: tier1={args.tier1_quantile_blend:.2f}, "

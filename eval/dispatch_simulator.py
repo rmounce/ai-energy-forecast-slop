@@ -88,6 +88,9 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                       capacity_kwh: float = CAPACITY_KWH,
                       max_power_kw: float = MAX_POWER_KW,
                       terminal_energy_value_per_kwh: float = 0.0,
+                      extra_terminal_energy_value_per_kwh: float = 0.0,
+                      extra_terminal_energy_floor_kwh: float | None = None,
+                      extra_terminal_energy_cap_kwh: float | None = None,
                       min_terminal_soc_kwh: float | None = None,
                       max_terminal_soc_kwh: float | None = None) -> dict:
     """
@@ -101,6 +104,13 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         Salvage value assigned to energy remaining in the battery at the end of
         the horizon. Positive values discourage premature discharge and act as a
         generic "opportunity cost of energy" bias.
+
+    extra_terminal_energy_value_per_kwh / floor / cap:
+        Optional piecewise salvage value applied only to the band of terminal
+        energy above `extra_terminal_energy_floor_kwh`, capped at
+        `extra_terminal_energy_cap_kwh`. This is useful when the strategic
+        contract already defines a q50 floor, and only the energy above that
+        floor should receive an additional premium.
 
     min_terminal_soc_kwh / max_terminal_soc_kwh:
         Optional terminal SoC constraints at the end of the horizon. When both
@@ -138,6 +148,20 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
     A_upper = np.hstack([ EFF_C * interval_h * L, -interval_h * L])
     b_upper = np.full(n, capacity_kwh - soc_init)
 
+    n_extra = 0
+    use_extra_terminal_value = (
+        extra_terminal_energy_value_per_kwh > 0.0
+        and extra_terminal_energy_floor_kwh is not None
+        and extra_terminal_energy_cap_kwh is not None
+        and extra_terminal_energy_cap_kwh > 0.0
+    )
+    if use_extra_terminal_value:
+        n_extra = 1
+        c_obj = np.concatenate([c_obj, np.array([-float(extra_terminal_energy_value_per_kwh)], dtype=np.float64)])
+        zero_col = np.zeros((n, 1), dtype=np.float64)
+        A_lower = np.hstack([A_lower, zero_col])
+        A_upper = np.hstack([A_upper, zero_col])
+
     A_parts = [A_lower, A_upper]
     b_parts = [b_lower, b_upper]
 
@@ -149,6 +173,9 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
          EFF_C * interval_h * np.ones(n, dtype=np.float64),
         -interval_h * np.ones(n, dtype=np.float64),
     ])
+    if use_extra_terminal_value:
+        terminal_row_lower = np.concatenate([terminal_row_lower, np.array([0.0], dtype=np.float64)])
+        terminal_row_upper = np.concatenate([terminal_row_upper, np.array([0.0], dtype=np.float64)])
     if min_terminal_soc_kwh is not None:
         min_terminal_soc_kwh = float(np.clip(min_terminal_soc_kwh, 0.0, capacity_kwh))
         A_parts.append(terminal_row_lower.reshape(1, -1))
@@ -158,9 +185,24 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         A_parts.append(terminal_row_upper.reshape(1, -1))
         b_parts.append(np.array([max_terminal_soc_kwh - soc_init], dtype=np.float64))
 
+    if use_extra_terminal_value:
+        extra_terminal_energy_floor_kwh = float(np.clip(extra_terminal_energy_floor_kwh, 0.0, capacity_kwh))
+        extra_terminal_energy_cap_kwh = float(
+            np.clip(extra_terminal_energy_cap_kwh, 0.0, capacity_kwh - extra_terminal_energy_floor_kwh)
+        )
+        extra_row = np.concatenate([
+            -EFF_C * interval_h * np.ones(n, dtype=np.float64),
+             interval_h * np.ones(n, dtype=np.float64),
+             np.array([1.0], dtype=np.float64),
+        ])
+        A_parts.append(extra_row.reshape(1, -1))
+        b_parts.append(np.array([soc_init - extra_terminal_energy_floor_kwh], dtype=np.float64))
+
     A_ub = np.vstack(A_parts)
     b_ub = np.concatenate(b_parts)
     bounds = [(0.0, max_power_kw)] * (2 * n)
+    if use_extra_terminal_value:
+        bounds.append((0.0, extra_terminal_energy_cap_kwh))
 
     result = linprog(c_obj, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs",
                      options={"disp": False})
@@ -182,6 +224,7 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         "status": int(result.status),
         "success": bool(result.success),
         "initial_soc_shadow_price_per_kwh": _estimate_initial_soc_shadow_price_per_kwh(result, n),
+        "extra_terminal_energy_kwh": float(result.x[2 * n]) if use_extra_terminal_value else 0.0,
         "soc_trajectory_kwh": compute_soc_trajectory(result.x[:n], result.x[n:], soc_init,
                                                      interval_h=interval_h,
                                                      capacity_kwh=capacity_kwh),
@@ -193,6 +236,9 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                 capacity_kwh: float = CAPACITY_KWH,
                 max_power_kw: float = MAX_POWER_KW,
                 terminal_energy_value_per_kwh: float = 0.0,
+                extra_terminal_energy_value_per_kwh: float = 0.0,
+                extra_terminal_energy_floor_kwh: float | None = None,
+                extra_terminal_energy_cap_kwh: float | None = None,
                 min_terminal_soc_kwh: float | None = None,
                 max_terminal_soc_kwh: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -205,6 +251,9 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         capacity_kwh=capacity_kwh,
         max_power_kw=max_power_kw,
         terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
+        extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
+        extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
+        extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
         min_terminal_soc_kwh=min_terminal_soc_kwh,
         max_terminal_soc_kwh=max_terminal_soc_kwh,
     )

@@ -153,7 +153,154 @@ Both should be tried on a short pilot window before any full 6-week rerun.
 
 ---
 
-## 5. Process Takeaway
+## 5. Follow-up 2-day Pilots
+
+Two short pilots were run over `2025-09-01 -> 2025-09-03` after adding better
+multiprocessing diagnostics and `--mp-start-method auto`:
+
+- `rolling_mpc_eval_pilot_band_term_20260424`
+- `rolling_mpc_eval_pilot_floor_20260424`
+
+Both used:
+- `--sources amber_apf_lgbm,model_a_hybrid`
+- `--baseline-source amber_apf_lgbm`
+- `--strategic-soc-handoff`
+- `--workers 2`
+- `--mp-start-method auto`
+
+The multiprocessing path selected `fork` on Linux, emitted worker startup diagnostics, and
+completed cleanly. This is the first positive validation that the improved multi-worker path
+can run a real rolling MPC pilot without the earlier silent-startup failure mode.
+
+### Pilot economics
+
+Both pilots produced the same economics:
+
+- `amber_apf_lgbm`: **$9.598/day**
+- `model_a_hybrid`: **$9.850/day**
+- hybrid vs amber: **+2.6%**
+
+This 2-day slice is therefore favorable to the hybrid, but it is too short to draw
+architecture-level conclusions.
+
+### Pilot activation diagnostics
+
+For `model_a_hybrid`:
+
+- `band + dynamic terminal value`
+  - positive target-uplift steps: `103 / 576`
+  - positive terminal-adder steps: `563 / 576`
+  - mean dynamic target uplift: `0.218 kWh`
+  - mean dynamic terminal adder: `0.100 $/kWh`
+- `floor + dynamic target uplift`
+  - positive target-uplift steps: `103 / 576`
+  - positive terminal-adder steps: `0 / 576`
+  - mean dynamic target uplift: `0.218 kWh`
+
+### Raw action comparison
+
+Comparing `band + dynamic terminal value` against `floor + dynamic target uplift` with
+[eval/compare_rolling_mpc_raw.py](../eval/compare_rolling_mpc_raw.py) showed:
+
+- `charge_kw`: **0** changed steps
+- `discharge_kw`: **0** changed steps
+- `soc_kwh`: **0** changed steps
+- `step_pnl`: **0** changed steps
+
+Only terminal-contract metadata changed, notably:
+
+- `dynamic_terminal_adder_per_kwh`: `562` changed steps
+- `terminal_energy_value_per_kwh`: `562` changed steps
+- `min_terminal_soc_kwh`: `35` changed steps
+
+So these two pilots were dispatch-identical to each other. The `band + terminal` formulation
+did add a value signal, but on this slice it still did not alter the realized control action
+relative to the stricter `floor` formulation.
+
+Important limitation:
+
+These pilots were not yet compared against a same-window handoff-enabled `exact` q50 baseline.
+They show that both variants can beat Amber on this particular 2-day slice and that they are
+identical to each other, but they do not yet prove either variant improves over the existing
+handoff baseline.
+
+---
+
+## 6. Options From Here
+
+The next decision should be made around dispatch-changing behavior, not only summary PnL.
+
+### Option 1 - Same-window exact baseline comparator
+
+Run a 2-day handoff-enabled `exact` q50 pilot over the same window, then compare raw outputs
+against `floor` and `band + terminal`.
+
+Purpose:
+- establish whether the new bridge variants actually differ from the existing handoff baseline
+- avoid promoting a variant that merely repeats the current q50 handoff behavior
+
+Promotion criterion:
+- non-zero `charge_kw`, `discharge_kw`, or `soc_kwh` changes on the pilot window
+- no obvious pathological inventory hoarding or forced terminal behavior
+
+### Option 2 - Stronger floor / terminal scale probe
+
+If the same-window comparator shows little or no dispatch movement, run a small scale probe:
+
+- `floor`, target scale `2.0`
+- `band + terminal`, target scale `1.0`, terminal scale `2.0`
+- `band + terminal_scope=extra_band`, target scale `1.0`, terminal scale `1.0`
+- optionally q95 as the dynamic bridge upper quantile
+
+Purpose:
+- test whether the bridge signal is structurally capable of moving the LP when made stronger
+- keep the window short so this is a behavioral diagnostic, not a tuned production candidate
+
+Risk:
+- stronger scales may over-preserve inventory and recreate the fixed q50->q90 path-tilt failure
+
+### Option 3 - Move from point targets to a value curve
+
+Replace the current scalar terminal target/value experiments with a richer piecewise terminal
+value curve derived from the strategic solve.
+
+Purpose:
+- represent the marginal value of stored energy at the 14h boundary more directly
+- avoid brittle behavior from a single exact target or a single static terminal adder
+
+Note:
+- `terminal_scope=extra_band` is a lightweight first step in this direction: it values only
+  the energy above the q50 floor inside the uplift band, rather than all terminal inventory
+
+Risk:
+- more implementation complexity
+- requires careful eval design to avoid overfitting a small number of windows
+
+### Option 4 - Pause bridge-contract tuning and diagnose forecast/control residuals
+
+Use the handoff-enabled q50 baseline as the current reference and inspect where it still loses
+to Amber on Window B.
+
+Purpose:
+- determine whether the remaining gap is forecast quality, tactical execution, or strategic
+boundary behavior
+- avoid repeatedly tuning terminal contracts if the residual issue is elsewhere
+
+Candidate diagnostics:
+- compare charge/discharge price capture by source
+- inspect days where Amber ends with materially different SoC
+- compare strategic q50/q90 target paths against actual profitable opportunities
+
+Recommended order:
+
+1. Run the same-window exact baseline comparator.
+2. If bridge variants are dispatch-identical to exact, run one stronger short-window probe.
+3. If stronger probes still do not move dispatch usefully, pivot to residual diagnostics before
+   designing a value-curve handoff.
+
+---
+
+## 7. Process Takeaway
 
 The long-run launch shape itself is now also better understood:
 
@@ -161,3 +308,6 @@ The long-run launch shape itself is now also better understood:
 - `PYTHONUNBUFFERED=1` was important so progress appeared in logs
 - jumping straight to a `6-week` batch remains expensive and should still be preceded by a
   shorter pilot window whenever possible
+- after the foreground pilot mistake on 2026-04-24, the operational rule is stricter:
+  anything beyond a trivial smoke test should run in detached `tmux` with log and exit-code
+  files so progress remains inspectable outside the assistant session

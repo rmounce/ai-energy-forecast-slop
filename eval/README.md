@@ -18,6 +18,33 @@
 
 ---
 
+## Rolling MPC Run Hygiene
+
+For `rolling_mpc_eval.py`, treat anything beyond a tiny smoke test as a managed background job:
+
+- launch via detached `tmux`, not an assistant-attached foreground session
+- use `PYTHONUNBUFFERED=1` so progress appears in the log promptly
+- use `nice -n19` for long or parallel experiments
+- write stdout/stderr to an `eval/results/*.log` file
+- write the process exit code to a matching `eval/results/*.exitcode` file
+- run a `1-3 day` pilot before promoting a new run shape to a full `6-week` window
+
+Parallelism notes:
+
+- `--workers` parallelizes across forecast sources, not timesteps
+- common two-source runs can only usefully consume about two worker processes
+- `--mp-start-method auto` prefers `fork` on Linux and has completed a real `2-day` pilot with
+  `--workers 2`
+- still validate any new multi-worker run shape on a short pilot before leaving it unattended
+- bridge-contract runs now support `--dynamic-bridge-terminal-scope extra_band`, which applies
+  dynamic terminal value only to the terminal energy above the q50 floor inside band mode
+
+Before promoting a control variant to a long run, compare raw pilot outputs with
+`compare_rolling_mpc_raw.py`. If `charge_kw`, `discharge_kw`, and `soc_kwh` are unchanged,
+the variant is probably not worth a long rerun unless the goal is purely diagnostic.
+
+---
+
 ## Phase 6 — Holistic Dispatch Simulation
 
 **Goal:** Produce a $/day simulated profit comparison across forecast sources on a stratified
