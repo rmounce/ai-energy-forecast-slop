@@ -32,6 +32,10 @@ DEFAULT_COMPARE_COLS = [
     "strategic_target_gap_kwh",
     "dynamic_target_uplift_kwh",
     "dynamic_terminal_adder_per_kwh",
+    "extra_terminal_energy_value_per_kwh",
+    "extra_terminal_energy_floor_kwh",
+    "extra_terminal_energy_cap_kwh",
+    "extra_terminal_energy_kwh",
     "min_terminal_soc_kwh",
     "max_terminal_soc_kwh",
 ]
@@ -47,10 +51,10 @@ def _load_raw(path: Path) -> pd.DataFrame:
 def _resolve_path(raw_arg: str) -> Path:
     p = Path(raw_arg)
     if p.exists():
-        return p
+        return p.resolve()
     p_results = RESULTS_DIR / raw_arg
     if p_results.exists():
-        return p_results
+        return p_results.resolve()
     raise FileNotFoundError(f"Could not find parquet: {raw_arg}")
 
 
