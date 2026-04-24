@@ -82,6 +82,27 @@ def load_config() -> dict:
         return json.load(f)
 
 
+CONFIG = load_config()
+LOCAL_TZ = pytz.timezone(CONFIG["timezone"])
+
+
+def _load_tariff_profile() -> tuple[dict[str, float], dict[str, float], float]:
+    tariff_path = ROOT / CONFIG["paths"]["tariff_file"]
+    try:
+        with open(tariff_path) as f:
+            tariffs = json.load(f)
+    except FileNotFoundError:
+        return {}, {}, 1.05
+    return (
+        tariffs.get("general_tariff", {}),
+        tariffs.get("feed_in_tariff", {}),
+        float(tariffs.get("network_loss_factor", 1.05)),
+    )
+
+
+GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = _load_tariff_profile()
+
+
 def _load_actuals_5m() -> pd.DataFrame:
     df = pd.read_parquet(ACTUALS_5M_FILE)
     if df.index.tz is None:
@@ -106,6 +127,58 @@ def _load_pv_5m_from_30m(actuals_30m: pd.DataFrame) -> pd.Series:
     pv_5m = pv.resample("5min").ffill()
     pv_5m.name = "power_pv"
     return pv_5m
+
+
+def _expand_actual_30m_power_to_5m(actuals_30m: pd.DataFrame, column: str) -> pd.Series:
+    if column not in actuals_30m.columns:
+        return pd.Series(dtype=np.float64)
+    series = pd.to_numeric(actuals_30m[column], errors="coerce").astype(np.float64)
+    expanded = series.resample("5min").ffill()
+    expanded.name = column
+    return expanded
+
+
+def _load_net_load_5m_from_30m(actuals_30m: pd.DataFrame) -> pd.Series:
+    load_5m = _expand_actual_30m_power_to_5m(actuals_30m, "power_load")
+    pv_5m = _expand_actual_30m_power_to_5m(actuals_30m, "power_pv")
+    if load_5m.empty and pv_5m.empty:
+        return pd.Series(dtype=np.float64)
+    idx = load_5m.index.union(pv_5m.index)
+    net_load_kw = (
+        load_5m.reindex(idx).ffill().fillna(0.0)
+        - pv_5m.reindex(idx).ffill().fillna(0.0)
+    ) / 1000.0
+    net_load_kw.name = "net_load_kw"
+    return net_load_kw.astype(np.float64)
+
+
+def _tariffed_price_frame_from_wholesale_mwh(wholesale_prices_mwh: pd.Series) -> pd.DataFrame:
+    frame = pd.DataFrame(index=wholesale_prices_mwh.index.copy())
+    frame["wholesale_price"] = wholesale_prices_mwh.astype(np.float64) / 1000.0
+    local_time = pd.Series(
+        frame.index.tz_convert(LOCAL_TZ).floor("30min").time.astype(str),
+        index=frame.index,
+        dtype="string",
+    )
+    general_tariff = local_time.map(GENERAL_TARIFF_MAP).fillna(0.0).astype(np.float64)
+    feed_in_tariff = local_time.map(FEED_IN_TARIFF_MAP).fillna(0.0).astype(np.float64)
+
+    general_price_ex_gst = frame["wholesale_price"] * NETWORK_LOSS_FACTOR + general_tariff
+    feed_in_price_ex_gst = frame["wholesale_price"] * NETWORK_LOSS_FACTOR + feed_in_tariff
+
+    frame["general_price"] = np.where(
+        general_price_ex_gst > 0,
+        general_price_ex_gst * CONFIG["gst_rate"],
+        general_price_ex_gst,
+    )
+    frame["feed_in_price"] = np.where(
+        feed_in_price_ex_gst < 0,
+        feed_in_price_ex_gst * CONFIG["gst_rate"],
+        feed_in_price_ex_gst,
+    )
+    frame["general_price_mwh"] = frame["general_price"] * 1000.0
+    frame["feed_in_price_mwh"] = frame["feed_in_price"] * 1000.0
+    return frame
 
 
 def _load_p5min_runs() -> tuple[dict[pd.Timestamp, list[float]], list[pd.Timestamp], np.ndarray]:
@@ -283,6 +356,7 @@ class ForecastProviders:
         self.actuals_5m = _load_actuals_5m()
         self.actuals_30m = _load_actuals_30m()
         self.pv_5m = _load_pv_5m_from_30m(self.actuals_30m)
+        self.net_load_5m = _load_net_load_5m_from_30m(self.actuals_30m)
         self.p5min_runs, self.p5_run_times_sorted, self.p5_run_times_ns = _load_p5min_runs()
         self.tactical_models = {
             0.05: joblib.load(TACTICAL_MODEL_DIR / "lgbm_q05.pkl"),
@@ -519,6 +593,7 @@ def simulate_stepwise(
     providers: ForecastProviders,
     sources: list[str],
     soc_init: float,
+    economic_mode: str = "price_only",
     terminal_energy_value_per_kwh: float = 0.0,
     dual_terminal_scale: float = 0.0,
     strategic_soc_handoff: bool = False,
@@ -540,12 +615,33 @@ def simulate_stepwise(
     repaired_invalid_curve = {src: 0 for src in sources}
     invalid_curve_logged = {src: 0 for src in sources}
 
+    if economic_mode == "netload_tariffed":
+        tariffed_actuals = _tariffed_price_frame_from_wholesale_mwh(actual_prices.reindex(timestamps).ffill().bfill())
+        actual_general_prices = tariffed_actuals["general_price_mwh"]
+        actual_feed_in_prices = tariffed_actuals["feed_in_price_mwh"]
+        actual_net_load_kw = providers.net_load_5m.reindex(timestamps).ffill().bfill()
+    elif economic_mode == "price_only":
+        actual_general_prices = None
+        actual_feed_in_prices = None
+        actual_net_load_kw = None
+    else:
+        raise ValueError(f"Unsupported economic_mode: {economic_mode}")
+
     for i, ts in enumerate(timestamps):
         actual = float(actual_prices.asof(ts))
         if np.isnan(actual):
             for src in sources:
                 skipped_missing_actual[src] += 1
             continue
+        actual_general_price_mwh = (
+            float(actual_general_prices.asof(ts)) if actual_general_prices is not None else float("nan")
+        )
+        actual_feed_in_price_mwh = (
+            float(actual_feed_in_prices.asof(ts)) if actual_feed_in_prices is not None else float("nan")
+        )
+        actual_net_load_step_kw = (
+            float(actual_net_load_kw.asof(ts)) if actual_net_load_kw is not None else float("nan")
+        )
 
         for src in sources:
             curve = providers.build_forecast_curve(src, ts)
@@ -654,10 +750,26 @@ def simulate_stepwise(
                         raise ValueError(
                             f"Unsupported dynamic_bridge_terminal_scope: {dynamic_bridge_terminal_scope}"
                         )
+            forecast_general_price_mwh = None
+            forecast_feed_in_price_mwh = None
+            forecast_net_load_kw = None
+            if economic_mode == "netload_tariffed":
+                curve_idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
+                tariffed_curve = _tariffed_price_frame_from_wholesale_mwh(
+                    pd.Series(curve, index=curve_idx, dtype=np.float64)
+                )
+                forecast_general_price_mwh = tariffed_curve["general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
+                forecast_feed_in_price_mwh = tariffed_curve["feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
+                forecast_net_load_kw = (
+                    providers.net_load_5m.reindex(curve_idx).ffill().bfill().to_numpy(dtype=np.float64, copy=True)
+                )
             if dual_terminal_scale > 0.0:
                 probe = solve_lp_dispatch(
                     curve,
                     state[src],
+                    import_prices_mwh=None if economic_mode == "price_only" else forecast_general_price_mwh,
+                    export_prices_mwh=None if economic_mode == "price_only" else forecast_feed_in_price_mwh,
+                    net_load_forecast_kw=None if economic_mode == "price_only" else forecast_net_load_kw,
                     terminal_energy_value_per_kwh=0.0,
                     min_terminal_soc_kwh=min_terminal_soc_kwh,
                     max_terminal_soc_kwh=max_terminal_soc_kwh,
@@ -670,9 +782,13 @@ def simulate_stepwise(
                     )
                 else:
                     applied_terminal_energy_value_per_kwh = 0.0
+
             solve = solve_lp_dispatch(
                 curve,
                 state[src],
+                import_prices_mwh=forecast_general_price_mwh,
+                export_prices_mwh=forecast_feed_in_price_mwh,
+                net_load_forecast_kw=forecast_net_load_kw,
                 terminal_energy_value_per_kwh=applied_terminal_energy_value_per_kwh,
                 extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
                 extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
@@ -684,18 +800,46 @@ def simulate_stepwise(
             d_plan = solve["discharge_kw"]
             c0 = float(c_plan[0]) if len(c_plan) else 0.0
             d0 = float(d_plan[0]) if len(d_plan) else 0.0
-            p_kwh = actual / 1000.0
-            pnl = (d0 * EFF_D * p_kwh - c0 * p_kwh - DEG_PER_KWH * (c0 * EFF_C + d0)) * INTERVAL_H
+            grid_import0 = float(solve["grid_import_kw"][0]) if len(solve["grid_import_kw"]) else 0.0
+            grid_export0 = float(solve["grid_export_kw"][0]) if len(solve["grid_export_kw"]) else 0.0
+            if economic_mode == "netload_tariffed":
+                grid_kw = actual_net_load_step_kw + c0 - d0 * EFF_D
+                realized_grid_import_kw = max(grid_kw, 0.0)
+                realized_grid_export_kw = max(-grid_kw, 0.0)
+                pnl = (
+                    realized_grid_export_kw * (actual_feed_in_price_mwh / 1000.0)
+                    - realized_grid_import_kw * (actual_general_price_mwh / 1000.0)
+                    - DEG_PER_KWH * (c0 * EFF_C + d0)
+                ) * INTERVAL_H
+            else:
+                p_kwh = actual / 1000.0
+                realized_grid_import_kw = 0.0
+                realized_grid_export_kw = 0.0
+                pnl = (d0 * EFF_D * p_kwh - c0 * p_kwh - DEG_PER_KWH * (c0 * EFF_C + d0)) * INTERVAL_H
             state[src] = float(np.clip(state[src] + (c0 * EFF_C - d0) * INTERVAL_H, 0.0, CAPACITY_KWH))
             pnl_totals[src] += pnl
             executed_steps[src] += 1
             raw_rows.append({
                 "time": ts,
                 "source": src,
+                "economic_mode": economic_mode,
                 "actual_price_mwh": actual,
+                "actual_general_price_mwh": actual_general_price_mwh,
+                "actual_feed_in_price_mwh": actual_feed_in_price_mwh,
+                "actual_net_load_kw": actual_net_load_step_kw,
                 "forecast_step0_mwh": float(curve[0]),
+                "forecast_general_step0_mwh": (
+                    float(forecast_general_price_mwh[0]) if forecast_general_price_mwh is not None else float("nan")
+                ),
+                "forecast_feed_in_step0_mwh": (
+                    float(forecast_feed_in_price_mwh[0]) if forecast_feed_in_price_mwh is not None else float("nan")
+                ),
                 "charge_kw": c0,
                 "discharge_kw": d0,
+                "grid_import_kw": grid_import0,
+                "grid_export_kw": grid_export0,
+                "realized_grid_import_kw": realized_grid_import_kw,
+                "realized_grid_export_kw": realized_grid_export_kw,
                 "soc_prev_kwh": soc_prev,
                 "soc_kwh": state[src],
                 "step_pnl": pnl,
@@ -743,6 +887,7 @@ def simulate_stepwise(
             "total_pnl": pnl_totals[src],
             "mean_per_day": pnl_totals[src] / n_days,
             "soc_final_kwh": state[src],
+            "economic_mode": economic_mode,
             "terminal_energy_value_per_kwh": terminal_energy_value_per_kwh,
             "dual_terminal_scale": dual_terminal_scale,
             "strategic_soc_handoff": strategic_soc_handoff,
@@ -1090,6 +1235,7 @@ def _simulate_single_source(
         providers=providers,
         sources=[source],
         soc_init=soc_init,
+        economic_mode=args_dict["economic_mode"],
         terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
         dual_terminal_scale=args_dict["dual_terminal_scale"],
         strategic_soc_handoff=args_dict["strategic_soc_handoff"],
@@ -1119,6 +1265,7 @@ def simulate_stepwise_parallel(
             providers,
             sources,
             soc_init,
+            economic_mode=args_dict["economic_mode"],
             terminal_energy_value_per_kwh=args_dict["terminal_energy_value_per_kwh"],
             dual_terminal_scale=args_dict["dual_terminal_scale"],
             strategic_soc_handoff=args_dict["strategic_soc_handoff"],
@@ -1180,6 +1327,15 @@ def main():
     )
     parser.add_argument("--tft-checkpoint", default="", help="Path to TFT checkpoint for model_a_hybrid")
     parser.add_argument("--tft-scalers", default="", help="Path to matching TFT scalers for model_a_hybrid")
+    parser.add_argument(
+        "--economic-mode",
+        choices=["price_only", "netload_tariffed"],
+        default="price_only",
+        help=(
+            "Dispatch/PnL objective. 'price_only' keeps the legacy wholesale arbitrage eval; "
+            "'netload_tariffed' adds actual load/PV plus separate import/feed-in economics."
+        ),
+    )
     parser.add_argument("--soc-init-kwh", type=float, default=SOC_INIT_KWH)
     parser.add_argument(
         "--tier1-quantile-blend",
@@ -1346,6 +1502,7 @@ def main():
     print(f"  Steps:  {len(idx):,}")
     print(f"  Sources: {sources}")
     print(f"  Baseline: {baseline_source}")
+    print(f"  Economic mode: {args.economic_mode}")
     print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
     print(f"  Dual terminal scale: {args.dual_terminal_scale:.3f}")
     print(f"  Strategic SoC handoff: {args.strategic_soc_handoff} ({args.strategic_target_mode})")

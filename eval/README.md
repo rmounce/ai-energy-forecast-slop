@@ -10,7 +10,7 @@
 | `retro_tft_inference.py` | Retrospective TFT Tier 2 batch inference → `retro_tft_forecasts.pkl` ({ts → ndarray(144,6)}). |
 | `retro_tier1_inference.py` | Retrospective Tier 1 LGBM inference → `retro_tier1_forecasts.pkl` ({ts → ndarray(2,)}). Uses parquet P5MIN + actuals; InfluxDB for PV only. |
 | `eval_tier1_accuracy.py` | **Pass A tactical eval**: MAE per horizon h0-h11 for Tier 1 vs p5min_direct/naive/oracle. Outputs `tier1_accuracy_by_horizon.csv` + `tier1_accuracy_summary.csv`. |
-| `rolling_mpc_eval.py` | **Track A rolling MPC eval**: contiguous 5-min, price-only, SoC-carrying backtest scaffold for the execution-focused near horizon, with regime, spike-band, coverage, and behavior diagnostics. For detached long runs, prefer `--workers 1` unless a short pilot has already validated a multi-worker setup; `--mp-start-method auto` now prefers `fork` on Linux. |
+| `rolling_mpc_eval.py` | **Track A rolling MPC eval**: contiguous 5-min, SoC-carrying backtest scaffold for the execution-focused near horizon. Supports legacy `price_only` mode and newer `netload_tariffed` mode (actual load/PV plus separate import/feed-in economics), with regime, spike-band, coverage, and behavior diagnostics. For detached long runs, prefer `--workers 1` unless a short pilot has already validated a multi-worker setup; `--mp-start-method auto` now prefers `fork` on Linux. |
 | `compare_rolling_mpc_raw.py` | Compare two Track A raw parquet outputs and report whether dispatch actually changed (`charge_kw`, `discharge_kw`, `soc_kwh`, terminal-contract columns). Useful as a cheap preflight before committing to long reruns. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
@@ -35,6 +35,9 @@ Parallelism notes:
 - common two-source runs can only usefully consume about two worker processes
 - `--mp-start-method auto` prefers `fork` on Linux and has completed a real `2-day` pilot with
   `--workers 2`
+- `--economic-mode netload_tariffed` is the first production-fidelity upgrade path for Track A:
+  it uses actual 30-minute load/PV expanded to 5-minute net load plus tariffed import/feed-in
+  price curves for both the tactical solve and realized PnL
 - still validate any new multi-worker run shape on a short pilot before leaving it unattended
 - bridge-contract runs now support `--dynamic-bridge-terminal-scope extra_band`, which applies
   dynamic terminal value only to the terminal energy above the q50 floor inside band mode

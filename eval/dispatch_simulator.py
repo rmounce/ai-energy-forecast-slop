@@ -87,6 +87,9 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                       interval_h: float = INTERVAL_H,
                       capacity_kwh: float = CAPACITY_KWH,
                       max_power_kw: float = MAX_POWER_KW,
+                      import_prices_mwh: np.ndarray | None = None,
+                      export_prices_mwh: np.ndarray | None = None,
+                      net_load_forecast_kw: np.ndarray | None = None,
                       terminal_energy_value_per_kwh: float = 0.0,
                       extra_terminal_energy_value_per_kwh: float = 0.0,
                       extra_terminal_energy_floor_kwh: float | None = None,
@@ -124,6 +127,8 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         return {
             "charge_kw": np.zeros(0),
             "discharge_kw": np.zeros(0),
+            "grid_import_kw": np.zeros(0),
+            "grid_export_kw": np.zeros(0),
             "objective_value": 0.0,
             "status": 0,
             "success": True,
@@ -131,21 +136,39 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         }
 
     p = prices_mwh / 1000.0  # $/kWh
-
-    c_obj = np.concatenate([
-        (p + DEG_PER_KWH * EFF_C) * interval_h,
-        (-p * EFF_D + DEG_PER_KWH) * interval_h,
-    ])
+    use_net_load_mode = (
+        import_prices_mwh is not None
+        and export_prices_mwh is not None
+        and net_load_forecast_kw is not None
+    )
+    if use_net_load_mode:
+        import_p = np.asarray(import_prices_mwh, dtype=np.float64) / 1000.0
+        export_p = np.asarray(export_prices_mwh, dtype=np.float64) / 1000.0
+        net_load_forecast_kw = np.asarray(net_load_forecast_kw, dtype=np.float64)
+        if len(import_p) != n or len(export_p) != n or len(net_load_forecast_kw) != n:
+            raise ValueError("Net-load mode requires import/export price curves and net load forecast matching horizon length")
+        c_obj = np.concatenate([
+            np.full(n, DEG_PER_KWH * EFF_C * interval_h, dtype=np.float64),
+            np.full(n, DEG_PER_KWH * interval_h, dtype=np.float64),
+            import_p * interval_h,
+            -export_p * interval_h,
+        ])
+    else:
+        c_obj = np.concatenate([
+            (p + DEG_PER_KWH * EFF_C) * interval_h,
+            (-p * EFF_D + DEG_PER_KWH) * interval_h,
+        ])
     if terminal_energy_value_per_kwh:
         c_obj[:n] -= terminal_energy_value_per_kwh * EFF_C * interval_h
         c_obj[n:] += terminal_energy_value_per_kwh * interval_h
 
     L = np.tril(np.ones((n, n)))
 
-    A_lower = np.hstack([-EFF_C * interval_h * L,  interval_h * L])
+    zeros_extra = np.zeros((n, 2 * n if use_net_load_mode else 0), dtype=np.float64)
+    A_lower = np.hstack([-EFF_C * interval_h * L,  interval_h * L, zeros_extra])
     b_lower = np.full(n, soc_init)
 
-    A_upper = np.hstack([ EFF_C * interval_h * L, -interval_h * L])
+    A_upper = np.hstack([ EFF_C * interval_h * L, -interval_h * L, zeros_extra])
     b_upper = np.full(n, capacity_kwh - soc_init)
 
     n_extra = 0
@@ -168,10 +191,12 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
     terminal_row_lower = np.hstack([
         -EFF_C * interval_h * np.ones(n, dtype=np.float64),
          interval_h * np.ones(n, dtype=np.float64),
+         np.zeros(2 * n if use_net_load_mode else 0, dtype=np.float64),
     ])
     terminal_row_upper = np.hstack([
          EFF_C * interval_h * np.ones(n, dtype=np.float64),
         -interval_h * np.ones(n, dtype=np.float64),
+        np.zeros(2 * n if use_net_load_mode else 0, dtype=np.float64),
     ])
     if use_extra_terminal_value:
         terminal_row_lower = np.concatenate([terminal_row_lower, np.array([0.0], dtype=np.float64)])
@@ -198,28 +223,48 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         A_parts.append(extra_row.reshape(1, -1))
         b_parts.append(np.array([soc_init - extra_terminal_energy_floor_kwh], dtype=np.float64))
 
+    A_eq = None
+    b_eq = None
+    if use_net_load_mode:
+        charge_block = -np.eye(n, dtype=np.float64)
+        discharge_block = EFF_D * np.eye(n, dtype=np.float64)
+        import_block = np.eye(n, dtype=np.float64)
+        export_block = -np.eye(n, dtype=np.float64)
+        A_eq = np.hstack([charge_block, discharge_block, import_block, export_block])
+        if use_extra_terminal_value:
+            A_eq = np.hstack([A_eq, np.zeros((n, 1), dtype=np.float64)])
+        b_eq = net_load_forecast_kw
+
     A_ub = np.vstack(A_parts)
     b_ub = np.concatenate(b_parts)
     bounds = [(0.0, max_power_kw)] * (2 * n)
+    if use_net_load_mode:
+        bounds.extend([(0.0, None)] * (2 * n))
     if use_extra_terminal_value:
         bounds.append((0.0, extra_terminal_energy_cap_kwh))
 
-    result = linprog(c_obj, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs",
+    result = linprog(c_obj, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs",
                      options={"disp": False})
 
     if result.status != 0:
         return {
             "charge_kw": np.zeros(n),
             "discharge_kw": np.zeros(n),
+            "grid_import_kw": np.zeros(n),
+            "grid_export_kw": np.zeros(n),
             "objective_value": float("nan"),
             "status": int(result.status),
             "success": False,
             "initial_soc_shadow_price_per_kwh": float("nan"),
         }
 
+    grid_import = result.x[2 * n:3 * n] if use_net_load_mode else np.zeros(n)
+    grid_export = result.x[3 * n:4 * n] if use_net_load_mode else np.zeros(n)
     return {
         "charge_kw": result.x[:n],
         "discharge_kw": result.x[n:],
+        "grid_import_kw": grid_import,
+        "grid_export_kw": grid_export,
         "objective_value": float(result.fun),
         "status": int(result.status),
         "success": bool(result.success),
@@ -235,6 +280,9 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                 interval_h: float = INTERVAL_H,
                 capacity_kwh: float = CAPACITY_KWH,
                 max_power_kw: float = MAX_POWER_KW,
+                import_prices_mwh: np.ndarray | None = None,
+                export_prices_mwh: np.ndarray | None = None,
+                net_load_forecast_kw: np.ndarray | None = None,
                 terminal_energy_value_per_kwh: float = 0.0,
                 extra_terminal_energy_value_per_kwh: float = 0.0,
                 extra_terminal_energy_floor_kwh: float | None = None,
@@ -250,6 +298,9 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         interval_h=interval_h,
         capacity_kwh=capacity_kwh,
         max_power_kw=max_power_kw,
+        import_prices_mwh=import_prices_mwh,
+        export_prices_mwh=export_prices_mwh,
+        net_load_forecast_kw=net_load_forecast_kw,
         terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
         extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
         extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
