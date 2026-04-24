@@ -342,6 +342,39 @@ batch.
 - if stronger probes still fail to move useful dispatch, pause bridge-contract tuning and
   diagnose residual Window B losses against Amber before designing a richer value-curve handoff
 
+**Same-window exact vs selective-band follow-up (2026-04-24):** the next two detached 2-day
+pilots completed over the same `2025-09-01 -> 2025-09-03` window:
+- `rolling_mpc_eval_pilot_exact_20260424`
+- `rolling_mpc_eval_pilot_extra_band_20260424`
+
+`extra_band` is the new selective formulation where dynamic terminal value applies only to the
+terminal energy above the q50 floor inside the uplift band, rather than to all terminal
+inventory.
+
+Economics:
+- `amber_apf_lgbm`: **$9.598/day**
+- `model_a_hybrid exact`: **$9.850/day**
+- `model_a_hybrid extra_band`: **$9.850/day**
+
+Raw comparison between `exact` and `extra_band` again showed **0 changed steps** in
+`charge_kw`, `discharge_kw`, `soc_kwh`, and `step_pnl`. What changed were bridge metadata
+columns such as:
+- `dynamic_terminal_adder_per_kwh`
+- `extra_terminal_energy_value_per_kwh`
+- `dynamic_target_uplift_kwh`
+- `extra_terminal_energy_kwh`
+
+Updated reading:
+- the more selective "value only the extra band above q50" formulation did activate and did bind
+  on some steps
+- but it still did not alter first-step tactical dispatch on this pilot slice
+- so the bridge-only search space is narrowing further, and any remaining bridge experiments
+  should be treated as increasingly diagnostic
+
+Revised next-step choice:
+- either run one final stronger short-window bridge probe
+- or pivot from bridge tuning to diagnosing the residual Amber gap more directly
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
