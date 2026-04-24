@@ -85,6 +85,28 @@ For `model_a_hybrid`:
 So the new signals were present, but they did **not** change realized economic outcome in this
 eval configuration.
 
+### Raw action comparison
+
+Using [eval/compare_rolling_mpc_raw.py](../eval/compare_rolling_mpc_raw.py), the raw Track 10A
+outputs were compared directly against the handoff-enabled baseline.
+
+Observed:
+- `handoff_exact_refresh` vs `dynterm_100`: `charge_kw`, `discharge_kw`, `soc_kwh`, and
+  `step_pnl` changed on **0** steps beyond numerical noise
+- `handoff_exact_refresh` vs `dynterm_200`: `charge_kw`, `discharge_kw`, `soc_kwh`, and
+  `step_pnl` changed on **0** steps beyond numerical noise
+- `handoff_exact_refresh` vs `dynband_100`: `charge_kw`, `discharge_kw`, `soc_kwh`, and
+  `step_pnl` changed on **0** steps
+
+What did change:
+- terminal contract metadata columns such as `dynamic_terminal_adder_per_kwh`,
+  `dynamic_target_uplift_kwh`, and `max_terminal_soc_kwh`
+
+So the stronger statement is:
+
+These variants did not merely land on similar final economics; they produced the **same tactical
+dispatch path** as the handoff-enabled baseline, up to floating-point noise.
+
 ---
 
 ## 4. Current Interpretation
