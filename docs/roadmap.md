@@ -301,6 +301,12 @@ economic outcome was unchanged. The result is therefore best read as a **formula
 `exact` terminal targets leave terminal value little room to matter, while `band` without a
 value signal gives the optimizer permission to finish higher without giving it a reason to do so.
 
+**Comparator confirmation:** direct raw-parquet comparison now shows that these variants were not
+just economically similar; they were dispatch-identical to numerical noise. Comparing the handoff
+baseline to `dynterm_100`, `dynterm_200`, and `dynband_100` showed **0 changed steps** in
+`charge_kw`, `discharge_kw`, `soc_kwh`, and `step_pnl`. The changed columns were terminal-contract
+metadata, not executed control actions.
+
 **Updated reading:** this narrows the next-step search, but it does not rule out dynamic bridge
 contracts. The simple fixed path tilt is too blunt, and the first dynamic bridge runs did not
 combine the right constraint/value ingredients. The next useful pilots should be short-window
