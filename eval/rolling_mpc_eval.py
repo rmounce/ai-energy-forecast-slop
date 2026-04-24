@@ -498,6 +498,21 @@ class ForecastProviders:
         raise ValueError(f"Unknown source: {source}")
 
 
+def _resolve_mp_start_method(requested: str) -> str:
+    available = set(mp.get_all_start_methods())
+    if requested == "auto":
+        for candidate in ("fork", "forkserver", "spawn"):
+            if candidate in available:
+                return candidate
+        raise RuntimeError(f"No supported multiprocessing start method available from {sorted(available)}")
+    if requested not in available:
+        raise ValueError(
+            f"Requested multiprocessing start method '{requested}' is unavailable; "
+            f"available={sorted(available)}"
+        )
+    return requested
+
+
 def simulate_stepwise(
     timestamps: pd.DatetimeIndex,
     actual_prices: pd.Series,
@@ -1030,9 +1045,18 @@ def _simulate_single_source(
     soc_init: float,
     args_dict: dict,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    worker_label = mp.current_process().name
+    print(f"  [{worker_label}] Starting source '{source}'", flush=True)
     timestamps = pd.date_range(start=start, end=end - pd.Timedelta(minutes=5), freq="5min", tz="UTC")
-    actual_prices = _load_actuals_5m()["rrp"].reindex(timestamps)
+    provider_t0 = time.time()
     providers = ForecastProviders(argparse.Namespace(**args_dict))
+    provider_elapsed = time.time() - provider_t0
+    actual_prices = providers.actuals_5m["rrp"].reindex(timestamps)
+    print(
+        f"  [{worker_label}] Provider init complete for '{source}' in {provider_elapsed:.1f}s "
+        f"({len(timestamps):,} steps)",
+        flush=True,
+    )
     return simulate_stepwise(
         timestamps=timestamps,
         actual_prices=actual_prices,
@@ -1078,10 +1102,16 @@ def simulate_stepwise_parallel(
 
     raw_frames: list[pd.DataFrame] = []
     summary_frames: list[pd.DataFrame] = []
+    start_method = _resolve_mp_start_method(str(args_dict.get("mp_start_method", "auto")))
+    print(
+        f"  Parallel execution across {len(sources)} source(s) with {workers} worker(s) "
+        f"using start method '{start_method}'",
+        flush=True,
+    )
 
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=workers,
-        mp_context=mp.get_context("spawn"),
+        mp_context=mp.get_context(start_method),
     ) as ex:
         futures = {
             ex.submit(
@@ -1221,6 +1251,15 @@ def main():
         default=0,
         help="Worker processes across sources. Default: min(number of sources, CPU count).",
     )
+    parser.add_argument(
+        "--mp-start-method",
+        choices=["auto", "fork", "forkserver", "spawn"],
+        default="auto",
+        help=(
+            "Multiprocessing start method when --workers > 1. "
+            "'auto' prefers fork, then forkserver, then spawn."
+        ),
+    )
     args = parser.parse_args()
 
     start = pd.Timestamp(args.start, tz="UTC")
@@ -1280,6 +1319,8 @@ def main():
         f"tier2={args.tier2_quantile_blend:.2f}, tier2_qhi=q{int(args.tier2_upper_quantile * 100):02d}"
     )
     print(f"  Workers: {workers}")
+    if workers > 1:
+        print(f"  MP start method: {_resolve_mp_start_method(args.mp_start_method)}")
 
     t0 = time.time()
     raw_df, summary_df = simulate_stepwise_parallel(
