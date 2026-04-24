@@ -1,8 +1,8 @@
 # Dynamic Bridge Experiment Plan — 2026-04-23
 
 Purpose: capture the first implementation pass for the post-review
-**dynamic bridge-contract** experiments in Track 10A, and define the first long
-runs worth launching.
+**dynamic bridge-contract** experiments in Track 10A, and record the initial
+long-run evaluation shape that was tried.
 
 Related:
 - [docs/roadmap.md](./roadmap.md)
@@ -71,7 +71,7 @@ This is not yet an evaluation result, just an implementation sanity check.
 
 ---
 
-## 3. Recommended First Long Runs
+## 3. Initial Long-Run Batch
 
 Use the same Window B follow-up slice as the recent handoff and fixed-blend work.
 
@@ -96,7 +96,7 @@ Purpose:
 - test the reviewer's preferred "state-dependent bridge signal through the
   terminal contract" with the least structural change
 
-Suggested first scales:
+Executed first scales:
 - `--dynamic-bridge-terminal-scale 1.0`
 - `--dynamic-bridge-terminal-scale 2.0`
 
@@ -109,7 +109,7 @@ Purpose:
 - test whether selective headroom above the q50 target helps the tactical layer
   preserve inventory without another full-path tilt
 
-Suggested first setting:
+Executed first setting:
 - `--strategic-target-mode band`
 - `--dynamic-bridge-target-scale 1.0`
 
@@ -120,13 +120,13 @@ If the target-gap signal is mostly dormant, this run will tell us quickly.
 Purpose:
 - test a more conservative version than the upward band
 
-Suggested first setting:
+Planned first setting:
 - `--strategic-target-mode floor`
 - `--dynamic-bridge-target-scale 1.0`
 
 ---
 
-## 4. Suggested Command Templates
+## 4. Command Templates Used
 
 These should be run via the agreed `tmux` + logfile flow outside the sandbox.
 
@@ -141,7 +141,7 @@ nice -n19 python eval/rolling_mpc_eval.py \
   --tft-scalers models/tft_price/scalers_run014_phase7.pkl \
   --strategic-soc-handoff \
   --strategic-target-mode exact \
-  --workers 2 \
+  --workers 1 \
   --output-prefix rolling_mpc_eval_tracka_followup_6week_handoff_exact_refresh
 ```
 
@@ -158,7 +158,7 @@ nice -n19 python eval/rolling_mpc_eval.py \
   --strategic-target-mode exact \
   --dynamic-bridge-upper-quantile 0.90 \
   --dynamic-bridge-terminal-scale 1.0 \
-  --workers 2 \
+  --workers 1 \
   --output-prefix rolling_mpc_eval_tracka_followup_6week_dynterm_100
 ```
 
@@ -173,7 +173,7 @@ nice -n19 python eval/rolling_mpc_eval.py \
   --strategic-target-mode exact \
   --dynamic-bridge-upper-quantile 0.90 \
   --dynamic-bridge-terminal-scale 2.0 \
-  --workers 2 \
+  --workers 1 \
   --output-prefix rolling_mpc_eval_tracka_followup_6week_dynterm_200
 ```
 
@@ -190,23 +190,53 @@ nice -n19 python eval/rolling_mpc_eval.py \
   --strategic-target-mode band \
   --dynamic-bridge-upper-quantile 0.90 \
   --dynamic-bridge-target-scale 1.0 \
-  --workers 2 \
+  --workers 1 \
   --output-prefix rolling_mpc_eval_tracka_followup_6week_dynband_100
 ```
 
 ---
 
-## 5. Current Recommendation
+## 5. Outcome Of The First Batch
 
-If there is only time or patience for a small number of long runs, prioritize:
+The completed results are summarized in
+[docs/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md).
 
-1. dynamic terminal-value bridge
-2. dynamic upward band
-3. dynamic floor uplift
+Headline outcome:
+- the handoff-enabled baseline remained at **$2.2706/day** for `model_a_hybrid`
+- the dynamic terminal-value runs (`scale=1.0`, `scale=2.0`) landed on the same
+  economic result
+- the dynamic upward-band run (`scale=1.0`) also landed on the same economic result
 
-Reason:
-- the small smoke check suggests the shadow-gap signal is more likely to be
-  active than the target-gap signal
-- the fixed full-path blend has already been ruled out
-- these variants directly test the bridge-contract hypothesis without another
-  path-tilt sweep
+Current interpretation:
+- the simple first dynamic bridge variants were **active but non-decisive**
+- they did not improve on the handoff-enabled Track 10A baseline
+- they also did not obviously break anything
+- further work likely needs either a different bridge contract or a more
+  structural tactical-control change
+
+---
+
+## 6. Operational Note For Future Runs
+
+Avoid jumping straight to another full `6-week` rolling MPC batch unless the run shape has
+already been proven on a shorter window.
+
+Recommended workflow:
+- first run a very short smoke check to confirm the code path works at all
+- then run an intermediate pilot window, e.g. `1-3 days`
+- only then launch the full `2025-09-01 -> 2025-10-13` batch if:
+  - progress logging is advancing
+  - CPU usage looks healthy
+  - exit-code capture is verified
+  - the run configuration is worth the long wait
+  - the detached launch shape has already been proven on that exact worker mode
+
+Rationale:
+- these jobs are expensive in wall-clock time
+- launch/configuration mistakes can waste many hours before they are noticed
+- shorter pilot windows are usually enough to validate process management and catch obvious
+  pathologies before committing to the full window
+
+Observed process lesson from this batch:
+- `--workers 1` was the stable choice for these detached long runs
+- `PYTHONUNBUFFERED=1` was important so progress was visible in logs
