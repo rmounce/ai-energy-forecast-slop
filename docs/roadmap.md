@@ -375,6 +375,48 @@ Revised next-step choice:
 - either run one final stronger short-window bridge probe
 - or pivot from bridge tuning to diagnosing the residual Amber gap more directly
 
+**Rolling eval fidelity pilot (2026-04-25):** after fixing the AI combined publisher
+interval mismatch, the next implementation step was a minimum production-fidelity upgrade
+to Track A:
+- actual `30m` load/PV expanded to `5m` net load
+- separate tariffed import and feed-in price curves
+- same `14h x 5m` rolling MPC and same strategic handoff semantics
+
+This was first tested on the same short `2025-09-01 -> 2025-09-03` exact-handoff slice in
+two otherwise-matched runs:
+- `rolling_mpc_eval_pilot_exact_priceonly_20260424`
+- `rolling_mpc_eval_pilot_exact_netload_20260424`
+
+Result:
+- under `price_only`, hybrid beat Amber by **+2.6%**
+- under `netload_tariffed`, hybrid lost to Amber by **-6.3%**
+
+This is an important architecture signal. The more production-like economics gate changed
+both dispatch behavior and the observed ranking on the same window.
+
+Raw comparator confirmation:
+- `step_pnl`: `1152` changed rows
+- `soc_kwh`: `892` changed rows
+- `discharge_kw`: `295` changed rows
+- `charge_kw`: `289` changed rows
+
+So the fidelity upgrade is not merely re-accounting the same controller behavior; it changes
+the tactical actions taken.
+
+Behavioral read from the tariffed pilot:
+- both sources were similar on `2025-09-01`
+- the gap mostly came from `2025-09-02`
+- Hybrid finished the second day with about `8.0 kWh` more stored energy
+- Amber exported materially more energy on that day (`14.73 kWh` vs `7.33 kWh`) and earned
+  about `$0.46` more pnl
+
+Updated implication:
+- the production-fidelity rolling gate now deserves priority over further bridge-only tuning
+- the next diagnostics should focus on why Amber monetizes inventory better on this slice
+  under tariffed site economics
+- future control experiments should be judged primarily under `netload_tariffed`, with
+  `price_only` kept as a secondary comparability lens rather than the main architectural gate
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
