@@ -89,21 +89,45 @@ eval configuration.
 
 ## 4. Current Interpretation
 
-This is a negative result for these first dynamic bridge formulations.
+This result is best read as a **formulation lesson**, not a broad rejection of dynamic bridge
+contracts.
 
-What it rules out:
-- a simple shadow-gap-driven terminal value, as implemented here
-- a simple q50/q90 target-gap-driven upward terminal band, as implemented here
+The `dynterm_100` and `dynterm_200` runs used `--strategic-target-mode exact`. Under an exact
+terminal SoC constraint, adding a terminal energy value is mostly unable to influence the LP:
+all feasible solutions end at the same terminal SoC, so the terminal value contributes roughly
+the same constant to each feasible solution. That explains why the dynamic terminal adder was
+active in diagnostics but did not change realized dispatch or PnL.
 
-What it does **not** yet rule out:
+The `dynband_100` run gave the optimizer permission to finish above the q50 target, but it did
+not add a positive reason to value extra terminal inventory. The optimizer therefore appears to
+have stayed at the lower q50 bound. That makes this a weak test of "target band plus strategic
+value"; it was only a test of "target band permission."
+
+What these runs rule out:
+- dynamic terminal value **combined with an exact terminal SoC target**, as implemented here
+- dynamic upward band **without a value signal**, as implemented here
+
+What they do **not** yet rule out:
 - richer bridge contracts
+- `band + dynamic terminal value`, where the optimizer has both permission and incentive to
+  end above the q50 target
+- `floor + dynamic target uplift`, where the q90-derived target gap forces a stricter terminal
+  floor
 - different tactical control formulations
 - a more structural change in how strategic information is handed down
 
 The practical takeaway is narrower:
 
 The first dynamic bridge variants were **active but non-decisive**. They did not improve on the
-handoff-enabled Track 10A baseline, and they did not degrade it either.
+handoff-enabled Track 10A baseline, and they did not degrade it either. The next test should
+combine permission and incentive, or force a different terminal contract, before drawing a
+stronger conclusion about dynamic bridge contracts.
+
+Recommended next pilots:
+- `--strategic-target-mode band --dynamic-bridge-target-scale 1.0 --dynamic-bridge-terminal-scale 1.0`
+- `--strategic-target-mode floor --dynamic-bridge-target-scale 1.0`
+
+Both should be tried on a short pilot window before any full 6-week rerun.
 
 ---
 

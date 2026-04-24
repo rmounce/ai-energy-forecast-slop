@@ -297,15 +297,19 @@ On Window B:
 
 **Important nuance:** these were not purely dormant code paths. The dynamic terminal adder was
 active on most steps, and the dynamic band sometimes widened materially, but the realized
-economic outcome was unchanged. So the result is best read as **active but non-decisive**, not
-as a configuration bug.
+economic outcome was unchanged. The result is therefore best read as a **formulation lesson**:
+`exact` terminal targets leave terminal value little room to matter, while `band` without a
+value signal gives the optimizer permission to finish higher without giving it a reason to do so.
 
-**Updated reading:** this narrows the next-step search further. The simple fixed path tilt is too
-blunt, and these first simple dynamic bridge variants are too weak or too non-binding in the
-current tactical formulation. The next useful work is therefore likely to involve either:
-- a different bridge contract
-- a more structural tactical-control change
-- or a reevaluation of whether Track 10A is the right place to keep iterating these bridge ideas
+**Updated reading:** this narrows the next-step search, but it does not rule out dynamic bridge
+contracts. The simple fixed path tilt is too blunt, and the first dynamic bridge runs did not
+combine the right constraint/value ingredients. The next useful pilots should be short-window
+diagnostics that verify dispatch actually changes before any full 6-week rerun:
+- `band + dynamic terminal value`, giving the optimizer both permission and incentive to hold
+  extra terminal inventory
+- `floor + dynamic target uplift`, forcing a stricter q90-informed terminal floor
+- a small raw-output comparator that checks `charge_kw`, `discharge_kw`, and `soc_kwh` deltas
+  before promoting a variant to a long run
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
