@@ -1902,14 +1902,49 @@ def _execute_tft_load_prediction(historical_df, future_covariates_df):
     return res
 
 
-def _build_combined_forecast_items(p50_df, low_df, high_df, interval_minutes):
+def _expand_forecast_to_publish_interval(df, source_interval_minutes, publish_interval_minutes):
+    """
+    Expand a forecast DataFrame from its native interval to a finer publish interval
+    by repeating each source row across the publish grid.
+    """
+    if publish_interval_minutes == source_interval_minutes:
+        return df.copy()
+    if publish_interval_minutes <= 0 or source_interval_minutes <= 0:
+        raise ValueError("Forecast intervals must be positive")
+    if source_interval_minutes % publish_interval_minutes != 0:
+        raise ValueError(
+            f"Cannot expand {source_interval_minutes}m source interval into {publish_interval_minutes}m publish interval"
+        )
+
+    repeats = source_interval_minutes // publish_interval_minutes
+    publish_delta = pd.Timedelta(minutes=publish_interval_minutes)
+    rows = []
+    expanded_index = []
+    for ts, row in df.iterrows():
+        for offset in range(repeats):
+            expanded_index.append(ts + offset * publish_delta)
+            rows.append(row.to_dict())
+
+    expanded_df = pd.DataFrame(rows, index=pd.DatetimeIndex(expanded_index))
+    expanded_df.index.name = df.index.name
+    return expanded_df
+
+
+def _build_combined_forecast_items(
+    p50_df,
+    low_df,
+    high_df,
+    source_interval_minutes,
+    publish_interval_minutes=None,
+):
     """
     Convert three DataFrames (each with 'wholesale_price' in $/kWh) into a list of
     Amber-compatible forecast dicts. Applies tariffs to each to get general/feed-in price.
 
     Returns (general_items, feed_in_items) — two lists of dicts with Amber field names.
     """
-    interval_delta = pd.Timedelta(minutes=interval_minutes)
+    publish_interval_minutes = publish_interval_minutes or source_interval_minutes
+    interval_delta = pd.Timedelta(minutes=publish_interval_minutes)
     general_items  = []
     feed_in_items  = []
 
@@ -1917,10 +1952,11 @@ def _build_combined_forecast_items(p50_df, low_df, high_df, interval_minutes):
     for key, df in frames.items():
         if 'wholesale_price' not in df.columns:
             df.rename(columns={df.columns[0]: 'wholesale_price'}, inplace=True)
+        df = _expand_forecast_to_publish_interval(df, source_interval_minutes, publish_interval_minutes)
         apply_tariffs_to_forecast(df)
         frames[key] = df
 
-    for ts in p50_df.index:
+    for ts in frames['p50'].index:
         gp50  = float(frames['p50'].loc[ts, 'general_price'])
         glow  = float(frames['low'].loc[ts, 'general_price'])
         ghigh = float(frames['high'].loc[ts, 'general_price'])
@@ -1972,9 +2008,9 @@ def _publish_combined_price_forecasts(tactical_results, tft_results):
         logging.warning("Combined forecast skipped: one or more required model outputs missing.")
         return
 
-    # Tier 1: all 12 steps
+    # Tier 1: all 12 steps, already 5-minute native cadence
     t1_end = t1_p50.index[-1]
-    gen_t1, fin_t1 = _build_combined_forecast_items(t1_p50, t1_low, t1_high, 5)
+    gen_t1, fin_t1 = _build_combined_forecast_items(t1_p50, t1_low, t1_high, 5, 5)
 
     # Tier 2: steps after Tier 1 ends
     t2_p50_after  = t2_p50[t2_p50.index > t1_end]
@@ -1985,13 +2021,19 @@ def _publish_combined_price_forecasts(tactical_results, tft_results):
         logging.warning("Combined forecast: no Tier 2 steps beyond Tier 1 window.")
         gen_all, fin_all = gen_t1, fin_t1
     else:
-        gen_t2, fin_t2 = _build_combined_forecast_items(t2_p50_after, t2_low_after, t2_high_after, 30)
+        gen_t2, fin_t2 = _build_combined_forecast_items(
+            t2_p50_after,
+            t2_low_after,
+            t2_high_after,
+            30,
+            5,
+        )
         gen_all = gen_t1 + gen_t2
         fin_all = fin_t1 + fin_t2
 
     logging.info(
         f"Combined forecast: {len(gen_t1)} Tier-1 (5-min) + "
-        f"{len(gen_all) - len(gen_t1)} Tier-2 (30-min) = {len(gen_all)} total intervals"
+        f"{len(gen_all) - len(gen_t1)} Tier-2 (published 5-min) = {len(gen_all)} total intervals"
     )
 
     now_iso = datetime.now(pytz.UTC).isoformat()
