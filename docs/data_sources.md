@@ -156,6 +156,11 @@ The MPC calculates per-period energy as:
 ```jinja2
 {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
 ```
-This assumes every `Forecasts` item is 5-min. `sensor.ai_combined_general_price_forecast` has Tier 1 items (genuine 5-min) followed by Tier 2 items (genuine 30-min). The MPC will underweight Tier 2 periods by 6×.
+This assumes every `Forecasts` item is 5-min. The original combined AI shadow sensor used
+Tier 1 items at genuine 5-minute cadence, then published Tier 2 as 30-minute items, which
+would have caused the MPC to underweight Tier 2 periods by 6x.
 
-**Fix (pending):** In `_build_combined_forecast_items`, when `interval_minutes=30`, emit 6 identical 5-min dict entries per step instead of one 30-min entry. No MPC YAML changes required.
+**Status:** fixed on `2026-04-24` in [forecast.py](../forecast.py). The combined publisher now
+expands each 30-minute Tier 2 step into six identical 5-minute forecast items before tariff
+application and Home Assistant publication. No MPC YAML changes are required for the shadow
+sensor path.

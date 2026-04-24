@@ -2,6 +2,7 @@
 Tests for _build_combined_forecast_items() and _publish_combined_price_forecasts():
   - Tier 1 items have 5-min intervals
   - Tier 2 items have 30-min intervals
+  - Tier 2 can be expanded to six 5-min items per 30-min source step
   - feed-in sign convention preserved
   - total items in combined output
 """
@@ -44,6 +45,26 @@ def test_tier2_item_interval_is_30min(tier2_dfs):
         assert (end - start) == pd.Timedelta(minutes=30), (
             f"Tier 2 interval should be 30 min, got {end - start}"
         )
+
+
+def test_tier2_items_can_publish_as_5min(tier2_dfs):
+    gen_items, _ = fc._build_combined_forecast_items(
+        tier2_dfs["p50"], tier2_dfs["low"], tier2_dfs["high"], 30, 5
+    )
+    assert len(gen_items) == 144 * 6
+
+    first = gen_items[0]
+    seventh = gen_items[6]
+    first_start = pd.Timestamp(first["start_time"])
+    first_end = pd.Timestamp(first["end_time"])
+    seventh_start = pd.Timestamp(seventh["start_time"])
+
+    assert (first_end - first_start) == pd.Timedelta(minutes=5)
+    assert seventh_start == first_start + pd.Timedelta(minutes=30)
+    for offset in range(6):
+        item = gen_items[offset]
+        assert item["per_kwh"] == first["per_kwh"]
+        assert pd.Timestamp(item["start_time"]) == first_start + pd.Timedelta(minutes=5 * offset)
 
 
 # ── Item counts ───────────────────────────────────────────────────────────────
