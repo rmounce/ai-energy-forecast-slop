@@ -12,7 +12,7 @@
 | `eval_tier1_accuracy.py` | **Pass A tactical eval**: MAE per horizon h0-h11 for Tier 1 vs p5min_direct/naive/oracle. Outputs `tier1_accuracy_by_horizon.csv` + `tier1_accuracy_summary.csv`. |
 | `rolling_mpc_eval.py` | **Track A rolling MPC eval**: contiguous 5-min, SoC-carrying backtest scaffold for the execution-focused near horizon. Supports legacy `price_only` mode and newer `netload_tariffed` mode (actual load/PV plus separate import/feed-in economics), with regime, spike-band, coverage, and behavior diagnostics. For detached long runs, prefer `--workers 1` unless a short pilot has already validated a multi-worker setup; `--mp-start-method auto` now prefers `fork` on Linux. |
 | `compare_rolling_mpc_raw.py` | Compare two Track A raw parquet outputs and report whether dispatch actually changed (`charge_kw`, `discharge_kw`, `soc_kwh`, terminal-contract columns). Useful as a cheap preflight before committing to long reruns. |
-| `analyze_rolling_mpc_tariffed.py` | Source/day diagnostics for `rolling_mpc_eval.py --economic-mode netload_tariffed`: import/export energy, tariffed pnl decomposition, SoC posture, and top charge/discharge events. |
+| `analyze_rolling_mpc_tariffed.py` | Source/day diagnostics for `rolling_mpc_eval.py --economic-mode netload_tariffed`: import/export energy, tariffed pnl decomposition, SoC posture, top charge/discharge events, a same-strategic-target/different-tactical daily delta table, and a missed-export interval report. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
