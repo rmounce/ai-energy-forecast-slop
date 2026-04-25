@@ -417,6 +417,54 @@ Updated implication:
 - future control experiments should be judged primarily under `netload_tariffed`, with
   `price_only` kept as a secondary comparability lens rather than the main architectural gate
 
+**Full-window tariffed follow-up (2026-04-25):** the next batch extended the tariffed exact-handoff
+comparison beyond the initial 2-day pilot. See
+[docs/rolling_eval_fidelity_full_windows_2026-04-25.md](./rolling_eval_fidelity_full_windows_2026-04-25.md).
+
+Finished runs:
+- `rolling_mpc_eval_pilot_exact_netload_7day_20260425`
+- `rolling_mpc_eval_tracka_followup_6week_netload_exact_20260425`
+- `rolling_mpc_eval_tracka_followup_6week_priceonly_exact_refresh_20260425`
+- `rolling_mpc_eval_tracka_windowa_6week_netload_exact_20260425`
+
+Results:
+- `7-day netload_tariffed` (`2025-09-01 -> 2025-09-08`):
+  - Amber: **$1.476/day**
+  - Hybrid: **$0.952/day**
+  - hybrid vs amber: **-35.5%**
+- `Window B price_only exact refresh`:
+  - Amber: **$2.451/day**
+  - Hybrid: **$2.271/day**
+  - hybrid vs amber: **-7.4%**
+- `Window B netload_tariffed exact`:
+  - Amber: **$0.427/day**
+  - Hybrid: **$0.298/day**
+  - hybrid vs amber: **-30.2%**
+- `Window A netload_tariffed exact`:
+  - Amber: **-$0.570/day**
+  - Hybrid: **-$0.901/day**
+  - hybrid vs amber: **-58.1%**
+
+This materially changes the roadmap interpretation:
+- under `price_only`, the hybrid looked acceptable in Window A and only moderately weak in Window B
+- under `netload_tariffed`, Amber beats the hybrid on the 7-day pilot, full Window B, and full Window A
+
+So the stronger production-fidelity gate is not just narrowing the advantage; it reverses the
+old optimistic reading across both major windows.
+
+6-week diagnostic read:
+- Window B: Amber earns about **$8.0** more export revenue, with similar import cost, and the
+  hybrid finishes the full window with **less** final stored energy (`0.0 kWh` vs `9.1 kWh`)
+- Window A: Amber again wins mostly on export monetization, while the hybrid saves a little on
+  import/degradation but not nearly enough to offset the weaker realized spread
+
+Updated implication:
+- the main bottleneck now looks more like tactical control / inventory monetization under
+  realistic site economics than another round of generic 72h path tuning
+- bridge-only experiments should remain paused until Amber-vs-Hybrid residual diagnostics are
+  better understood under the tariffed gate
+- `netload_tariffed` should be treated as the primary rolling architecture gate going forward
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
