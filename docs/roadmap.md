@@ -505,6 +505,17 @@ So the crossed-counterfactual pilots currently point toward near-horizon tactica
 quality as the larger bottleneck, with strategic handoff still relevant but probably
 second-order.
 
+**Window B 7-day crossed-counterfactual confirmation (2026-04-25):**
+- `amber_apf_lgbm`: **$1.476/day**
+- `amber_tactical_hybrid_strategic`: **$1.370/day**
+- `hybrid_tactical_amber_strategic`: **$0.967/day**
+- `model_a_hybrid`: **$0.841/day**
+
+This longer Window B run strengthened the same interpretation as the 2-day pilots:
+- swapping Amber strategic target into Hybrid recovers only a small fraction of the gap
+- swapping Hybrid strategic target into Amber degrades Amber only modestly
+- the larger deficit still appears to be tactical-curve / near-horizon monetization quality
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast

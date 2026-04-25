@@ -54,6 +54,9 @@ Runs launched:
 ### Window B, `price_only`, 2-day
 - `2025-09-01 -> 2025-09-03`
 
+### Window B, `netload_tariffed`, 7-day
+- `2025-09-01 -> 2025-09-08`
+
 Source matrix:
 - `amber_apf_lgbm`
 - `model_a_hybrid`
@@ -108,6 +111,18 @@ Relative to Amber:
 - Hybrid tactical + Amber strategic: **-$0.032/day**
 - Hybrid tactical + Hybrid strategic: **+$0.160/day**
 
+## Window B — `netload_tariffed`, 7-day
+
+- `amber_apf_lgbm`: **$10.325 total / $1.476 per day**
+- `amber_tactical_hybrid_strategic`: **$9.588 total / $1.370 per day**
+- `hybrid_tactical_amber_strategic`: **$6.765 total / $0.967 per day**
+- `model_a_hybrid`: **$5.885 total / $0.841 per day**
+
+Relative to Amber:
+- Amber tactical + Hybrid strategic: **-$0.105/day**
+- Hybrid tactical + Amber strategic: **-$0.509/day**
+- Hybrid tactical + Hybrid strategic: **-$0.635/day**
+
 ---
 
 ## 4. Interpretation
@@ -117,7 +132,7 @@ The main signal from the tariffed gate is:
 - swapping **Amber strategic -> Hybrid strategic** only hurts Amber modestly
 - swapping **Hybrid strategic -> Amber strategic** helps Hybrid only marginally
 
-That pattern holds on both 2-day tariffed pilots.
+That pattern holds on both 2-day tariffed pilots and strengthens on the longer 7-day Window B run.
 
 ### Window B read
 
@@ -126,6 +141,15 @@ In Window B `netload_tariffed`:
 - Amber with Hybrid strategic target degrades from **$6.311/day** to **$6.095/day**
 
 So the tactical curve appears to dominate the strategic handoff on this slice.
+
+### Window B, 7-day read
+
+The longer Window B run strengthens the same conclusion:
+- Hybrid with Amber strategic improves only from **$0.841/day** to **$0.967/day**
+- Amber with Hybrid strategic degrades only from **$1.476/day** to **$1.370/day**
+
+So even on the longer slice, the first-order deficit still looks much more tactical than
+strategic.
 
 ### Window A read
 
@@ -152,28 +176,28 @@ That reinforces the earlier conclusion:
 
 These short counterfactual pilots suggest:
 
-1. The tariffed short-window loss is **more tactical-curve-shaped than strategic-target-shaped**.
+1. The tariffed loss is **more tactical-curve-shaped than strategic-target-shaped** on both the
+   short pilots and the longer 7-day Window B confirmation run.
 2. The strategic handoff is not irrelevant, but it does not appear to be the dominant source of
    the current Amber-vs-Hybrid gap on these slices.
 3. The main next diagnostic priority should therefore remain near-horizon monetization quality,
    not another round of bridge-only strategic-target tuning.
 
-This is still a **pilot result**, not a final architecture verdict. The next confirmation step
-should be the same crossed counterfactual matrix on a longer Window B run using the same
-snapshot-backed Run 011b candidate.
+This is still a **provisional diagnostic result**, not a final architecture verdict. But the
+7-day Window B run is now a meaningful confirmation step, and it points in the same direction as
+the 2-day pilots.
 
 ---
 
 ## 6. Immediate Next Questions
 
-1. Does the tactical-dominant pattern persist on a longer Window B run?
-2. If so, where exactly does Hybrid’s tactical curve miss Amber’s monetization?
+1. Where exactly does Hybrid’s tactical curve miss Amber’s monetization on the longer Window B run?
    - missed export windows
    - weaker sell timing
    - weaker discharge magnitude
-3. Does an oracle strategic target materially improve Hybrid once the tactical curve is held
+2. Does an oracle strategic target materially improve Hybrid once the tactical curve is held
    fixed?
-4. Should the next intervention focus on:
+3. Should the next intervention focus on:
    - tactical forecast shape,
    - tactical objective formulation,
    - or only then the strategic valuation layer?
