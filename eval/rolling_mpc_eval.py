@@ -114,6 +114,11 @@ def _format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
+def _curve_window_mean(curve: np.ndarray, steps: int) -> float:
+    steps = max(1, min(int(steps), len(curve)))
+    return float(np.mean(curve[:steps]))
+
+
 def _progress_path(output_prefix: str, source: str | None = None) -> Path:
     suffix = f"_{source}" if source else ""
     return RESULTS_DIR / f"{output_prefix}{suffix}.progress.json"
@@ -788,6 +793,9 @@ def simulate_stepwise(
                     invalid_curve_logged[src] += 1
                 continue
             soc_prev = state[src]
+            forecast_mean_next_1h_mwh = _curve_window_mean(curve, 12)
+            forecast_mean_next_4h_mwh = _curve_window_mean(curve, 48)
+            forecast_mean_next_14h_mwh = _curve_window_mean(curve, HORIZON_5M_STEPS)
             probe_shadow_price_per_kwh = float("nan")
             applied_terminal_energy_value_per_kwh = terminal_energy_value_per_kwh
             strategic_soc_target_kwh = float("nan")
@@ -961,6 +969,9 @@ def simulate_stepwise(
                 "actual_feed_in_price_mwh": actual_feed_in_price_mwh,
                 "actual_net_load_kw": actual_net_load_step_kw,
                 "forecast_step0_mwh": float(curve[0]),
+                "forecast_mean_next_1h_mwh": forecast_mean_next_1h_mwh,
+                "forecast_mean_next_4h_mwh": forecast_mean_next_4h_mwh,
+                "forecast_mean_next_14h_mwh": forecast_mean_next_14h_mwh,
                 "forecast_general_step0_mwh": (
                     float(forecast_general_price_mwh[0]) if forecast_general_price_mwh is not None else float("nan")
                 ),

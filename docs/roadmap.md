@@ -479,6 +479,32 @@ Updated implication:
   - `amber_tactical_hybrid_strategic`
   - `amber_apf_lgbm`
 
+**Crossed counterfactual pilot (2026-04-25):** the first 2-day pilot using the recovered
+snapshot-backed Run 011b-era TFT asset is documented in
+[docs/counterfactual_pilot_2026-04-25.md](./counterfactual_pilot_2026-04-25.md).
+
+Window B `netload_tariffed` (`2025-09-01 -> 2025-09-03`):
+- `amber_apf_lgbm`: **$6.311/day**
+- `amber_tactical_hybrid_strategic`: **$6.095/day**
+- `hybrid_tactical_amber_strategic`: **$5.750/day**
+- `model_a_hybrid`: **$5.739/day**
+
+Window A `netload_tariffed` (`2025-07-21 -> 2025-07-23`):
+- `amber_apf_lgbm`: **-$1.533/day**
+- `amber_tactical_hybrid_strategic`: **-$1.666/day**
+- `model_a_hybrid`: **-$1.897/day**
+- `hybrid_tactical_amber_strategic`: **-$1.985/day**
+
+Interpretation:
+- on the tariffed gate, swapping Amber strategic target into Hybrid recovers little
+- swapping Hybrid strategic target into Amber degrades Amber only modestly
+- on these pilots, the Amber-vs-Hybrid gap looks more **tactical-curve-shaped** than
+  **strategic-target-shaped**
+
+So the crossed-counterfactual pilots currently point toward near-horizon tactical monetization
+quality as the larger bottleneck, with strategic handoff still relevant but probably
+second-order.
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
