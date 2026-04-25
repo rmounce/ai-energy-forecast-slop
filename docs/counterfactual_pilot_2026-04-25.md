@@ -172,7 +172,91 @@ That reinforces the earlier conclusion:
 
 ---
 
-## 5. Provisional Conclusion
+## 5. 7-Day Tactical Residual Read
+
+The richer tariffed diagnostics on the 7-day Window B run make the tactical read substantially
+stronger.
+
+### Same strategic target, different tactical curve
+
+Comparing:
+- `amber_tactical_hybrid_strategic`
+- `model_a_hybrid`
+
+holds the **Hybrid strategic target fixed** and changes only the tactical curve.
+
+Result:
+- Amber tactical + Hybrid strategic: **$9.588 total / $1.370 per day**
+- Hybrid tactical + Hybrid strategic: **$5.885 total / $0.841 per day**
+- same final SoC: **`26.589 kWh`** for both
+
+So the tactical-only gap is about:
+- **+$3.70 total**
+- **+$0.53/day**
+
+This is important because it is not explained by:
+- different final inventory posture
+- a more favorable strategic terminal target
+
+### Tariffed economic decomposition
+
+Under that same-target tactical comparison:
+
+- `amber_tactical_hybrid_strategic`
+  - import cost: **$7.28**
+  - export revenue: **$35.47**
+- `model_a_hybrid`
+  - import cost: **$10.11**
+  - export revenue: **$34.45**
+
+So Amber tactical beats Hybrid tactical through both:
+- about **$2.83** lower import cost
+- about **$1.03** higher export revenue
+
+with only a small degradation-cost offset.
+
+That means the problem is not merely weaker export timing. The tactical damage shows up on both
+the import and export side of the tariffed objective.
+
+### Daily same-target tactical delta
+
+The same-target daily delta table shows:
+- Amber tactical beats Hybrid tactical on **6 of 7 days**
+- largest positive day: **2025-09-06**, about **+$2.28**
+- Hybrid tactical wins only **2025-09-05**, and only by about **$0.20**
+
+So the tactical underperformance is broad across the week rather than being dominated by one
+pathological interval.
+
+### Missed export intervals
+
+The missed-export report is also revealing.
+
+Top missed-export intervals cluster around **2025-09-01 10:00–11:20 UTC**:
+- actual feed-in prices are high, roughly **$410–$676/MWh**
+- Amber exports about **7.9–8.4 kW**
+- Hybrid exports **0 kW**
+- Amber discharges at **10 kW**
+- Hybrid only discharges around **1.17–1.68 kW**
+- strategic targets are effectively **zero for both**
+- `forecast_step0_mwh` is also the **same** in these rows
+
+So these are not simple:
+- strategic-target differences
+- step-0 wholesale-price differences
+
+Instead, they point more toward:
+- the shape of the tactical forward curve across the next **1h / 4h / 14h**
+- and how that curve interacts with the tariffed LP objective
+
+Diagnostic outputs for this 7-day run were written to:
+- [rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_diagnostics_overall.csv](../eval/results/rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_diagnostics_overall.csv)
+- [rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_diagnostics_same_target_daily_delta.csv](../eval/results/rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_diagnostics_same_target_daily_delta.csv)
+- [rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_diagnostics_missed_export.csv](../eval/results/rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_diagnostics_missed_export.csv)
+
+---
+
+## 6. Provisional Conclusion
 
 These short counterfactual pilots suggest:
 
@@ -180,7 +264,10 @@ These short counterfactual pilots suggest:
    short pilots and the longer 7-day Window B confirmation run.
 2. The strategic handoff is not irrelevant, but it does not appear to be the dominant source of
    the current Amber-vs-Hybrid gap on these slices.
-3. The main next diagnostic priority should therefore remain near-horizon monetization quality,
+3. The 7-day same-target tactical comparison now shows that the gap persists even with the same
+   strategic target and same final SoC, which makes the tactical curve / tactical objective
+   interaction the clearest current bottleneck.
+4. The main next diagnostic priority should therefore remain near-horizon monetization quality,
    not another round of bridge-only strategic-target tuning.
 
 This is still a **provisional diagnostic result**, not a final architecture verdict. But the
@@ -189,15 +276,15 @@ the 2-day pilots.
 
 ---
 
-## 6. Immediate Next Questions
+## 7. Immediate Next Questions
 
-1. Where exactly does Hybrid’s tactical curve miss Amber’s monetization on the longer Window B run?
-   - missed export windows
-   - weaker sell timing
-   - weaker discharge magnitude
-2. Does an oracle strategic target materially improve Hybrid once the tactical curve is held
-   fixed?
-3. Should the next intervention focus on:
-   - tactical forecast shape,
-   - tactical objective formulation,
-   - or only then the strategic valuation layer?
+1. Why does the Hybrid tactical curve create both higher import cost and lower export revenue
+   under the tariffed objective?
+2. Are the most important tactical failures:
+   - feed-in/export opportunity miss,
+   - weak discharge urgency,
+   - or tariff-aware curve shape/calibration?
+3. Should the next intervention focus first on:
+   - tactical curve calibration under tariffed economics,
+   - export-aware tactical quantile/curve shaping,
+   - or separate effective buy/sell tactical curves?

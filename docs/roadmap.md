@@ -516,6 +516,32 @@ This longer Window B run strengthened the same interpretation as the 2-day pilot
 - swapping Hybrid strategic target into Amber degrades Amber only modestly
 - the larger deficit still appears to be tactical-curve / near-horizon monetization quality
 
+**7-day same-target tactical residual read (2026-04-25):**
+Holding the Hybrid strategic target fixed:
+- `amber_tactical_hybrid_strategic`: **$1.370/day**
+- `model_a_hybrid`: **$0.841/day**
+- gap: about **+$0.53/day** for Amber tactical
+- same final SoC for both: **`26.589 kWh`**
+
+Tariffed decomposition of that tactical-only gap:
+- Amber tactical has about **$2.83 lower import cost**
+- Amber tactical has about **$1.03 higher export revenue**
+- Hybrid tactical underperforms on **6 of 7 days**
+
+Missed-export diagnostics on the same run show high-feed-in intervals where:
+- Amber exports about **7.9–8.4 kW**
+- Hybrid exports **0 kW**
+- strategic targets are effectively **zero for both**
+- step-0 wholesale forecast is also the **same**
+
+So the next bottleneck is now best described as:
+- tactical curve / tactical objective interaction under tariffed site economics
+- especially missed export monetization and weaker import-side economics
+
+That makes the next likely intervention class:
+- tactical monetization work
+- not another bridge-only strategic-target experiment
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
