@@ -445,12 +445,18 @@ Results:
   - Hybrid: **-$0.901/day**
   - hybrid vs amber: **-58.1%**
 
-This materially changes the roadmap interpretation:
+This materially changes the roadmap interpretation for the currently tested local asset set:
 - under `price_only`, the hybrid looked acceptable in Window A and only moderately weak in Window B
 - under `netload_tariffed`, Amber beats the hybrid on the 7-day pilot, full Window B, and full Window A
 
 So the stronger production-fidelity gate is not just narrowing the advantage; it reverses the
 old optimistic reading across both major windows.
+
+Important caveat:
+- these tariffed rolling results used the locally available **Run 014 Phase 7** TFT asset
+- repo docs still treat **Run 011b + binary routing** as the incumbent
+- therefore these results should be treated as **provisional / artifact-limited** until the
+  strongest intended incumbent asset is recovered or reproduced and re-run under the same gate
 
 6-week diagnostic read:
 - Window B: Amber earns about **$8.0** more export revenue, with similar import cost, and the
@@ -464,6 +470,14 @@ Updated implication:
 - bridge-only experiments should remain paused until Amber-vs-Hybrid residual diagnostics are
   better understood under the tariffed gate
 - `netload_tariffed` should be treated as the primary rolling architecture gate going forward
+- architecture conclusions should remain provisional until the intended incumbent checkpoint is
+  re-run under that gate
+- the next diagnostic harness should be crossed tactical/strategic counterfactuals under
+  `netload_tariffed`, not another bridge sweep:
+  - `model_a_hybrid`
+  - `hybrid_tactical_amber_strategic`
+  - `amber_tactical_hybrid_strategic`
+  - `amber_apf_lgbm`
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

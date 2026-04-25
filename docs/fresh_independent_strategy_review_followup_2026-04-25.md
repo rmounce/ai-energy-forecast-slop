@@ -35,6 +35,12 @@ Two important implementation changes landed:
 This created the first meaningful comparison between the legacy `price_only` architecture gate
 and a closer-to-production rolling gate.
 
+Important caveat:
+- the current tariffed runs use the locally available **Run 014 Phase 7** TFT asset
+- repo docs still record **Run 011b + binary routing** as the evaluated incumbent
+- so the results below should be interpreted as **provisional / artifact-limited** until the
+  strongest intended incumbent asset is recovered or reproduced under the same tariffed gate
+
 ---
 
 ## 2. Main New Result
@@ -76,7 +82,8 @@ Headline numbers:
 - hybrid vs amber: **-58.1%**
 
 So the stronger gate does not just narrow the hybrid’s edge. It changes the overall
-architecture reading across both major windows.
+architecture reading across both major windows for the currently tested Run 014-based local
+setup.
 
 ---
 
@@ -94,7 +101,9 @@ So the more production-like economic objective changes tactical behavior itself,
 score assigned to a fixed policy.
 
 This matters because it means older `price_only` conclusions are not reliable architecture
-gates once site economics are modeled more faithfully.
+gates once site economics are modeled more faithfully. It does **not** yet mean the best
+documented AEMO-native incumbent has been defeated under the tariffed gate, because that
+incumbent asset is not currently present locally.
 
 ---
 
@@ -180,6 +189,8 @@ In other words:
   gate
 - it weakened the case for continuing to treat `price_only` or pure long-horizon forecast-path
   improvement as the main roadmap driver
+- it also introduced an asset-selection caveat: interpretation should stay provisional until the
+  strongest intended incumbent TFT checkpoint is re-run
 
 ---
 

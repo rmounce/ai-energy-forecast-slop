@@ -307,6 +307,68 @@ class StrategicSolveSummary:
     initial_shadow_price_per_kwh: float
 
 
+@dataclass(frozen=True)
+class SourceContract:
+    name: str
+    tactical_source: str
+    strategic_source: str
+
+
+VALID_BASE_SOURCES = {"p5min_naive", "amber_apf_lgbm", "model_a_hybrid"}
+
+COUNTERFACTUAL_SOURCE_ALIASES = {
+    "hybrid_tactical_amber_strategic": SourceContract(
+        name="hybrid_tactical_amber_strategic",
+        tactical_source="model_a_hybrid",
+        strategic_source="amber_apf_lgbm",
+    ),
+    "amber_tactical_hybrid_strategic": SourceContract(
+        name="amber_tactical_hybrid_strategic",
+        tactical_source="amber_apf_lgbm",
+        strategic_source="model_a_hybrid",
+    ),
+}
+
+
+def _parse_source_contract(spec: str) -> SourceContract:
+    token = spec.strip()
+    if not token:
+        raise ValueError("Empty source spec")
+    if token in COUNTERFACTUAL_SOURCE_ALIASES:
+        return COUNTERFACTUAL_SOURCE_ALIASES[token]
+    if token in VALID_BASE_SOURCES:
+        return SourceContract(name=token, tactical_source=token, strategic_source=token)
+    if token.startswith("cf:"):
+        parts = token.split(":")
+        if len(parts) != 4:
+            raise ValueError(
+                "Counterfactual source specs must look like "
+                "'cf:<label>:<tactical_source>:<strategic_source>'"
+            )
+        _, label, tactical_source, strategic_source = parts
+        if tactical_source not in VALID_BASE_SOURCES:
+            raise ValueError(f"Unsupported tactical source '{tactical_source}' in '{token}'")
+        if strategic_source not in VALID_BASE_SOURCES:
+            raise ValueError(f"Unsupported strategic source '{strategic_source}' in '{token}'")
+        return SourceContract(
+            name=label,
+            tactical_source=tactical_source,
+            strategic_source=strategic_source,
+        )
+    raise ValueError(
+        f"Unsupported source '{token}'. Use one of {sorted(VALID_BASE_SOURCES | set(COUNTERFACTUAL_SOURCE_ALIASES))} "
+        "or cf:<label>:<tactical_source>:<strategic_source>."
+    )
+
+
+def _parse_source_contracts(specs: list[str]) -> list[SourceContract]:
+    contracts = [_parse_source_contract(spec) for spec in specs]
+    names = [contract.name for contract in contracts]
+    if len(names) != len(set(names)):
+        raise ValueError(f"Duplicate source labels are not allowed: {names}")
+    return contracts
+
+
 def _load_tft_context(ckpt_path: Path, scalers_path: Path) -> TFTContext:
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     meta = ckpt.get("meta", {})
@@ -646,7 +708,7 @@ def simulate_stepwise(
     timestamps: pd.DatetimeIndex,
     actual_prices: pd.Series,
     providers: ForecastProviders,
-    sources: list[str],
+    source_contracts: list[SourceContract],
     soc_init: float,
     economic_mode: str = "price_only",
     output_prefix: str = "",
@@ -660,22 +722,23 @@ def simulate_stepwise(
     dynamic_bridge_terminal_scale: float = 0.0,
     dynamic_bridge_terminal_scope: str = "all",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    state = {src: float(soc_init) for src in sources}
+    source_names = [contract.name for contract in source_contracts]
+    state = {src: float(soc_init) for src in source_names}
     raw_rows = []
     summary = []
     started_at = time.time()
     steps_total = len(timestamps)
     source_progress_paths = {
-        src: (_progress_path(output_prefix, src) if output_prefix else None) for src in sources
+        src: (_progress_path(output_prefix, src) if output_prefix else None) for src in source_names
     }
 
-    pnl_totals = {src: 0.0 for src in sources}
-    executed_steps = {src: 0 for src in sources}
-    skipped_missing_actual = {src: 0 for src in sources}
-    skipped_missing_curve = {src: 0 for src in sources}
-    skipped_invalid_curve = {src: 0 for src in sources}
-    repaired_invalid_curve = {src: 0 for src in sources}
-    invalid_curve_logged = {src: 0 for src in sources}
+    pnl_totals = {src: 0.0 for src in source_names}
+    executed_steps = {src: 0 for src in source_names}
+    skipped_missing_actual = {src: 0 for src in source_names}
+    skipped_missing_curve = {src: 0 for src in source_names}
+    skipped_invalid_curve = {src: 0 for src in source_names}
+    repaired_invalid_curve = {src: 0 for src in source_names}
+    invalid_curve_logged = {src: 0 for src in source_names}
 
     if economic_mode == "netload_tariffed":
         tariffed_actuals = _tariffed_price_frame_from_wholesale_mwh(actual_prices.reindex(timestamps).ffill().bfill())
@@ -692,7 +755,7 @@ def simulate_stepwise(
     for i, ts in enumerate(timestamps):
         actual = float(actual_prices.asof(ts))
         if np.isnan(actual):
-            for src in sources:
+            for src in source_names:
                 skipped_missing_actual[src] += 1
             continue
         actual_general_price_mwh = (
@@ -705,12 +768,13 @@ def simulate_stepwise(
             float(actual_net_load_kw.asof(ts)) if actual_net_load_kw is not None else float("nan")
         )
 
-        for src in sources:
-            curve = providers.build_forecast_curve(src, ts)
+        for contract in source_contracts:
+            src = contract.name
+            curve = providers.build_forecast_curve(contract.tactical_source, ts)
             if curve is None:
                 skipped_missing_curve[src] += 1
                 continue
-            if providers.curve_was_repaired(src):
+            if providers.curve_was_repaired(contract.tactical_source):
                 repaired_invalid_curve[src] += 1
             curve = np.asarray(curve, dtype=np.float64)
             if curve.shape[0] != HORIZON_5M_STEPS or not np.isfinite(curve).all():
@@ -740,7 +804,12 @@ def simulate_stepwise(
             min_terminal_soc_kwh = None
             max_terminal_soc_kwh = None
             if strategic_soc_handoff:
-                strategic_q50 = providers.strategic_solve_summary(src, ts, soc_prev, quantile=0.50)
+                strategic_q50 = providers.strategic_solve_summary(
+                    contract.strategic_source,
+                    ts,
+                    soc_prev,
+                    quantile=0.50,
+                )
                 if strategic_q50 is not None and np.isfinite(strategic_q50.target_kwh):
                     strategic_soc_target_kwh = float(strategic_q50.target_kwh)
                     strategic_shadow_q50_per_kwh = float(strategic_q50.initial_shadow_price_per_kwh)
@@ -752,7 +821,7 @@ def simulate_stepwise(
                         or dynamic_bridge_terminal_scale > 0.0
                     ):
                         strategic_qhi = providers.strategic_solve_summary(
-                            src,
+                            contract.strategic_source,
                             ts,
                             soc_prev,
                             quantile=dynamic_bridge_upper_quantile,
@@ -884,6 +953,8 @@ def simulate_stepwise(
             raw_rows.append({
                 "time": ts,
                 "source": src,
+                "tactical_source": contract.tactical_source,
+                "strategic_source": contract.strategic_source,
                 "economic_mode": economic_mode,
                 "actual_price_mwh": actual,
                 "actual_general_price_mwh": actual_general_price_mwh,
@@ -938,8 +1009,8 @@ def simulate_stepwise(
                 f"eta={_format_duration(eta_seconds)} finish={eta_ts.isoformat()}",
                 flush=True,
             )
-            if len(sources) == 1:
-                src = sources[0]
+            if len(source_contracts) == 1:
+                src = source_contracts[0].name
                 progress_path = source_progress_paths[src]
                 if progress_path is not None:
                     _write_progress_checkpoint(
@@ -953,7 +1024,8 @@ def simulate_stepwise(
                     )
 
     n_days = max((timestamps.max() - timestamps.min()).total_seconds() / 86400.0, 1e-9)
-    for src in sources:
+    for contract in source_contracts:
+        src = contract.name
         src_rows = [row for row in raw_rows if row["source"] == src]
         src_df = pd.DataFrame(src_rows)
         mean_dynamic_target_uplift_kwh = float(src_df["dynamic_target_uplift_kwh"].mean()) if not src_df.empty else 0.0
@@ -968,6 +1040,8 @@ def simulate_stepwise(
         positive_terminal_adder_steps = int((src_df["dynamic_terminal_adder_per_kwh"] > 0).sum()) if not src_df.empty else 0
         summary.append({
             "source": src,
+            "tactical_source": contract.tactical_source,
+            "strategic_source": contract.strategic_source,
             "steps": executed_steps[src],
             "total_pnl": pnl_totals[src],
             "mean_per_day": pnl_totals[src] / n_days,
@@ -1296,21 +1370,25 @@ def build_behavior_summary(daily_summary_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _simulate_single_source(
-    source: str,
+    source_contract: SourceContract,
     start: pd.Timestamp,
     end: pd.Timestamp,
     soc_init: float,
     args_dict: dict,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     worker_label = mp.current_process().name
-    print(f"  [{worker_label}] Starting source '{source}'", flush=True)
+    print(
+        f"  [{worker_label}] Starting source '{source_contract.name}' "
+        f"(tactical={source_contract.tactical_source}, strategic={source_contract.strategic_source})",
+        flush=True,
+    )
     timestamps = pd.date_range(start=start, end=end - pd.Timedelta(minutes=5), freq="5min", tz="UTC")
     provider_t0 = time.time()
     providers = ForecastProviders(argparse.Namespace(**args_dict))
     provider_elapsed = time.time() - provider_t0
     actual_prices = providers.actuals_5m["rrp"].reindex(timestamps)
     print(
-        f"  [{worker_label}] Provider init complete for '{source}' in {provider_elapsed:.1f}s "
+        f"  [{worker_label}] Provider init complete for '{source_contract.name}' in {provider_elapsed:.1f}s "
         f"({len(timestamps):,} steps)",
         flush=True,
     )
@@ -1318,7 +1396,7 @@ def _simulate_single_source(
         timestamps=timestamps,
         actual_prices=actual_prices,
         providers=providers,
-        sources=[source],
+        source_contracts=[source_contract],
         soc_init=soc_init,
         economic_mode=args_dict["economic_mode"],
         output_prefix=args_dict["output_prefix"],
@@ -1337,12 +1415,12 @@ def _simulate_single_source(
 def simulate_stepwise_parallel(
     start: pd.Timestamp,
     end: pd.Timestamp,
-    sources: list[str],
+    source_contracts: list[SourceContract],
     soc_init: float,
     args_dict: dict,
     workers: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if workers <= 1 or len(sources) <= 1:
+    if workers <= 1 or len(source_contracts) <= 1:
         providers = ForecastProviders(argparse.Namespace(**args_dict))
         timestamps = pd.date_range(start=start, end=end - pd.Timedelta(minutes=5), freq="5min", tz="UTC")
         actual_prices = providers.actuals_5m["rrp"].reindex(timestamps)
@@ -1350,7 +1428,7 @@ def simulate_stepwise_parallel(
             timestamps,
             actual_prices,
             providers,
-            sources,
+            source_contracts,
             soc_init,
             economic_mode=args_dict["economic_mode"],
             output_prefix=args_dict["output_prefix"],
@@ -1369,7 +1447,7 @@ def simulate_stepwise_parallel(
     summary_frames: list[pd.DataFrame] = []
     start_method = _resolve_mp_start_method(str(args_dict.get("mp_start_method", "auto")))
     print(
-        f"  Parallel execution across {len(sources)} source(s) with {workers} worker(s) "
+        f"  Parallel execution across {len(source_contracts)} source(s) with {workers} worker(s) "
         f"using start method '{start_method}'",
         flush=True,
     )
@@ -1381,18 +1459,18 @@ def simulate_stepwise_parallel(
         futures = {
             ex.submit(
                 _simulate_single_source,
-                source,
+                source_contract,
                 start,
                 end,
                 soc_init,
                 args_dict,
-            ): source
-            for source in sources
+            ): source_contract
+            for source_contract in source_contracts
         }
         for fut in concurrent.futures.as_completed(futures):
-            source = futures[fut]
+            source_contract = futures[fut]
             raw_df, summary_df = fut.result()
-            print(f"  Completed source: {source}")
+            print(f"  Completed source: {source_contract.name}")
             raw_frames.append(raw_df)
             summary_frames.append(summary_df)
 
@@ -1412,7 +1490,11 @@ def main():
     parser.add_argument(
         "--sources",
         default="p5min_naive,model_a_hybrid",
-        help="Comma-separated sources: p5min_naive, model_a_hybrid, amber_apf_lgbm",
+        help=(
+            "Comma-separated source labels. Built-ins: p5min_naive, model_a_hybrid, amber_apf_lgbm, "
+            "hybrid_tactical_amber_strategic, amber_tactical_hybrid_strategic. "
+            "Generic counterfactual form: cf:<label>:<tactical_source>:<strategic_source>."
+        ),
     )
     parser.add_argument("--tft-checkpoint", default="", help="Path to TFT checkpoint for model_a_hybrid")
     parser.add_argument("--tft-scalers", default="", help="Path to matching TFT scalers for model_a_hybrid")
@@ -1556,8 +1638,13 @@ def main():
 
     start = pd.Timestamp(args.start, tz="UTC")
     end = pd.Timestamp(args.end, tz="UTC")
-    sources = [s.strip() for s in args.sources.split(",") if s.strip()]
-    baseline_source = args.baseline_source.strip() or sources[0]
+    source_specs = [s.strip() for s in args.sources.split(",") if s.strip()]
+    try:
+        source_contracts = _parse_source_contracts(source_specs)
+    except ValueError as exc:
+        parser.error(str(exc))
+    source_names = [contract.name for contract in source_contracts]
+    baseline_source = args.baseline_source.strip() or source_names[0]
     args.terminal_energy_value_per_kwh = args.terminal_energy_value_mwh / 1000.0
     if not 0.0 <= args.tier1_quantile_blend <= 1.0:
         parser.error("--tier1-quantile-blend must be in [0, 1]")
@@ -1585,20 +1672,29 @@ def main():
     ):
         parser.error("Dynamic bridge options require --strategic-soc-handoff")
 
-    if "model_a_hybrid" in sources and (not args.tft_checkpoint or not args.tft_scalers):
+    if any(
+        "model_a_hybrid" in (contract.tactical_source, contract.strategic_source)
+        for contract in source_contracts
+    ) and (not args.tft_checkpoint or not args.tft_scalers):
         parser.error("model_a_hybrid requires --tft-checkpoint and --tft-scalers")
-    if baseline_source not in sources:
+    if baseline_source not in source_names:
         parser.error("--baseline-source must be one of --sources")
 
     idx = pd.date_range(start=start, end=end - pd.Timedelta(minutes=5), freq="5min", tz="UTC")
-    workers = args.workers or min(len(sources), max(1, (os.cpu_count() or 1)))
-    workers = max(1, min(workers, len(sources)))
+    workers = args.workers or min(len(source_contracts), max(1, (os.cpu_count() or 1)))
+    workers = max(1, min(workers, len(source_contracts)))
     args_dict = vars(args).copy()
 
     print(f"Rolling MPC eval — Model A track")
     print(f"  Window: {start} → {end}")
     print(f"  Steps:  {len(idx):,}")
-    print(f"  Sources: {sources}")
+    print(f"  Sources: {source_names}")
+    for contract in source_contracts:
+        if contract.tactical_source != contract.strategic_source:
+            print(
+                f"    {contract.name}: tactical={contract.tactical_source}, "
+                f"strategic={contract.strategic_source}"
+            )
     print(f"  Baseline: {baseline_source}")
     print(f"  Economic mode: {args.economic_mode}")
     print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
@@ -1622,7 +1718,7 @@ def main():
     raw_df, summary_df = simulate_stepwise_parallel(
         start=start,
         end=end,
-        sources=sources,
+        source_contracts=source_contracts,
         soc_init=args.soc_init_kwh,
         args_dict=args_dict,
         workers=workers,
@@ -1647,7 +1743,7 @@ def main():
     daily_summary_df = build_daily_summary(raw_df)
     daily_regime_df = build_daily_regime_summary(raw_df)
     daily_summary_df = add_daily_regime_to_summary(daily_summary_df, daily_regime_df)
-    coverage_df = build_coverage_summary(raw_df, start, end, sources, summary_df=summary_df)
+    coverage_df = build_coverage_summary(raw_df, start, end, source_names, summary_df=summary_df)
     regime_summary_df = build_regime_summary(daily_summary_df)
     spike_band_summary_df = build_spike_band_summary(daily_summary_df)
     behavior_summary_df = build_behavior_summary(daily_summary_df)

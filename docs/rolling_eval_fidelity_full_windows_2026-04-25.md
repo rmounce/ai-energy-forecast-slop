@@ -13,6 +13,14 @@ These runs use:
   - `models/tft_price/checkpoint_run014_phase7_best.pt`
   - `models/tft_price/scalers_run014_phase7.pkl`
 
+Important caveat:
+- these results use the locally available **Run 014 Phase 7** TFT asset
+- repo docs still describe **Run 011b + binary routing** as the strongest incumbent and Run 014
+  as a failed interim eval checkpoint
+- so these tariffed results should currently be treated as **provisional / artifact-limited**
+  evidence about the mechanics of the rolling gate, not yet a final verdict on the best
+  AEMO-native architecture
+
 ## 1. Finished Runs
 
 Completed on `2026-04-25`:
@@ -48,9 +56,10 @@ Completed on `2026-04-25`:
 - `model_a_hybrid`: **-$37.849 total / -$0.901 per day**
 - hybrid vs amber: **-58.1%**
 
-## 3. Primary Conclusion
+## 3. Provisional Conclusion
 
-The production-fidelity economics gate materially changes the architecture picture.
+The production-fidelity economics gate materially changes the architecture picture for the
+currently tested local asset set.
 
 Previously:
 - Window A looked favorable to the hybrid under `price_only`
@@ -61,9 +70,9 @@ Now, under `netload_tariffed`:
 - Amber wins on full Window B
 - Amber wins on full Window A
 
-This is no longer a narrow “one follow-up window” problem. Under more production-like site
-economics, Amber is consistently ahead on both major Track 10A windows that previously anchored
-the roadmap discussion.
+This is no longer a narrow “one follow-up window” problem for the current Run 014-based local
+setup. Under more production-like site economics, Amber is consistently ahead on both major
+Track 10A windows that previously anchored the roadmap discussion.
 
 ## 4. Window B Diagnostic Read
 
@@ -149,7 +158,9 @@ Less likely primary bottlenecks:
 
 In other words, the full-window tariffed gate supports the reviewer’s recommendation to treat
 the strategic layer more as an inventory-value layer and to make the rolling `14h x 5m` eval
-the main architectural gate.
+the main architectural gate. But the checkpoint caveat matters: these runs should not yet be
+summarized as “the AEMO-native incumbent loses” until the strongest intended incumbent asset is
+recovered or reproduced and re-run under the same gate.
 
 ## 7. Immediate Next Questions
 
