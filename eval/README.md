@@ -47,6 +47,12 @@ Parallelism notes:
 - still validate any new multi-worker run shape on a short pilot before leaving it unattended
 - bridge-contract runs now support `--dynamic-bridge-terminal-scope extra_band`, which applies
   dynamic terminal value only to the terminal energy above the q50 floor inside band mode
+- crossed tactical/strategic counterfactuals are supported via built-in source aliases:
+  - `hybrid_tactical_amber_strategic`
+  - `amber_tactical_hybrid_strategic`
+  - or the generic form `cf:<label>:<tactical_source>:<strategic_source>`
+  This keeps the tactical forecast curve and strategic handoff source separable inside the same
+  rolling-eval harness
 
 Before promoting a control variant to a long run, compare raw pilot outputs with
 `compare_rolling_mpc_raw.py`. If `charge_kw`, `discharge_kw`, and `soc_kwh` are unchanged,
