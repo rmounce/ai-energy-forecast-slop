@@ -119,6 +119,10 @@ def _curve_window_mean(curve: np.ndarray, steps: int) -> float:
     return float(np.mean(curve[:steps]))
 
 
+def _parse_csv_set(text: str) -> set[str]:
+    return {item.strip() for item in str(text).split(",") if item.strip()}
+
+
 def _progress_path(output_prefix: str, source: str | None = None) -> Path:
     suffix = f"_{source}" if source else ""
     return RESULTS_DIR / f"{output_prefix}{suffix}.progress.json"
@@ -161,6 +165,37 @@ def _write_progress_checkpoint(
         "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
     }
     path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def _apply_sell_urgency_transform(
+    export_prices_mwh: np.ndarray,
+    *,
+    tactical_source: str,
+    allowed_tactical_sources: set[str],
+    trigger_feed_in_price_mwh: float,
+    current_feed_in_price_mwh: float,
+    max_strategic_target_kwh: float,
+    strategic_soc_target_kwh: float,
+    discount: float,
+    horizon_steps: int,
+) -> tuple[np.ndarray, bool]:
+    shaped = np.asarray(export_prices_mwh, dtype=np.float64).copy()
+    if (
+        not allowed_tactical_sources
+        or tactical_source not in allowed_tactical_sources
+        or discount <= 0.0
+        or horizon_steps <= 0
+        or not np.isfinite(current_feed_in_price_mwh)
+        or current_feed_in_price_mwh < trigger_feed_in_price_mwh
+        or not np.isfinite(strategic_soc_target_kwh)
+        or strategic_soc_target_kwh > max_strategic_target_kwh
+    ):
+        return shaped, False
+    stop = min(len(shaped), 1 + int(horizon_steps))
+    if stop <= 1:
+        return shaped, False
+    shaped[1:stop] *= max(0.0, 1.0 - discount)
+    return shaped, True
 
 
 def _load_actuals_5m() -> pd.DataFrame:
@@ -892,6 +927,10 @@ def simulate_stepwise(
             forecast_general_price_mwh = None
             forecast_feed_in_price_mwh = None
             forecast_net_load_kw = None
+            sell_urgency_applied = False
+            forecast_feed_in_mean_next_1h_mwh = float("nan")
+            forecast_feed_in_mean_next_4h_mwh = float("nan")
+            forecast_feed_in_mean_next_14h_mwh = float("nan")
             if economic_mode == "netload_tariffed":
                 curve_idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
                 tariffed_curve = _tariffed_price_frame_from_wholesale_mwh(
@@ -899,6 +938,23 @@ def simulate_stepwise(
                 )
                 forecast_general_price_mwh = tariffed_curve["general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
                 forecast_feed_in_price_mwh = tariffed_curve["feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
+                forecast_feed_in_price_mwh, sell_urgency_applied = _apply_sell_urgency_transform(
+                    forecast_feed_in_price_mwh,
+                    tactical_source=contract.tactical_source,
+                    allowed_tactical_sources=providers.args.sell_urgency_tactical_sources,
+                    trigger_feed_in_price_mwh=providers.args.sell_urgency_trigger_feed_in_price_mwh,
+                    current_feed_in_price_mwh=actual_feed_in_price_mwh,
+                    max_strategic_target_kwh=providers.args.sell_urgency_max_strategic_target_kwh,
+                    strategic_soc_target_kwh=strategic_soc_target_kwh,
+                    discount=providers.args.sell_urgency_discount,
+                    horizon_steps=providers.args.sell_urgency_horizon_steps,
+                )
+                forecast_feed_in_mean_next_1h_mwh = _curve_window_mean(forecast_feed_in_price_mwh, 12)
+                forecast_feed_in_mean_next_4h_mwh = _curve_window_mean(forecast_feed_in_price_mwh, 48)
+                forecast_feed_in_mean_next_14h_mwh = _curve_window_mean(
+                    forecast_feed_in_price_mwh,
+                    HORIZON_5M_STEPS,
+                )
                 forecast_net_load_kw = (
                     providers.net_load_5m.reindex(curve_idx).ffill().bfill().to_numpy(dtype=np.float64, copy=True)
                 )
@@ -978,6 +1034,9 @@ def simulate_stepwise(
                 "forecast_feed_in_step0_mwh": (
                     float(forecast_feed_in_price_mwh[0]) if forecast_feed_in_price_mwh is not None else float("nan")
                 ),
+                "forecast_feed_in_mean_next_1h_mwh": forecast_feed_in_mean_next_1h_mwh,
+                "forecast_feed_in_mean_next_4h_mwh": forecast_feed_in_mean_next_4h_mwh,
+                "forecast_feed_in_mean_next_14h_mwh": forecast_feed_in_mean_next_14h_mwh,
                 "charge_kw": c0,
                 "discharge_kw": d0,
                 "grid_import_kw": grid_import0,
@@ -1004,6 +1063,11 @@ def simulate_stepwise(
                 "max_terminal_soc_kwh": max_terminal_soc_kwh,
                 "tier1_quantile_blend": providers.args.tier1_quantile_blend,
                 "tier2_quantile_blend": providers.args.tier2_quantile_blend,
+                "sell_urgency_applied": sell_urgency_applied,
+                "sell_urgency_trigger_feed_in_price_mwh": providers.args.sell_urgency_trigger_feed_in_price_mwh,
+                "sell_urgency_discount": providers.args.sell_urgency_discount,
+                "sell_urgency_horizon_steps": providers.args.sell_urgency_horizon_steps,
+                "sell_urgency_max_strategic_target_kwh": providers.args.sell_urgency_max_strategic_target_kwh,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
@@ -1615,6 +1679,51 @@ def main():
             "'extra_band' only values the energy above the q50 floor within band mode."
         ),
     )
+    parser.add_argument(
+        "--sell-urgency-trigger-feed-in-price-mwh",
+        type=float,
+        default=float("inf"),
+        help=(
+            "If finite, enable a tactical sell-urgency stress test in netload_tariffed mode: "
+            "when the current actual feed-in price is at or above this threshold, selected "
+            "tactical sources have their future export-price curve discounted after step 0."
+        ),
+    )
+    parser.add_argument(
+        "--sell-urgency-discount",
+        type=float,
+        default=0.0,
+        help=(
+            "Fractional discount applied to future export prices after step 0 when the "
+            "sell-urgency trigger fires. Example: 0.25 discounts by 25%%."
+        ),
+    )
+    parser.add_argument(
+        "--sell-urgency-horizon-hours",
+        type=float,
+        default=0.0,
+        help=(
+            "How far after step 0 the sell-urgency discount applies, in hours. "
+            "Typical probes are 1 or 4."
+        ),
+    )
+    parser.add_argument(
+        "--sell-urgency-max-strategic-target-kwh",
+        type=float,
+        default=float("inf"),
+        help=(
+            "Maximum strategic target SoC for the sell-urgency transform to apply. "
+            "Use a low value (for example 0 or 2) to focus on low-reserve intervals."
+        ),
+    )
+    parser.add_argument(
+        "--sell-urgency-tactical-sources",
+        default="",
+        help=(
+            "Comma-separated tactical source labels eligible for the sell-urgency transform. "
+            "Example: model_a_hybrid"
+        ),
+    )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
     parser.add_argument(
         "--progress-every-steps",
@@ -1663,6 +1772,12 @@ def main():
         parser.error("--tier2-quantile-blend must be in [0, 1]")
     if args.dual_terminal_scale < 0:
         parser.error("--dual-terminal-scale must be >= 0")
+    if not 0.0 <= args.sell_urgency_discount <= 1.0:
+        parser.error("--sell-urgency-discount must be in [0, 1]")
+    if args.sell_urgency_horizon_hours < 0.0:
+        parser.error("--sell-urgency-horizon-hours must be >= 0")
+    args.sell_urgency_horizon_steps = int(round(args.sell_urgency_horizon_hours * 12))
+    args.sell_urgency_tactical_sources = _parse_csv_set(args.sell_urgency_tactical_sources)
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
         parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
     if args.dynamic_bridge_target_scale < 0:

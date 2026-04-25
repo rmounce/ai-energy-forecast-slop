@@ -49,6 +49,10 @@ Parallelism notes:
 - still validate any new multi-worker run shape on a short pilot before leaving it unattended
 - bridge-contract runs now support `--dynamic-bridge-terminal-scope extra_band`, which applies
   dynamic terminal value only to the terminal energy above the q50 floor inside band mode
+- tactical sell-deferral probes can now use the `--sell-urgency-*` flags in
+  `netload_tariffed` mode to leave step 0 unchanged while discounting only future export prices
+  for selected tactical sources during already-high feed-in intervals; this is intended as a
+  small export-monetization stress test rather than a general forecast-model change
 - crossed tactical/strategic counterfactuals are supported via built-in source aliases:
   - `hybrid_tactical_amber_strategic`
   - `amber_tactical_hybrid_strategic`
