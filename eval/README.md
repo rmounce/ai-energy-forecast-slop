@@ -30,6 +30,7 @@ For `rolling_mpc_eval.py`, treat anything beyond a tiny smoke test as a managed 
 - write the process exit code to a matching `eval/results/*.exitcode` file
 - when using a shell wrapper, prefer `status=${PIPESTATUS[0]}; printf '%s\n' "$status" > ...`
   so the exit-code file contains a plain integer and not a malformed string
+- `eval/run_track10a_long.sh` supports `LOG_PATH=...` and `EXITCODE_PATH=...` for this pattern
 - run a `1-3 day` pilot before promoting a new run shape to a full `6-week` window
 
 Parallelism notes:

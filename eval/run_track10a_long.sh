@@ -16,6 +16,7 @@ TFT_CHECKPOINT="${TFT_CHECKPOINT:-models/tft_price/checkpoint_run014_phase7_best
 TFT_SCALERS="${TFT_SCALERS:-models/tft_price/scalers_run014_phase7.pkl}"
 MPL_DIR="${MPL_DIR:-/tmp/mpl_track10a_long}"
 LOG_PATH="${LOG_PATH:-/tmp/${OUTPUT_PREFIX}.log}"
+EXITCODE_PATH="${EXITCODE_PATH:-/tmp/${OUTPUT_PREFIX}.exitcode}"
 
 mkdir -p "$MPL_DIR"
 
@@ -27,6 +28,7 @@ echo "  baseline: $BASELINE_SOURCE"
 echo "  workers:  $WORKERS"
 echo "  output:   $OUTPUT_PREFIX"
 echo "  log:      $LOG_PATH"
+echo "  exitcode: $EXITCODE_PATH"
 
 MPLCONFIGDIR="$MPL_DIR" PYTHONUNBUFFERED=1 \
 python eval/rolling_mpc_eval.py \
@@ -39,3 +41,6 @@ python eval/rolling_mpc_eval.py \
   --workers "$WORKERS" \
   --output-prefix "$OUTPUT_PREFIX" \
   2>&1 | tee "$LOG_PATH"
+status=${PIPESTATUS[0]}
+printf '%s\n' "$status" > "$EXITCODE_PATH"
+exit "$status"
