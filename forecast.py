@@ -251,6 +251,59 @@ def get_entity_state(entity_id):
     # This function remains unchanged
     return call_ha_api('GET', f"states/{entity_id}")
 
+def _persist_amber_spot_5min_forecasts(entity_id, entity_state, forecasts):
+    log_path = Path(CONFIG['paths'].get('amber_spot_5min_forecast_log_file', 'amber_spot_5min_forecast_log.parquet'))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    forecast_creation_time = pd.to_datetime(
+        entity_state.get("last_updated") or datetime.now(pytz.UTC).isoformat(),
+        utc=True,
+        errors="coerce",
+    )
+    if pd.isna(forecast_creation_time):
+        forecast_creation_time = pd.Timestamp.now(tz="UTC")
+    retrieval_time = pd.Timestamp.now(tz="UTC")
+    scaling_factor = float(get_amber_api_scaling_factor())
+
+    rows = []
+    for f in forecasts:
+        if "start_time" not in f or f.get("spot_per_kwh") is None:
+            continue
+        target_time = pd.to_datetime(f["start_time"], utc=True, errors="coerce")
+        if pd.isna(target_time):
+            continue
+        raw_spot_per_kwh = float(f["spot_per_kwh"])
+        rows.append({
+            "forecast_creation_time": forecast_creation_time,
+            "retrieval_time": retrieval_time,
+            "forecast_target_time": target_time.round("min"),
+            "entity_id": entity_id,
+            "duration_minutes": int(f.get("duration", 5) or 5),
+            "amber_spot_per_kwh_raw": raw_spot_per_kwh,
+            "aemo_price_sa1_adjusted": raw_spot_per_kwh / scaling_factor if scaling_factor else raw_spot_per_kwh,
+            "amber_api_scaling_factor": scaling_factor,
+        })
+
+    if not rows:
+        return
+
+    new_df = pd.DataFrame(rows)
+    key_cols = ["forecast_creation_time", "forecast_target_time", "entity_id"]
+    if log_path.exists() and log_path.stat().st_size > 0:
+        existing_df = pd.read_parquet(log_path)
+        combined = pd.concat([existing_df, new_df], ignore_index=True)
+        combined = combined.drop_duplicates(subset=key_cols, keep="last")
+    else:
+        combined = new_df
+
+    combined = combined.sort_values(key_cols, kind="stable").reset_index(drop=True)
+    combined.to_parquet(log_path, index=False)
+    logging.info(
+        "Logged %s Amber 5-min spot forecast rows to %s",
+        len(new_df),
+        log_path,
+    )
+
 def get_amber_spot_price_forecast(apply_loss_factor=True):
     # This function remains unchanged
     logging.info("Retrieving Amber Electric spot price forecast...")
@@ -2142,6 +2195,19 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     adjusted_covariates_for_prediction = adjusted_covariates_df.copy()
     adjusted_covariates_for_prediction.ffill(inplace=True)
     adjusted_covariates_for_prediction.bfill(inplace=True)
+    amber_spot_df = pd.DataFrame()
+
+    if 'price' in models_to_run:
+        try:
+            amber_entity_id = CONFIG['home_assistant']['amber_entity']
+            amber_entity_state = get_entity_state(amber_entity_id)
+            if amber_entity_state:
+                amber_forecasts = amber_entity_state.get("attributes", {}).get("Forecasts", [])
+                if amber_forecasts:
+                    _persist_amber_spot_5min_forecasts(amber_entity_id, amber_entity_state, amber_forecasts)
+                    amber_spot_df = get_amber_spot_price_forecast()
+        except Exception as e:
+            logging.error(f"FATAL ERROR capturing Amber 5-min spot forecasts: {e}", exc_info=True)
 
     # 2. Loop, execute predictions, and COLLECT results (This part is unchanged)
     all_results = {}
@@ -2209,7 +2275,6 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             primary_pred_df_for_save.rename(columns={primary_pred_df_for_save.columns[0]: 'wholesale_price'}, inplace=True)
             # Only apply Amber spot override for the base 'price' model if handover is NOT used
             if model_name == 'price' and not use_dynamic_handoff:
-                amber_spot_df = get_amber_spot_price_forecast()
                 if not amber_spot_df.empty:
                     primary_pred_df_for_save.update(amber_spot_df)
             apply_tariffs_to_forecast(primary_pred_df_for_save)
