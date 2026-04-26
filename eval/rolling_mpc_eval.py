@@ -564,6 +564,31 @@ class ForecastProviders:
     def _blend_series(self, base: pd.Series, upper: pd.Series, weight: float) -> pd.Series:
         return base + float(weight) * (upper - base)
 
+    def _build_model_a_curve(
+        self,
+        ts: pd.Timestamp,
+        *,
+        tier1_signed_blend: float,
+        tier2_signed_blend: float,
+    ) -> np.ndarray | None:
+        idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
+        current_actual = self.current_actual_price(ts)
+        if np.isnan(current_actual):
+            return None
+        tier1_q50 = self.tier1_quantile(ts, 0.50)
+        tier1_q95 = self.tier1_quantile(ts, 0.95)
+        tft_q50 = self.tft_quantile_expanded(ts, 0.50)
+        tft_qhi = self.tft_quantile_expanded(ts, self.args.tier2_upper_quantile)
+        if tier1_q50 is None or tier1_q95 is None or tft_q50 is None or tft_qhi is None:
+            return None
+        tier1 = self._blend_series(tier1_q50, tier1_q95, tier1_signed_blend)
+        tft = self._blend_series(tft_q50, tft_qhi, tier2_signed_blend)
+        out = pd.Series(index=idx, dtype=np.float64)
+        out.loc[idx[:TACTICAL_STEPS]] = tier1.reindex(idx[:TACTICAL_STEPS]).ffill().bfill().values
+        later_idx = idx[TACTICAL_STEPS:]
+        out.loc[later_idx] = tft.reindex(later_idx).ffill().bfill().values
+        return self._finalize_curve("model_a_hybrid", out.values.astype(np.float64), current_actual)
+
     def tier1_quantile(self, ts: pd.Timestamp, quantile: float) -> pd.Series | None:
         if quantile not in self.tactical_models:
             raise ValueError(f"Unsupported tactical quantile: {quantile}")
@@ -712,21 +737,44 @@ class ForecastProviders:
             return self._finalize_curve(source, out, current_actual)
 
         if source == "model_a_hybrid":
-            tier1_q50 = self.tier1_quantile(ts, 0.50)
-            tier1_q95 = self.tier1_quantile(ts, 0.95)
-            tft_q50 = self.tft_quantile_expanded(ts, 0.50)
-            tft_qhi = self.tft_quantile_expanded(ts, self.args.tier2_upper_quantile)
-            if tier1_q50 is None or tier1_q95 is None or tft_q50 is None or tft_qhi is None:
-                return None
-            tier1 = self._blend_series(tier1_q50, tier1_q95, self.args.tier1_quantile_blend)
-            tft = self._blend_series(tft_q50, tft_qhi, self.args.tier2_quantile_blend)
-            out = pd.Series(index=idx, dtype=np.float64)
-            out.loc[idx[:TACTICAL_STEPS]] = tier1.reindex(idx[:TACTICAL_STEPS]).ffill().bfill().values
-            later_idx = idx[TACTICAL_STEPS:]
-            out.loc[later_idx] = tft.reindex(later_idx).ffill().bfill().values
-            return self._finalize_curve(source, out.values.astype(np.float64), current_actual)
+            return self._build_model_a_curve(
+                ts,
+                tier1_signed_blend=self.args.tier1_quantile_blend,
+                tier2_signed_blend=self.args.tier2_quantile_blend,
+            )
 
         raise ValueError(f"Unknown source: {source}")
+
+    def build_effective_netload_curves(
+        self,
+        source: str,
+        ts: pd.Timestamp,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        base_curve = self.build_forecast_curve(source, ts)
+        if base_curve is None:
+            return None
+        if (
+            source != "model_a_hybrid"
+            or source not in self.args.split_curve_tactical_sources
+            or (
+                self.args.buy_curve_quantile_blend == 0.0
+                and self.args.sell_curve_quantile_blend == 0.0
+            )
+        ):
+            return base_curve, base_curve.copy(), base_curve.copy()
+        buy_curve = self._build_model_a_curve(
+            ts,
+            tier1_signed_blend=-self.args.buy_curve_quantile_blend,
+            tier2_signed_blend=-self.args.buy_curve_quantile_blend,
+        )
+        sell_curve = self._build_model_a_curve(
+            ts,
+            tier1_signed_blend=self.args.sell_curve_quantile_blend,
+            tier2_signed_blend=self.args.sell_curve_quantile_blend,
+        )
+        if buy_curve is None or sell_curve is None:
+            return None
+        return base_curve, buy_curve, sell_curve
 
 
 def _resolve_mp_start_method(requested: str) -> str:
@@ -810,13 +858,25 @@ def simulate_stepwise(
 
         for contract in source_contracts:
             src = contract.name
-            curve = providers.build_forecast_curve(contract.tactical_source, ts)
-            if curve is None:
+            effective_curves = (
+                providers.build_effective_netload_curves(contract.tactical_source, ts)
+                if economic_mode == "netload_tariffed"
+                else None
+            )
+            if effective_curves is not None:
+                curve, buy_curve, sell_curve = effective_curves
+            else:
+                curve = providers.build_forecast_curve(contract.tactical_source, ts)
+                buy_curve = curve
+                sell_curve = curve
+            if curve is None or buy_curve is None or sell_curve is None:
                 skipped_missing_curve[src] += 1
                 continue
             if providers.curve_was_repaired(contract.tactical_source):
                 repaired_invalid_curve[src] += 1
             curve = np.asarray(curve, dtype=np.float64)
+            buy_curve = np.asarray(buy_curve, dtype=np.float64)
+            sell_curve = np.asarray(sell_curve, dtype=np.float64)
             if curve.shape[0] != HORIZON_5M_STEPS or not np.isfinite(curve).all():
                 skipped_invalid_curve[src] += 1
                 if invalid_curve_logged[src] < 3:
@@ -827,10 +887,24 @@ def simulate_stepwise(
                     )
                     invalid_curve_logged[src] += 1
                 continue
+            if (
+                buy_curve.shape[0] != HORIZON_5M_STEPS
+                or sell_curve.shape[0] != HORIZON_5M_STEPS
+                or not np.isfinite(buy_curve).all()
+                or not np.isfinite(sell_curve).all()
+            ):
+                skipped_invalid_curve[src] += 1
+                continue
             soc_prev = state[src]
             forecast_mean_next_1h_mwh = _curve_window_mean(curve, 12)
             forecast_mean_next_4h_mwh = _curve_window_mean(curve, 48)
             forecast_mean_next_14h_mwh = _curve_window_mean(curve, HORIZON_5M_STEPS)
+            forecast_buy_mean_next_1h_mwh = _curve_window_mean(buy_curve, 12)
+            forecast_buy_mean_next_4h_mwh = _curve_window_mean(buy_curve, 48)
+            forecast_buy_mean_next_14h_mwh = _curve_window_mean(buy_curve, HORIZON_5M_STEPS)
+            forecast_sell_mean_next_1h_mwh = _curve_window_mean(sell_curve, 12)
+            forecast_sell_mean_next_4h_mwh = _curve_window_mean(sell_curve, 48)
+            forecast_sell_mean_next_14h_mwh = _curve_window_mean(sell_curve, HORIZON_5M_STEPS)
             probe_shadow_price_per_kwh = float("nan")
             applied_terminal_energy_value_per_kwh = terminal_energy_value_per_kwh
             strategic_soc_target_kwh = float("nan")
@@ -933,11 +1007,14 @@ def simulate_stepwise(
             forecast_feed_in_mean_next_14h_mwh = float("nan")
             if economic_mode == "netload_tariffed":
                 curve_idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
-                tariffed_curve = _tariffed_price_frame_from_wholesale_mwh(
-                    pd.Series(curve, index=curve_idx, dtype=np.float64)
+                tariffed_buy_curve = _tariffed_price_frame_from_wholesale_mwh(
+                    pd.Series(buy_curve, index=curve_idx, dtype=np.float64)
                 )
-                forecast_general_price_mwh = tariffed_curve["general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
-                forecast_feed_in_price_mwh = tariffed_curve["feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
+                tariffed_sell_curve = _tariffed_price_frame_from_wholesale_mwh(
+                    pd.Series(sell_curve, index=curve_idx, dtype=np.float64)
+                )
+                forecast_general_price_mwh = tariffed_buy_curve["general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
+                forecast_feed_in_price_mwh = tariffed_sell_curve["feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
                 forecast_feed_in_price_mwh, sell_urgency_applied = _apply_sell_urgency_transform(
                     forecast_feed_in_price_mwh,
                     tactical_source=contract.tactical_source,
@@ -1028,6 +1105,14 @@ def simulate_stepwise(
                 "forecast_mean_next_1h_mwh": forecast_mean_next_1h_mwh,
                 "forecast_mean_next_4h_mwh": forecast_mean_next_4h_mwh,
                 "forecast_mean_next_14h_mwh": forecast_mean_next_14h_mwh,
+                "forecast_buy_step0_mwh": float(buy_curve[0]),
+                "forecast_buy_mean_next_1h_mwh": forecast_buy_mean_next_1h_mwh,
+                "forecast_buy_mean_next_4h_mwh": forecast_buy_mean_next_4h_mwh,
+                "forecast_buy_mean_next_14h_mwh": forecast_buy_mean_next_14h_mwh,
+                "forecast_sell_step0_mwh": float(sell_curve[0]),
+                "forecast_sell_mean_next_1h_mwh": forecast_sell_mean_next_1h_mwh,
+                "forecast_sell_mean_next_4h_mwh": forecast_sell_mean_next_4h_mwh,
+                "forecast_sell_mean_next_14h_mwh": forecast_sell_mean_next_14h_mwh,
                 "forecast_general_step0_mwh": (
                     float(forecast_general_price_mwh[0]) if forecast_general_price_mwh is not None else float("nan")
                 ),
@@ -1058,11 +1143,13 @@ def simulate_stepwise(
                 "extra_terminal_energy_value_per_kwh": extra_terminal_energy_value_per_kwh,
                 "extra_terminal_energy_floor_kwh": extra_terminal_energy_floor_kwh,
                 "extra_terminal_energy_cap_kwh": extra_terminal_energy_cap_kwh,
-                "extra_terminal_energy_kwh": solve["extra_terminal_energy_kwh"],
+                "extra_terminal_energy_kwh": float(solve.get("extra_terminal_energy_kwh", 0.0)),
                 "min_terminal_soc_kwh": min_terminal_soc_kwh,
                 "max_terminal_soc_kwh": max_terminal_soc_kwh,
                 "tier1_quantile_blend": providers.args.tier1_quantile_blend,
                 "tier2_quantile_blend": providers.args.tier2_quantile_blend,
+                "buy_curve_quantile_blend": providers.args.buy_curve_quantile_blend,
+                "sell_curve_quantile_blend": providers.args.sell_curve_quantile_blend,
                 "sell_urgency_applied": sell_urgency_applied,
                 "sell_urgency_trigger_feed_in_price_mwh": providers.args.sell_urgency_trigger_feed_in_price_mwh,
                 "sell_urgency_discount": providers.args.sell_urgency_discount,
@@ -1609,6 +1696,32 @@ def main():
         help="Upper TFT quantile used for the Tier 2 strategic-extension blend.",
     )
     parser.add_argument(
+        "--buy-curve-quantile-blend",
+        type=float,
+        default=0.0,
+        help=(
+            "Eval-only split-curve mode: symmetric lower-tail blend weight for import decisions. "
+            "0 keeps the buy curve at q50; positive values move it lower using (q50 - qhi gap)."
+        ),
+    )
+    parser.add_argument(
+        "--sell-curve-quantile-blend",
+        type=float,
+        default=0.0,
+        help=(
+            "Eval-only split-curve mode: upper-tail blend weight for export decisions. "
+            "0 keeps the sell curve at q50; positive values move it toward qhi."
+        ),
+    )
+    parser.add_argument(
+        "--split-curve-tactical-sources",
+        default="",
+        help=(
+            "Comma-separated tactical source labels eligible for eval-only buy/sell split curves. "
+            "Example: model_a_hybrid"
+        ),
+    )
+    parser.add_argument(
         "--terminal-energy-value-mwh",
         type=float,
         default=0.0,
@@ -1770,6 +1883,10 @@ def main():
         parser.error("--tier1-quantile-blend must be in [0, 1]")
     if not 0.0 <= args.tier2_quantile_blend <= 1.0:
         parser.error("--tier2-quantile-blend must be in [0, 1]")
+    if args.buy_curve_quantile_blend < 0.0:
+        parser.error("--buy-curve-quantile-blend must be >= 0")
+    if args.sell_curve_quantile_blend < 0.0:
+        parser.error("--sell-curve-quantile-blend must be >= 0")
     if args.dual_terminal_scale < 0:
         parser.error("--dual-terminal-scale must be >= 0")
     if not 0.0 <= args.sell_urgency_discount <= 1.0:
@@ -1778,6 +1895,7 @@ def main():
         parser.error("--sell-urgency-horizon-hours must be >= 0")
     args.sell_urgency_horizon_steps = int(round(args.sell_urgency_horizon_hours * 12))
     args.sell_urgency_tactical_sources = _parse_csv_set(args.sell_urgency_tactical_sources)
+    args.split_curve_tactical_sources = _parse_csv_set(args.split_curve_tactical_sources)
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
         parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
     if args.dynamic_bridge_target_scale < 0:
