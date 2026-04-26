@@ -39,7 +39,9 @@ persistence at 5-min resolution) alongside the existing 30-min/72h strategic gat
 
 ### Amber APF 5-min forecast logging + comparison
 
-**Status:** Not started. Low urgency until tactical eval gates are established.
+**Status:** In progress as of `2026-04-26`. `forecast.py` now persists the raw Amber-issued
+5-minute spot forecast array once per live price prediction cycle to
+`amber_spot_5min_forecast_log.parquet` (default path if no explicit config override is set).
 
 To compare Tier 1 LGBM against Amber APF at 5-min/1h resolution, we need historical
 Amber 5-min forecasts at the time they were issued. Currently only the 30-min resampled
@@ -47,7 +49,7 @@ combined forecast is logged in `price_forecast_log.csv`.
 
 **What's needed:**
 - New ingest: at each 5-min forecast cycle, capture Amber's raw 5-min price array from
-  the API response and store to InfluxDB `rp_5m` (or a new parquet log).
+  the API response and store to a dedicated parquet log keyed by issue time + target time.
 - After accumulating ~1–2 months, run Pass A/B from `eval_tier1_accuracy.py` /
   `eval_tier1_dispatch.py` with an additional `amber_apf_5min` source column.
 - No retrospective data exists — historical Amber APF 5-min forecasts were never logged.

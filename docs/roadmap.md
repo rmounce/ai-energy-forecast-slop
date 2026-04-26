@@ -542,6 +542,18 @@ That makes the next likely intervention class:
 - tactical monetization work
 - not another bridge-only strategic-target experiment
 
+Reviewer follow-up on `2026-04-26` sharpened two tactical points:
+- the current gap should be described less as generic "forecast accuracy" and more as
+  **short-horizon curve shape for economically asymmetric decisions**
+- `price_only` should remain in the comparison table as a decomposition/debug lens even while
+  `netload_tariffed` remains the primary architecture gate, to reduce the risk of overfitting
+  conclusions to one fixed retail tariff structure
+
+The same reviewer also recommended the next tactical ablation order:
+- split buy/sell tactical curves first (eval-only)
+- only then consider learned tariff-aware tactical calibration if the split-curve ablation closes
+  too little of the Amber gap
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
