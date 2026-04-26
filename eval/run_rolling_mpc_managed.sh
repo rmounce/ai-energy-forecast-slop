@@ -30,7 +30,7 @@ echo "  args:     $*"
 set +e
 MPLCONFIGDIR="$MPL_DIR" PYTHONUNBUFFERED=1 \
 nice -n "$NICE_LEVEL" \
-./.venv/bin/python eval/rolling_mpc_eval.py "$@" 2>&1 | tee "$LOG_PATH"
+./.venv/bin/python eval/rolling_mpc_eval.py --output-prefix "$OUTPUT_PREFIX" "$@" 2>&1 | tee "$LOG_PATH"
 status=${PIPESTATUS[0]}
 set -e
 
