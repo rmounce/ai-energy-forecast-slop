@@ -554,6 +554,91 @@ The same reviewer also recommended the next tactical ablation order:
 - only then consider learned tariff-aware tactical calibration if the split-curve ablation closes
   too little of the Amber gap
 
+**Split-curve tactical ablation update (2026-04-27):**
+
+The first split-curve batch substantially narrowed that search space.
+
+Window B `netload_tariffed`, 2-day, same-target tactical comparison:
+- baseline `amber_tactical_hybrid_strategic`: **$6.088/day**
+- Hybrid sell-only `0.25`: **$4.650/day**
+- Hybrid sell-only `0.50`: **$2.988/day**
+- Hybrid sell-only `0.75`: **-$2.625/day**
+- Hybrid buy-only `0.50`: **$2.643/day**
+- Hybrid buy+sell `0.50 / 0.50`: **-$3.925/day**
+- Hybrid sell-only `0.50` + urgency `500 / 1h / 50%`: **$5.961/day**
+
+Window B `netload_tariffed`, 7-day:
+- baseline `amber_tactical_hybrid_strategic`: **$1.386/day**
+- Hybrid sell-only `0.25`: **$0.573/day**
+- Hybrid sell-only `0.50`: **$0.235/day**
+- Hybrid sell-only `0.75`: **-$1.452/day**
+- Hybrid buy-only `0.50`: **$0.322/day**
+- Hybrid buy+sell `0.50 / 0.50`: **-$1.542/day**
+
+Window A sanity:
+- baseline `amber_tactical_hybrid_strategic`: **-$1.673/day**
+- Hybrid sell-only `0.50`: **-$2.324/day**
+
+Interpretation:
+- broad split buy/sell shaping is **too blunt**
+- buy-side shaping should be deprioritized
+- broad buy+sell shaping should be deprioritized
+- pure sell-side shaping is still harmful versus the unshaped Hybrid tactical baseline, even if
+  it is less bad than buy-only or buy+sell shaping
+- the first genuinely promising follow-up is now **conditional** export-side shaping:
+  - sell-only `0.50`
+  - plus strict urgency during already-high feed-in conditions
+
+So the tactical hypothesis has tightened again. The next question is no longer:
+- “do separate buy/sell curves help in general?”
+
+It is now:
+- “can a narrowly selective export-side heuristic survive the same-target tariffed gate?”
+
+That question has now been tested twice:
+
+1. **Combined selective candidate**  
+   sell-only `0.50` + urgency `500 / 1h / 50%`
+
+   Window B `7-day`:
+   - baseline `amber_tactical_hybrid_strategic`: **$1.385/day**
+   - unshaped Hybrid: **$0.841/day**
+   - shaped Hybrid: **$1.074/day**
+
+   This closed only about **40–45%** of the same-target tactical gap, and trigger activations
+   were highly concentrated on `2025-09-01`.
+
+   Window A sanity was materially worse:
+   - `2-day`: **-$1.909/day** vs baseline **-$1.658/day**
+   - `7-day`: **-$1.542/day** vs baseline **-$1.176/day**
+
+2. **Trigger-only falsification**  
+   same urgency trigger, but outside triggered intervals the sell curve remained exactly
+   unshaped
+
+   Window B:
+   - `2-day`: **$5.609/day** vs baseline **$6.085/day**
+   - `7-day`: **$0.792/day** vs baseline **$1.385/day**
+
+   Window A:
+   - `2-day`: **-$1.909/day** vs baseline **-$1.658/day**
+   - `7-day`: **-$1.542/day** vs baseline **-$1.176/day**
+
+Interpretation:
+- the trigger-only variant did **not** preserve the earlier Window B gain
+- it also remained worse on Window A
+- so the clean selective hypothesis is effectively falsified
+
+That means the heuristic export-side shaping family has probably reached its ceiling.
+The most justified next step is now:
+- **tariff-aware tactical features / calibration**
+
+The least invasive first version of that, per the old implementer’s suggestion, is:
+- add effective import rate and effective export rate features to the Tier 1 tactical model
+- keep the current training pipeline and architecture otherwise unchanged
+- then re-run the tariffed same-target tactical comparisons before considering any more complex
+  tariff-aware objective changes
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast

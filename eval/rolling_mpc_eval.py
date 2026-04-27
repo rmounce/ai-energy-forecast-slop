@@ -167,8 +167,7 @@ def _write_progress_checkpoint(
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
-def _apply_sell_urgency_transform(
-    export_prices_mwh: np.ndarray,
+def _should_apply_sell_urgency(
     *,
     tactical_source: str,
     allowed_tactical_sources: set[str],
@@ -178,9 +177,8 @@ def _apply_sell_urgency_transform(
     strategic_soc_target_kwh: float,
     discount: float,
     horizon_steps: int,
-) -> tuple[np.ndarray, bool]:
-    shaped = np.asarray(export_prices_mwh, dtype=np.float64).copy()
-    if (
+) -> bool:
+    return not (
         not allowed_tactical_sources
         or tactical_source not in allowed_tactical_sources
         or discount <= 0.0
@@ -189,7 +187,17 @@ def _apply_sell_urgency_transform(
         or current_feed_in_price_mwh < trigger_feed_in_price_mwh
         or not np.isfinite(strategic_soc_target_kwh)
         or strategic_soc_target_kwh > max_strategic_target_kwh
-    ):
+    )
+
+
+def _apply_sell_urgency_transform(
+    export_prices_mwh: np.ndarray,
+    *,
+    discount: float,
+    horizon_steps: int,
+) -> tuple[np.ndarray, bool]:
+    shaped = np.asarray(export_prices_mwh, dtype=np.float64).copy()
+    if discount <= 0.0 or horizon_steps <= 0:
         return shaped, False
     stop = min(len(shaped), 1 + int(horizon_steps))
     if stop <= 1:
@@ -1007,6 +1015,9 @@ def simulate_stepwise(
             forecast_feed_in_mean_next_14h_mwh = float("nan")
             if economic_mode == "netload_tariffed":
                 curve_idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
+                tariffed_base_curve = _tariffed_price_frame_from_wholesale_mwh(
+                    pd.Series(curve, index=curve_idx, dtype=np.float64)
+                )
                 tariffed_buy_curve = _tariffed_price_frame_from_wholesale_mwh(
                     pd.Series(buy_curve, index=curve_idx, dtype=np.float64)
                 )
@@ -1014,9 +1025,7 @@ def simulate_stepwise(
                     pd.Series(sell_curve, index=curve_idx, dtype=np.float64)
                 )
                 forecast_general_price_mwh = tariffed_buy_curve["general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
-                forecast_feed_in_price_mwh = tariffed_sell_curve["feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
-                forecast_feed_in_price_mwh, sell_urgency_applied = _apply_sell_urgency_transform(
-                    forecast_feed_in_price_mwh,
+                urgency_triggered = _should_apply_sell_urgency(
                     tactical_source=contract.tactical_source,
                     allowed_tactical_sources=providers.args.sell_urgency_tactical_sources,
                     trigger_feed_in_price_mwh=providers.args.sell_urgency_trigger_feed_in_price_mwh,
@@ -1026,6 +1035,32 @@ def simulate_stepwise(
                     discount=providers.args.sell_urgency_discount,
                     horizon_steps=providers.args.sell_urgency_horizon_steps,
                 )
+                if providers.args.sell_urgency_trigger_only_shaping:
+                    forecast_feed_in_price_mwh = tariffed_base_curve["feed_in_price_mwh"].to_numpy(
+                        dtype=np.float64,
+                        copy=True,
+                    )
+                    if urgency_triggered:
+                        shaped_feed_in = tariffed_sell_curve["feed_in_price_mwh"].to_numpy(
+                            dtype=np.float64,
+                            copy=True,
+                        )
+                        forecast_feed_in_price_mwh, sell_urgency_applied = _apply_sell_urgency_transform(
+                            shaped_feed_in,
+                            discount=providers.args.sell_urgency_discount,
+                            horizon_steps=providers.args.sell_urgency_horizon_steps,
+                        )
+                else:
+                    forecast_feed_in_price_mwh = tariffed_sell_curve["feed_in_price_mwh"].to_numpy(
+                        dtype=np.float64,
+                        copy=True,
+                    )
+                    if urgency_triggered:
+                        forecast_feed_in_price_mwh, sell_urgency_applied = _apply_sell_urgency_transform(
+                            forecast_feed_in_price_mwh,
+                            discount=providers.args.sell_urgency_discount,
+                            horizon_steps=providers.args.sell_urgency_horizon_steps,
+                        )
                 forecast_feed_in_mean_next_1h_mwh = _curve_window_mean(forecast_feed_in_price_mwh, 12)
                 forecast_feed_in_mean_next_4h_mwh = _curve_window_mean(forecast_feed_in_price_mwh, 48)
                 forecast_feed_in_mean_next_14h_mwh = _curve_window_mean(
@@ -1155,6 +1190,7 @@ def simulate_stepwise(
                 "sell_urgency_discount": providers.args.sell_urgency_discount,
                 "sell_urgency_horizon_steps": providers.args.sell_urgency_horizon_steps,
                 "sell_urgency_max_strategic_target_kwh": providers.args.sell_urgency_max_strategic_target_kwh,
+                "sell_urgency_trigger_only_shaping": providers.args.sell_urgency_trigger_only_shaping,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
@@ -1835,6 +1871,15 @@ def main():
         help=(
             "Comma-separated tactical source labels eligible for the sell-urgency transform. "
             "Example: model_a_hybrid"
+        ),
+    )
+    parser.add_argument(
+        "--sell-urgency-trigger-only-shaping",
+        action="store_true",
+        help=(
+            "When set, keep the sell/export curve exactly at the unshaped tactical baseline "
+            "outside triggered urgency intervals. During triggered intervals, apply the "
+            "configured sell-side reshaping and urgency discount."
         ),
     )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")

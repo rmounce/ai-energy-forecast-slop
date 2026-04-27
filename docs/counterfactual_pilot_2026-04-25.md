@@ -258,6 +258,196 @@ Diagnostic outputs for this 7-day run were written to:
 
 ## 6. Provisional Conclusion
 
+The crossed-counterfactual evidence currently supports three working conclusions:
+
+1. The tariffed loss is **more tactical-curve-shaped than strategic-target-shaped** on both the
+   short pilots and the 7-day Window B confirmation.
+2. A single tactical wholesale curve appears too blunt for tariffed site economics, but a broad
+   symmetric buy/sell split is also too blunt to serve as a general fix.
+3. The most promising near-term lane is now **selective export-side shaping under high-value
+   conditions**, not more bridge-only strategic work.
+
+---
+
+## 7. Split-Curve Tactical Ablation
+
+Reviewer follow-up on `2026-04-26` suggested an eval-only ablation where Hybrid tactical is
+allowed to use different effective curves for:
+- buy / import decisions
+- sell / export decisions
+
+The first batch was intentionally simple and non-learned:
+- buy curve: symmetric downward shift from Hybrid `q50` using the existing `q50 -> q90` spread
+- sell curve: symmetric upward shift from Hybrid `q50` using the same spread
+
+These runs kept the **Hybrid strategic target fixed** and compared against:
+- `amber_tactical_hybrid_strategic`
+
+### Window B — `netload_tariffed`, 2-day (`2025-09-01 -> 2025-09-03`)
+
+Baseline:
+- `amber_tactical_hybrid_strategic`: **$12.154 total / $6.088 per day**
+
+Hybrid tactical variants:
+- sell-only `0.25`: **$9.283 total / $4.650 per day**
+- sell-only `0.50`: **$5.965 total / $2.988 per day**
+- sell-only `0.75`: **-$5.242 total / -$2.625 per day**
+- buy-only `0.50`: **$5.277 total / $2.643 per day**
+- buy+sell `0.50 / 0.50`: **-$7.837 total / -$3.925 per day**
+- sell-only `0.50` + strict urgency `500 / 1h / 50%`: **$11.902 total / $5.961 per day**
+
+Read:
+- pure sell-side shaping is still harmful versus the earlier unshaped Hybrid tactical baseline,
+  but it is less harmful than buy-side or buy+sell shaping
+- stronger pure sell-side shaping quickly becomes harmful
+- buy-side shaping as currently defined is actively harmful
+- the first variant that got **close** to Amber tactical was:
+  - sell-only `0.50` + strict urgency `500 / 1h / 50%`
+
+### Window B — `netload_tariffed`, 7-day (`2025-09-01 -> 2025-09-08`)
+
+Baseline:
+- `amber_tactical_hybrid_strategic`: **$9.697 total / $1.386 per day**
+
+Hybrid tactical variants:
+- sell-only `0.25`: **$4.009 total / $0.573 per day**
+- sell-only `0.50`: **$1.643 total / $0.235 per day**
+- sell-only `0.75`: **-$10.155 total / -$1.452 per day**
+- buy-only `0.50`: **$2.250 total / $0.322 per day**
+- buy+sell `0.50 / 0.50`: **-$10.785 total / -$1.542 per day**
+
+Read:
+- the pure split-curve family does **not** generalize well on the longer Window B slice
+- buy-only remains harmful
+- broad buy+sell shaping is clearly the wrong direction
+- among the pure split variants, the mildest sell-side shift (`0.25`) is the least bad, but
+  still materially behind Amber tactical
+
+### Window A — `netload_tariffed`, 2-day (`2025-07-21 -> 2025-07-23`)
+
+Baseline:
+- `amber_tactical_hybrid_strategic`: **-$3.340 total / -$1.673 per day**
+
+Hybrid tactical variant:
+- sell-only `0.50`: **-$4.640 total / -$2.324 per day**
+
+Read:
+- the `0.50` sell-only split is not a generally safe tactical improvement
+- Window A agrees that broad split-curve shaping is too blunt
+
+### Interim interpretation
+
+This batch narrows the search space meaningfully:
+- **buy-only** shaping should be deprioritized
+- broad **buy+sell** shaping should be deprioritized
+- broad pure **sell-only** shaping remains too blunt and generally harmful versus the unshaped
+  Hybrid tactical baseline
+- the best new signal is a **conditional** sell-side intervention:
+  - sell-only `0.50` plus strict urgency during very high feed-in conditions
+
+So the current working hypothesis is no longer:
+- “split buy and sell curves globally”
+
+It is now:
+- “use a more selective export-side shaping rule during already-high-value sell conditions”
+
+### Conditional sell-side shaping confirmation
+
+The first selective candidate layered a strict urgency trigger on top of the sell-only `0.50`
+shape:
+- trigger: current feed-in price `>= 500 $/MWh`
+- horizon: `1h`
+- discount: `50%`
+
+#### Window B — `netload_tariffed`, 7-day (`2025-09-01 -> 2025-09-08`)
+
+Baseline:
+- `amber_tactical_hybrid_strategic`: **$9.689 total / $1.385 per day**
+
+Hybrid variants:
+- unshaped Hybrid tactical: **$5.885 total / $0.841 per day**
+- sell-only `0.50` + urgency `500 / 1h / 50%`: **$7.517 total / $1.074 per day**
+
+Read:
+- the combined variant does improve meaningfully over unshaped Hybrid on Window B
+- but it closes only about **40–45%** of the same-target tactical gap, not most of it
+- trigger activations are highly concentrated:
+  - **44** total
+  - **41** on `2025-09-01`
+  - **2** on `2025-09-02`
+  - **1** on `2025-09-04`
+
+So the gain is real, but still heavily tied to one day / one regime cluster.
+
+#### Window A sanity for the same combined variant
+
+Window A, 2-day:
+- baseline `amber_tactical_hybrid_strategic`: **-$3.310 total / -$1.658 per day**
+- shaped Hybrid: **-$3.810 total / -$1.909 per day**
+
+Window A, 7-day:
+- baseline `amber_tactical_hybrid_strategic`: **-$8.225 total / -$1.176 per day**
+- shaped Hybrid: **-$10.789 total / -$1.542 per day**
+
+Read:
+- the combined selective variant is still materially worse on Window A
+- so the first selective candidate is not a general tactical fix
+
+### Trigger-only falsification test
+
+Because the previous combined variant still included always-on sell-only shaping outside
+triggered intervals, one final clean falsification was run:
+
+- same urgency trigger: `500 / 1h / 50%`
+- same sell-side shaping strength: `0.50`
+- **outside triggered intervals, sell curve stays exactly unshaped**
+
+Results:
+
+Window B, 2-day:
+- baseline `amber_tactical_hybrid_strategic`: **$6.085/day**
+- trigger-only Hybrid: **$5.609/day**
+
+Window B, 7-day:
+- baseline `amber_tactical_hybrid_strategic`: **$1.385/day**
+- trigger-only Hybrid: **$0.792/day**
+
+Window A, 2-day:
+- baseline `amber_tactical_hybrid_strategic`: **-$1.658/day**
+- trigger-only Hybrid: **-$1.909/day**
+
+Window A, 7-day:
+- baseline `amber_tactical_hybrid_strategic`: **-$1.176/day**
+- trigger-only Hybrid: **-$1.542/day**
+
+Interpretation:
+- the trigger-only variant does **not** preserve the Window B gain
+- it underperforms the earlier unshaped Hybrid tactical baseline on Window B
+- it also remains worse on Window A
+
+So the clean selective hypothesis is effectively falsified. The overlay family successfully
+identified the failure mode, but it is not expressive enough to solve it robustly.
+
+Reviewer follow-up on `2026-04-27` sharpened the decision rule:
+- if the 7-day run closes most of the same-target tactical gap and gains are not concentrated on
+  one day, continue along the selective export-side shaping path
+- if it closes only part of the gap but the remaining loss is still concentrated in the same
+  triggered export regimes, allow **one** more refinement, but only as a better trigger guard,
+  not broader shaping
+- if the remaining loss shifts to import cost, non-triggered days, or broad bad charge timing,
+  stop heuristic shaping and move to tariff-aware tactical calibration
+
+The old implementer took a stricter line:
+- if the 7-day result lands in the middle rather than clearly succeeding, that is probably the
+  ceiling of hand-shaped overlays, and the next move should be tariff-aware training rather than
+  another overlay parameter
+
+With the trigger-only falsification in hand, the current best read is now much closer to that
+stricter line:
+- heuristic shaping has likely reached its ceiling
+- the next intervention should be tariff-aware tactical features / calibration rather than more
+  export-side knobs
+
 These short counterfactual pilots suggest:
 
 1. The tariffed loss is **more tactical-curve-shaped than strategic-target-shaped** on both the
