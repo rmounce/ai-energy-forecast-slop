@@ -28,7 +28,9 @@ Outputs (models/lgbm_tactical/):
   training_meta.json       — hyperparams, split sizes, calibration summary
 """
 
+import argparse
 import json
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -39,7 +41,9 @@ import pandas as pd
 
 ROOT        = Path(__file__).resolve().parent.parent
 PARQUET_DIR = ROOT / "data" / "parquet"
-MODEL_DIR   = ROOT / "models" / "lgbm_tactical"
+DEFAULT_MODEL_DIR = ROOT / "models" / "lgbm_tactical"
+sys.path.insert(0, str(ROOT))
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/ai-energy-forecast-slop-mplconfig")
 
 OUTPUT_STEPS = 12
 QUANTILES    = [0.05, 0.50, 0.95]
@@ -289,7 +293,16 @@ def evaluate_by_stratum(models: dict[float, lgb.LGBMRegressor],
 
 
 def main():
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model-dir",
+        default=str(DEFAULT_MODEL_DIR),
+        help="Directory to write trained tactical models into.",
+    )
+    args = parser.parse_args()
+    model_dir = Path(args.model_dir)
+
+    model_dir.mkdir(parents=True, exist_ok=True)
 
     print("=== Tier 1 Tactical LightGBM Training ===\n")
     X, y, y_mask, run_times, train_idx, val_idx, test_idx = load_arrays()
@@ -326,7 +339,7 @@ def main():
     # ── Save models ───────────────────────────────────────────────────────────
     print("\nSaving models...")
     for q, model in models.items():
-        path = MODEL_DIR / f"lgbm_q{int(q*100):02d}.pkl"
+        path = model_dir / f"lgbm_q{int(q*100):02d}.pkl"
         with open(path, "wb") as f:
             pickle.dump(model, f)
         print(f"  Saved: {path}")
@@ -349,7 +362,7 @@ def main():
         "val_results":         val_results,
         "strat_results":       strat_results,
     }
-    meta_path = MODEL_DIR / "training_meta.json"
+    meta_path = model_dir / "training_meta.json"
 
     def _json_default(obj):
         if isinstance(obj, (np.floating, np.float32, np.float64)):
@@ -365,7 +378,7 @@ def main():
     print(f"  Metadata: {meta_path}")
 
     print("\n=== Training complete ===")
-    print(f"  Models saved to: {MODEL_DIR}/")
+    print(f"  Models saved to: {model_dir}/")
     for q, model in models.items():
         print(f"  q{int(q*100):02d}: {model.best_iteration_} trees, "
               f"val pinball={model.best_score_['valid_0']['quantile']:.4f}")

@@ -50,7 +50,7 @@ from eval.retro_tier1_inference import (
 
 RESULTS_DIR     = ROOT / "eval" / "results"
 PARQUET_DIR     = ROOT / "data" / "parquet"
-MODEL_DIR       = ROOT / "models" / "lgbm_tactical"
+DEFAULT_MODEL_DIR = ROOT / "models" / "lgbm_tactical"
 OUT_FILE        = RESULTS_DIR / "tier1_dispatch_results.csv"
 
 OUTPUT_STEPS = 12
@@ -78,17 +78,23 @@ def main():
     parser.add_argument("--sample",     type=int, default=300,
                         help="Max windows per stratum (default 300)")
     parser.add_argument("--seed",       type=int, default=42)
+    parser.add_argument(
+        "--model-dir",
+        default=str(DEFAULT_MODEL_DIR),
+        help="Directory containing Tier 1 tactical LightGBM artifacts.",
+    )
     args = parser.parse_args()
+    model_dir = Path(args.model_dir)
 
     eval_start = pd.Timestamp(args.eval_start, tz="UTC")
     eval_end   = pd.Timestamp(args.eval_end,   tz="UTC")
 
-    if not (MODEL_DIR / "lgbm_q50.pkl").exists():
-        print(f"ERROR: model not found at {MODEL_DIR}/lgbm_q50.pkl")
+    if not (model_dir / "lgbm_q50.pkl").exists():
+        print(f"ERROR: model not found at {model_dir}/lgbm_q50.pkl")
         sys.exit(1)
 
     print("Loading Tier 1 LGBM q50 model...")
-    q50_model = joblib.load(MODEL_DIR / "lgbm_q50.pkl")
+    q50_model = joblib.load(model_dir / "lgbm_q50.pkl")
 
     p5min_runs = load_p5min_from_parquet()
     act_df     = load_actuals_from_parquet()
