@@ -794,6 +794,47 @@ What to avoid from here:
 - any return to shaping or bridge-side tactical hacks
 - a loss-function change before the smaller calibrator / regime test has done its job
 
+**Overnight falsification outcome (`2026-04-28`):**
+
+Window B excluding `2025-09-01` (`2025-09-02 -> 2025-09-09`):
+- Amber tactical + Hybrid strategic: `-0.353/day`
+- legacy Hybrid tactical: `-0.695/day`
+- `tariffaware_v1`: `-0.691/day`
+- candidate improvement vs legacy: `+0.0039/day`
+- gap closure: about `1.1%`
+
+Moderate-FIT middle window (`2025-08-12 -> 2025-08-19`):
+- Amber tactical + Hybrid strategic: `0.225/day`
+- legacy Hybrid tactical: `-0.217/day`
+- `tariffaware_v1`: `-0.213/day`
+- candidate improvement vs legacy: `+0.0037/day`
+- gap closure: about `0.8%`
+
+Interpretation:
+- once the flagship `2025-09-01` day is removed, the apparent Window B gain essentially
+  disappears
+- the candidate also fails to show meaningful improvement on a middle export-opportunity regime
+- export revenue does not consistently improve on these falsification slices
+
+So `tariffaware_v1` is now best described as:
+- **single-event-sensitive probe**
+
+not:
+- weak positive candidate
+- generally useful tariff-aware tactical model
+
+This changes the branch decision:
+- stop iterating the `tariffaware_v1` feature-only path
+- do **not** build a calibrator on top of `tariffaware_v1`
+- treat the remaining problem as a formulation / target-construction issue
+
+Most justified next branch:
+- build an explicit oracle-action / action-regret dataset under the tariffed LP
+- compare what Hybrid did, what Amber did, and what the oracle would have done under actual
+  future import/export prices
+- then decide whether the next model should predict action deltas, action ranking, or bounded
+  tactical correction signals
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast

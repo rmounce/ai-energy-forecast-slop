@@ -350,3 +350,105 @@ another immediate feature sweep.
    - small post-forecast tactical calibrator with genuine inference-time information advantage,
      or
    - another targeted tariff-aware feature reformulation if the candidate proves too narrow.
+
+### Overnight falsification result
+
+The overnight falsification slices came back strongly negative for `tariffaware_v1` as a
+general tactical improvement.
+
+#### Window B excluding `2025-09-01`
+`2025-09-02 -> 2025-09-09`
+
+- `amber_tactical_hybrid_strategic`: `-0.353183/day`
+- legacy `model_a_hybrid`: `-0.695252/day`
+- `tariffaware_v1`: `-0.691327/day`
+
+So the candidate improves on legacy by only `+0.003924/day`, which closes about `1.1%` of the
+Amber gap.
+
+Decomposition vs legacy:
+
+- import cost: slightly better (`-0.1260`)
+- export revenue: slightly worse (`-0.0909`)
+- degradation: slightly worse (`+0.0076`)
+- final SoC: higher by `+0.194 kWh`
+
+The earlier Window B gain therefore mostly disappears once the flagship `2025-09-01` day is
+removed.
+
+#### Moderate-FIT middle window
+`2025-08-12 -> 2025-08-19`
+
+- `amber_tactical_hybrid_strategic`: `0.224917/day`
+- legacy `model_a_hybrid`: `-0.217169/day`
+- `tariffaware_v1`: `-0.213425/day`
+
+So the candidate improves on legacy by only `+0.003743/day`, which closes about `0.8%` of the
+Amber gap.
+
+Decomposition vs legacy:
+
+- import cost: slightly better (`-0.1632`)
+- export revenue: worse (`-0.1899`)
+- degradation: slightly better (`-0.0528`)
+- final SoC: unchanged
+
+This means the candidate does **not** meaningfully generalize to a middle regime with more
+export opportunity than Window A but much less than the flagship Window B day.
+
+### Updated conclusion after falsification
+
+After the overnight falsification runs, the most defensible label for `tariffaware_v1` is now:
+
+- **single-event-sensitive probe**
+
+rather than:
+
+- weak positive candidate
+- partial regime detector
+- or generally improved tactical model
+
+The branch-level conclusion is now:
+
+1. The broader tariff-aware tactical idea is still conceptually relevant.
+2. But `tariffaware_v1` should not be extended with more feature sweeps.
+3. A calibrator on top of `tariffaware_v1` is not justified, because the underlying signal has
+   not generalized enough.
+
+The current best read from reviewer and implementer feedback is that this is now a
+**formulation problem**, not a simple feature-gap problem.
+
+Likely issue:
+
+- tariff features were added to a model still trained to predict price quantiles
+- so the model can see tariff asymmetry
+- but the loss still rewards price accuracy, not tariffed action value
+
+### New next step
+
+The next branch should be an explicit **oracle-action / action-regret diagnostic dataset**,
+not another Tier 1 feature pass.
+
+For each rolling step, under the same SoC and strategic target, record:
+
+- what the tariffed LP would do with actual future import/export prices
+- what Hybrid did
+- what Amber did
+- missed export value
+- bad import cost
+- value of charging more / less
+- value of discharging more / less
+
+Then decide whether the next model should predict:
+
+- discharge uplift
+- charge suppression
+- action ranking
+- or a corrected buy/sell curve
+
+Decision logic:
+
+- if the action errors are learnable from available real-time features, then a tactical
+  calibrator or action model is justified
+- if they mostly require future information, then the remaining Amber gap is primarily
+  forecast-information quality rather than tactical correction
