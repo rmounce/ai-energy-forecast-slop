@@ -29,6 +29,8 @@ import io
 import re
 import zipfile
 
+from tariff_utils import load_tariff_profile, tariffed_price_frame_from_wholesale_mwh
+
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -57,6 +59,8 @@ def load_config(config_path='config.json'):
         raise
 
 CONFIG = load_config()
+ROOT = Path(__file__).resolve().parent
+GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = load_tariff_profile(CONFIG, ROOT)
 
 # Shared cached session for all AEMO/NEMWeb HTTP requests
 _aemo_session = make_aemo_session()
@@ -1195,7 +1199,6 @@ def _execute_tactical_prediction():
     Returns dict with 'p5min_price', 'p5min_price_q05', 'p5min_price_q95' DataFrames
     (wholesale price in $/kWh, ready for apply_tariffs_to_forecast).
     """
-    ROOT = Path(__file__).resolve().parent
     model_dir = ROOT / "models" / "lgbm_tactical"
 
     if not (model_dir / "lgbm_q50.pkl").exists():
@@ -1319,9 +1322,29 @@ def _execute_tactical_prediction():
     dow_sin  = float(np.sin(2 * np.pi * rt_bne.weekday() / 7.0))
     dow_cos  = float(np.cos(2 * np.pi * rt_bne.weekday() / 7.0))
 
-    # Base 24-feature vector (no horizon)
+    intervals = pd.date_range(start=latest_run_time, periods=12, freq='5min', tz='UTC')
+    tariffed_curve = tariffed_price_frame_from_wholesale_mwh(
+        pd.Series(np.asarray(p5min_rrp, dtype=np.float64), index=intervals),
+        timezone=CONFIG['timezone'],
+        general_tariff_map=GENERAL_TARIFF_MAP,
+        feed_in_tariff_map=FEED_IN_TARIFF_MAP,
+        network_loss_factor=NETWORK_LOSS_FACTOR,
+        gst_rate=CONFIG['gst_rate'],
+    )
+    import_curve = tariffed_curve['general_price_mwh'].to_numpy(dtype=np.float32, copy=False)
+    export_curve = tariffed_curve['feed_in_price_mwh'].to_numpy(dtype=np.float32, copy=False)
+
+    # Base 32-feature vector (no horizon)
     base_feats = np.array([
         *p5min_rrp,           # h0..h11  [12]
+        import_curve[0],      # [1]
+        export_curve[0],      # [1]
+        import_curve.mean(),  # [1]
+        import_curve.max(),   # [1]
+        np.ptp(import_curve), # [1]
+        export_curve.mean(),  # [1]
+        export_curve.max(),   # [1]
+        np.ptp(export_curve), # [1]
         divergence_t1,        # [1]
         actual_t1,            # [1]
         actual_t2,            # [1]
@@ -1334,9 +1357,9 @@ def _execute_tactical_prediction():
         dow_sin,              # [1]
         dow_cos,              # [1]
         0.0,                  # is_imputed_p5min [1]
-    ], dtype=np.float32)     # [24]
+    ], dtype=np.float32)     # [32]
 
-    # Expand to [12, 25] with horizon as last feature (matching long-format training)
+    # Expand to [12, 33] with horizon as last feature (matching long-format training)
     X_long = np.column_stack([
         np.tile(base_feats, (12, 1)),
         np.arange(12, dtype=np.float32).reshape(-1, 1),
@@ -1373,7 +1396,6 @@ def _execute_tactical_prediction():
     )
 
     # ── Build output DataFrames ($/kWh for tariff compatibility) ─────────────
-    intervals = pd.date_range(start=latest_run_time, periods=12, freq='5min', tz='UTC')
     return {
         'p5min_price':     pd.DataFrame({'wholesale_price': raw_q50 / 1000.0}, index=intervals),
         'p5min_price_q05': pd.DataFrame({'wholesale_price': cal_q05 / 1000.0}, index=intervals),
