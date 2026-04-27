@@ -59,6 +59,10 @@ Parallelism notes:
   - or the generic form `cf:<label>:<tactical_source>:<strategic_source>`
   This keeps the tactical forecast curve and strategic handoff source separable inside the same
   rolling-eval harness
+- tactical model candidates can now be evaluated side-by-side with the baseline by pointing
+  `rolling_mpc_eval.py` at an alternate Tier 1 artifact directory via `--tactical-model-dir`;
+  the same pattern is available in `retro_tier1_inference.py`, `eval_tier1_accuracy.py`,
+  `eval_tier1_dispatch.py`, and `train_lgbm_tactical.py --model-dir`
 
 Before promoting a control variant to a long run, compare raw pilot outputs with
 `compare_rolling_mpc_raw.py`. If `charge_kw`, `discharge_kw`, and `soc_kwh` are unchanged,

@@ -47,8 +47,8 @@ from tariff_utils import load_tariff_profile, tariffed_price_frame_from_wholesal
 RESULTS_DIR     = ROOT / "eval" / "results"
 PARQUET_DIR     = ROOT / "data" / "parquet"
 INDEX_FILE      = RESULTS_DIR / "holistic_eval_index.parquet"
-OUT_FILE        = RESULTS_DIR / "retro_tier1_forecasts.pkl"
-MODEL_DIR       = ROOT / "models" / "lgbm_tactical"
+DEFAULT_OUT_FILE = RESULTS_DIR / "retro_tier1_forecasts.pkl"
+DEFAULT_MODEL_DIR = ROOT / "models" / "lgbm_tactical"
 
 P5MIN_PARQUET   = PARQUET_DIR / "aemo_p5min_sa1.parquet"
 ACTUALS_PARQUET = PARQUET_DIR / "actuals_sa1_5m.parquet"
@@ -225,19 +225,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing output file")
+    parser.add_argument(
+        "--model-dir",
+        default=str(DEFAULT_MODEL_DIR),
+        help="Directory containing Tier 1 tactical LightGBM artifacts.",
+    )
+    parser.add_argument(
+        "--output-file",
+        default=str(DEFAULT_OUT_FILE),
+        help="Pickle path to write retrospective Tier 1 forecasts into.",
+    )
     args = parser.parse_args()
+    model_dir = Path(args.model_dir)
+    out_file = Path(args.output_file)
 
-    if OUT_FILE.exists() and not args.overwrite:
-        print(f"Output exists: {OUT_FILE.relative_to(ROOT)}")
+    if out_file.exists() and not args.overwrite:
+        print(f"Output exists: {out_file.relative_to(ROOT)}")
         print("Use --overwrite to regenerate.")
         sys.exit(0)
 
-    if not (MODEL_DIR / "lgbm_q50.pkl").exists():
-        print(f"ERROR: Tier 1 model not found at {MODEL_DIR}/lgbm_q50.pkl")
+    if not (model_dir / "lgbm_q50.pkl").exists():
+        print(f"ERROR: Tier 1 model not found at {model_dir}/lgbm_q50.pkl")
         sys.exit(1)
 
     print("Loading Tier 1 LGBM q50 model...")
-    q50_model = joblib.load(MODEL_DIR / "lgbm_q50.pkl")
+    q50_model = joblib.load(model_dir / "lgbm_q50.pkl")
 
     df_index = pd.read_parquet(INDEX_FILE)
     df_index["start_time"] = pd.to_datetime(df_index["start_time"], utc=True)
@@ -308,8 +320,8 @@ def main():
     if skipped_no_p5min:
         print(f"  Skipped {skipped_no_p5min} windows: no P5MIN run found before window start")
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    with open(OUT_FILE, "wb") as f:
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_file, "wb") as f:
         pickle.dump({
             "forecasts":   forecasts,
             "n_steps":     2,
@@ -317,7 +329,7 @@ def main():
                            "step[0]=mean(h0..h5, 0-30min), step[1]=mean(h6..h11, 30-60min). "
                            "P5MIN from data/parquet/aemo_p5min_sa1.parquet.",
         }, f)
-    print(f"Saved → {OUT_FILE.relative_to(ROOT)}")
+    print(f"Saved → {out_file.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

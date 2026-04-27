@@ -675,6 +675,24 @@ This branch is meant to answer the smallest next question:
   same-target tactical gap before we consider a separate post-forecast calibrator or a new
   tariff-aware learning objective?
 
+**First tariff-aware candidate (`lgbm_tactical_tariffaware_v1`)**
+
+The first current-tariff candidate has now been trained into a separate model directory:
+- `models/lgbm_tactical_tariffaware_v1/`
+
+Offline training signal is mixed but plausible:
+- baseline validation `q50` MAE: **21.08**
+- tariff-aware candidate validation `q50` MAE: **21.21**
+- baseline stratified-eval `q50` MAE: **109.96**
+- tariff-aware candidate stratified-eval `q50` MAE: **108.43**
+
+Interpretation:
+- generic price MAE did **not** improve on the ordinary time-ordered validation slice
+- but the stratified hold-out, which overweights the harder market regimes we actually care
+  about tactically, improved a little
+- so this branch should be judged primarily through the `netload_tariffed` rolling gate, not
+  by headline MAE alone
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast

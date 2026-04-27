@@ -70,7 +70,7 @@ OOF_FILE = PARQUET_DIR / "debiased_pd_rrp_oof.parquet"
 ACTUALS_5M_FILE = PARQUET_DIR / "actuals_sa1_5m.parquet"
 ACTUALS_30M_FILE = PARQUET_DIR / "actuals_sa1.parquet"
 P5MIN_FILE = PARQUET_DIR / "aemo_p5min_sa1.parquet"
-TACTICAL_MODEL_DIR = ROOT / "models" / "lgbm_tactical"
+DEFAULT_TACTICAL_MODEL_DIR = ROOT / "models" / "lgbm_tactical"
 
 HORIZON_5M_STEPS = 14 * 12  # 14h × 12 steps/hour = 168
 TACTICAL_STEPS = 12         # 0–60 min at 5-min resolution
@@ -523,10 +523,11 @@ class ForecastProviders:
         self.pv_5m = _load_pv_5m_from_30m(self.actuals_30m)
         self.net_load_5m = _load_net_load_5m_from_30m(self.actuals_30m)
         self.p5min_runs, self.p5_run_times_sorted, self.p5_run_times_ns = _load_p5min_runs()
+        tactical_model_dir = Path(args.tactical_model_dir)
         self.tactical_models = {
-            0.05: joblib.load(TACTICAL_MODEL_DIR / "lgbm_q05.pkl"),
-            0.50: joblib.load(TACTICAL_MODEL_DIR / "lgbm_q50.pkl"),
-            0.95: joblib.load(TACTICAL_MODEL_DIR / "lgbm_q95.pkl"),
+            0.05: joblib.load(tactical_model_dir / "lgbm_q05.pkl"),
+            0.50: joblib.load(tactical_model_dir / "lgbm_q50.pkl"),
+            0.95: joblib.load(tactical_model_dir / "lgbm_q95.pkl"),
         }
         self.args = args
 
@@ -1696,6 +1697,11 @@ def main():
     )
     parser.add_argument("--tft-checkpoint", default="", help="Path to TFT checkpoint for model_a_hybrid")
     parser.add_argument("--tft-scalers", default="", help="Path to matching TFT scalers for model_a_hybrid")
+    parser.add_argument(
+        "--tactical-model-dir",
+        default=str(DEFAULT_TACTICAL_MODEL_DIR),
+        help="Directory containing Tier 1 tactical LightGBM artifacts.",
+    )
     parser.add_argument(
         "--economic-mode",
         choices=["price_only", "netload_tariffed"],
