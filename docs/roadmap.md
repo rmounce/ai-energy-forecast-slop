@@ -680,6 +680,12 @@ This branch is meant to answer the smallest next question:
 The first current-tariff candidate has now been trained into a separate model directory:
 - `models/lgbm_tactical_tariffaware_v1/`
 
+This branch should be described as a **current-tariff counterfactual backtest**:
+- tariff-aware features are reconstructed from the current deterministic tariff contract
+- they are useful for architecture choice
+- but they should not be silently described as historical tariff truth if tariff rules later
+  change
+
 Offline training signal is mixed but plausible:
 - baseline validation `q50` MAE: **21.08**
 - tariff-aware candidate validation `q50` MAE: **21.21**
@@ -692,6 +698,71 @@ Interpretation:
   about tactically, improved a little
 - so this branch should be judged primarily through the `netload_tariffed` rolling gate, not
   by headline MAE alone
+
+The first clean short-window rolling comparison is documented in
+[docs/tariff_aware_tier1_candidate_2026-04-27.md](./tariff_aware_tier1_candidate_2026-04-27.md).
+
+**Compatibility checkpoint:** adding tariff-aware Tier 1 features changed the tactical
+inference contract from a legacy `25`-column long matrix to a new `33`-column long matrix.
+A compatibility layer now adapts the inference frame to the target tactical model so that:
+
+- legacy `models/lgbm_tactical` still receive `25` columns
+- `models/lgbm_tactical_tariffaware_v1` receive `33` columns
+
+This restores clean side-by-side rolling evaluation under the same harness.
+
+**First clean A/B result (`2026-04-27`):**
+
+Window B `2-day` (`2025-09-01 -> 2025-09-03`):
+- Amber tactical + Hybrid strategic: `6.085/day`
+- legacy Tier 1 Hybrid: `5.717/day`
+- tariff-aware Tier 1 candidate: `5.995/day`
+
+Window A `2-day` (`2025-07-21 -> 2025-07-23`):
+- Amber tactical + Hybrid strategic: `-1.658/day`
+- legacy Tier 1 Hybrid: `-1.909/day`
+- tariff-aware Tier 1 candidate: `-1.952/day`
+
+Current read:
+- the first tariff-aware candidate materially improves the export-heavy Window B tactical gap
+- it does **not** yet improve Window A, and is slightly worse there
+- so tariff-aware tactical features now look justified as a direction, but not yet as a
+  general solution without longer-window confirmation
+
+**7-day confirmation (`2026-04-27`):**
+
+Window B `7-day` (`2025-09-01 -> 2025-09-08`):
+- Amber tactical + Hybrid strategic: `1.385/day`
+- legacy Tier 1 Hybrid: `0.823/day`
+- tariff-aware Tier 1 candidate: `0.897/day`
+
+Window A `7-day` (`2025-07-21 -> 2025-07-28`):
+- Amber tactical + Hybrid strategic: `-1.176/day`
+- legacy Tier 1 Hybrid: `-1.542/day`
+- tariff-aware Tier 1 candidate: `-1.570/day`
+
+Interpretation after the longer confirmation:
+- the candidate still improves Window B, but only modestly on the longer slice
+- the gain closes only about `13%` of the Amber gap on Window B `7-day`
+- the improvement is real action quality rather than changed terminal SoC, because legacy and
+  candidate finish Window B at the same final SoC
+- the candidate still does not improve Window A
+- so `tariffaware_v1` looks like a meaningful first positive signal, but not yet a broadly
+  deployable tactical replacement
+
+Decomposition read:
+- Window B improvement is mostly export-side (`+0.48` export revenue vs legacy) with a very
+  small import-cost improvement
+- most of the gain is concentrated on `2025-09-01`, and regime-wise it is mainly a spike-regime
+  improvement
+- Window A is slightly worse in both low and spike regimes
+
+So the current conclusion is:
+- tariff-aware tactical features are still the right branch
+- but the first feature-only pass remains too regime-specific
+- the next tariff-aware refinement should be judged on whether it preserves the Window B gain
+  while reducing the Window A regression, before escalating to a larger calibration or
+  objective-change step
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
