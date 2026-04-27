@@ -757,12 +757,42 @@ Decomposition read:
   improvement
 - Window A is slightly worse in both low and spike regimes
 
+Structural read:
+- Window B has much richer export-opportunity conditions than Window A
+- Window B candidate rows had feed-in `>= 300` on about `6.0%` of steps and feed-in `>= 500`
+  on about `2.18%`
+- Window A had only about `1.14%` and `0.15%` respectively
+- Window B also had a more negative mean net load and a higher share of negative-net-load steps
+
+That reinforces the interpretation that `tariffaware_v1` is currently behaving more like a
+partial high-export regime detector than a generally improved tactical model.
+
 So the current conclusion is:
 - tariff-aware tactical features are still the right branch
 - but the first feature-only pass remains too regime-specific
 - the next tariff-aware refinement should be judged on whether it preserves the Window B gain
   while reducing the Window A regression, before escalating to a larger calibration or
   objective-change step
+
+Given the reviewer and implementer feedback after this checkpoint, the most justified next
+question is now slightly earlier than “build the calibrator”:
+- does `tariffaware_v1` generalize beyond the flagship `2025-09-01` Window B export day?
+
+Current critical consensus:
+- branch alive
+- candidate not a win
+- best label is **partial regime detector**
+- next cheap falsification should use:
+  - Window B excluding `2025-09-01`
+  - and/or a moderate-FIT middle window
+
+Only if the candidate still helps on those slices should the next implementation branch become:
+- a small post-forecast tactical calibrator with real inference-time information advantage
+
+What to avoid from here:
+- another broad tariff-aware feature sweep before the generalization question is answered
+- any return to shaping or bridge-side tactical hacks
+- a loss-function change before the smaller calibrator / regime test has done its job
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

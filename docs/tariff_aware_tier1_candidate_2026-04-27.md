@@ -184,6 +184,50 @@ Regime split:
 This suggests the first tariff-aware pass is learning the export-heavy spike regime better, but
 is not yet broadly improving tactical behavior across all market conditions.
 
+Structural contrast between Window B and Window A also supports that read.
+
+Window B candidate raw rows (`2016` steps) had:
+
+- mean actual feed-in price: `71.45 $/MWh`
+- feed-in `p90`: `217.25 $/MWh`
+- feed-in `p99`: `638.95 $/MWh`
+- negative net-load share: `36.9%`
+- feed-in `>= 300`: `6.0%` of steps
+- feed-in `>= 500`: `2.18%` of steps
+
+Window A candidate raw rows (`2016` steps) had:
+
+- mean actual feed-in price: `45.89 $/MWh`
+- feed-in `p90`: `149.02 $/MWh`
+- feed-in `p99`: `304.27 $/MWh`
+- negative net-load share: `25.9%`
+- feed-in `>= 300`: `1.14%` of steps
+- feed-in `>= 500`: `0.15%` of steps
+
+So Window B contains materially more frequent and more intense high-value export conditions
+than Window A. That makes the current tariff-aware gain look more like a regime-boundary
+effect than a broad tactical uplift.
+
+Per-day high-feed-in counts reinforce the same picture.
+
+Window B:
+
+- `2025-09-01`: `98` steps with feed-in `>= 300`, `41` with feed-in `>= 500`
+- `2025-09-02`: `5` / `2`
+- `2025-09-03`: `12` / `0`
+- `2025-09-04`: `6` / `1`
+- `2025-09-05` to `2025-09-07`: `0` / `0`
+
+Window A:
+
+- `2025-07-21`: `0` / `0`
+- `2025-07-22`: `0` / `0`
+- `2025-07-23`: `15` / `0`
+- `2025-07-24`: `2` / `2`
+- `2025-07-25`: `4` / `1`
+- `2025-07-26`: `0` / `0`
+- `2025-07-27`: `2` / `0`
+
 #### Window A, 7-day (`2025-07-21 -> 2025-07-28`)
 
 Amber tactical baseline:
@@ -220,6 +264,35 @@ Regime split:
 So this first tariff-aware pass is not just failing on one pathological interval. It still adds
 some wrong shape outside the Window B-style export-opportunity regime.
 
+Daily deltas vs legacy also suggest a regime-boundary problem rather than a broad uplift.
+
+Window B candidate-minus-legacy deltas:
+
+- `2025-09-01`: `+0.555`
+- `2025-09-02`: `+0.000`
+- `2025-09-03`: `+0.006`
+- `2025-09-04`: `-0.005`
+- `2025-09-05`: `+0.064`
+- `2025-09-06`: `-0.058`
+- `2025-09-07`: `-0.044`
+
+Window A candidate-minus-legacy deltas:
+
+- `2025-07-21`: `-0.096`
+- `2025-07-22`: `+0.009`
+- `2025-07-23`: `+0.017`
+- `2025-07-24`: `-0.068`
+- `2025-07-25`: `+0.038`
+- `2025-07-26`: `-0.006`
+- `2025-07-27`: `-0.087`
+
+That is:
+
+- Window B improvement is dominated by a single very strong export-opportunity day
+- Window A does not show a coherent positive pattern at all
+- the current candidate therefore looks better described as a partial regime detector than as a
+  generally stronger tactical forecast
+
 ### Updated interpretation
 
 The first tariff-aware Tier 1 candidate remains a meaningful positive signal, but it is now
@@ -242,13 +315,38 @@ The current best read is therefore:
 - the next refinement should be judged on whether it preserves the Window B gain while reducing
   the Window A regression
 
+Reviewer / implementer critical read after this checkpoint converged on the following:
+
+- `tariffaware_v1` is best understood as a **partial regime detector**
+- the branch is alive, but the candidate is not yet a win
+- the strongest claim that remains justified is:
+  - tariff-aware features help the tactical model recognize and exploit some high-export-value
+    conditions
+  - but they do not yet create a generally stronger tactical model
+
+The main remaining uncertainty is now:
+
+- does the candidate generalize to export-opportunity conditions beyond the very strong
+  `2025-09-01`-style Window B day?
+- or is it essentially a narrow-event detector dressed up as tariff awareness?
+
+That means the next branch-decision should be based on **generalization falsification**, not on
+another immediate feature sweep.
+
 ### Next recommended steps
 
-1. Run longer-window baseline vs tariff-aware candidate confirmation:
-   - Window B, `full`
-   - Window A, `full` only if the shorter sanity result is acceptable
-2. Compare import cost, export revenue, degradation, regime splits, and missed-export /
-   bad-charge behavior before adding more features.
-3. If the next candidate again helps Window B but remains weak on Window A, treat that as
-   evidence that tariff-aware features are necessary but not yet sufficient, and consider a
-   small post-forecast tactical calibrator before any loss-function change.
+1. Run a cheap falsification pass before another implementation branch:
+   - Window B `7-day` excluding `2025-09-01`
+   - and/or a moderate-FIT middle window between Window A and Window B
+2. Compare:
+   - legacy Hybrid
+   - `tariffaware_v1`
+   on those slices using the same `netload_tariffed` gate
+3. If the candidate still helps on non-extreme export-opportunity days while staying neutral
+   elsewhere, the branch is genuinely regime-sensitive and remains promising.
+4. If the gain disappears off the flagship Window B day, treat `tariffaware_v1` as a narrow
+   event detector and be more cautious about adding a calibrator on top of it.
+5. Only after that should the next implementation branch be chosen:
+   - small post-forecast tactical calibrator with genuine inference-time information advantage,
+     or
+   - another targeted tariff-aware feature reformulation if the candidate proves too narrow.
