@@ -835,6 +835,12 @@ Most justified next branch:
 - then decide whether the next model should predict action deltas, action ranking, or bounded
   tactical correction signals
 
+Implementation checkpoint:
+- [eval/build_tactical_action_regret_dataset.py](../eval/build_tactical_action_regret_dataset.py)
+  now exists to build that oracle-action / action-regret dataset directly from rolling raw
+  parquets using the logged SoC, terminal constraints, and actual future tariffed prices/net
+  load
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
