@@ -11,8 +11,10 @@ For each P5MIN run_time, produces a single sample with:
 Intervals where actuals are unavailable (near data end) get y=NaN; the
 corresponding mask entry is False so those steps are excluded from training.
 
-Feature set (F = 12 + 1 + 3 + 2 + 1 + 4 + 1 = 24):
+Feature set (F = 12 + 8 + 1 + 3 + 2 + 1 + 4 + 1 = 32):
   p5min_rrp_h{0..11}  — P5MIN forecast for each target interval  [12]
+  eff_import_price_*  — current-tariff effective import price summaries [4]
+  eff_feed_in_price_* — current-tariff effective feed-in price summaries [4]
   aemo_divergence_t1  — actual[t-1] minus p5min_self_forecast[t-1] [1]
   actual_rrp_t1/t2/t6 — lag actual prices at -5, -10, -30 min    [3]
   rolling_1h_std      — std of actuals in last 12 × 5-min (1h)    [1]
@@ -34,7 +36,7 @@ Notes:
     run_time+55min].
 
 Outputs (data/parquet/):
-  X_tactical.npy            [N, 24]  — raw features (NOT normalised)
+  X_tactical.npy            [N, 32]  — raw features (NOT normalised)
   y_tactical.npy            [N, 12]  — raw target RRP (NaN masked)
   y_tactical_mask.npy       [N, 12]  — bool: True where target exists
   run_times_tactical.npy    [N]      — int64 nanosecond run_time per sample
@@ -43,6 +45,7 @@ Outputs (data/parquet/):
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -50,14 +53,32 @@ import pandas as pd
 
 ROOT        = Path(__file__).resolve().parent.parent
 PARQUET_DIR = ROOT / "data" / "parquet"
+sys.path.insert(0, str(ROOT))
+
+from tariff_utils import load_tariff_profile, tariffed_price_frame_from_wholesale_mwh
 
 OUTPUT_STEPS = 12   # 12 × 5-min = 60-min horizon
 VAL_DAYS     = 60   # last N days of run_times → validation split
 TRAIN_GAP_H  = 1    # hours gap between train and val to avoid leakage
 
+with open(ROOT / "config.json") as f:
+    CONFIG = json.load(f)
+
+GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = load_tariff_profile(CONFIG, ROOT)
+
 # Feature names — must stay in sync with array construction below
 FEATURE_NAMES = (
     [f"p5min_rrp_h{h}" for h in range(OUTPUT_STEPS)]   # 12
+    + [
+        "eff_import_price_h0",
+        "eff_feed_in_price_h0",
+        "eff_import_price_1h_mean",
+        "eff_import_price_1h_max",
+        "eff_import_price_1h_spread",
+        "eff_feed_in_price_1h_mean",
+        "eff_feed_in_price_1h_max",
+        "eff_feed_in_price_1h_spread",
+    ]                                                  # 8
     + ["aemo_divergence_t1"]                             # 1
     + ["actual_rrp_t1", "actual_rrp_t2", "actual_rrp_t6"]  # 3
     + ["rolling_1h_std", "rolling_3h_max"]               # 2
@@ -65,7 +86,7 @@ FEATURE_NAMES = (
     + ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]     # 4
     + ["is_imputed_p5min"]                                # 1
 )
-N_FEATURES = len(FEATURE_NAMES)  # 24
+N_FEATURES = len(FEATURE_NAMES)  # 32
 
 
 def _time_encodings(timestamps: pd.DatetimeIndex) -> pd.DataFrame:
@@ -77,6 +98,40 @@ def _time_encodings(timestamps: pd.DatetimeIndex) -> pd.DataFrame:
         "dow_sin":  np.sin(2 * np.pi * t.dayofweek / 7),
         "dow_cos":  np.cos(2 * np.pi * t.dayofweek / 7),
     }, index=timestamps)
+
+
+def _build_tariff_feature_block(
+    run_times: pd.DatetimeIndex,
+    p5_rrp_flat: np.ndarray,
+) -> np.ndarray:
+    dt5 = pd.Timedelta(minutes=5)
+    horizon_offsets = np.arange(OUTPUT_STEPS, dtype=np.int64) * dt5.value
+    run_ns = run_times.view(np.int64)
+    interval_ns = (run_ns[:, None] + horizon_offsets[None, :]).reshape(-1)
+    interval_idx = pd.DatetimeIndex(interval_ns, tz="UTC")
+
+    wholesale_flat = p5_rrp_flat.reshape(-1)
+    tariffed = tariffed_price_frame_from_wholesale_mwh(
+        pd.Series(wholesale_flat, index=interval_idx, dtype=np.float64),
+        timezone=CONFIG["timezone"],
+        general_tariff_map=GENERAL_TARIFF_MAP,
+        feed_in_tariff_map=FEED_IN_TARIFF_MAP,
+        network_loss_factor=NETWORK_LOSS_FACTOR,
+        gst_rate=CONFIG["gst_rate"],
+    )
+    import_curve = tariffed["general_price_mwh"].to_numpy(dtype=np.float32, copy=False).reshape(len(run_times), OUTPUT_STEPS)
+    export_curve = tariffed["feed_in_price_mwh"].to_numpy(dtype=np.float32, copy=False).reshape(len(run_times), OUTPUT_STEPS)
+
+    return np.column_stack([
+        import_curve[:, 0],
+        export_curve[:, 0],
+        import_curve.mean(axis=1),
+        import_curve.max(axis=1),
+        np.ptp(import_curve, axis=1),
+        export_curve.mean(axis=1),
+        export_curve.max(axis=1),
+        np.ptp(export_curve, axis=1),
+    ]).astype(np.float32)
 
 
 def build_dataset(p5min: pd.DataFrame,
@@ -117,6 +172,10 @@ def build_dataset(p5min: pd.DataFrame,
     rt_arr = p5_sorted["run_time"].values[::12][:N]
     assert (first_intervals == rt_arr).all(), \
         "First P5MIN interval_dt does not equal run_time — data ordering issue"
+
+    # ── Tariff-aware effective import/export summaries ───────────────────────
+    print("  Deriving tariff-aware import/export summaries from the P5MIN curve...")
+    tariff_feature_block = _build_tariff_feature_block(all_run_times, p5_rrp_flat)
 
     # ── P5MIN self-forecast series (first interval of each run) ──────────────
     # self_forecast[T] = P5MIN forecast for interval T issued at run_time T
@@ -180,10 +239,11 @@ def build_dataset(p5min: pd.DataFrame,
     # Live ingest will set this to 1 for forward-filled fallback intervals.
     is_imputed = np.zeros(N, dtype=np.float32)
 
-    # ── Assemble X [N, 24] ────────────────────────────────────────────────────
+    # ── Assemble X [N, 32] ────────────────────────────────────────────────────
     print("  Assembling feature matrix...")
     X = np.column_stack([
         p5_rrp_flat,                                              # [N, 12]
+        tariff_feature_block,                                     # [N,  8]
         np.nan_to_num(divergence_t1, nan=0.0).reshape(-1, 1),    # [N,  1]
         np.nan_to_num(actual_t1,     nan=0.0).reshape(-1, 1),    # [N,  1]
         np.nan_to_num(actual_t2,     nan=0.0).reshape(-1, 1),    # [N,  1]
@@ -354,6 +414,8 @@ def main():
             "is_intervention masking not yet applied to aemo_divergence_t1",
             "residual_demand uses 30-min power_pv forward-filled to 5-min resolution",
             "p5min_rrp_h0 is the forecast for run_time itself (h=0 = current dispatch interval)",
+            "tariff-derived features are reconstructed from the current tariff contract "
+            "(current-tariff backtest assumption)",
         ],
     }
     with open(PARQUET_DIR / "tactical_meta.json", "w") as f:

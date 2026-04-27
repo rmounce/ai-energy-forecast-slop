@@ -639,6 +639,42 @@ The least invasive first version of that, per the old implementer’s suggestion
 - then re-run the tariffed same-target tactical comparisons before considering any more complex
   tariff-aware objective changes
 
+**Tariff-aware Tier 1 branch start (2026-04-27):**
+
+The first implementation pass now begins with explicit deterministic tariff-derived features in
+the Tier 1 tactical dataset and inference path, rather than another heuristic shaping layer.
+
+Current scope:
+- derive effective import/export price features directly from the existing P5MIN wholesale curve
+- use the current tariff contract:
+  - general tariff profile
+  - feed-in tariff profile
+  - network loss factor
+  - GST rule
+- keep the Tier 1 LightGBM architecture and training objective unchanged for this first pass
+
+First-pass feature block:
+- `eff_import_price_h0`
+- `eff_feed_in_price_h0`
+- `eff_import_price_1h_mean`
+- `eff_import_price_1h_max`
+- `eff_import_price_1h_spread`
+- `eff_feed_in_price_1h_mean`
+- `eff_feed_in_price_1h_max`
+- `eff_feed_in_price_1h_spread`
+
+Important framing:
+- this is a **current-tariff backtest**, not yet a historically tariff-versioned backtest
+- the tariff contract is deterministic enough to reconstruct without a separate historical
+  effective-rate log
+- if tariff rules change materially later, training/eval artifacts should record the tariff
+  version or be explicitly described as current-tariff experiments
+
+This branch is meant to answer the smallest next question:
+- does making tariff asymmetry explicit to Tier 1 improve the `netload_tariffed`
+  same-target tactical gap before we consider a separate post-forecast calibrator or a new
+  tariff-aware learning objective?
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast

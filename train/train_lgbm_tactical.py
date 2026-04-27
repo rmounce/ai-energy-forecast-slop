@@ -6,8 +6,8 @@ Architecture: 3 LightGBM quantile regressors (q5, q50, q95), each trained
 on all 12 horizons simultaneously via a "long format" + horizon feature.
 
 Long format construction:
-  Base features X [N, 24] are repeated 12 times.
-  A horizon feature (0..11) is appended → X_long [N×12, 25].
+  Base features X [N, 32] are repeated 12 times.
+  A horizon feature (0..11) is appended → X_long [N×12, 33].
   Targets are flattened from y [N, 12] → y_long [N×12].
   Runs where y_mask is False are dropped entirely from training.
 
@@ -67,7 +67,7 @@ EARLY_STOPPING_ROUNDS = 50
 def load_arrays():
     """Load tactical dataset arrays and split indices."""
     print("Loading arrays...")
-    X         = np.load(PARQUET_DIR / "X_tactical.npy")          # [N, 24]
+    X         = np.load(PARQUET_DIR / "X_tactical.npy")          # [N, 32]
     y         = np.load(PARQUET_DIR / "y_tactical.npy")          # [N, 12]
     y_mask    = np.load(PARQUET_DIR / "y_tactical_mask.npy")     # [N, 12] bool
     run_times = np.load(PARQUET_DIR / "run_times_tactical.npy")  # [N]
@@ -88,7 +88,7 @@ def build_long_format(X: np.ndarray,
                       y_mask: np.ndarray,
                       idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Convert [N, 24+12] wide format → long format [M, 25] x [M] y.
+    Convert [N, 32] wide format → long format [M, 33] x [M] y.
 
     For each of the 12 horizons h=0..11:
       - Repeat X rows, append horizon as scalar feature
@@ -111,7 +111,7 @@ def build_long_format(X: np.ndarray,
         if valid.sum() == 0:
             continue
         horizon_col = np.full((valid.sum(), 1), h, dtype=np.float32)
-        X_parts.append(np.hstack([X_sub[valid], horizon_col]))   # [m, 25]
+        X_parts.append(np.hstack([X_sub[valid], horizon_col]))   # [m, 33]
         y_parts.append(y_sub[valid, h])                           # [m]
 
     X_long = np.vstack(X_parts)

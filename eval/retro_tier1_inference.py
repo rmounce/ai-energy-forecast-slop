@@ -42,6 +42,8 @@ from influxdb import InfluxDBClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from tariff_utils import load_tariff_profile, tariffed_price_frame_from_wholesale_mwh
+
 RESULTS_DIR     = ROOT / "eval" / "results"
 PARQUET_DIR     = ROOT / "data" / "parquet"
 INDEX_FILE      = RESULTS_DIR / "holistic_eval_index.parquet"
@@ -58,6 +60,10 @@ LOOKBACK_H   = 3    # hours of 5min history needed before each window start
 def load_config():
     with open(ROOT / "config.json") as f:
         return json.load(f)
+
+
+CONFIG = load_config()
+GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = load_tariff_profile(CONFIG, ROOT)
 
 
 def load_p5min_from_parquet() -> dict:
@@ -121,13 +127,37 @@ def fetch_pv_from_influxdb(client, start_iso: str, end_iso: str) -> pd.Series:
     return s
 
 
+def _tariff_feature_block(run_time: pd.Timestamp, p5min_rrp: list[float]) -> np.ndarray:
+    intervals = pd.date_range(start=run_time, periods=OUTPUT_STEPS, freq="5min", tz="UTC")
+    tariffed = tariffed_price_frame_from_wholesale_mwh(
+        pd.Series(np.asarray(p5min_rrp, dtype=np.float64), index=intervals),
+        timezone=CONFIG["timezone"],
+        general_tariff_map=GENERAL_TARIFF_MAP,
+        feed_in_tariff_map=FEED_IN_TARIFF_MAP,
+        network_loss_factor=NETWORK_LOSS_FACTOR,
+        gst_rate=CONFIG["gst_rate"],
+    )
+    import_curve = tariffed["general_price_mwh"].to_numpy(dtype=np.float32, copy=False)
+    export_curve = tariffed["feed_in_price_mwh"].to_numpy(dtype=np.float32, copy=False)
+    return np.array([
+        import_curve[0],
+        export_curve[0],
+        import_curve.mean(),
+        import_curve.max(),
+        np.ptp(import_curve),
+        export_curve.mean(),
+        export_curve.max(),
+        np.ptp(export_curve),
+    ], dtype=np.float32)
+
+
 def build_features(run_time: pd.Timestamp,
                    p5min_rrp: list,
                    prev_p5min_h0: float,
                    act_df: pd.DataFrame,
                    pv_series: pd.Series) -> np.ndarray:
     """
-    Build 24-feature base vector at run_time.
+    Build 32-feature base vector at run_time.
     Feature order matches FEATURE_NAMES in data/build_tactical_dataset.py exactly.
     """
     def asof(series, ts, default=0.0):
@@ -170,8 +200,11 @@ def build_features(run_time: pd.Timestamp,
     dow_sin   = float(np.sin(2 * np.pi * rt_bne.weekday() / 7.0))
     dow_cos   = float(np.cos(2 * np.pi * rt_bne.weekday() / 7.0))
 
+    tariff_block = _tariff_feature_block(run_time, p5min_rrp)
+
     return np.array([
         *p5min_rrp,           # h0..h11  [12]
+        *tariff_block,        # tariff-aware import/export summaries [8]
         divergence_t1,        # [1]
         actual_t1,            # [1]
         actual_t2,            # [1]
@@ -219,8 +252,7 @@ def main():
                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
     fetch_end = (df_index["start_time"].max() + pd.Timedelta(minutes=5)
                  ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    config = load_config()
-    client = InfluxDBClient(**config["influxdb"])
+    client = InfluxDBClient(**CONFIG["influxdb"])
     try:
         pv_series = fetch_pv_from_influxdb(client, fetch_start, fetch_end)
     finally:
@@ -255,7 +287,7 @@ def main():
 
         feats = build_features(run_time, p5min_rrp, prev_p5min_h0, act_df, pv_series)
 
-        # Long format: [12, 25] — base features repeated × 12 + horizon index
+        # Long format: [12, 33] — base features repeated × 12 + horizon index
         X_long = np.column_stack([
             np.tile(feats, (OUTPUT_STEPS, 1)),
             np.arange(OUTPUT_STEPS, dtype=np.float32).reshape(-1, 1),
