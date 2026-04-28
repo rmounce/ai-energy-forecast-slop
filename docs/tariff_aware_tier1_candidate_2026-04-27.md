@@ -511,3 +511,10 @@ Practical implication:
 - do **not** use raw first-step Amber imitation as the next training target
 - use the oracle dataset to construct richer labels around multi-step regret / state value
   instead
+
+Implementation note:
+
+- the oracle dataset builder now records not only first-action deltas, but also
+  **full-horizon forced-first-action objective regret** for both Hybrid and Amber
+  actions under the realized future tariffed path
+- that should be the next diagnostic lens before any new calibrator or action model is trained

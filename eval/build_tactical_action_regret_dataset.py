@@ -29,7 +29,7 @@ RESULTS_DIR = ROOT / "eval" / "results"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from eval.dispatch_simulator import DEG_PER_KWH, EFF_C, EFF_D, INTERVAL_H, solve_lp_dispatch
+from eval.dispatch_simulator import CAPACITY_KWH, DEG_PER_KWH, EFF_C, EFF_D, INTERVAL_H, solve_lp_dispatch
 
 
 def _resolve_path(raw_arg: str) -> Path:
@@ -76,6 +76,62 @@ def _step_components(
         "degradation_cost": degradation_cost,
         "step_pnl": step_pnl,
     }
+
+
+def _soc_after_step(*, soc_prev_kwh: float, charge_kw: float, discharge_kw: float) -> float:
+    return float(np.clip(soc_prev_kwh + (charge_kw * EFF_C - discharge_kw) * INTERVAL_H, 0.0, CAPACITY_KWH))
+
+
+def _forced_first_action_total_objective(
+    *,
+    charge_kw: float,
+    discharge_kw: float,
+    soc_prev_kwh: float,
+    actual_general_price_mwh: float,
+    actual_feed_in_price_mwh: float,
+    actual_net_load_kw: float,
+    import_prices_mwh: np.ndarray,
+    export_prices_mwh: np.ndarray,
+    net_load_forecast_kw: np.ndarray,
+    terminal_energy_value_per_kwh: float,
+    extra_terminal_energy_value_per_kwh: float,
+    extra_terminal_energy_floor_kwh: float | None,
+    extra_terminal_energy_cap_kwh: float | None,
+    min_terminal_soc_kwh: float | None,
+    max_terminal_soc_kwh: float | None,
+) -> tuple[float, bool]:
+    step = _step_components(
+        charge_kw=charge_kw,
+        discharge_kw=discharge_kw,
+        actual_general_price_mwh=actual_general_price_mwh,
+        actual_feed_in_price_mwh=actual_feed_in_price_mwh,
+        actual_net_load_kw=actual_net_load_kw,
+    )
+    step_cost = -step["step_pnl"]
+    if len(import_prices_mwh) <= 1:
+        return step_cost, True
+
+    soc_next = _soc_after_step(
+        soc_prev_kwh=soc_prev_kwh,
+        charge_kw=charge_kw,
+        discharge_kw=discharge_kw,
+    )
+    tail = solve_lp_dispatch(
+        import_prices_mwh[1:].copy(),
+        soc_next,
+        import_prices_mwh=import_prices_mwh[1:].copy(),
+        export_prices_mwh=export_prices_mwh[1:].copy(),
+        net_load_forecast_kw=net_load_forecast_kw[1:].copy(),
+        terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
+        extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
+        extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
+        extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
+        min_terminal_soc_kwh=min_terminal_soc_kwh,
+        max_terminal_soc_kwh=max_terminal_soc_kwh,
+    )
+    if not tail["success"]:
+        return float("nan"), False
+    return step_cost + float(tail["objective_value"]), True
 
 
 def build_dataset(
@@ -169,6 +225,23 @@ def build_dataset(
             actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
             actual_net_load_kw=float(row.actual_net_load_kw),
         )
+        observed_total_objective, observed_total_success = _forced_first_action_total_objective(
+            charge_kw=float(row.charge_kw),
+            discharge_kw=float(row.discharge_kw),
+            soc_prev_kwh=float(row.soc_prev_kwh),
+            actual_general_price_mwh=float(row.actual_general_price_mwh),
+            actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
+            actual_net_load_kw=float(row.actual_net_load_kw),
+            import_prices_mwh=import_prices_mwh,
+            export_prices_mwh=export_prices_mwh,
+            net_load_forecast_kw=net_load_forecast_kw,
+            terminal_energy_value_per_kwh=float(row.terminal_energy_value_per_kwh),
+            extra_terminal_energy_value_per_kwh=float(getattr(row, "extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
+            extra_terminal_energy_floor_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_floor_kwh", None)),
+            extra_terminal_energy_cap_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_cap_kwh", None)),
+            min_terminal_soc_kwh=_none_if_nan(getattr(row, "min_terminal_soc_kwh", None)),
+            max_terminal_soc_kwh=_none_if_nan(getattr(row, "max_terminal_soc_kwh", None)),
+        )
 
         out: dict[str, float | str | int | bool | None] = {
             "time": ts,
@@ -200,6 +273,13 @@ def build_dataset(
             "oracle_success": bool(solve["success"]),
             "oracle_objective_value": float(solve["objective_value"]),
             "oracle_initial_soc_shadow_price_per_kwh": float(solve["initial_soc_shadow_price_per_kwh"]),
+            "observed_forced_total_objective_value": observed_total_objective,
+            "observed_forced_total_objective_success": bool(observed_total_success),
+            "observed_forced_total_objective_regret": (
+                observed_total_objective - float(solve["objective_value"])
+                if observed_total_success
+                else float("nan")
+            ),
             "oracle_charge_delta_kw": oracle_charge_kw - float(row.charge_kw),
             "oracle_discharge_delta_kw": oracle_discharge_kw - float(row.discharge_kw),
             "oracle_step_pnl": oracle_step["step_pnl"],
@@ -223,11 +303,35 @@ def build_dataset(
                 actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
                 actual_net_load_kw=float(row.actual_net_load_kw),
             )
+            comp_total_objective, comp_total_success = _forced_first_action_total_objective(
+                charge_kw=float(comp_row["charge_kw"]),
+                discharge_kw=float(comp_row["discharge_kw"]),
+                soc_prev_kwh=float(row.soc_prev_kwh),
+                actual_general_price_mwh=float(row.actual_general_price_mwh),
+                actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
+                actual_net_load_kw=float(row.actual_net_load_kw),
+                import_prices_mwh=import_prices_mwh,
+                export_prices_mwh=export_prices_mwh,
+                net_load_forecast_kw=net_load_forecast_kw,
+                terminal_energy_value_per_kwh=float(row.terminal_energy_value_per_kwh),
+                extra_terminal_energy_value_per_kwh=float(getattr(row, "extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
+                extra_terminal_energy_floor_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_floor_kwh", None)),
+                extra_terminal_energy_cap_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_cap_kwh", None)),
+                min_terminal_soc_kwh=_none_if_nan(getattr(row, "min_terminal_soc_kwh", None)),
+                max_terminal_soc_kwh=_none_if_nan(getattr(row, "max_terminal_soc_kwh", None)),
+            )
             out.update(
                 {
                     "comparator_charge_kw": float(comp_row["charge_kw"]),
                     "comparator_discharge_kw": float(comp_row["discharge_kw"]),
                     "comparator_step_pnl_recomputed": comp_step["step_pnl"],
+                    "comparator_forced_total_objective_value": comp_total_objective,
+                    "comparator_forced_total_objective_success": bool(comp_total_success),
+                    "comparator_forced_total_objective_regret": (
+                        comp_total_objective - float(solve["objective_value"])
+                        if comp_total_success
+                        else float("nan")
+                    ),
                     "oracle_vs_comparator_charge_delta_kw": oracle_charge_kw - float(comp_row["charge_kw"]),
                     "oracle_vs_comparator_discharge_delta_kw": oracle_discharge_kw - float(comp_row["discharge_kw"]),
                     "oracle_vs_comparator_step_pnl_delta": oracle_step["step_pnl"] - comp_step["step_pnl"],

@@ -70,6 +70,8 @@ def _summarize_bucket(rows: list[dict[str, float]], *, bucket_name: str) -> dict
         "mean_oracle_charge_delta_kw_vs_amber": _mean([r["oracle_vs_amber_charge_delta_kw"] for r in rows]),
         "mean_oracle_export_revenue_delta_vs_hybrid": _mean([r["oracle_export_revenue_delta"] for r in rows]),
         "mean_oracle_step_pnl_delta_vs_hybrid": _mean([r["oracle_step_pnl_delta"] for r in rows]),
+        "mean_observed_total_objective_regret": _mean([r["observed_total_objective_regret"] for r in rows]),
+        "mean_amber_total_objective_regret": _mean([r["amber_total_objective_regret"] for r in rows]),
     }
 
 
@@ -94,6 +96,8 @@ def analyze(csv_path: Path) -> list[dict[str, float | int | str]]:
                     "oracle_vs_amber_discharge_delta_kw": _f(row.get("oracle_vs_comparator_discharge_delta_kw")),
                     "oracle_export_revenue_delta": _f(row["oracle_export_revenue_delta"]),
                     "oracle_step_pnl_delta": _f(row["oracle_step_pnl_delta"]),
+                    "observed_total_objective_regret": _f(row.get("observed_forced_total_objective_regret")),
+                    "amber_total_objective_regret": _f(row.get("comparator_forced_total_objective_regret")),
                     "hybrid_dist": abs(oracle_charge - observed_charge) + abs(oracle_discharge - observed_discharge),
                     "amber_dist": abs(oracle_charge - amber_charge) + abs(oracle_discharge - amber_discharge),
                     "oracle_exporting": 1.0 if oracle_discharge > 0 else 0.0,
