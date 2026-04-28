@@ -863,6 +863,13 @@ immediate action direction” and more likely to involve:
 So the next modeling branch should not be “teach Hybrid to copy Amber’s first action.”
 It should be a richer oracle-derived label around multi-step regret / state-transition value.
 
+Builder upgrade:
+- `build_tactical_action_regret_dataset.py` now also records full-horizon
+  **forced-first-action objective regret** for both the observed Hybrid action and the Amber
+  comparator action
+- that makes the next label search more concrete: we can now ask not just “who matched the
+  oracle first action?” but “whose first action left more tariffed horizon value on the table?”
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
