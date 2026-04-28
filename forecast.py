@@ -30,6 +30,7 @@ import re
 import zipfile
 
 from tariff_utils import load_tariff_profile, tariffed_price_frame_from_wholesale_mwh
+from eval.retro_tier1_inference import build_feature_dict as build_tier1_feature_dict, build_long_matrix_for_model as build_tier1_long_matrix
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -1334,36 +1335,14 @@ def _execute_tactical_prediction():
     import_curve = tariffed_curve['general_price_mwh'].to_numpy(dtype=np.float32, copy=False)
     export_curve = tariffed_curve['feed_in_price_mwh'].to_numpy(dtype=np.float32, copy=False)
 
-    # Base 32-feature vector (no horizon)
-    base_feats = np.array([
-        *p5min_rrp,           # h0..h11  [12]
-        import_curve[0],      # [1]
-        export_curve[0],      # [1]
-        import_curve.mean(),  # [1]
-        import_curve.max(),   # [1]
-        np.ptp(import_curve), # [1]
-        export_curve.mean(),  # [1]
-        export_curve.max(),   # [1]
-        np.ptp(export_curve), # [1]
-        divergence_t1,        # [1]
-        actual_t1,            # [1]
-        actual_t2,            # [1]
-        actual_t6,            # [1]
-        rolling_1h_std,       # [1]
-        rolling_3h_max,       # [1]
-        residual_demand_t1,   # [1]
-        hour_sin,             # [1]
-        hour_cos,             # [1]
-        dow_sin,              # [1]
-        dow_cos,              # [1]
-        0.0,                  # is_imputed_p5min [1]
-    ], dtype=np.float32)     # [32]
-
-    # Expand to [12, 33] with horizon as last feature (matching long-format training)
-    X_long = np.column_stack([
-        np.tile(base_feats, (12, 1)),
-        np.arange(12, dtype=np.float32).reshape(-1, 1),
-    ])
+    feature_dict = build_tier1_feature_dict(
+        latest_run_time,
+        p5min_rrp,
+        p5min_h0_prev,
+        act_df,
+        pv_series,
+    )
+    X_long = build_tier1_long_matrix(q50_model, feature_dict, 12)
 
     # ── Predict ───────────────────────────────────────────────────────────────
     raw_q05 = q05_model.predict(X_long)

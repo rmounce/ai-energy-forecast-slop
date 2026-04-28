@@ -66,7 +66,18 @@ with open(ROOT / "config.json") as f:
 
 GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = load_tariff_profile(CONFIG, ROOT)
 
-# Feature names — must stay in sync with array construction below
+# Legacy feature names for the original 24-feature Tier 1 contract.
+LEGACY_FEATURE_NAMES = (
+    [f"p5min_rrp_h{h}" for h in range(OUTPUT_STEPS)]   # 12
+    + ["aemo_divergence_t1"]                             # 1
+    + ["actual_rrp_t1", "actual_rrp_t2", "actual_rrp_t6"]  # 3
+    + ["rolling_1h_std", "rolling_3h_max"]               # 2
+    + ["residual_demand_t1"]                              # 1
+    + ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]     # 4
+    + ["is_imputed_p5min"]                                # 1
+)
+
+# Current feature names — must stay in sync with array construction below.
 FEATURE_NAMES = (
     [f"p5min_rrp_h{h}" for h in range(OUTPUT_STEPS)]   # 12
     + [

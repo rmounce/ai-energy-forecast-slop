@@ -43,6 +43,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from tariff_utils import load_tariff_profile, tariffed_price_frame_from_wholesale_mwh
+from data.build_tactical_dataset import FEATURE_NAMES, LEGACY_FEATURE_NAMES
 
 RESULTS_DIR     = ROOT / "eval" / "results"
 PARQUET_DIR     = ROOT / "data" / "parquet"
@@ -151,15 +152,12 @@ def _tariff_feature_block(run_time: pd.Timestamp, p5min_rrp: list[float]) -> np.
     ], dtype=np.float32)
 
 
-def build_features(run_time: pd.Timestamp,
-                   p5min_rrp: list,
-                   prev_p5min_h0: float,
-                   act_df: pd.DataFrame,
-                   pv_series: pd.Series) -> np.ndarray:
-    """
-    Build 32-feature base vector at run_time.
-    Feature order matches FEATURE_NAMES in data/build_tactical_dataset.py exactly.
-    """
+def build_feature_dict(run_time: pd.Timestamp,
+                       p5min_rrp: list,
+                       prev_p5min_h0: float,
+                       act_df: pd.DataFrame,
+                       pv_series: pd.Series) -> dict[str, float]:
+    """Build a named Tier 1 feature dict that can be aligned to legacy or current model contracts."""
     def asof(series, ts, default=0.0):
         try:
             v = series.asof(ts) if len(series) > 0 else np.nan
@@ -190,7 +188,7 @@ def build_features(run_time: pd.Timestamp,
 
     td_t1 = asof(td_series, t1)
     pv_t1 = asof(pv_series, t1, default=0.0)
-    residual_demand_t1 = td_t1 - pv_t1   # falls back to td_t1 when pv_t1=0.0
+    residual_demand_t1 = td_t1 - pv_t1
 
     brisbane_tz = pytz.timezone("Australia/Brisbane")
     rt_bne = run_time.astimezone(brisbane_tz)
@@ -199,25 +197,68 @@ def build_features(run_time: pd.Timestamp,
     hour_cos  = float(np.cos(2 * np.pi * hour_frac / 24.0))
     dow_sin   = float(np.sin(2 * np.pi * rt_bne.weekday() / 7.0))
     dow_cos   = float(np.cos(2 * np.pi * rt_bne.weekday() / 7.0))
-
     tariff_block = _tariff_feature_block(run_time, p5min_rrp)
 
-    return np.array([
-        *p5min_rrp,           # h0..h11  [12]
-        *tariff_block,        # tariff-aware import/export summaries [8]
-        divergence_t1,        # [1]
-        actual_t1,            # [1]
-        actual_t2,            # [1]
-        actual_t6,            # [1]
-        rolling_1h_std,       # [1]
-        rolling_3h_max,       # [1]
-        residual_demand_t1,   # [1]
-        hour_sin,             # [1]
-        hour_cos,             # [1]
-        dow_sin,              # [1]
-        dow_cos,              # [1]
-        0.0,                  # is_imputed_p5min [1]
-    ], dtype=np.float32)
+    features: dict[str, float] = {}
+    for h, val in enumerate(p5min_rrp):
+        features[f"p5min_rrp_h{h}"] = float(val)
+    features.update({
+        "eff_import_price_h0": float(tariff_block[0]),
+        "eff_feed_in_price_h0": float(tariff_block[1]),
+        "eff_import_price_1h_mean": float(tariff_block[2]),
+        "eff_import_price_1h_max": float(tariff_block[3]),
+        "eff_import_price_1h_spread": float(tariff_block[4]),
+        "eff_feed_in_price_1h_mean": float(tariff_block[5]),
+        "eff_feed_in_price_1h_max": float(tariff_block[6]),
+        "eff_feed_in_price_1h_spread": float(tariff_block[7]),
+        "aemo_divergence_t1": divergence_t1,
+        "actual_rrp_t1": actual_t1,
+        "actual_rrp_t2": actual_t2,
+        "actual_rrp_t6": actual_t6,
+        "rolling_1h_std": rolling_1h_std,
+        "rolling_3h_max": rolling_3h_max,
+        "residual_demand_t1": residual_demand_t1,
+        "hour_sin": hour_sin,
+        "hour_cos": hour_cos,
+        "dow_sin": dow_sin,
+        "dow_cos": dow_cos,
+        "is_imputed_p5min": 0.0,
+    })
+    return features
+
+
+def _tactical_base_feature_names_for_model(model) -> list[str]:
+    expected = int(getattr(model, "n_features_in_", 0) or len(model.booster_.feature_name()))
+    if expected == len(LEGACY_FEATURE_NAMES) + 1:
+        return list(LEGACY_FEATURE_NAMES)
+    if expected == len(FEATURE_NAMES) + 1:
+        return list(FEATURE_NAMES)
+    raise ValueError(
+        f"Unsupported tactical model feature count {expected}; "
+        f"expected {len(LEGACY_FEATURE_NAMES)+1} or {len(FEATURE_NAMES)+1} including horizon."
+    )
+
+
+def build_long_matrix_for_model(model, feature_dict: dict[str, float], steps: int = OUTPUT_STEPS) -> np.ndarray:
+    base_names = _tactical_base_feature_names_for_model(model)
+    base_vec = np.array([float(feature_dict[name]) for name in base_names], dtype=np.float32)
+    return np.column_stack([
+        np.tile(base_vec, (steps, 1)),
+        np.arange(steps, dtype=np.float32).reshape(-1, 1),
+    ])
+
+
+def build_features(run_time: pd.Timestamp,
+                   p5min_rrp: list,
+                   prev_p5min_h0: float,
+                   act_df: pd.DataFrame,
+                   pv_series: pd.Series) -> np.ndarray:
+    """
+    Build 32-feature base vector at run_time.
+    Feature order matches FEATURE_NAMES in data/build_tactical_dataset.py exactly.
+    """
+    feature_dict = build_feature_dict(run_time, p5min_rrp, prev_p5min_h0, act_df, pv_series)
+    return np.array([float(feature_dict[name]) for name in FEATURE_NAMES], dtype=np.float32)
 
 
 def main():
@@ -297,13 +338,8 @@ def main():
         prev_p5min_h0 = (p5min_runs[prev_rt][0]
                          if prev_rt in p5min_runs else float("nan"))
 
-        feats = build_features(run_time, p5min_rrp, prev_p5min_h0, act_df, pv_series)
-
-        # Long format: [12, 33] — base features repeated × 12 + horizon index
-        X_long = np.column_stack([
-            np.tile(feats, (OUTPUT_STEPS, 1)),
-            np.arange(OUTPUT_STEPS, dtype=np.float32).reshape(-1, 1),
-        ])
+        feature_dict = build_feature_dict(run_time, p5min_rrp, prev_p5min_h0, act_df, pv_series)
+        X_long = build_long_matrix_for_model(q50_model, feature_dict, OUTPUT_STEPS)
 
         q50_raw = q50_model.predict(X_long).astype(np.float64)  # [12] $/MWh
 
