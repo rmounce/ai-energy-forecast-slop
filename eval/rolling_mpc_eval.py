@@ -58,10 +58,11 @@ from retro_tft_inference import (  # noqa: E402
     build_window_tensors,
     load_decoder_sources,
 )
-from retro_tier1_inference import build_features as build_tier1_features  # noqa: E402
+from retro_tier1_inference import (  # noqa: E402
+    build_feature_dict as build_tier1_feature_dict,
+    build_long_matrix_for_model as build_tier1_long_matrix,
+)
 from train_tft_price import TFTPriceModel  # noqa: E402
-from data.build_tactical_dataset import FEATURE_NAMES as TACTICAL_FEATURE_NAMES  # noqa: E402
-
 PARQUET_DIR = ROOT / "data" / "parquet"
 RESULTS_DIR = ROOT / "eval" / "results"
 PRICE_FORECAST_LOG = ROOT / "price_forecast_log.csv"
@@ -612,16 +613,11 @@ class ForecastProviders:
         p5min_rrp = self.p5min_runs[run_time]
         prev_rt = run_time - pd.Timedelta(minutes=5)
         prev_p5min_h0 = self.p5min_runs[prev_rt][0] if prev_rt in self.p5min_runs else float("nan")
-        feats = build_tier1_features(run_time, p5min_rrp, prev_p5min_h0, self.actuals_5m, self.pv_5m)
-        X_long = np.column_stack([
-            np.tile(feats, (TACTICAL_STEPS, 1)),
-            np.arange(TACTICAL_STEPS, dtype=np.float32).reshape(-1, 1),
-        ])
-        X_long_df = pd.DataFrame(
-            X_long,
-            columns=list(TACTICAL_FEATURE_NAMES) + ["horizon"],
+        feature_dict = build_tier1_feature_dict(
+            run_time, p5min_rrp, prev_p5min_h0, self.actuals_5m, self.pv_5m
         )
-        preds = self.tactical_models[quantile].predict(X_long_df).astype(np.float64)
+        X_long = build_tier1_long_matrix(self.tactical_models[quantile], feature_dict, TACTICAL_STEPS)
+        preds = self.tactical_models[quantile].predict(X_long).astype(np.float64)
         idx = pd.date_range(start=run_time, periods=TACTICAL_STEPS, freq="5min", tz="UTC")
         series = pd.Series(preds, index=idx)
         self._tier1_cache[cache_key] = series

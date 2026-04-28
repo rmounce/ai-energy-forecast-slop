@@ -840,6 +840,28 @@ Implementation checkpoint:
   now exists to build that oracle-action / action-regret dataset directly from rolling raw
   parquets using the logged SoC, terminal constraints, and actual future tariffed prices/net
   load
+- [eval/analyze_tactical_action_regret.py](../eval/analyze_tactical_action_regret.py)
+  now summarizes those oracle-action datasets by bucket and reports whether Hybrid or Amber is
+  actually closer to the oracle first action
+
+**First oracle-action read (2026-04-28):**
+- the simple story “Hybrid should just act more like Amber on export-heavy rows” did **not**
+  survive the first-action oracle check
+- on Window B `7-day`, Hybrid was closer to the oracle slightly more often overall
+  (`11.4%` vs Amber `10.0%`, with `78.6%` equal)
+- on the high-FIT rows, the oracle sided with Hybrid much more often than Amber:
+  - feed-in `>= 300`: Hybrid `30.6%`, Amber `2.5%`
+  - feed-in `>= 500`: Hybrid `38.6%`, Amber `2.3%`
+- outside the flagship regime, the result was mostly flat/tied rather than decisively pro-Amber
+
+**Interpretation shift:** the remaining Amber advantage is now less likely to be “better
+immediate action direction” and more likely to involve:
+- multi-step path effects,
+- forecast-information quality,
+- or a better label family than raw first-step imitation
+
+So the next modeling branch should not be “teach Hybrid to copy Amber’s first action.”
+It should be a richer oracle-derived label around multi-step regret / state-transition value.
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

@@ -13,6 +13,8 @@
 | `rolling_mpc_eval.py` | **Track A rolling MPC eval**: contiguous 5-min, SoC-carrying backtest scaffold for the execution-focused near horizon. Supports legacy `price_only` mode and newer `netload_tariffed` mode (actual load/PV plus separate import/feed-in economics), with regime, spike-band, coverage, and behavior diagnostics. For detached long runs, prefer `--workers 1` unless a short pilot has already validated a multi-worker setup; `--mp-start-method auto` now prefers `fork` on Linux. |
 | `compare_rolling_mpc_raw.py` | Compare two Track A raw parquet outputs and report whether dispatch actually changed (`charge_kw`, `discharge_kw`, `soc_kwh`, terminal-contract columns). Useful as a cheap preflight before committing to long reruns. |
 | `analyze_rolling_mpc_tariffed.py` | Source/day diagnostics for `rolling_mpc_eval.py --economic-mode netload_tariffed`: import/export energy, tariffed pnl decomposition, SoC posture, top charge/discharge events, a same-strategic-target/different-tactical daily delta table, and a missed-export interval report. |
+| `build_tactical_action_regret_dataset.py` | Rebuild a per-step oracle-action / action-regret dataset from raw rolling-eval parquet using actual future tariffed prices plus the logged SoC and terminal constraints. |
+| `analyze_tactical_action_regret.py` | Summarize oracle-action datasets by bucket (`FIT >= 300/500`, negative net load, oracle exporting/charging) and report whether Hybrid or Amber is actually closer to the oracle first action. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -70,6 +72,14 @@ the variant is probably not worth a long rerun unless the goal is purely diagnos
 
 After a `netload_tariffed` pilot, use `analyze_rolling_mpc_tariffed.py` to answer the next
 question: where did the winning source buy lower, sell higher, or hold a different SoC posture?
+
+When the open question is no longer “which source won?” but “what action error was made?”,
+switch to the oracle-action flow:
+
+1. build a per-step oracle-action dataset with `build_tactical_action_regret_dataset.py`
+2. summarize Hybrid-vs-Amber oracle closeness with `analyze_tactical_action_regret.py`
+3. only then decide whether the next label should be first-action correction, multi-step regret,
+   or a richer action-ranking target
 
 ---
 

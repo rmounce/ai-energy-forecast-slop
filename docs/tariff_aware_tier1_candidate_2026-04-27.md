@@ -452,3 +452,62 @@ Decision logic:
   calibrator or action model is justified
 - if they mostly require future information, then the remaining Amber gap is primarily
   forecast-information quality rather than tactical correction
+
+### First oracle-action read
+
+The first oracle-action dataset runs materially changed the interpretation of this branch.
+
+The question tested was narrower than overall PnL:
+
+- with the same logged SoC and terminal constraints,
+- and with actual future tariffed prices/net load fed to the LP,
+- is Hybrid or Amber closer to the oracle **first action**?
+
+This is not the final label family, but it is a useful falsification check for the simple
+story that “Hybrid should just act more like Amber in export-heavy intervals.”
+
+#### Window B, 7-day oracle first-action comparison
+
+Across all `2016` steps:
+
+- Hybrid closer to oracle: `11.4%`
+- Amber closer to oracle: `10.0%`
+- equal: `78.6%`
+
+High feed-in subsets were more surprising:
+
+- feed-in `>= 300`: Hybrid closer `30.6%`, Amber closer `2.5%`, equal `66.9%`
+- feed-in `>= 500`: Hybrid closer `38.6%`, Amber closer `2.3%`, equal `59.1%`
+
+So on the same high-FIT rows that originally made Amber look economically stronger, the
+realized-future oracle first action was actually much more often closer to Hybrid than to
+Amber.
+
+#### Other windows
+
+The same pattern weakens or disappears away from the flagship regime:
+
+- Window B excluding `2025-09-01`: near-flat, overwhelmingly equal, tiny differences
+- moderate-FIT middle window: Hybrid slightly closer overall, but still mostly equal
+- Window A 7-day: no clear winner; Hybrid and Amber are both close and mostly tied
+
+#### What this does and does not mean
+
+This does **not** prove that Hybrid is economically better overall. It only says:
+
+- the oracle-action dataset does not support the simple hypothesis that Amber wins because its
+  first action is systematically more oracle-like on export-heavy rows
+- a large part of the Amber-vs-Hybrid gap must therefore come from something subtler than
+  “under-export now”
+
+Likely alternatives now include:
+
+1. multi-step path differences that are not captured by first-step imitation
+2. forecast-information quality differences rather than local tactical correction
+3. a better label family based on state-transition value or multi-step action regret
+
+Practical implication:
+
+- do **not** use raw first-step Amber imitation as the next training target
+- use the oracle dataset to construct richer labels around multi-step regret / state value
+  instead
