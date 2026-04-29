@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -29,7 +30,7 @@ RESULTS_DIR = ROOT / "eval" / "results"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from eval.dispatch_simulator import CAPACITY_KWH, DEG_PER_KWH, EFF_C, EFF_D, INTERVAL_H, solve_lp_dispatch
+from eval.dispatch_simulator import DEG_PER_KWH, EFF_C, EFF_D, INTERVAL_H, solve_lp_dispatch
 
 
 def _resolve_path(raw_arg: str) -> Path:
@@ -78,10 +79,6 @@ def _step_components(
     }
 
 
-def _soc_after_step(*, soc_prev_kwh: float, charge_kw: float, discharge_kw: float) -> float:
-    return float(np.clip(soc_prev_kwh + (charge_kw * EFF_C - discharge_kw) * INTERVAL_H, 0.0, CAPACITY_KWH))
-
-
 def _forced_first_action_total_objective(
     *,
     charge_kw: float,
@@ -100,38 +97,24 @@ def _forced_first_action_total_objective(
     min_terminal_soc_kwh: float | None,
     max_terminal_soc_kwh: float | None,
 ) -> tuple[float, bool]:
-    step = _step_components(
-        charge_kw=charge_kw,
-        discharge_kw=discharge_kw,
-        actual_general_price_mwh=actual_general_price_mwh,
-        actual_feed_in_price_mwh=actual_feed_in_price_mwh,
-        actual_net_load_kw=actual_net_load_kw,
-    )
-    step_cost = -step["step_pnl"]
-    if len(import_prices_mwh) <= 1:
-        return step_cost, True
-
-    soc_next = _soc_after_step(
-        soc_prev_kwh=soc_prev_kwh,
-        charge_kw=charge_kw,
-        discharge_kw=discharge_kw,
-    )
-    tail = solve_lp_dispatch(
-        import_prices_mwh[1:].copy(),
-        soc_next,
-        import_prices_mwh=import_prices_mwh[1:].copy(),
-        export_prices_mwh=export_prices_mwh[1:].copy(),
-        net_load_forecast_kw=net_load_forecast_kw[1:].copy(),
+    forced = solve_lp_dispatch(
+        import_prices_mwh.copy(),
+        soc_prev_kwh,
+        import_prices_mwh=import_prices_mwh.copy(),
+        export_prices_mwh=export_prices_mwh.copy(),
+        net_load_forecast_kw=net_load_forecast_kw.copy(),
         terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
         extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
         extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
         extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
         min_terminal_soc_kwh=min_terminal_soc_kwh,
         max_terminal_soc_kwh=max_terminal_soc_kwh,
+        force_first_charge_kw=charge_kw,
+        force_first_discharge_kw=discharge_kw,
     )
-    if not tail["success"]:
+    if not forced["success"]:
         return float("nan"), False
-    return step_cost + float(tail["objective_value"]), True
+    return float(forced["objective_value"]), True
 
 
 def build_dataset(
@@ -139,6 +122,7 @@ def build_dataset(
     *,
     target_source: str,
     comparator_source: str | None = None,
+    progress_every_rows: int = 0,
 ) -> pd.DataFrame:
     raw_df = raw_df.copy()
     raw_df["time"] = pd.to_datetime(raw_df["time"], utc=True)
@@ -181,9 +165,10 @@ def build_dataset(
         comparator_by_time = comparator_df
 
     rows: list[dict[str, float | str | int | bool | None]] = []
-    timestamps = market_df.index.to_list()
+    total_rows = len(target_df)
+    start_t = time.perf_counter()
 
-    for row in target_df.itertuples(index=False):
+    for i, row in enumerate(target_df.itertuples(index=False), start=1):
         ts = pd.Timestamp(row.time)
         future = market_df.loc[ts:]
         if future.empty:
@@ -341,6 +326,18 @@ def build_dataset(
 
         rows.append(out)
 
+        if progress_every_rows > 0 and (i % progress_every_rows == 0 or i == total_rows):
+            elapsed = time.perf_counter() - start_t
+            rate = i / elapsed if elapsed > 0 else float("nan")
+            remaining = max(total_rows - i, 0)
+            eta_sec = remaining / rate if rate and np.isfinite(rate) and rate > 0 else float("nan")
+            eta_str = f"{eta_sec/60:.1f}m" if np.isfinite(eta_sec) else "?"
+            print(
+                f"[progress] {i}/{total_rows} rows ({100.0 * i / total_rows:.1f}%) "
+                f"elapsed={elapsed/60:.1f}m eta={eta_str}",
+                flush=True,
+            )
+
     return pd.DataFrame(rows)
 
 
@@ -350,6 +347,7 @@ def main() -> int:
     parser.add_argument("--target-source", default="model_a_hybrid")
     parser.add_argument("--comparator-source", default="amber_tactical_hybrid_strategic")
     parser.add_argument("--output-prefix", required=True)
+    parser.add_argument("--progress-every-rows", type=int, default=0, help="Emit progress every N processed target rows")
     args = parser.parse_args()
 
     raw_path = _resolve_path(args.raw)
@@ -358,6 +356,7 @@ def main() -> int:
         raw_df,
         target_source=args.target_source,
         comparator_source=args.comparator_source or None,
+        progress_every_rows=max(0, int(args.progress_every_rows)),
     )
 
     out_parquet = RESULTS_DIR / f"{args.output_prefix}_oracle_action_regret.parquet"
