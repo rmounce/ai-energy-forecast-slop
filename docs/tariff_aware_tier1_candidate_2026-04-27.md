@@ -517,4 +517,117 @@ Implementation note:
 - the oracle dataset builder now records not only first-action deltas, but also
   **full-horizon forced-first-action objective regret** for both Hybrid and Amber
   actions under the realized future tariffed path
-- that should be the next diagnostic lens before any new calibrator or action model is trained
+- the first stitched implementation of that regret field had an accounting inconsistency and was
+  replaced with a stricter definition: solve the full horizon again with the first action pinned
+
+### Corrected oracle-regret read (`v3`)
+
+The corrected full-horizon oracle-regret rebuilds mostly **confirmed** the earlier first-action
+read rather than reversing it.
+
+#### Window B, 7-day
+
+Overall:
+
+- Hybrid closer to oracle first action: `11.4%`
+- Amber closer to oracle first action: `10.0%`
+- equal: `78.6%`
+- mean Hybrid forced-first-action regret: `0.00541`
+- mean Amber forced-first-action regret: `0.00605`
+
+So on the corrected full-horizon label, Hybrid is still slightly better overall on this
+oracle-first-action lens.
+
+High-FIT subsets were the strongest signal:
+
+- feed-in `>= 300`
+  - Hybrid closer: `30.6%`
+  - Amber closer: `2.5%`
+  - Hybrid regret: `0.0153`
+  - Amber regret: `0.0411`
+- feed-in `>= 500`
+  - Hybrid closer: `38.6%`
+  - Amber closer: `2.3%`
+  - Hybrid regret: `0.00566`
+  - Amber regret: `0.0567`
+
+So on the same export-heavy rows that originally made Amber look economically stronger, the
+corrected realized-future oracle still says Amber's **first action** is less oracle-like than
+Hybrid's.
+
+#### Other windows
+
+- Window B excluding `2025-09-01`
+  - Hybrid regret: `0.00479`
+  - Amber regret: `0.00426`
+  - Amber slightly better once the flagship day is removed
+- moderate-FIT middle window
+  - Hybrid regret: `0.00450`
+  - Amber regret: `0.00516`
+  - Hybrid slightly better overall, but not strongly
+- Window A 7-day
+  - Hybrid regret: `0.00372`
+  - Amber regret: `0.00340`
+  - Amber slightly better overall
+
+#### Updated interpretation
+
+This narrows the conclusion further:
+
+1. The remaining Amber-vs-Hybrid gap is **not** well described as “Hybrid should imitate
+   Amber’s first action.”
+2. In the strongest high-FIT Window B regime, Amber’s first action actually leaves **more**
+   full-horizon tariffed value on the table than Hybrid’s.
+3. Amber remains slightly better on Window A and on the non-flagship Window B slice, so the
+   answer is not “Hybrid is simply better.” The gap must come from something subtler.
+
+The most plausible remaining explanations are now:
+
+- multi-step path effects beyond first-action imitation
+- forecast-information quality rather than local first-action correction
+- a richer label family based on state-transition value or multi-step regret
+
+Practical implication:
+
+- do **not** train the next model to copy Amber’s first action
+- if a corrective modeling branch is pursued, the label should be richer than first-action
+  oracle regret alone
+
+### Updated next-step consensus
+
+Reviewer and implementer feedback after the corrected `v3` oracle-regret pass converged on a
+more specific next diagnostic sequence.
+
+What is now ruled out:
+
+- a first-action calibrator as the next primary abstraction
+- a model trained to make Hybrid imitate Amber’s immediate dispatch action
+
+Why:
+
+- Hybrid is already slightly better on the corrected first-action oracle-regret lens in the
+  strongest Window B high-FIT regime
+- yet Amber still wins economically over some broader slices
+- so the remaining gap is not well explained by “wrong first command”
+
+Most justified next diagnostic pair:
+
+1. **Forward-curve shape comparison** on the high-FIT intervals where Amber wins economically.
+   The key question is whether Hybrid gets step 0 roughly right but mean-reverts too quickly
+   over steps `2–10`, while Amber’s tactical curve stays elevated longer.
+
+2. **Forced-prefix regret** with pinned prefixes of length:
+   - `N = 1`
+   - `N = 3`
+   - `N = 6`
+   - `N = 12`
+   and optionally longer if runtime is acceptable.
+
+Interpretation logic:
+
+- if Amber only becomes better when several initial actions are pinned, the issue is more about
+  multi-step tactical path / inventory trajectory value than about a local first-action fix
+- if the curves already differ in their short-horizon persistence shape, a narrower tactical
+  persistence intervention may be more justified than a wholly new target
+- if neither the curve shape nor the pinned-prefix path reveals Amber’s advantage, the next
+  place to look is forecast-update / receding-horizon behavior rather than local tactical labels
