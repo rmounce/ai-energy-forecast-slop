@@ -95,7 +95,11 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                       extra_terminal_energy_floor_kwh: float | None = None,
                       extra_terminal_energy_cap_kwh: float | None = None,
                       min_terminal_soc_kwh: float | None = None,
-                      max_terminal_soc_kwh: float | None = None) -> dict:
+                      max_terminal_soc_kwh: float | None = None,
+                      force_first_charge_kw: float | None = None,
+                      force_first_discharge_kw: float | None = None,
+                      force_prefix_charge_kw: np.ndarray | None = None,
+                      force_prefix_discharge_kw: np.ndarray | None = None) -> dict:
     """
     Optimal battery dispatch over a price horizon via LP.
 
@@ -242,6 +246,27 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         bounds.extend([(0.0, None)] * (2 * n))
     if use_extra_terminal_value:
         bounds.append((0.0, extra_terminal_energy_cap_kwh))
+
+    if force_first_charge_kw is not None:
+        force_first_charge_kw = float(np.clip(force_first_charge_kw, 0.0, max_power_kw))
+        bounds[0] = (force_first_charge_kw, force_first_charge_kw)
+    if force_first_discharge_kw is not None:
+        force_first_discharge_kw = float(np.clip(force_first_discharge_kw, 0.0, max_power_kw))
+        bounds[n] = (force_first_discharge_kw, force_first_discharge_kw)
+    if force_prefix_charge_kw is not None:
+        prefix_charge = np.asarray(force_prefix_charge_kw, dtype=np.float64)
+        if len(prefix_charge) > n:
+            raise ValueError("force_prefix_charge_kw longer than horizon")
+        for i, val in enumerate(prefix_charge):
+            fixed = float(np.clip(val, 0.0, max_power_kw))
+            bounds[i] = (fixed, fixed)
+    if force_prefix_discharge_kw is not None:
+        prefix_discharge = np.asarray(force_prefix_discharge_kw, dtype=np.float64)
+        if len(prefix_discharge) > n:
+            raise ValueError("force_prefix_discharge_kw longer than horizon")
+        for i, val in enumerate(prefix_discharge):
+            fixed = float(np.clip(val, 0.0, max_power_kw))
+            bounds[n + i] = (fixed, fixed)
 
     result = linprog(c_obj, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs",
                      options={"disp": False})
