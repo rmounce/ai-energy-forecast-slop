@@ -870,6 +870,43 @@ Builder upgrade:
 - that makes the next label search more concrete: we can now ask not just “who matched the
   oracle first action?” but “whose first action left more tariffed horizon value on the table?”
 
+**Corrected oracle-regret read (`v3`):**
+- the corrected full-horizon regret rebuilds did **not** move the story back toward
+  “copy Amber’s first action”
+- on Window B `7-day` overall:
+  - Hybrid regret: `0.00541`
+  - Amber regret: `0.00605`
+- on the strongest high-FIT Window B rows:
+  - feed-in `>= 300`: Hybrid `0.0153`, Amber `0.0411`
+  - feed-in `>= 500`: Hybrid `0.00566`, Amber `0.0567`
+- so in the regime where Amber originally looked economically strongest, Amber’s **first
+  action** actually leaves more full-horizon tariffed value on the table than Hybrid’s
+- Amber is still slightly better on Window A `7-day` (`0.00340` vs Hybrid `0.00372`) and on
+  Window B excluding `2025-09-01` (`0.00426` vs Hybrid `0.00479`)
+
+**Interpretation shift (stronger):**
+- the next branch should definitely **not** be “teach Hybrid to imitate Amber’s first action”
+- the remaining gap is more likely to live in:
+  - multi-step path effects,
+  - forecast-information quality,
+  - or a richer state-value / multi-step-regret label family
+
+**Updated next-step consensus (reviewer + implementer):**
+- first-action calibrator is now ruled out as the next primary abstraction
+- the best next diagnostic pair is:
+  1. forward-curve shape comparison on the high-FIT intervals where Amber wins economically
+  2. forced-prefix regret with `N = 1, 3, 6, 12` pinned actions
+
+Reasoning:
+- if Hybrid gets step 0 roughly right but mean-reverts too quickly over the next several steps,
+  the tactical curve shape/persistence is the issue
+- if Amber only becomes better once several initial actions are pinned, the loss lives in the
+  multi-step tactical path / inventory trajectory rather than in a local first-action fix
+- only after those two diagnostics should a richer target be chosen, such as:
+  - multi-step regret
+  - marginal energy value
+  - or state-transition value
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
