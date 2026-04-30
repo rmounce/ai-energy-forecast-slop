@@ -90,6 +90,20 @@ on a small `--max-rows` smoke. Full Window B runs are LP-heavy, and finite-diffe
 roughly double the solve count, so use detached `tmux`, `.venv`, logs, and `.exitcode` files
 before running them unattended.
 
+The current target bucket from the forced-prefix attribution is:
+
+```bash
+./.venv/bin/python eval/build_state_transition_label_dataset.py \
+  --raw rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_raw.parquet \
+  --horizons 6,12 \
+  --feed-in-max-mwh 300 \
+  --net-load-max-kw 0 \
+  --output-prefix state_transition_wb7_fitlt300_negload
+```
+
+Use `--max-rows` for smoke tests. Add `--soc-finite-diff-kwh 1.0` only after the cheaper
+path-label distribution is worth expanding.
+
 ---
 
 ## Phase 6 — Holistic Dispatch Simulation

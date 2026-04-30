@@ -962,6 +962,8 @@ So the next branch should stop thinking “big export spikes” and start thinki
   - optional finite-difference initial-SoC value via `--soc-finite-diff-kwh`
 - quick smokes passed on Window B raw data; full-window label builds are LP-heavy and should use
   detached `tmux` plus logs/exitcode files before being left unattended
+- the builder now supports numeric target-bucket filters; the current first full label build
+  should use `--feed-in-max-mwh 300 --net-load-max-kw 0 --horizons 6,12`
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

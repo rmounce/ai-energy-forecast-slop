@@ -158,6 +158,10 @@ def build_dataset(
     target_source: str,
     comparator_source: str | None,
     horizons: list[int],
+    feed_in_min_mwh: float | None = None,
+    feed_in_max_mwh: float | None = None,
+    net_load_min_kw: float | None = None,
+    net_load_max_kw: float | None = None,
     max_rows: int | None = None,
     progress_every_rows: int = 0,
     soc_finite_diff_kwh: float = 0.0,
@@ -177,6 +181,14 @@ def build_dataset(
     if target_path_df.empty:
         raise ValueError(f"No rows found for target source: {target_source}")
     target_df = target_path_df
+    if feed_in_min_mwh is not None:
+        target_df = target_df[target_df["actual_feed_in_price_mwh"] >= float(feed_in_min_mwh)]
+    if feed_in_max_mwh is not None:
+        target_df = target_df[target_df["actual_feed_in_price_mwh"] < float(feed_in_max_mwh)]
+    if net_load_min_kw is not None:
+        target_df = target_df[target_df["actual_net_load_kw"] >= float(net_load_min_kw)]
+    if net_load_max_kw is not None:
+        target_df = target_df[target_df["actual_net_load_kw"] < float(net_load_max_kw)]
     if max_rows is not None:
         target_df = target_df.head(max(0, int(max_rows)))
 
@@ -270,6 +282,10 @@ def build_dataset(
                 "actual_general_price_mwh": float(row.actual_general_price_mwh),
                 "actual_feed_in_price_mwh": float(row.actual_feed_in_price_mwh),
                 "actual_net_load_kw": float(row.actual_net_load_kw),
+                "filter_feed_in_min_mwh": feed_in_min_mwh,
+                "filter_feed_in_max_mwh": feed_in_max_mwh,
+                "filter_net_load_min_kw": net_load_min_kw,
+                "filter_net_load_max_kw": net_load_max_kw,
                 "bucket_fit_lt_300_negload": bool(
                     float(row.actual_feed_in_price_mwh) < 300.0 and float(row.actual_net_load_kw) < 0.0
                 ),
@@ -337,12 +353,22 @@ def _parse_horizons(value: str) -> list[int]:
     return horizons
 
 
+def _optional_bound(value: str) -> float | None:
+    if value.strip().lower() in {"none", "nan", ""}:
+        return None
+    return float(value)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw", required=True, help="Rolling raw parquet path or filename under eval/results")
     parser.add_argument("--target-source", default="model_a_hybrid")
     parser.add_argument("--comparator-source", default="amber_tactical_hybrid_strategic")
     parser.add_argument("--horizons", type=_parse_horizons, default=_parse_horizons("6,12"), help="Comma-separated 5-min step counts")
+    parser.add_argument("--feed-in-min-mwh", type=_optional_bound, default=None)
+    parser.add_argument("--feed-in-max-mwh", type=_optional_bound, default=None)
+    parser.add_argument("--net-load-min-kw", type=_optional_bound, default=None)
+    parser.add_argument("--net-load-max-kw", type=_optional_bound, default=None)
     parser.add_argument("--max-rows", type=int, default=None, help="Optional smoke-test row limit")
     parser.add_argument("--progress-every-rows", type=int, default=0)
     parser.add_argument(
@@ -355,11 +381,16 @@ def main() -> int:
     args = parser.parse_args()
 
     raw_df = pd.read_parquet(_resolve_path(args.raw))
+    raw_target_rows = int((raw_df["source"] == args.target_source).sum()) if "source" in raw_df.columns else 0
     dataset = build_dataset(
         raw_df,
         target_source=args.target_source,
         comparator_source=args.comparator_source or None,
         horizons=args.horizons,
+        feed_in_min_mwh=args.feed_in_min_mwh,
+        feed_in_max_mwh=args.feed_in_max_mwh,
+        net_load_min_kw=args.net_load_min_kw,
+        net_load_max_kw=args.net_load_max_kw,
         max_rows=args.max_rows,
         progress_every_rows=max(0, int(args.progress_every_rows)),
         soc_finite_diff_kwh=max(0.0, float(args.soc_finite_diff_kwh)),
@@ -370,6 +401,8 @@ def main() -> int:
     dataset.to_parquet(out_parquet, index=False)
     dataset.to_csv(out_csv, index=False)
     print(f"Wrote {len(dataset)} rows")
+    if args.horizons:
+        print(f"Approx target start rows after filters: {len(dataset) // len(args.horizons)} of {raw_target_rows}")
     print(f"Parquet: {out_parquet}")
     print(f"CSV:     {out_csv}")
     if not dataset.empty:
