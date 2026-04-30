@@ -949,6 +949,20 @@ So the next branch should stop thinking “big export spikes” and start thinki
 - next abstraction remains state-transition / marginal energy value, with multi-step regret as
   the label source and gate
 
+**State-transition label branch started:**
+- [eval/build_state_transition_label_dataset.py](../eval/build_state_transition_label_dataset.py)
+  builds the first compact label dataset for this branch
+- for each target row, it solves the realized-future tariffed oracle and compares oracle,
+  target, and optional comparator prefixes over configurable horizons such as `N=6` and `N=12`
+- emitted labels include:
+  - oracle-vs-target SoC delta
+  - oracle-vs-target throughput/churn
+  - oracle-vs-target import/export energy
+  - oracle-vs-target prefix PnL
+  - optional finite-difference initial-SoC value via `--soc-finite-diff-kwh`
+- quick smokes passed on Window B raw data; full-window label builds are LP-heavy and should use
+  detached `tmux` plus logs/exitcode files before being left unattended
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
