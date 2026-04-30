@@ -631,3 +631,127 @@ Interpretation logic:
   persistence intervention may be more justified than a wholly new target
 - if neither the curve shape nor the pinned-prefix path reveals Amber’s advantage, the next
   place to look is forecast-update / receding-horizon behavior rather than local tactical labels
+
+### Forced-prefix result on `wb7`
+
+The first real forced-prefix batch on Window B `7-day` (`N = 1, 3, 6, 12`) sharpened the story
+again.
+
+Overall, Amber becomes increasingly better as more of the path is pinned:
+
+- `N = 1`: Amber advantage `-0.00043`
+- `N = 3`: Amber advantage `-0.00150`
+- `N = 6`: Amber advantage `-0.00351`
+- `N = 12`: Amber advantage `-0.01147`
+
+Negative here means Amber has lower forced-prefix regret than Hybrid.
+
+So the reviewer’s core hypothesis was right:
+
+- Amber’s advantage is **not** mainly in the first action
+- it emerges more clearly over a multi-step prefix
+
+But the high-FIT subset result went the other way:
+
+- on feed-in `>= 300`, Amber is worse at every prefix length
+- on feed-in `>= 500`, Amber is worse by an even larger margin
+
+So the path advantage is **not** coming from the flagship high-FIT rows.
+
+The first useful non-high-FIT split shows where the Amber edge is actually accumulating.
+
+For feed-in `< 300`:
+
+- `N = 1`: Amber advantage `-0.00087`
+- `N = 3`: Amber advantage `-0.00251`
+- `N = 6`: Amber advantage `-0.00480`
+- `N = 12`: Amber advantage `-0.01364`
+
+And that is driven mainly by the **negative-net-load** portion of the same subset:
+
+- `N = 1`: Amber advantage `-0.00389`
+- `N = 3`: Amber advantage `-0.01168`
+- `N = 6`: Amber advantage `-0.02287`
+- `N = 12`: Amber advantage `-0.05101`
+
+By contrast, `FIT < 300` with **non-negative** net load slightly favors Hybrid:
+
+- `N = 1`: `+0.00094`
+- `N = 3`: `+0.00292`
+- `N = 6`: `+0.00567`
+- `N = 12`: `+0.00780`
+
+So the current best read is:
+
+1. Amber’s advantage is a real **multi-step path** effect.
+2. It does **not** live mainly in the highest-FIT spike rows.
+3. It appears to accumulate primarily in **negative-net-load, sub-`300` FIT** conditions.
+
+That points the next diagnosis away from “export harder into the big spikes” and toward:
+
+- inventory trajectory quality during more ordinary export-capable periods
+- medium-horizon tactical path quality
+- possibly preserving/exporting energy better across clusters of moderate opportunities rather
+  than only the most extreme intervals
+
+Concrete saved decomposition from the `wb7` forced-prefix summaries:
+
+- overall Amber advantage grows with prefix length:
+  - `N=1`: `-0.00043`
+  - `N=3`: `-0.00150`
+  - `N=6`: `-0.00351`
+  - `N=12`: `-0.01146`
+- `FIT < 300` and negative net load drives most of that edge:
+  - `N=1`: `-0.00389`
+  - `N=3`: `-0.01168`
+  - `N=6`: `-0.02287`
+  - `N=12`: `-0.05101`
+- `FIT < 300` with non-negative net load slightly favors Hybrid instead:
+  - `N=1`: `+0.00094`
+  - `N=3`: `+0.00292`
+  - `N=6`: `+0.00567`
+  - `N=12`: `+0.00780`
+
+So the strongest currently supported working hypothesis is:
+
+- Amber’s remaining edge is a **multi-step inventory/path advantage in ordinary export-capable
+  periods**, not a “giant spike export” trick
+
+### Forced-prefix path attribution
+
+A follow-up attribution pass joined the forced-prefix regret rows back to the rolling raw paths
+without rerunning the LP solves:
+
+- [eval/analyze_forced_prefix_path_attribution.py](../eval/analyze_forced_prefix_path_attribution.py)
+- outputs:
+  - `eval/results/wb7_prefix_n{1,3,6,12}_forced_prefix_path_attribution.csv`
+  - `eval/results/wb7_prefix_n{1,3,6,12}_forced_prefix_path_attribution_summary.csv`
+
+For the key `FIT < 300` + negative-net-load bucket, the `N=12` attribution shows Amber's
+lower-regret prefix is **not** achieved by exporting more:
+
+- Amber minus Hybrid forced-prefix regret: `-0.05101`
+- prefix charge: `-0.083 kWh`
+- prefix discharge: `-0.161 kWh`
+- prefix import: `-0.302 kWh`
+- prefix export: `-0.371 kWh`
+- prefix step PnL: `+0.022`
+- prefix SoC delta: `+0.081 kWh`
+
+The same pattern ramps with prefix length (`N=1,3,6,12`): Amber does less charging, less
+discharging, less importing, and less exporting in the target bucket, while ending the prefix
+with slightly more stored energy and better immediate PnL.
+
+That sharpens the interpretation again:
+
+- the target bucket is not simply "ordinary export opportunities"
+- its average feed-in price is low/negative, so excess export can be actively unattractive
+- the Amber edge looks more like **reduced churn / better surplus-PV inventory discipline**
+  through low-to-moderate FIT periods
+
+This makes the next modeling target closer to a short-horizon state-transition or marginal
+energy-value label than to an export-uplift label. A useful first label family would ask:
+
+- how much SoC should be carried 30-60 minutes forward during negative-net-load, low-FIT periods?
+- when should surplus PV be stored versus exported versus ignored?
+- what is the marginal value of one extra kWh in the battery at the end of the prefix?
