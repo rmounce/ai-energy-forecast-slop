@@ -907,6 +907,48 @@ Reasoning:
   - marginal energy value
   - or state-transition value
 
+**First forced-prefix result on `wb7`:**
+- Amber becomes increasingly better as more of the prefix is pinned:
+  - `N=1`: `-0.00043`
+  - `N=3`: `-0.00150`
+  - `N=6`: `-0.00351`
+  - `N=12`: `-0.01147`
+- so the path effect is real and grows with prefix length
+
+But the surprise is where it does **not** come from:
+- high-FIT rows (`FIT >= 300` and especially `>= 500`) still favor Hybrid, not Amber
+
+The current leading decomposition is:
+- Amber’s multi-step advantage is accumulating mainly in **negative-net-load, sub-`300` FIT**
+  conditions
+- `FIT < 300` and negative net load:
+  - `N=1`: `-0.00389`
+  - `N=3`: `-0.01168`
+  - `N=6`: `-0.02287`
+  - `N=12`: `-0.05101`
+- `FIT < 300` with non-negative net load slightly favors Hybrid
+
+So the next branch should stop thinking “big export spikes” and start thinking:
+- medium-horizon inventory trajectory quality in ordinary export-capable periods
+- especially the `30–60 minute` path through negative-net-load, non-extreme-FIT regimes
+
+**Forced-prefix path attribution:**
+- [eval/analyze_forced_prefix_path_attribution.py](../eval/analyze_forced_prefix_path_attribution.py)
+  now joins forced-prefix regret rows back to rolling raw paths and summarizes charge,
+  discharge, import, export, step PnL, and SoC movement by bucket
+- in the key `FIT < 300` + negative-net-load bucket at `N=12`, Amber's lower-regret prefix is:
+  - lower charge: `-0.083 kWh`
+  - lower discharge: `-0.161 kWh`
+  - lower import: `-0.302 kWh`
+  - lower export: `-0.371 kWh`
+  - higher prefix step PnL: `+0.022`
+  - slightly higher prefix SoC delta: `+0.081 kWh`
+- so the working hypothesis is now sharper than “ordinary export-capable periods”:
+  Amber appears to win by **reducing churn / preserving inventory during low-to-moderate,
+  often negative-FIT surplus-PV periods**, not by exporting harder
+- next abstraction remains state-transition / marginal energy value, with multi-step regret as
+  the label source and gate
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
