@@ -965,6 +965,31 @@ So the next branch should stop thinking “big export spikes” and start thinki
 - the builder now supports numeric target-bucket filters; the current first full label build
   should use `--feed-in-max-mwh 300 --net-load-max-kw 0 --horizons 6,12`
 
+**First full target-bucket state-label run:**
+- completed `state_transition_wb7_fitlt300_negload` with `700` filtered starts and `1,400`
+  horizon rows (`N=6`, `N=12`)
+- [eval/analyze_state_transition_labels.py](../eval/analyze_state_transition_labels.py)
+  summarizes the label dataset by horizon
+- all rows are in the intended `FIT < 300` + negative-net-load bucket
+- at `N=12`, oracle minus Hybrid averages:
+  - SoC delta: `-0.443 kWh`
+  - throughput/churn: `-0.540 kWh`
+  - import: `-0.466 kWh`
+  - export: `+0.005 kWh`
+  - prefix PnL: `+0.004`
+- at `N=12`, Amber minus Hybrid averages:
+  - SoC delta: `-0.104 kWh`
+  - throughput/churn: `-0.235 kWh`
+  - import: `-0.303 kWh`
+  - export: `-0.366 kWh`
+  - prefix PnL: `+0.024`
+- this corrects the previous shorthand: the signal is not mainly "preserve more inventory"
+  and not "export harder"; it is **reduce uneconomic churn and grid exchange during low-FIT
+  surplus-PV periods**
+- likely first model target should be a bounded churn / grid-exchange discipline signal or
+  state-transition value label, with marginal-SoC finite-difference labels deferred until this
+  cheaper label distribution is understood
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
