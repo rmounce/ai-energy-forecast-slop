@@ -755,3 +755,43 @@ energy-value label than to an export-uplift label. A useful first label family w
 - how much SoC should be carried 30-60 minutes forward during negative-net-load, low-FIT periods?
 - when should surplus PV be stored versus exported versus ignored?
 - what is the marginal value of one extra kWh in the battery at the end of the prefix?
+
+### First target-bucket state-transition labels
+
+The first full state-transition label build for the target bucket completed successfully:
+
+- output prefix: `state_transition_wb7_fitlt300_negload`
+- filter: `FIT < 300` and negative net load
+- horizons: `N=6` and `N=12`
+- rows: `700` filtered starts, `1,400` horizon rows
+- summary tool: [eval/analyze_state_transition_labels.py](../eval/analyze_state_transition_labels.py)
+
+The label read sharpens the interpretation again. In this target bucket, the realized-future
+oracle does **not** say "carry more inventory than Hybrid" on average.
+
+At `N=12`, oracle minus Hybrid averages:
+
+- SoC delta: `-0.443 kWh`
+- throughput/churn: `-0.540 kWh`
+- import: `-0.466 kWh`
+- export: `+0.005 kWh`
+- prefix PnL: `+0.004`
+
+At `N=12`, Amber minus Hybrid averages:
+
+- SoC delta: `-0.104 kWh`
+- throughput/churn: `-0.235 kWh`
+- import: `-0.303 kWh`
+- export: `-0.366 kWh`
+- prefix PnL: `+0.024`
+
+So the earlier "preserve inventory" phrase was too broad. The better current read is:
+
+- reduce uneconomic charge/discharge churn
+- reduce unnecessary grid exchange
+- avoid exporting surplus PV into weak feed-in conditions unless the path value supports it
+- learn a 30-60 minute state-transition discipline signal, not a simple export-uplift signal
+
+This points the next modeling pass toward a bounded churn / grid-exchange discipline target or
+state-transition value label. A finite-difference marginal-SoC run remains useful, but should be
+second-pass because it roughly doubles LP solve cost.

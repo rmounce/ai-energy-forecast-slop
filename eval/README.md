@@ -16,6 +16,7 @@
 | `build_tactical_action_regret_dataset.py` | Rebuild a per-step oracle-action / action-regret dataset from raw rolling-eval parquet using actual future tariffed prices plus the logged SoC and terminal constraints. Includes both first-action deltas and full-horizon forced-first-action regret fields. For long runs, use `--progress-every-rows` so logs show row-count progress and ETA. |
 | `analyze_tactical_action_regret.py` | Summarize oracle-action datasets by bucket (`FIT >= 300/500`, negative net load, oracle exporting/charging) and report whether Hybrid or Amber is actually closer to the oracle first action, plus mean full-horizon first-action regret where available. |
 | `build_state_transition_label_dataset.py` | Build the first state-value / inventory-discipline label dataset from rolling raw parquet. Solves the realized-future tariffed oracle, then compares oracle/target/comparator 30-60 minute path metrics. Optional `--soc-finite-diff-kwh` adds a finite-difference marginal initial-SoC value label, at the cost of one extra LP solve per row. |
+| `analyze_state_transition_labels.py` | Summarize state-transition label datasets by horizon: SoC movement, throughput/churn, import/export energy, prefix PnL, and direction rates for oracle/comparator relative to the target source. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
