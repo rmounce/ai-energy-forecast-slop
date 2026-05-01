@@ -1028,6 +1028,13 @@ So the next branch should stop thinking “big export spikes” and start thinki
 - implication: curtailment support improves eval fidelity, but it does not explain away the
   remaining Hybrid tactical loss; proceed with a short-horizon inventory-discipline / churn
   reduction target rather than returning to spike-export or first-action correction branches
+- physical-feasibility audit on the corrected raw run passed with `0` violations for all sources
+  at tolerance `1e-6`, covering simultaneous charge/discharge, simultaneous planned/realized
+  import/export, grid-balance residuals, SoC transition residuals/bounds, curtailment greater
+  than available PV, and import/export power bounds
+- implication: no further simulator refinement is currently blocking the modeling branch; keep
+  future simulation work focused on specific audit failures or explicitly modeled inverter
+  constraints
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

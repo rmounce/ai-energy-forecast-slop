@@ -865,3 +865,17 @@ reduced churn / grid exchange. At `N=12`, oracle minus Hybrid averages:
 This strengthens the current read: the next modeling branch should target short-horizon inventory
 discipline / reduced uneconomic churn, not spike export uplift, first-action imitation, or simply
 more PV curtailment.
+
+A physical-feasibility audit of the corrected raw run also passed cleanly:
+
+- audit output: `rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_curtail_20260501_physical_feasibility_summary.csv`
+- checked simultaneous charge/discharge
+- checked simultaneous planned and realized import/export
+- checked planned and realized grid-balance residuals
+- checked SoC transition residuals and SoC bounds
+- checked curtailment against available PV
+- checked import/export bounds
+- result: `0` violations for every source and every check at tolerance `1e-6`
+
+That makes further simulator work a lower-priority branch for now. The corrected run is physically
+clean enough to use as the next state-value / inventory-discipline modeling gate.
