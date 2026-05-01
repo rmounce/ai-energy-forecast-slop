@@ -233,6 +233,24 @@ def _load_pv_5m_from_30m(actuals_30m: pd.DataFrame) -> pd.Series:
     return pv_5m
 
 
+def _load_load_5m_from_30m(actuals_30m: pd.DataFrame) -> pd.Series:
+    load_5m = _expand_actual_30m_power_to_5m(actuals_30m, "power_load")
+    if load_5m.empty:
+        return load_5m
+    load_kw = load_5m / 1000.0
+    load_kw.name = "load_kw"
+    return load_kw.astype(np.float64)
+
+
+def _load_pv_kw_5m_from_30m(actuals_30m: pd.DataFrame) -> pd.Series:
+    pv_5m = _expand_actual_30m_power_to_5m(actuals_30m, "power_pv")
+    if pv_5m.empty:
+        return pv_5m
+    pv_kw = pv_5m / 1000.0
+    pv_kw.name = "pv_kw"
+    return pv_kw.astype(np.float64)
+
+
 def _expand_actual_30m_power_to_5m(actuals_30m: pd.DataFrame, column: str) -> pd.Series:
     if column not in actuals_30m.columns:
         return pd.Series(dtype=np.float64)
@@ -522,6 +540,8 @@ class ForecastProviders:
         self.actuals_5m = _load_actuals_5m()
         self.actuals_30m = _load_actuals_30m()
         self.pv_5m = _load_pv_5m_from_30m(self.actuals_30m)
+        self.load_kw_5m = _load_load_5m_from_30m(self.actuals_30m)
+        self.pv_kw_5m = _load_pv_kw_5m_from_30m(self.actuals_30m)
         self.net_load_5m = _load_net_load_5m_from_30m(self.actuals_30m)
         self.p5min_runs, self.p5_run_times_sorted, self.p5_run_times_ns = _load_p5min_runs()
         tactical_model_dir = Path(args.tactical_model_dir)
@@ -838,10 +858,21 @@ def simulate_stepwise(
         actual_general_prices = tariffed_actuals["general_price_mwh"]
         actual_feed_in_prices = tariffed_actuals["feed_in_price_mwh"]
         actual_net_load_kw = providers.net_load_5m.reindex(timestamps).ffill().bfill()
+        actual_load_kw = providers.load_kw_5m.reindex(timestamps).ffill().bfill()
+        actual_pv_kw = providers.pv_kw_5m.reindex(timestamps).ffill().bfill()
+        use_split_load_pv = (
+            not actual_load_kw.empty
+            and not actual_pv_kw.empty
+            and actual_load_kw.notna().any()
+            and actual_pv_kw.notna().any()
+        )
     elif economic_mode == "price_only":
         actual_general_prices = None
         actual_feed_in_prices = None
         actual_net_load_kw = None
+        actual_load_kw = None
+        actual_pv_kw = None
+        use_split_load_pv = False
     else:
         raise ValueError(f"Unsupported economic_mode: {economic_mode}")
 
@@ -859,6 +890,12 @@ def simulate_stepwise(
         )
         actual_net_load_step_kw = (
             float(actual_net_load_kw.asof(ts)) if actual_net_load_kw is not None else float("nan")
+        )
+        actual_load_step_kw = (
+            float(actual_load_kw.asof(ts)) if actual_load_kw is not None else float("nan")
+        )
+        actual_pv_step_kw = (
+            float(actual_pv_kw.asof(ts)) if actual_pv_kw is not None else float("nan")
         )
 
         for contract in source_contracts:
@@ -1006,6 +1043,8 @@ def simulate_stepwise(
             forecast_general_price_mwh = None
             forecast_feed_in_price_mwh = None
             forecast_net_load_kw = None
+            forecast_load_kw = None
+            forecast_pv_kw = None
             sell_urgency_applied = False
             forecast_feed_in_mean_next_1h_mwh = float("nan")
             forecast_feed_in_mean_next_4h_mwh = float("nan")
@@ -1067,6 +1106,16 @@ def simulate_stepwise(
                 forecast_net_load_kw = (
                     providers.net_load_5m.reindex(curve_idx).ffill().bfill().to_numpy(dtype=np.float64, copy=True)
                 )
+                if use_split_load_pv:
+                    maybe_load_kw = (
+                        providers.load_kw_5m.reindex(curve_idx).ffill().bfill().to_numpy(dtype=np.float64, copy=True)
+                    )
+                    maybe_pv_kw = (
+                        providers.pv_kw_5m.reindex(curve_idx).ffill().bfill().to_numpy(dtype=np.float64, copy=True)
+                    )
+                    if np.isfinite(maybe_load_kw).all() and np.isfinite(maybe_pv_kw).all():
+                        forecast_load_kw = maybe_load_kw
+                        forecast_pv_kw = maybe_pv_kw
             if dual_terminal_scale > 0.0:
                 probe = solve_lp_dispatch(
                     curve,
@@ -1074,6 +1123,8 @@ def simulate_stepwise(
                     import_prices_mwh=None if economic_mode == "price_only" else forecast_general_price_mwh,
                     export_prices_mwh=None if economic_mode == "price_only" else forecast_feed_in_price_mwh,
                     net_load_forecast_kw=None if economic_mode == "price_only" else forecast_net_load_kw,
+                    load_forecast_kw=None if economic_mode == "price_only" else forecast_load_kw,
+                    pv_forecast_kw=None if economic_mode == "price_only" else forecast_pv_kw,
                     terminal_energy_value_per_kwh=0.0,
                     min_terminal_soc_kwh=min_terminal_soc_kwh,
                     max_terminal_soc_kwh=max_terminal_soc_kwh,
@@ -1093,6 +1144,8 @@ def simulate_stepwise(
                 import_prices_mwh=forecast_general_price_mwh,
                 export_prices_mwh=forecast_feed_in_price_mwh,
                 net_load_forecast_kw=forecast_net_load_kw,
+                load_forecast_kw=forecast_load_kw,
+                pv_forecast_kw=forecast_pv_kw,
                 terminal_energy_value_per_kwh=applied_terminal_energy_value_per_kwh,
                 extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
                 extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
@@ -1108,7 +1161,10 @@ def simulate_stepwise(
             grid_export0 = float(solve["grid_export_kw"][0]) if len(solve["grid_export_kw"]) else 0.0
             curtail0 = float(solve.get("curtail_kw", [0.0])[0]) if len(solve.get("curtail_kw", [])) else 0.0
             if economic_mode == "netload_tariffed":
-                grid_kw = actual_net_load_step_kw + c0 - d0 * EFF_D + curtail0
+                if np.isfinite(actual_load_step_kw) and np.isfinite(actual_pv_step_kw):
+                    grid_kw = actual_load_step_kw - actual_pv_step_kw + c0 - d0 * EFF_D + curtail0
+                else:
+                    grid_kw = actual_net_load_step_kw + c0 - d0 * EFF_D + curtail0
                 realized_grid_import_kw = max(grid_kw, 0.0)
                 realized_grid_export_kw = max(-grid_kw, 0.0)
                 pnl = (
@@ -1134,6 +1190,8 @@ def simulate_stepwise(
                 "actual_general_price_mwh": actual_general_price_mwh,
                 "actual_feed_in_price_mwh": actual_feed_in_price_mwh,
                 "actual_net_load_kw": actual_net_load_step_kw,
+                "actual_load_kw": actual_load_step_kw,
+                "actual_pv_kw": actual_pv_step_kw,
                 "forecast_step0_mwh": float(curve[0]),
                 "forecast_mean_next_1h_mwh": forecast_mean_next_1h_mwh,
                 "forecast_mean_next_4h_mwh": forecast_mean_next_4h_mwh,

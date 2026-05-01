@@ -55,6 +55,8 @@ def _forced_prefix_objective(
     import_prices_mwh: np.ndarray,
     export_prices_mwh: np.ndarray,
     net_load_forecast_kw: np.ndarray,
+    load_forecast_kw: np.ndarray | None,
+    pv_forecast_kw: np.ndarray | None,
     soc_prev_kwh: float,
     prefix_charge_kw: np.ndarray,
     prefix_discharge_kw: np.ndarray,
@@ -71,6 +73,8 @@ def _forced_prefix_objective(
         import_prices_mwh=import_prices_mwh.copy(),
         export_prices_mwh=export_prices_mwh.copy(),
         net_load_forecast_kw=net_load_forecast_kw.copy(),
+        load_forecast_kw=None if load_forecast_kw is None else load_forecast_kw.copy(),
+        pv_forecast_kw=None if pv_forecast_kw is None else pv_forecast_kw.copy(),
         terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
         extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
         extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
@@ -85,6 +89,16 @@ def _forced_prefix_objective(
     return float(solve["objective_value"]), True
 
 
+def _split_load_pv_arrays_or_none(market_df: pd.DataFrame) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if "actual_load_kw" not in market_df.columns or "actual_pv_kw" not in market_df.columns:
+        return None, None
+    load_kw = market_df["actual_load_kw"].to_numpy(dtype=np.float64, copy=True)
+    pv_kw = market_df["actual_pv_kw"].to_numpy(dtype=np.float64, copy=True)
+    if not np.isfinite(load_kw).all() or not np.isfinite(pv_kw).all():
+        return None, None
+    return load_kw, pv_kw
+
+
 def build_dataset(
     raw_df: pd.DataFrame,
     *,
@@ -97,15 +111,11 @@ def build_dataset(
     raw_df["time"] = pd.to_datetime(raw_df["time"], utc=True)
     raw_df = raw_df.sort_values(["source", "time"], kind="stable").reset_index(drop=True)
 
+    market_cols = ["time", "actual_general_price_mwh", "actual_feed_in_price_mwh", "actual_net_load_kw"]
+    if "actual_load_kw" in raw_df.columns and "actual_pv_kw" in raw_df.columns:
+        market_cols.extend(["actual_load_kw", "actual_pv_kw"])
     market_df = (
-        raw_df[
-            [
-                "time",
-                "actual_general_price_mwh",
-                "actual_feed_in_price_mwh",
-                "actual_net_load_kw",
-            ]
-        ]
+        raw_df[market_cols]
         .drop_duplicates("time")
         .sort_values("time", kind="stable")
         .set_index("time")
@@ -144,6 +154,7 @@ def build_dataset(
         import_prices_mwh = future["actual_general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
         export_prices_mwh = future["actual_feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
         net_load_forecast_kw = future["actual_net_load_kw"].to_numpy(dtype=np.float64, copy=True)
+        load_forecast_kw, pv_forecast_kw = _split_load_pv_arrays_or_none(future)
 
         oracle = solve_lp_dispatch(
             import_prices_mwh.copy(),
@@ -151,6 +162,8 @@ def build_dataset(
             import_prices_mwh=import_prices_mwh.copy(),
             export_prices_mwh=export_prices_mwh.copy(),
             net_load_forecast_kw=net_load_forecast_kw.copy(),
+            load_forecast_kw=None if load_forecast_kw is None else load_forecast_kw.copy(),
+            pv_forecast_kw=None if pv_forecast_kw is None else pv_forecast_kw.copy(),
             terminal_energy_value_per_kwh=float(a_row["terminal_energy_value_per_kwh"]),
             extra_terminal_energy_value_per_kwh=float(a_row.get("extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
             extra_terminal_energy_floor_kwh=_none_if_nan(a_row.get("extra_terminal_energy_floor_kwh", None)),
@@ -175,6 +188,8 @@ def build_dataset(
             import_prices_mwh=import_prices_mwh,
             export_prices_mwh=export_prices_mwh,
             net_load_forecast_kw=net_load_forecast_kw,
+            load_forecast_kw=load_forecast_kw,
+            pv_forecast_kw=pv_forecast_kw,
             soc_prev_kwh=float(a_row["soc_prev_kwh"]),
             prefix_charge_kw=a_prefix["charge_kw"].to_numpy(dtype=np.float64, copy=True),
             prefix_discharge_kw=a_prefix["discharge_kw"].to_numpy(dtype=np.float64, copy=True),
@@ -189,6 +204,8 @@ def build_dataset(
             import_prices_mwh=import_prices_mwh,
             export_prices_mwh=export_prices_mwh,
             net_load_forecast_kw=net_load_forecast_kw,
+            load_forecast_kw=load_forecast_kw,
+            pv_forecast_kw=pv_forecast_kw,
             soc_prev_kwh=float(a_row["soc_prev_kwh"]),
             prefix_charge_kw=b_prefix["charge_kw"].to_numpy(dtype=np.float64, copy=True),
             prefix_discharge_kw=b_prefix["discharge_kw"].to_numpy(dtype=np.float64, copy=True),
@@ -208,6 +225,8 @@ def build_dataset(
                 "horizon_steps_available": horizon_available,
                 "actual_feed_in_price_mwh": float(a_row["actual_feed_in_price_mwh"]),
                 "actual_net_load_kw": float(a_row["actual_net_load_kw"]),
+                "actual_load_kw": float(a_row.get("actual_load_kw", np.nan)),
+                "actual_pv_kw": float(a_row.get("actual_pv_kw", np.nan)),
                 "soc_prev_kwh": float(a_row["soc_prev_kwh"]),
                 "oracle_objective_value": float(oracle["objective_value"]),
                 "a_source": source_a,

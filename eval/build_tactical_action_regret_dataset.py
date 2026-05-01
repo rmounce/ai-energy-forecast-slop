@@ -62,8 +62,14 @@ def _step_components(
     actual_general_price_mwh: float,
     actual_feed_in_price_mwh: float,
     actual_net_load_kw: float,
+    actual_load_kw: float = float("nan"),
+    actual_pv_kw: float = float("nan"),
 ) -> dict[str, float]:
-    grid_kw = float(actual_net_load_kw) + float(charge_kw) - float(discharge_kw) * EFF_D + float(curtail_kw)
+    if np.isfinite(actual_load_kw) and np.isfinite(actual_pv_kw):
+        base_grid_kw = float(actual_load_kw) - float(actual_pv_kw)
+    else:
+        base_grid_kw = float(actual_net_load_kw)
+    grid_kw = base_grid_kw + float(charge_kw) - float(discharge_kw) * EFF_D + float(curtail_kw)
     realized_grid_import_kw = max(grid_kw, 0.0)
     realized_grid_export_kw = max(-grid_kw, 0.0)
     import_cost = realized_grid_import_kw * (actual_general_price_mwh / 1000.0) * INTERVAL_H
@@ -85,12 +91,11 @@ def _forced_first_action_total_objective(
     charge_kw: float,
     discharge_kw: float,
     soc_prev_kwh: float,
-    actual_general_price_mwh: float,
-    actual_feed_in_price_mwh: float,
-    actual_net_load_kw: float,
     import_prices_mwh: np.ndarray,
     export_prices_mwh: np.ndarray,
     net_load_forecast_kw: np.ndarray,
+    load_forecast_kw: np.ndarray | None,
+    pv_forecast_kw: np.ndarray | None,
     terminal_energy_value_per_kwh: float,
     extra_terminal_energy_value_per_kwh: float,
     extra_terminal_energy_floor_kwh: float | None,
@@ -104,6 +109,8 @@ def _forced_first_action_total_objective(
         import_prices_mwh=import_prices_mwh.copy(),
         export_prices_mwh=export_prices_mwh.copy(),
         net_load_forecast_kw=net_load_forecast_kw.copy(),
+        load_forecast_kw=None if load_forecast_kw is None else load_forecast_kw.copy(),
+        pv_forecast_kw=None if pv_forecast_kw is None else pv_forecast_kw.copy(),
         terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
         extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
         extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
@@ -118,6 +125,16 @@ def _forced_first_action_total_objective(
     return float(forced["objective_value"]), True
 
 
+def _split_load_pv_arrays_or_none(market_df: pd.DataFrame) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if "actual_load_kw" not in market_df.columns or "actual_pv_kw" not in market_df.columns:
+        return None, None
+    load_kw = market_df["actual_load_kw"].to_numpy(dtype=np.float64, copy=True)
+    pv_kw = market_df["actual_pv_kw"].to_numpy(dtype=np.float64, copy=True)
+    if not np.isfinite(load_kw).all() or not np.isfinite(pv_kw).all():
+        return None, None
+    return load_kw, pv_kw
+
+
 def build_dataset(
     raw_df: pd.DataFrame,
     *,
@@ -129,15 +146,11 @@ def build_dataset(
     raw_df["time"] = pd.to_datetime(raw_df["time"], utc=True)
     raw_df = raw_df.sort_values(["source", "time"], kind="stable").reset_index(drop=True)
 
+    market_cols = ["time", "actual_general_price_mwh", "actual_feed_in_price_mwh", "actual_net_load_kw"]
+    if "actual_load_kw" in raw_df.columns and "actual_pv_kw" in raw_df.columns:
+        market_cols.extend(["actual_load_kw", "actual_pv_kw"])
     market_df = (
-        raw_df[
-            [
-                "time",
-                "actual_general_price_mwh",
-                "actual_feed_in_price_mwh",
-                "actual_net_load_kw",
-            ]
-        ]
+        raw_df[market_cols]
         .drop_duplicates("time")
         .sort_values("time", kind="stable")
         .reset_index(drop=True)
@@ -178,6 +191,7 @@ def build_dataset(
         import_prices_mwh = future["actual_general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
         export_prices_mwh = future["actual_feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
         net_load_forecast_kw = future["actual_net_load_kw"].to_numpy(dtype=np.float64, copy=True)
+        load_forecast_kw, pv_forecast_kw = _split_load_pv_arrays_or_none(future)
         prices_mwh = import_prices_mwh.copy()
 
         solve = solve_lp_dispatch(
@@ -186,6 +200,8 @@ def build_dataset(
             import_prices_mwh=import_prices_mwh,
             export_prices_mwh=export_prices_mwh,
             net_load_forecast_kw=net_load_forecast_kw,
+            load_forecast_kw=load_forecast_kw,
+            pv_forecast_kw=pv_forecast_kw,
             terminal_energy_value_per_kwh=float(row.terminal_energy_value_per_kwh),
             extra_terminal_energy_value_per_kwh=float(getattr(row, "extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
             extra_terminal_energy_floor_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_floor_kwh", None)),
@@ -205,6 +221,8 @@ def build_dataset(
             actual_general_price_mwh=float(row.actual_general_price_mwh),
             actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
             actual_net_load_kw=float(row.actual_net_load_kw),
+            actual_load_kw=float(getattr(row, "actual_load_kw", np.nan)),
+            actual_pv_kw=float(getattr(row, "actual_pv_kw", np.nan)),
         )
         observed_step = _step_components(
             charge_kw=float(row.charge_kw),
@@ -213,17 +231,18 @@ def build_dataset(
             actual_general_price_mwh=float(row.actual_general_price_mwh),
             actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
             actual_net_load_kw=float(row.actual_net_load_kw),
+            actual_load_kw=float(getattr(row, "actual_load_kw", np.nan)),
+            actual_pv_kw=float(getattr(row, "actual_pv_kw", np.nan)),
         )
         observed_total_objective, observed_total_success = _forced_first_action_total_objective(
             charge_kw=float(row.charge_kw),
             discharge_kw=float(row.discharge_kw),
             soc_prev_kwh=float(row.soc_prev_kwh),
-            actual_general_price_mwh=float(row.actual_general_price_mwh),
-            actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
-            actual_net_load_kw=float(row.actual_net_load_kw),
             import_prices_mwh=import_prices_mwh,
             export_prices_mwh=export_prices_mwh,
             net_load_forecast_kw=net_load_forecast_kw,
+            load_forecast_kw=load_forecast_kw,
+            pv_forecast_kw=pv_forecast_kw,
             terminal_energy_value_per_kwh=float(row.terminal_energy_value_per_kwh),
             extra_terminal_energy_value_per_kwh=float(getattr(row, "extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
             extra_terminal_energy_floor_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_floor_kwh", None)),
@@ -241,6 +260,8 @@ def build_dataset(
             "actual_general_price_mwh": float(row.actual_general_price_mwh),
             "actual_feed_in_price_mwh": float(row.actual_feed_in_price_mwh),
             "actual_net_load_kw": float(row.actual_net_load_kw),
+            "actual_load_kw": float(getattr(row, "actual_load_kw", np.nan)),
+            "actual_pv_kw": float(getattr(row, "actual_pv_kw", np.nan)),
             "strategic_soc_target_kwh": _none_if_nan(getattr(row, "strategic_soc_target_kwh", None)),
             "terminal_energy_value_per_kwh": float(row.terminal_energy_value_per_kwh),
             "min_terminal_soc_kwh": _none_if_nan(getattr(row, "min_terminal_soc_kwh", None)),
@@ -293,17 +314,18 @@ def build_dataset(
                 actual_general_price_mwh=float(row.actual_general_price_mwh),
                 actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
                 actual_net_load_kw=float(row.actual_net_load_kw),
+                actual_load_kw=float(getattr(row, "actual_load_kw", np.nan)),
+                actual_pv_kw=float(getattr(row, "actual_pv_kw", np.nan)),
             )
             comp_total_objective, comp_total_success = _forced_first_action_total_objective(
                 charge_kw=float(comp_row["charge_kw"]),
                 discharge_kw=float(comp_row["discharge_kw"]),
                 soc_prev_kwh=float(row.soc_prev_kwh),
-                actual_general_price_mwh=float(row.actual_general_price_mwh),
-                actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
-                actual_net_load_kw=float(row.actual_net_load_kw),
                 import_prices_mwh=import_prices_mwh,
                 export_prices_mwh=export_prices_mwh,
                 net_load_forecast_kw=net_load_forecast_kw,
+                load_forecast_kw=load_forecast_kw,
+                pv_forecast_kw=pv_forecast_kw,
                 terminal_energy_value_per_kwh=float(row.terminal_energy_value_per_kwh),
                 extra_terminal_energy_value_per_kwh=float(getattr(row, "extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
                 extra_terminal_energy_floor_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_floor_kwh", None)),

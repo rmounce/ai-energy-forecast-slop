@@ -70,6 +70,16 @@ def _optional_float(row: object, name: str) -> float:
         return float("nan")
 
 
+def _split_load_pv_arrays_or_none(market_df: pd.DataFrame) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if "actual_load_kw" not in market_df.columns or "actual_pv_kw" not in market_df.columns:
+        return None, None
+    load_kw = market_df["actual_load_kw"].to_numpy(dtype=np.float64, copy=True)
+    pv_kw = market_df["actual_pv_kw"].to_numpy(dtype=np.float64, copy=True)
+    if not np.isfinite(load_kw).all() or not np.isfinite(pv_kw).all():
+        return None, None
+    return load_kw, pv_kw
+
+
 def _path_metrics(
     *,
     charge_kw: np.ndarray,
@@ -106,11 +116,15 @@ def _path_metrics(
         else np.asarray(curtail_kw[:actual_steps], dtype=np.float64)
     )
     future = market_df.head(actual_steps)
-    net_load = future["actual_net_load_kw"].to_numpy(dtype=np.float64)
+    load_kw, pv_kw = _split_load_pv_arrays_or_none(future)
+    if load_kw is not None and pv_kw is not None:
+        base_grid_kw = load_kw - pv_kw
+    else:
+        base_grid_kw = future["actual_net_load_kw"].to_numpy(dtype=np.float64)
     import_price = future["actual_general_price_mwh"].to_numpy(dtype=np.float64) / 1000.0
     export_price = future["actual_feed_in_price_mwh"].to_numpy(dtype=np.float64) / 1000.0
 
-    grid_kw = net_load + c - d * EFF_D + curtail
+    grid_kw = base_grid_kw + c - d * EFF_D + curtail
     grid_import_kw = np.maximum(grid_kw, 0.0)
     grid_export_kw = np.maximum(-grid_kw, 0.0)
     import_cost = float(np.sum(grid_import_kw * import_price) * INTERVAL_H)
@@ -185,8 +199,11 @@ def build_dataset(
     raw_df["time"] = pd.to_datetime(raw_df["time"], utc=True)
     raw_df = raw_df.sort_values(["source", "time"], kind="stable").reset_index(drop=True)
 
+    market_cols = ["time", "actual_general_price_mwh", "actual_feed_in_price_mwh", "actual_net_load_kw"]
+    if "actual_load_kw" in raw_df.columns and "actual_pv_kw" in raw_df.columns:
+        market_cols.extend(["actual_load_kw", "actual_pv_kw"])
     market_df = (
-        raw_df[["time", "actual_general_price_mwh", "actual_feed_in_price_mwh", "actual_net_load_kw"]]
+        raw_df[market_cols]
         .drop_duplicates("time")
         .sort_values("time", kind="stable")
         .set_index("time")
@@ -231,6 +248,7 @@ def build_dataset(
         import_prices_mwh = future["actual_general_price_mwh"].to_numpy(dtype=np.float64, copy=True)
         export_prices_mwh = future["actual_feed_in_price_mwh"].to_numpy(dtype=np.float64, copy=True)
         net_load_kw = future["actual_net_load_kw"].to_numpy(dtype=np.float64, copy=True)
+        load_kw, pv_kw = _split_load_pv_arrays_or_none(future)
 
         oracle = solve_lp_dispatch(
             import_prices_mwh.copy(),
@@ -238,6 +256,8 @@ def build_dataset(
             import_prices_mwh=import_prices_mwh.copy(),
             export_prices_mwh=export_prices_mwh.copy(),
             net_load_forecast_kw=net_load_kw.copy(),
+            load_forecast_kw=None if load_kw is None else load_kw.copy(),
+            pv_forecast_kw=None if pv_kw is None else pv_kw.copy(),
             terminal_energy_value_per_kwh=float(row.terminal_energy_value_per_kwh),
             extra_terminal_energy_value_per_kwh=float(getattr(row, "extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
             extra_terminal_energy_floor_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_floor_kwh", None)),
@@ -258,6 +278,8 @@ def build_dataset(
                     import_prices_mwh=import_prices_mwh.copy(),
                     export_prices_mwh=export_prices_mwh.copy(),
                     net_load_forecast_kw=net_load_kw.copy(),
+                    load_forecast_kw=None if load_kw is None else load_kw.copy(),
+                    pv_forecast_kw=None if pv_kw is None else pv_kw.copy(),
                     terminal_energy_value_per_kwh=float(row.terminal_energy_value_per_kwh),
                     extra_terminal_energy_value_per_kwh=float(getattr(row, "extra_terminal_energy_value_per_kwh", 0.0) or 0.0),
                     extra_terminal_energy_floor_kwh=_none_if_nan(getattr(row, "extra_terminal_energy_floor_kwh", None)),
@@ -299,6 +321,8 @@ def build_dataset(
                 "actual_general_price_mwh": float(row.actual_general_price_mwh),
                 "actual_feed_in_price_mwh": float(row.actual_feed_in_price_mwh),
                 "actual_net_load_kw": float(row.actual_net_load_kw),
+                "actual_load_kw": _optional_float(row, "actual_load_kw"),
+                "actual_pv_kw": _optional_float(row, "actual_pv_kw"),
                 "filter_feed_in_min_mwh": feed_in_min_mwh,
                 "filter_feed_in_max_mwh": feed_in_max_mwh,
                 "filter_net_load_min_kw": net_load_min_kw,
