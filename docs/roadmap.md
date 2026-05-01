@@ -1098,6 +1098,22 @@ So the next branch should stop thinking “big export spikes” and start thinki
     suppresses too much useful Window B surplus/export behavior. Keep the hook for diagnostics,
     but do not pursue broad churn friction as the next deployment candidate without a sharper
     opportunity-aware gate.
+- tactical-model diagnostic pivot is now implemented as the next branch:
+  - added `eval/analyze_tier1_dispatch_relevant_errors.py` to inspect Tier 1 forecast shape from
+    rolling raw parquet outputs before training another model candidate
+  - the script records the contract mismatch explicitly: Tier 1 is trained on raw wholesale RRP,
+    while the production gate is tariffed site economics with separate import/feed-in prices
+  - outputs include source/bucket forecast errors, Amber-minus-Hybrid pairwise diagnostics, top
+    event rows, an enriched row parquet, and a model metadata audit for legacy vs tariff-aware
+    Tier 1 artifacts
+  - Window B 7-day smoke joined the `N=12` forced-prefix attribution and state-transition labels
+    successfully under prefix `tier1_dispatch_relevance_wb7_smoke_20260501`
+  - first smoke read keeps the focus on ordinary surplus-PV path quality: in `FIT < 300` with
+    negative net load, Amber has lower forced-prefix regret more often than Hybrid (`36.0%` vs
+    `23.1%`) while doing less charge/discharge/import/export over the pinned prefix; the tool also
+    exposes a meaningful feed-in 1h shape gap in that bucket
+  - next decision should come from running this diagnostic across Window A and the falsification
+    slices, not from another control-only heuristic or immediate retrain
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

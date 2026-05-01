@@ -19,6 +19,7 @@
 | `build_state_transition_label_dataset.py` | Build the first state-value / inventory-discipline label dataset from rolling raw parquet. Solves the realized-future tariffed oracle, then compares oracle/target/comparator 30-60 minute path metrics. Optional `--soc-finite-diff-kwh` adds a finite-difference marginal initial-SoC value label, at the cost of one extra LP solve per row. |
 | `analyze_state_transition_labels.py` | Summarize state-transition label datasets by horizon: SoC movement, throughput/churn, import/export energy, prefix PnL, and direction rates for oracle/comparator relative to the target source. |
 | `train_state_transition_value_model.py` | Train a small diagnostic LightGBM model on state-transition labels using production-side/current-time features. Reports whether oracle-vs-target path labels are learnable before any control integration. |
+| `analyze_tier1_dispatch_relevant_errors.py` | Dispatch-relevant Tier 1 tactical forecast diagnostic from rolling raw parquet outputs. Compares Amber-vs-Hybrid horizon-summary forecast shape, tariffed buy/sell error, act-now-vs-wait ordering, and optional forced-prefix / state-transition labels by regime bucket. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -128,6 +129,36 @@ Treat this as a signal test, not a deployable controller. The model uses current
 summary features and predicts oracle-vs-target path labels such as prefix PnL, SoC delta, churn,
 import/export, and curtailment deltas. `--labels` also accepts a comma-separated list of label
 files so multiple corrected windows/buckets can be pooled without hand-stitching.
+
+When the branch pivots back from control probes to the tactical model itself, use
+`analyze_tier1_dispatch_relevant_errors.py` before training another candidate. It works from
+rolling raw parquet outputs, so it only sees step-0 and persisted horizon-summary forecast
+columns rather than the full h0-h11 tactical vector. That is intentional for this first pass:
+it audits the known mismatch between Tier 1's raw wholesale-RRP target and the tariffed site
+economics gate, then compares available 1h/4h/14h forecast-shape proxies with realized
+tariffed import/feed-in outcomes.
+
+Example Window B diagnostic:
+
+```bash
+./.venv/bin/python eval/analyze_tier1_dispatch_relevant_errors.py \
+  --raw rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_curtail_20260501_raw.parquet \
+  --source-a amber_tactical_hybrid_strategic \
+  --source-b model_a_hybrid \
+  --prefix-attribution wb7_prefix_n12_forced_prefix_path_attribution.csv \
+  --state-labels state_transition_wb7_fitlt300_negload_curtail_20260501_state_transition_labels.csv \
+  --model-dir models/lgbm_tactical \
+  --model-dir models/lgbm_tactical_tariffaware_v1 \
+  --output-prefix tier1_dispatch_relevance_wb7_smoke_20260501
+```
+
+Primary outputs:
+
+- `{prefix}_tier1_dispatch_contract_audit.json`: target/objective mismatch and model metadata
+- `{prefix}_tier1_dispatch_error_by_source_bucket.csv`: per-source forecast/action diagnostics
+- `{prefix}_tier1_dispatch_error_pairwise_by_bucket.csv`: Amber-minus-Hybrid tactical comparison
+- `{prefix}_tier1_dispatch_error_events.csv`: top event rows where Amber beats Hybrid
+- `{prefix}_tier1_dispatch_error_rows.parquet`: enriched row-level table for follow-up notebooks/scripts
 
 ---
 
