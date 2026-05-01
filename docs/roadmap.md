@@ -1124,6 +1124,18 @@ So the next branch should stop thinking “big export spikes” and start thinki
   - implication: do not train a narrow `FIT < 300` / negative-net-load tactical model yet; first
     inspect event rows and add a fuller h0-h11 forecast-vector diagnostic so the model branch is
     aimed at the actual misranking mechanism rather than a bucket label alone
+  - added `eval/analyze_tier1_tactical_vector_errors.py` for that fuller h0-h11 diagnostic:
+    - reconstructs Amber APF and Tier 1 q50 first-hour tactical vectors from local inputs
+    - compares per-horizon tariffed feed-in/general-price errors by dispatch bucket
+    - supports `--max-times` for smaller smokes; real-window runs should use `nice -n 19`
+  - Window B 7-day legacy vector pass completed under prefix `tier1_vector_wb7_legacy_20260501`
+  - first read: the main shape difference is horizon-dependent, not a simple level bias. In
+    `FIT < 300` / negative net load, Amber's feed-in curve is lower than Hybrid's from h1-h11
+    by roughly `3-7 $/MWh`, while in `FIT >= 300` Amber is much higher than Hybrid in the first
+    15-20 minutes and materially lower later in the hour. This explains why a broad bucket or
+    act-now classifier is too crude for the next model branch.
+  - immediate next diagnostic should run the same vector tool across Window A, Window B excluding
+    `2025-09-01`, and the midfit slice before choosing a target transformation or calibrator
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

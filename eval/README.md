@@ -20,6 +20,7 @@
 | `analyze_state_transition_labels.py` | Summarize state-transition label datasets by horizon: SoC movement, throughput/churn, import/export energy, prefix PnL, and direction rates for oracle/comparator relative to the target source. |
 | `train_state_transition_value_model.py` | Train a small diagnostic LightGBM model on state-transition labels using production-side/current-time features. Reports whether oracle-vs-target path labels are learnable before any control integration. |
 | `analyze_tier1_dispatch_relevant_errors.py` | Dispatch-relevant Tier 1 tactical forecast diagnostic from rolling raw parquet outputs. Compares Amber-vs-Hybrid horizon-summary forecast shape, tariffed buy/sell error, act-now-vs-wait ordering, and optional forced-prefix / state-transition labels by regime bucket. |
+| `analyze_tier1_tactical_vector_errors.py` | Reconstruct full h0-h11 first-hour tactical vectors for Amber APF and Tier 1 from local forecast/model inputs, then compare per-horizon tariffed import/feed-in errors and act-now-vs-wait shape by bucket. Use `nice` for real-window runs because it reloads the large local Amber forecast log. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -160,6 +161,28 @@ Primary outputs:
 - `{prefix}_tier1_dispatch_error_pairwise_by_bucket.csv`: Amber-minus-Hybrid tactical comparison
 - `{prefix}_tier1_dispatch_error_events.csv`: top event rows where Amber beats Hybrid
 - `{prefix}_tier1_dispatch_error_rows.parquet`: enriched row-level table for follow-up notebooks/scripts
+
+If the horizon-summary diagnostic points at a tactical shape problem, follow with the full first-hour
+vector diagnostic. It reconstructs Amber APF and Tier 1 q50 h0-h11 curves; it does not need the TFT
+checkpoint because it only inspects the first 60 minutes.
+
+```bash
+nice -n 19 ./.venv/bin/python eval/analyze_tier1_tactical_vector_errors.py \
+  --raw rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_curtail_20260501_raw.parquet \
+  --source-a amber_tactical_hybrid_strategic \
+  --source-b model_a_hybrid \
+  --tactical-model-dir models/lgbm_tactical \
+  --output-prefix tier1_vector_wb7_legacy_20260501
+```
+
+Use `--max-times 288` for a one-day smoke before a full slice. Primary outputs:
+
+- `{prefix}_tier1_vector_by_source_bucket.csv`
+- `{prefix}_tier1_vector_by_source_bucket_horizon.csv`
+- `{prefix}_tier1_vector_pairwise_by_bucket.csv`
+- `{prefix}_tier1_vector_pairwise_by_bucket_horizon.csv`
+- `{prefix}_tier1_vector_events.csv`
+- `{prefix}_tier1_vector_rows.parquet`
 
 ---
 
