@@ -99,11 +99,11 @@ The current target bucket from the forced-prefix attribution is:
 
 ```bash
 ./.venv/bin/python eval/build_state_transition_label_dataset.py \
-  --raw rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_20260425_raw.parquet \
+  --raw rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_curtail_20260501_raw.parquet \
   --horizons 6,12 \
   --feed-in-max-mwh 300 \
   --net-load-max-kw 0 \
-  --output-prefix state_transition_wb7_fitlt300_negload
+  --output-prefix state_transition_wb7_fitlt300_negload_curtail_20260501
 ```
 
 Use `--max-rows` for smoke tests. Add `--soc-finite-diff-kwh 1.0` only after the cheaper
