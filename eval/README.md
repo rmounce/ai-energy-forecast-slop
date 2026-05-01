@@ -18,6 +18,7 @@
 | `analyze_dispatch_physical_feasibility.py` | Audit rolling raw parquet outputs for simple physical artifacts: simultaneous charge/discharge, simultaneous import/export, grid-balance residuals, SoC transition drift, curtailing more PV than available, and power/SoC bound violations. |
 | `build_state_transition_label_dataset.py` | Build the first state-value / inventory-discipline label dataset from rolling raw parquet. Solves the realized-future tariffed oracle, then compares oracle/target/comparator 30-60 minute path metrics. Optional `--soc-finite-diff-kwh` adds a finite-difference marginal initial-SoC value label, at the cost of one extra LP solve per row. |
 | `analyze_state_transition_labels.py` | Summarize state-transition label datasets by horizon: SoC movement, throughput/churn, import/export energy, prefix PnL, and direction rates for oracle/comparator relative to the target source. |
+| `train_state_transition_value_model.py` | Train a small diagnostic LightGBM model on state-transition labels using production-side/current-time features. Reports whether oracle-vs-target path labels are learnable before any control integration. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
 | `compare_load_forecast.py` | TFT vs LightGBM load forecast comparison. |
 | `eval_load_overnight.py` | Load TFT overnight ramp diagnostics. |
@@ -109,6 +110,18 @@ The current target bucket from the forced-prefix attribution is:
 
 Use `--max-rows` for smoke tests. Add `--soc-finite-diff-kwh 1.0` only after the cheaper
 path-label distribution is worth expanding.
+
+Then run the first diagnostic model pass:
+
+```bash
+./.venv/bin/python eval/train_state_transition_value_model.py \
+  --labels state_transition_wb7_fitlt300_negload_curtail_20260501_state_transition_labels.parquet \
+  --output-prefix state_transition_wb7_fitlt300_negload_curtail_20260501
+```
+
+Treat this as a signal test, not a deployable controller. The model uses current-time/site/forecast
+summary features and predicts oracle-vs-target path labels such as prefix PnL, SoC delta, churn,
+import/export, and curtailment deltas.
 
 ---
 

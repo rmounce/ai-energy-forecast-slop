@@ -879,3 +879,37 @@ A physical-feasibility audit of the corrected raw run also passed cleanly:
 
 That makes further simulator work a lower-priority branch for now. The corrected run is physically
 clean enough to use as the next state-value / inventory-discipline modeling gate.
+
+### First State-Value Model Probe
+
+The first diagnostic model scaffold is now in place:
+
+- tool: `eval/train_state_transition_value_model.py`
+- labels: `state_transition_wb7_fitlt300_negload_curtail_20260501_state_transition_labels.parquet`
+- model family: small LightGBM regressors
+- split: time-ordered, `70%` train / `30%` validation
+- features: current-time/site/forecast summary features only, plus horizon and time-of-day/day-of-week encodings
+- targets:
+  - `oracle_minus_target_step_pnl`
+  - `oracle_minus_target_soc_delta_kwh`
+  - `oracle_minus_target_throughput_kwh`
+  - `oracle_minus_target_import_kwh`
+  - `oracle_minus_target_export_kwh`
+  - `oracle_minus_target_curtail_kwh`
+
+Validation overall:
+
+- prefix value / PnL: MAE improves by about `3.8%` over a median baseline, `R2 ~= 0.084`,
+  sign accuracy `~94.5%`
+- SoC delta: MAE improves by about `7.2%`, `R2 ~= 0.038`, sign accuracy `~85.7%`
+- throughput/churn: MAE improves by only about `1.3%`, with negative `R2`
+- import/export/curtail deltas do not beat the simple baseline on MAE
+
+Top features for the two most promising labels are plausible rather than obviously spurious:
+`strategic_soc_target_kwh`, `soc_prev_kwh`, time/day encodings, `actual_pv_kw`, current net load,
+and `forecast_feed_in_mean_next_4h_mwh`.
+
+Interpretation: there is weak but real learnable signal for "how much value / SoC movement is the
+Hybrid path missing" in the corrected target bucket. There is not yet enough evidence to wire a
+model directly into control. The next modeling step should broaden the label set across more
+windows/regimes or improve target shaping before attempting an MPC bias.
