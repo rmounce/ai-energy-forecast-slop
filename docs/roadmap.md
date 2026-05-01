@@ -1082,6 +1082,22 @@ So the next branch should stop thinking “big export spikes” and start thinki
     that tiny slice by about `$1.40` total) but also materially changed final SoC, so the next
     step is a small sweep on the normal Window B / Window A gates rather than treating the smoke
     as evidence of a deployable setting
+- first inventory-discipline sweep completed on `2026-05-01` with all exit codes `0`:
+  - windows: Window B 2-day (`2025-09-01 -> 2025-09-03`) and Window A 2-day
+    (`2025-07-21 -> 2025-07-23`)
+  - cycle-cost adders: `25`, `50`, `75`, `100 $/MWh`
+  - Window B result is negative at every tested setting:
+    - baseline Amber tactical + Hybrid strategic: `6.253/day`
+    - unguarded Hybrid: `5.905/day`
+    - guarded Hybrid: `4.963`, `4.181`, `2.111`, `1.977/day`
+  - Window A result is only slightly positive versus unguarded Hybrid and still below Amber:
+    - Amber tactical + Hybrid strategic: `-1.052/day`
+    - unguarded Hybrid: `-1.330/day`
+    - guarded Hybrid: best about `-1.313/day`
+  - implication: a blunt regime-gated cycle-friction guard is falsified as a production path; it
+    suppresses too much useful Window B surplus/export behavior. Keep the hook for diagnostics,
+    but do not pursue broad churn friction as the next deployment candidate without a sharper
+    opportunity-aware gate.
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
