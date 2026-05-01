@@ -207,6 +207,27 @@ def _apply_sell_urgency_transform(
     return shaped, True
 
 
+def _should_apply_inventory_discipline(
+    *,
+    source: str,
+    allowed_sources: set[str],
+    cycle_cost_adder_per_kwh: float,
+    current_feed_in_price_mwh: float,
+    current_net_load_kw: float,
+    feed_in_max_mwh: float,
+    net_load_max_kw: float,
+) -> bool:
+    return not (
+        not allowed_sources
+        or source not in allowed_sources
+        or cycle_cost_adder_per_kwh <= 0.0
+        or not np.isfinite(current_feed_in_price_mwh)
+        or not np.isfinite(current_net_load_kw)
+        or current_feed_in_price_mwh >= feed_in_max_mwh
+        or current_net_load_kw >= net_load_max_kw
+    )
+
+
 def _load_actuals_5m() -> pd.DataFrame:
     df = pd.read_parquet(ACTUALS_5M_FILE)
     if df.index.tz is None:
@@ -392,6 +413,11 @@ COUNTERFACTUAL_SOURCE_ALIASES = {
     "amber_tactical_hybrid_strategic": SourceContract(
         name="amber_tactical_hybrid_strategic",
         tactical_source="amber_apf_lgbm",
+        strategic_source="model_a_hybrid",
+    ),
+    "model_a_hybrid_inventory_bias": SourceContract(
+        name="model_a_hybrid_inventory_bias",
+        tactical_source="model_a_hybrid",
         strategic_source="model_a_hybrid",
     ),
 }
@@ -962,6 +988,8 @@ def simulate_stepwise(
             extra_terminal_energy_value_per_kwh = 0.0
             min_terminal_soc_kwh = None
             max_terminal_soc_kwh = None
+            inventory_discipline_applied = False
+            inventory_discipline_cycle_cost_adder_per_kwh = 0.0
             if strategic_soc_handoff:
                 strategic_q50 = providers.strategic_solve_summary(
                     contract.strategic_source,
@@ -1116,6 +1144,19 @@ def simulate_stepwise(
                     if np.isfinite(maybe_load_kw).all() and np.isfinite(maybe_pv_kw).all():
                         forecast_load_kw = maybe_load_kw
                         forecast_pv_kw = maybe_pv_kw
+                inventory_discipline_applied = _should_apply_inventory_discipline(
+                    source=src,
+                    allowed_sources=providers.args.inventory_discipline_sources,
+                    cycle_cost_adder_per_kwh=providers.args.inventory_discipline_cycle_cost_per_kwh,
+                    current_feed_in_price_mwh=actual_feed_in_price_mwh,
+                    current_net_load_kw=actual_net_load_step_kw,
+                    feed_in_max_mwh=providers.args.inventory_discipline_feed_in_max_mwh,
+                    net_load_max_kw=providers.args.inventory_discipline_net_load_max_kw,
+                )
+                if inventory_discipline_applied:
+                    inventory_discipline_cycle_cost_adder_per_kwh = (
+                        providers.args.inventory_discipline_cycle_cost_per_kwh
+                    )
             if dual_terminal_scale > 0.0:
                 probe = solve_lp_dispatch(
                     curve,
@@ -1152,6 +1193,7 @@ def simulate_stepwise(
                 extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
                 min_terminal_soc_kwh=min_terminal_soc_kwh,
                 max_terminal_soc_kwh=max_terminal_soc_kwh,
+                throughput_cost_adder_per_kwh=inventory_discipline_cycle_cost_adder_per_kwh,
             )
             c_plan = solve["charge_kw"]
             d_plan = solve["discharge_kw"]
@@ -1248,6 +1290,10 @@ def simulate_stepwise(
                 "sell_urgency_horizon_steps": providers.args.sell_urgency_horizon_steps,
                 "sell_urgency_max_strategic_target_kwh": providers.args.sell_urgency_max_strategic_target_kwh,
                 "sell_urgency_trigger_only_shaping": providers.args.sell_urgency_trigger_only_shaping,
+                "inventory_discipline_applied": inventory_discipline_applied,
+                "inventory_discipline_cycle_cost_adder_per_kwh": inventory_discipline_cycle_cost_adder_per_kwh,
+                "inventory_discipline_feed_in_max_mwh": providers.args.inventory_discipline_feed_in_max_mwh,
+                "inventory_discipline_net_load_max_kw": providers.args.inventory_discipline_net_load_max_kw,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
@@ -1293,6 +1339,21 @@ def simulate_stepwise(
         max_strategic_shadow_gap_per_kwh = float(src_df["strategic_shadow_gap_per_kwh"].max()) if not src_df.empty else 0.0
         positive_target_uplift_steps = int((src_df["dynamic_target_uplift_kwh"] > 0).sum()) if not src_df.empty else 0
         positive_terminal_adder_steps = int((src_df["dynamic_terminal_adder_per_kwh"] > 0).sum()) if not src_df.empty else 0
+        inventory_discipline_steps = (
+            int(src_df["inventory_discipline_applied"].sum())
+            if not src_df.empty and "inventory_discipline_applied" in src_df
+            else 0
+        )
+        mean_inventory_discipline_cycle_cost_adder_per_kwh = (
+            float(src_df["inventory_discipline_cycle_cost_adder_per_kwh"].mean())
+            if not src_df.empty and "inventory_discipline_cycle_cost_adder_per_kwh" in src_df
+            else 0.0
+        )
+        max_inventory_discipline_cycle_cost_adder_per_kwh = (
+            float(src_df["inventory_discipline_cycle_cost_adder_per_kwh"].max())
+            if not src_df.empty and "inventory_discipline_cycle_cost_adder_per_kwh" in src_df
+            else 0.0
+        )
         summary.append({
             "source": src,
             "tactical_source": contract.tactical_source,
@@ -1320,6 +1381,9 @@ def simulate_stepwise(
             "max_strategic_shadow_gap_per_kwh": max_strategic_shadow_gap_per_kwh,
             "positive_target_uplift_steps": positive_target_uplift_steps,
             "positive_terminal_adder_steps": positive_terminal_adder_steps,
+            "inventory_discipline_steps": inventory_discipline_steps,
+            "mean_inventory_discipline_cycle_cost_adder_per_kwh": mean_inventory_discipline_cycle_cost_adder_per_kwh,
+            "max_inventory_discipline_cycle_cost_adder_per_kwh": max_inventory_discipline_cycle_cost_adder_per_kwh,
             "tier1_quantile_blend": providers.args.tier1_quantile_blend,
             "tier2_quantile_blend": providers.args.tier2_quantile_blend,
             "tier2_upper_quantile": providers.args.tier2_upper_quantile,
@@ -1944,6 +2008,36 @@ def main():
             "configured sell-side reshaping and urgency discount."
         ),
     )
+    parser.add_argument(
+        "--inventory-discipline-cycle-cost-mwh",
+        type=float,
+        default=0.0,
+        help=(
+            "Eval-only churn guard: add this $/MWh throughput friction to selected source "
+            "LP control solves when the inventory-discipline regime gate is active. "
+            "Realized P&L degradation accounting is unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--inventory-discipline-sources",
+        default="",
+        help=(
+            "Comma-separated source labels eligible for the inventory-discipline cycle-cost "
+            "adder. Example: model_a_hybrid_inventory_bias"
+        ),
+    )
+    parser.add_argument(
+        "--inventory-discipline-feed-in-max-mwh",
+        type=float,
+        default=300.0,
+        help="Inventory-discipline gate applies only when current actual feed-in price is below this $/MWh value.",
+    )
+    parser.add_argument(
+        "--inventory-discipline-net-load-max-kw",
+        type=float,
+        default=0.0,
+        help="Inventory-discipline gate applies only when current actual net load is below this kW value.",
+    )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
     parser.add_argument(
         "--progress-every-steps",
@@ -2003,6 +2097,12 @@ def main():
     args.sell_urgency_horizon_steps = int(round(args.sell_urgency_horizon_hours * 12))
     args.sell_urgency_tactical_sources = _parse_csv_set(args.sell_urgency_tactical_sources)
     args.split_curve_tactical_sources = _parse_csv_set(args.split_curve_tactical_sources)
+    args.inventory_discipline_sources = _parse_csv_set(args.inventory_discipline_sources)
+    args.inventory_discipline_cycle_cost_per_kwh = args.inventory_discipline_cycle_cost_mwh / 1000.0
+    if args.inventory_discipline_cycle_cost_mwh < 0.0:
+        parser.error("--inventory-discipline-cycle-cost-mwh must be >= 0")
+    if args.inventory_discipline_sources and args.economic_mode != "netload_tariffed":
+        parser.error("--inventory-discipline-sources currently requires --economic-mode netload_tariffed")
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
         parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
     if args.dynamic_bridge_target_scale < 0:
@@ -2060,6 +2160,12 @@ def main():
     print(
         f"  Quantile blend: tier1={args.tier1_quantile_blend:.2f}, "
         f"tier2={args.tier2_quantile_blend:.2f}, tier2_qhi=q{int(args.tier2_upper_quantile * 100):02d}"
+    )
+    print(
+        f"  Inventory discipline: sources={sorted(args.inventory_discipline_sources)}, "
+        f"cycle_cost={args.inventory_discipline_cycle_cost_mwh:.3f} $/MWh, "
+        f"feed_in_max={args.inventory_discipline_feed_in_max_mwh:.3f} $/MWh, "
+        f"net_load_max={args.inventory_discipline_net_load_max_kw:.3f} kW"
     )
     print(f"  Workers: {workers}")
     if workers > 1:

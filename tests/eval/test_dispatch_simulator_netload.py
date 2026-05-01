@@ -88,3 +88,22 @@ def test_solve_lp_dispatch_split_load_pv_can_turn_down_pv_behind_load():
     assert np.isclose(solve["curtail_kw"][0], 2.0)
     assert np.isclose(solve["grid_import_kw"][0], 3.0)
     assert np.isclose(solve["grid_export_kw"][0], 0.0)
+
+
+def test_solve_lp_dispatch_throughput_adder_can_suppress_marginal_cycle():
+    baseline = solve_lp_dispatch(
+        prices_mwh=np.array([0.0, 300.0]),
+        soc_init=0.0,
+    )
+    guarded = solve_lp_dispatch(
+        prices_mwh=np.array([0.0, 300.0]),
+        soc_init=0.0,
+        throughput_cost_adder_per_kwh=1.0,
+    )
+
+    assert baseline["success"] is True
+    assert guarded["success"] is True
+    assert baseline["charge_kw"][0] > 0.0
+    assert baseline["discharge_kw"][1] > 0.0
+    assert np.isclose(guarded["charge_kw"][0], 0.0)
+    assert np.isclose(guarded["discharge_kw"][1], 0.0)
