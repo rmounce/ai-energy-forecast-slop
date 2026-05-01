@@ -1007,3 +1007,58 @@ Interpretation: the finite-difference target is worth keeping as a label source,
 fit is not a production candidate. It argues for either better target shaping / regularization or
 more regime-aware training data before attempting an MPC inventory-value bias. It does **not**
 justify wiring the learned finite-difference model directly into dispatch.
+
+### Eval-Only Inventory-Discipline Control Sweep
+
+The first production-shaped control probe was deliberately simple: add a control-only cycle-cost
+adder in the `FIT < 300` + negative-net-load regime, using the new
+`model_a_hybrid_inventory_bias` rolling-eval source. This is not a learned finite-difference
+controller; it is a bounded test of whether "less churn in the ordinary surplus-PV bucket" is
+itself enough to improve dispatch.
+
+Sweep setup:
+
+- windows:
+  - Window B 2-day: `2025-09-01 -> 2025-09-03`
+  - Window A 2-day: `2025-07-21 -> 2025-07-23`
+- source comparison:
+  - `amber_tactical_hybrid_strategic`
+  - `model_a_hybrid`
+  - `model_a_hybrid_inventory_bias`
+- cycle-cost adders: `25`, `50`, `75`, `100 $/MWh`
+- result rollup: `inventory_bias_sweep_20260501_summary.csv`
+- all eight rolling runs completed with exit code `0`
+
+Window B result:
+
+| source / setting | mean $/day |
+| --- | ---: |
+| Amber tactical + Hybrid strategic | `6.253` |
+| unguarded Hybrid | `5.905` |
+| guarded Hybrid, `25 $/MWh` | `4.963` |
+| guarded Hybrid, `50 $/MWh` | `4.181` |
+| guarded Hybrid, `75 $/MWh` | `2.111` |
+| guarded Hybrid, `100 $/MWh` | `1.977` |
+
+So the blunt guard makes Window B worse at every tested setting. The first `25 $/MWh` setting
+already loses about `0.94/day` versus unguarded Hybrid and about `1.29/day` versus Amber
+tactical + Hybrid strategic.
+
+Window A result:
+
+| source / setting | mean $/day |
+| --- | ---: |
+| Amber tactical + Hybrid strategic | `-1.052` |
+| unguarded Hybrid | `-1.330` |
+| guarded Hybrid, `25 $/MWh` | `-1.329` |
+| guarded Hybrid, `50 $/MWh` | `-1.313` |
+| guarded Hybrid, `75 $/MWh` | `-1.313` |
+| guarded Hybrid, `100 $/MWh` | `-1.313` |
+
+So the guard slightly improves Window A versus unguarded Hybrid, but not enough to approach Amber.
+
+Interpretation: the eval hook is useful, but the broad cycle-friction hypothesis is falsified as
+a production path. The guard suppresses too much useful Window B surplus/export behavior. The
+remaining plausible direction is not "more friction whenever ordinary surplus PV is present"; it
+would need a sharper opportunity-aware state-value gate that distinguishes wasteful churn from
+profitable charging/export preparation.
