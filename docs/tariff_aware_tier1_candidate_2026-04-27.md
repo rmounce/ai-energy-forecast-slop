@@ -913,3 +913,53 @@ Interpretation: there is weak but real learnable signal for "how much value / So
 Hybrid path missing" in the corrected target bucket. There is not yet enough evidence to wire a
 model directly into control. The next modeling step should broaden the label set across more
 windows/regimes or improve target shaping before attempting an MPC bias.
+
+### State-Value Label Broadening
+
+The first broadening run completed on `2026-05-01`:
+
+- `FIT < 300`, non-negative net load:
+  `state_transition_wb7_fitlt300_nonnegload_curtail_20260501_state_transition_labels.parquet`
+- `FIT >= 300`:
+  `state_transition_wb7_fitgte300_curtail_20260501_state_transition_labels.parquet`
+- pooled diagnostic model:
+  `state_transition_wb7_pooled_curtail_20260501_state_value_model_metrics.csv`
+
+All batch steps completed with exit code `0`.
+
+The broadened label distributions are useful, but they weaken the simple pooled-model story.
+
+For `FIT < 300` with non-negative net load, the oracle still tends to prefer less churn than
+Hybrid, but the value sign differs from the original negative-net-load target bucket:
+
+- `N=12`, `1165` rows
+- oracle minus Hybrid SoC delta: `+0.322 kWh`
+- oracle minus Hybrid throughput/churn: `-0.164 kWh`
+- oracle minus Hybrid import: `+0.129 kWh`
+- oracle minus Hybrid export: `-0.185 kWh`
+- oracle minus Hybrid prefix PnL: `-0.074`
+- Amber minus Hybrid prefix PnL: `+0.012`
+
+For `FIT >= 300`, the oracle again prefers materially less movement than Hybrid, but also much
+less export and worse prefix PnL over the pinned prefix:
+
+- `N=12`, `121` rows
+- oracle minus Hybrid SoC delta: `+1.305 kWh`
+- oracle minus Hybrid throughput/churn: `-1.183 kWh`
+- oracle minus Hybrid export: `-1.180 kWh`
+- oracle minus Hybrid prefix PnL: `-0.474`
+- Amber minus Hybrid prefix PnL: `+0.119`
+
+The pooled LightGBM diagnostic did not find a useful general correction signal. On validation,
+the pooled model is effectively at baseline:
+
+- prefix value / PnL: `0.046%` MAE improvement overall, `R2 ~= -0.033`
+- SoC delta: about `0.002%` worse than baseline overall, `R2 ~= -0.114`
+- throughput, import, export, and curtail labels are all worse than baseline on MAE
+
+Interpretation: the original negative-net-load target bucket still looks like a real local signal,
+but it does not yet generalize as a single broad state-value model across these coarse regimes.
+The next production-worthy step should either narrow the state-value corrector to the specific
+ordinary surplus-PV regime where the economic gap was found, or build a more explicitly regime
+conditioned label/model family. A pooled one-size-fits-all inventory-value bias is not supported by
+this run.

@@ -1046,6 +1046,18 @@ So the next branch should stop thinking “big export spikes” and start thinki
 - implication: the inventory-discipline branch has weak but real signal, but should not be wired
   into control from this single target-bucket slice; broaden the label set or improve target
   shaping before attempting an MPC bias
+- first label-broadening batch completed on `2026-05-01` with all exit codes `0`:
+  - added `FIT < 300` / non-negative-net-load labels and `FIT >= 300` labels from the corrected
+    curtailment raw run
+  - pooled those labels with the original `FIT < 300` / negative-net-load target bucket in the
+    diagnostic LightGBM scaffold
+  - the broadened path labels are informative, but the pooled model is effectively at baseline:
+    prefix-value MAE improves by only `0.046%` overall on validation with `R2 ~= -0.033`, while
+    SoC-delta, throughput, import, export, and curtail labels are at or worse than baseline
+  - implication: the original target bucket still looks like a local signal, but a single broad
+    state-value bias across coarse regimes is not supported; next work should either narrow the
+    corrector to the ordinary surplus-PV regime where the gap was found or make the model/labels
+    explicitly regime conditioned
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
