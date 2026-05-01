@@ -58,11 +58,12 @@ def _step_components(
     *,
     charge_kw: float,
     discharge_kw: float,
+    curtail_kw: float = 0.0,
     actual_general_price_mwh: float,
     actual_feed_in_price_mwh: float,
     actual_net_load_kw: float,
 ) -> dict[str, float]:
-    grid_kw = float(actual_net_load_kw) + float(charge_kw) - float(discharge_kw) * EFF_D
+    grid_kw = float(actual_net_load_kw) + float(charge_kw) - float(discharge_kw) * EFF_D + float(curtail_kw)
     realized_grid_import_kw = max(grid_kw, 0.0)
     realized_grid_export_kw = max(-grid_kw, 0.0)
     import_cost = realized_grid_import_kw * (actual_general_price_mwh / 1000.0) * INTERVAL_H
@@ -195,10 +196,12 @@ def build_dataset(
 
         oracle_charge_kw = float(solve["charge_kw"][0]) if len(solve["charge_kw"]) else 0.0
         oracle_discharge_kw = float(solve["discharge_kw"][0]) if len(solve["discharge_kw"]) else 0.0
+        oracle_curtail_kw = float(solve["curtail_kw"][0]) if len(solve.get("curtail_kw", [])) else 0.0
 
         oracle_step = _step_components(
             charge_kw=oracle_charge_kw,
             discharge_kw=oracle_discharge_kw,
+            curtail_kw=oracle_curtail_kw,
             actual_general_price_mwh=float(row.actual_general_price_mwh),
             actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
             actual_net_load_kw=float(row.actual_net_load_kw),
@@ -206,6 +209,7 @@ def build_dataset(
         observed_step = _step_components(
             charge_kw=float(row.charge_kw),
             discharge_kw=float(row.discharge_kw),
+            curtail_kw=float(getattr(row, "curtail_kw", 0.0) or 0.0),
             actual_general_price_mwh=float(row.actual_general_price_mwh),
             actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
             actual_net_load_kw=float(row.actual_net_load_kw),
@@ -255,6 +259,7 @@ def build_dataset(
             "observed_discharge_kw": float(row.discharge_kw),
             "oracle_charge_kw": oracle_charge_kw,
             "oracle_discharge_kw": oracle_discharge_kw,
+            "oracle_curtail_kw": oracle_curtail_kw,
             "oracle_success": bool(solve["success"]),
             "oracle_objective_value": float(solve["objective_value"]),
             "oracle_initial_soc_shadow_price_per_kwh": float(solve["initial_soc_shadow_price_per_kwh"]),
@@ -284,6 +289,7 @@ def build_dataset(
             comp_step = _step_components(
                 charge_kw=float(comp_row["charge_kw"]),
                 discharge_kw=float(comp_row["discharge_kw"]),
+                curtail_kw=float(comp_row.get("curtail_kw", 0.0) or 0.0),
                 actual_general_price_mwh=float(row.actual_general_price_mwh),
                 actual_feed_in_price_mwh=float(row.actual_feed_in_price_mwh),
                 actual_net_load_kw=float(row.actual_net_load_kw),

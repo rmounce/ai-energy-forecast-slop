@@ -990,6 +990,22 @@ So the next branch should stop thinking “big export spikes” and start thinki
   state-transition value label, with marginal-SoC finite-difference labels deferred until this
   cheaper label distribution is understood
 
+**Curtailment correction:**
+- the low-FIT surplus-PV branch exposed that the first `netload_tariffed` LP had no explicit
+  curtailment variable, so negative net load not used for battery charging was forced to export
+- `solve_lp_dispatch()` now includes `curtail_kw` in net-load mode, bounded by current surplus:
+  `0 <= curtail_kw <= max(0, -net_load_kw)`
+- rolling `netload_tariffed` realized PnL now includes first-step curtailment in the grid-flow
+  balance
+- label builders/analyzers now carry curtailment into path metrics
+- quick smoke:
+  - negative feed-in with `2.5 kW` surplus: `export=0`, `curtail=2.5`
+  - positive feed-in with `2.5 kW` surplus: `export=2.5`, `curtail=0`
+- remaining limitation: current inputs only provide net load, so this supports surplus-PV
+  curtailment; full PV turn-off while site load is positive needs separate load/PV inputs
+- implication: rerun the target-bucket state-transition labels under the corrected LP before
+  training a churn/grid-exchange discipline model
+
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast

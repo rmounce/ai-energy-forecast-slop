@@ -48,6 +48,9 @@ Parallelism notes:
 - `--economic-mode netload_tariffed` is the first production-fidelity upgrade path for Track A:
   it uses actual 30-minute load/PV expanded to 5-minute net load plus tariffed import/feed-in
   price curves for both the tactical solve and realized PnL
+- net-load mode supports explicit surplus-PV curtailment via `curtail_kw`, bounded by
+  `max(0, -net_load_kw)`. Full PV turn-off while site load remains positive requires separate
+  load/PV inputs rather than the current net-load-only LP contract.
 - `--progress-every-steps` controls how often the script prints elapsed/ETA progress lines and
   updates `eval/results/<output_prefix>_<source>.progress.json` checkpoint files
 - still validate any new multi-worker run shape on a short pilot before leaving it unattended

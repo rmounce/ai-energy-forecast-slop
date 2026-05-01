@@ -85,6 +85,7 @@ def _prefix_metrics_for_source(
             "prefix_discharge_kwh": np.nan,
             "prefix_import_kwh": np.nan,
             "prefix_export_kwh": np.nan,
+            "prefix_curtail_kwh": np.nan,
             "prefix_import_cost": np.nan,
             "prefix_export_revenue": np.nan,
             "prefix_step_pnl": np.nan,
@@ -94,6 +95,7 @@ def _prefix_metrics_for_source(
 
     charge_kwh = float(prefix["charge_kw"].sum() * DT_HOURS)
     discharge_kwh = float(prefix["discharge_kw"].sum() * DT_HOURS)
+    curtail_kwh = float(prefix["curtail_kw"].sum() * DT_HOURS) if "curtail_kw" in prefix.columns else 0.0
     import_kwh = float(prefix[import_col].sum() * DT_HOURS)
     export_kwh = float(prefix[export_col].sum() * DT_HOURS)
     import_cost = float((prefix[import_col] * prefix["actual_general_price_mwh"]).sum() * DT_HOURS / 1000.0)
@@ -107,6 +109,7 @@ def _prefix_metrics_for_source(
         "prefix_discharge_kwh": discharge_kwh,
         "prefix_import_kwh": import_kwh,
         "prefix_export_kwh": export_kwh,
+        "prefix_curtail_kwh": curtail_kwh,
         "prefix_import_cost": import_cost,
         "prefix_export_revenue": export_revenue,
         "prefix_step_pnl": step_pnl,
@@ -177,6 +180,7 @@ def summarize(attr_df: pd.DataFrame) -> pd.DataFrame:
         "a_minus_b_prefix_discharge_kwh",
         "a_minus_b_prefix_import_kwh",
         "a_minus_b_prefix_export_kwh",
+        "a_minus_b_prefix_curtail_kwh",
         "a_minus_b_prefix_import_cost",
         "a_minus_b_prefix_export_revenue",
         "a_minus_b_prefix_step_pnl",
@@ -189,6 +193,8 @@ def summarize(attr_df: pd.DataFrame) -> pd.DataFrame:
         "b_prefix_import_kwh",
         "a_prefix_export_kwh",
         "b_prefix_export_kwh",
+        "a_prefix_curtail_kwh",
+        "b_prefix_curtail_kwh",
         "a_prefix_soc_delta_kwh",
         "b_prefix_soc_delta_kwh",
         "a_prefix_step_pnl",

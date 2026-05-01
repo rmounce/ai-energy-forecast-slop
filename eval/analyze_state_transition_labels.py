@@ -28,6 +28,7 @@ KEY_DELTAS = [
     "discharge_kwh",
     "import_kwh",
     "export_kwh",
+    "curtail_kwh",
     "step_pnl",
 ]
 

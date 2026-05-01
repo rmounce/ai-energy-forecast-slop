@@ -1106,8 +1106,9 @@ def simulate_stepwise(
             d0 = float(d_plan[0]) if len(d_plan) else 0.0
             grid_import0 = float(solve["grid_import_kw"][0]) if len(solve["grid_import_kw"]) else 0.0
             grid_export0 = float(solve["grid_export_kw"][0]) if len(solve["grid_export_kw"]) else 0.0
+            curtail0 = float(solve.get("curtail_kw", [0.0])[0]) if len(solve.get("curtail_kw", [])) else 0.0
             if economic_mode == "netload_tariffed":
-                grid_kw = actual_net_load_step_kw + c0 - d0 * EFF_D
+                grid_kw = actual_net_load_step_kw + c0 - d0 * EFF_D + curtail0
                 realized_grid_import_kw = max(grid_kw, 0.0)
                 realized_grid_export_kw = max(-grid_kw, 0.0)
                 pnl = (
@@ -1158,6 +1159,7 @@ def simulate_stepwise(
                 "discharge_kw": d0,
                 "grid_import_kw": grid_import0,
                 "grid_export_kw": grid_export0,
+                "curtail_kw": curtail0,
                 "realized_grid_import_kw": realized_grid_import_kw,
                 "realized_grid_export_kw": realized_grid_export_kw,
                 "soc_prev_kwh": soc_prev,
