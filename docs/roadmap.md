@@ -1009,8 +1009,25 @@ So the next branch should stop thinking “big export spikes” and start thinki
     `import=3.0`
 - remaining limitation: callers that provide only net load can still curtail only visible surplus;
   full PV turn-off while site load is positive requires split load/PV inputs
-- implication: rerun the target-bucket state-transition labels under the corrected LP before
-  training a churn/grid-exchange discipline model
+- corrected Window B `7-day` rerun completed on `2026-05-01`:
+  - `amber_apf_lgbm`: `1.611/day`
+  - `amber_tactical_hybrid_strategic`: `1.619/day`
+  - `hybrid_tactical_amber_strategic`: `1.078/day`
+  - `model_a_hybrid`: `1.040/day`
+- compared with the pre-curtailment run, all sources improved but the same-target tactical gap
+  remained: about `+0.579/day` for `amber_tactical_hybrid_strategic` over `model_a_hybrid`
+  versus about `+0.529/day` before
+- corrected target-bucket labels (`FIT < 300`, negative net load) still favor reduced churn /
+  grid exchange; at `N=12`, oracle minus Hybrid averages:
+  - SoC delta: `-0.400 kWh`
+  - throughput/churn: `-0.639 kWh`
+  - import: `-0.563 kWh`
+  - export: `-0.122 kWh`
+  - curtail: `-0.009 kWh`
+  - prefix PnL: `+0.023`
+- implication: curtailment support improves eval fidelity, but it does not explain away the
+  remaining Hybrid tactical loss; proceed with a short-horizon inventory-discipline / churn
+  reduction target rather than returning to spike-export or first-action correction branches
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

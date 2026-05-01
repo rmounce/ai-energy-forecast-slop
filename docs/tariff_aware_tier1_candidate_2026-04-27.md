@@ -830,6 +830,38 @@ Important remaining limitation: any caller that provides only net load can still
 surplus PV. Full PV turn-down while site load remains positive needs the split load/PV inputs now
 supported by `solve_lp_dispatch()` and the rolling `netload_tariffed` harness.
 
-The state-transition label conclusions above should therefore be treated as pre-curtailment
-diagnostics. The key target-bucket labels should be rerun under the corrected LP before training
-or promoting any churn/grid-exchange discipline model.
+The target-bucket labels were rerun under the corrected LP on `2026-05-01`:
+
+- rolling raw: `rolling_mpc_eval_counterfactual_windowb_7day_netload_011b_curtail_20260501_raw.parquet`
+- state labels: `state_transition_wb7_fitlt300_negload_curtail_20260501_state_transition_labels.parquet`
+- all three chained stages exited `0`
+
+Window B `7-day`, corrected curtailment:
+
+- `amber_apf_lgbm`: `1.611/day`
+- `amber_tactical_hybrid_strategic`: `1.619/day`
+- `hybrid_tactical_amber_strategic`: `1.078/day`
+- `model_a_hybrid`: `1.040/day`
+
+Compared with the pre-curtailment run, every source improves, but the same-target tactical gap
+does not disappear:
+
+- old `amber_tactical_hybrid_strategic` minus `model_a_hybrid`: about `+0.529/day`
+- corrected-curtailment gap: about `+0.579/day`
+
+So PV curtailment support improves simulator fidelity, but it does **not** explain away the Hybrid
+tactical loss.
+
+Corrected target-bucket state-transition labels (`FIT < 300`, negative net load) still point toward
+reduced churn / grid exchange. At `N=12`, oracle minus Hybrid averages:
+
+- SoC delta: `-0.400 kWh`
+- throughput/churn: `-0.639 kWh`
+- import: `-0.563 kWh`
+- export: `-0.122 kWh`
+- curtail: `-0.009 kWh`
+- prefix PnL: `+0.023`
+
+This strengthens the current read: the next modeling branch should target short-horizon inventory
+discipline / reduced uneconomic churn, not spike export uplift, first-action imitation, or simply
+more PV curtailment.
