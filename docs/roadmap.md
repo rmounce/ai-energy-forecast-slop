@@ -1058,6 +1058,17 @@ So the next branch should stop thinking “big export spikes” and start thinki
     state-value bias across coarse regimes is not supported; next work should either narrow the
     corrector to the ordinary surplus-PV regime where the gap was found or make the model/labels
     explicitly regime conditioned
+- marginal-SoC finite-difference target-bucket run completed on `2026-05-01`:
+  - added a `+1 kWh` initial-SoC finite-difference value label for the corrected `FIT < 300` /
+    negative-net-load bucket
+  - label distribution is plausible: mean `0.082 $/kWh`, median `0.084 $/kWh`, IQR about
+    `0.050` to `0.115 $/kWh`
+  - first diagnostic LightGBM fit is not controller-ready: validation MAE improves by about
+    `19.8%`, but validation `R2 ~= -3.57`, train `R2 ~= 0.89`, and sign accuracy is unchanged
+    from baseline
+  - implication: the finite-difference label is useful as a diagnostic / possible future target,
+    but the first learned marginal-value model overfits the narrow slice; do not wire it into
+    dispatch without better target shaping, regularization, or broader regime-aware training data
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
