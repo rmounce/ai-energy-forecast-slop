@@ -795,3 +795,38 @@ So the earlier "preserve inventory" phrase was too broad. The better current rea
 This points the next modeling pass toward a bounded churn / grid-exchange discipline target or
 state-transition value label. A finite-difference marginal-SoC run remains useful, but should be
 second-pass because it roughly doubles LP solve cost.
+
+### Curtailment correction
+
+The low-FIT surplus-PV read exposed an important simulator limitation: the first
+`netload_tariffed` LP represented grid import/export and battery charge/discharge, but did not
+represent PV curtailment. With negative net load, any surplus not absorbed by battery charging
+was therefore forced into grid export.
+
+That is too restrictive for the real hybrid inverter, which can curtail export or turn PV down.
+
+The LP has now been corrected for the current net-load input contract:
+
+- net-load mode includes a nonnegative `curtail_kw` variable
+- curtailment is bounded to available surplus under the current input contract:
+  `0 <= curtail_kw <= max(0, -net_load_kw)`
+- the grid balance becomes:
+  `grid_import - grid_export = net_load + charge - discharge * eff_d + curtail`
+- rolling `netload_tariffed` scoring now uses the first-step `curtail_kw`
+- oracle/action/state-label builders carry curtailment into their path metrics
+
+Smoke behavior:
+
+- negative feed-in with `2.5 kW` surplus: `export=0`, `curtail=2.5`
+- positive feed-in with `2.5 kW` surplus: `export=2.5`, `curtail=0`
+
+Important remaining limitation:
+
+- because the current LP receives only net load, not separate load and PV forecasts, this supports
+  curtailing **surplus** PV
+- full PV turn-off while site load remains positive, such as deliberately importing during
+  negative import prices, needs a richer LP input contract with separate load/PV terms
+
+The state-transition label conclusions above should therefore be treated as pre-curtailment
+diagnostics. The key target-bucket labels should be rerun under the corrected LP before training
+or promoting any churn/grid-exchange discipline model.

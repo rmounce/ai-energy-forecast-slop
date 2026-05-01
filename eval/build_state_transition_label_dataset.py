@@ -74,11 +74,13 @@ def _path_metrics(
     *,
     charge_kw: np.ndarray,
     discharge_kw: np.ndarray,
+    curtail_kw: np.ndarray | None = None,
     market_df: pd.DataFrame,
     soc_prev_kwh: float,
     steps: int,
 ) -> dict[str, float]:
-    actual_steps = min(int(steps), len(charge_kw), len(discharge_kw), len(market_df))
+    curtail_len = len(curtail_kw) if curtail_kw is not None else len(charge_kw)
+    actual_steps = min(int(steps), len(charge_kw), len(discharge_kw), curtail_len, len(market_df))
     if actual_steps <= 0:
         return {
             "steps": 0.0,
@@ -87,6 +89,7 @@ def _path_metrics(
             "throughput_kwh": np.nan,
             "import_kwh": np.nan,
             "export_kwh": np.nan,
+            "curtail_kwh": np.nan,
             "import_cost": np.nan,
             "export_revenue": np.nan,
             "degradation_cost": np.nan,
@@ -97,12 +100,17 @@ def _path_metrics(
 
     c = np.asarray(charge_kw[:actual_steps], dtype=np.float64)
     d = np.asarray(discharge_kw[:actual_steps], dtype=np.float64)
+    curtail = (
+        np.zeros(actual_steps, dtype=np.float64)
+        if curtail_kw is None
+        else np.asarray(curtail_kw[:actual_steps], dtype=np.float64)
+    )
     future = market_df.head(actual_steps)
     net_load = future["actual_net_load_kw"].to_numpy(dtype=np.float64)
     import_price = future["actual_general_price_mwh"].to_numpy(dtype=np.float64) / 1000.0
     export_price = future["actual_feed_in_price_mwh"].to_numpy(dtype=np.float64) / 1000.0
 
-    grid_kw = net_load + c - d * EFF_D
+    grid_kw = net_load + c - d * EFF_D + curtail
     grid_import_kw = np.maximum(grid_kw, 0.0)
     grid_export_kw = np.maximum(-grid_kw, 0.0)
     import_cost = float(np.sum(grid_import_kw * import_price) * INTERVAL_H)
@@ -118,6 +126,7 @@ def _path_metrics(
         "throughput_kwh": float(np.sum(c * EFF_C + d) * INTERVAL_H),
         "import_kwh": float(np.sum(grid_import_kw) * INTERVAL_H),
         "export_kwh": float(np.sum(grid_export_kw) * INTERVAL_H),
+        "curtail_kwh": float(np.sum(curtail) * INTERVAL_H),
         "import_cost": import_cost,
         "export_revenue": export_revenue,
         "degradation_cost": degradation_cost,
@@ -127,11 +136,17 @@ def _path_metrics(
     }
 
 
-def _prefix_from_source(source_df: pd.DataFrame, ts: pd.Timestamp, steps: int) -> tuple[np.ndarray, np.ndarray]:
+def _prefix_from_source(source_df: pd.DataFrame, ts: pd.Timestamp, steps: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     prefix = source_df[source_df["time"] >= ts].head(steps)
+    curtail = (
+        prefix["curtail_kw"].to_numpy(dtype=np.float64, copy=True)
+        if "curtail_kw" in prefix.columns
+        else np.zeros(len(prefix), dtype=np.float64)
+    )
     return (
         prefix["charge_kw"].to_numpy(dtype=np.float64, copy=True),
         prefix["discharge_kw"].to_numpy(dtype=np.float64, copy=True),
+        curtail,
     )
 
 
@@ -255,10 +270,11 @@ def build_dataset(
 
         for horizon_steps in horizons:
             horizon_steps = int(horizon_steps)
-            target_charge, target_discharge = _prefix_from_source(target_path_df, ts, horizon_steps)
+            target_charge, target_discharge, target_curtail = _prefix_from_source(target_path_df, ts, horizon_steps)
             oracle_metrics = _path_metrics(
                 charge_kw=oracle["charge_kw"],
                 discharge_kw=oracle["discharge_kw"],
+                curtail_kw=oracle.get("curtail_kw"),
                 market_df=future,
                 soc_prev_kwh=float(row.soc_prev_kwh),
                 steps=horizon_steps,
@@ -266,6 +282,7 @@ def build_dataset(
             target_metrics = _path_metrics(
                 charge_kw=target_charge,
                 discharge_kw=target_discharge,
+                curtail_kw=target_curtail,
                 market_df=future,
                 soc_prev_kwh=float(row.soc_prev_kwh),
                 steps=horizon_steps,
@@ -315,10 +332,11 @@ def build_dataset(
             _add_delta_metrics(out, prefix="oracle_minus_target", left=oracle_metrics, right=target_metrics)
 
             if comparator_df is not None:
-                comp_charge, comp_discharge = _prefix_from_source(comparator_df, ts, horizon_steps)
+                comp_charge, comp_discharge, comp_curtail = _prefix_from_source(comparator_df, ts, horizon_steps)
                 comp_metrics = _path_metrics(
                     charge_kw=comp_charge,
                     discharge_kw=comp_discharge,
+                    curtail_kw=comp_curtail,
                     market_df=future,
                     soc_prev_kwh=float(row.soc_prev_kwh),
                     steps=horizon_steps,
