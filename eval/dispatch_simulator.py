@@ -98,6 +98,7 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                       extra_terminal_energy_cap_kwh: float | None = None,
                       min_terminal_soc_kwh: float | None = None,
                       max_terminal_soc_kwh: float | None = None,
+                      throughput_cost_adder_per_kwh: float = 0.0,
                       force_first_charge_kw: float | None = None,
                       force_first_discharge_kw: float | None = None,
                       force_prefix_charge_kw: np.ndarray | None = None,
@@ -127,6 +128,11 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
     min_terminal_soc_kwh / max_terminal_soc_kwh:
         Optional terminal SoC constraints at the end of the horizon. When both
         are set to the same value, the solve enforces an exact terminal target.
+
+    throughput_cost_adder_per_kwh:
+        Optional control-only friction added to battery throughput in the LP
+        objective. This does not change realized degradation accounting; it is
+        an eval hook for conservative churn / inventory-discipline probes.
 
     Returns a dict containing the optimal actions and LP diagnostics.
     Infeasible solves return zero actions with status metadata.
@@ -162,6 +168,7 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
     if use_site_flow_mode:
         import_p = np.asarray(import_prices_mwh, dtype=np.float64) / 1000.0
         export_p = np.asarray(export_prices_mwh, dtype=np.float64) / 1000.0
+        throughput_cost = DEG_PER_KWH + max(0.0, float(throughput_cost_adder_per_kwh))
         if use_split_load_pv_mode:
             load_forecast_kw = np.asarray(load_forecast_kw, dtype=np.float64)
             pv_forecast_kw = np.asarray(pv_forecast_kw, dtype=np.float64)
@@ -174,16 +181,17 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                 raise ValueError("Net-load mode requires import/export price curves and net load forecast matching horizon length")
             net_load_balance_kw = net_load_forecast_kw
         c_obj = np.concatenate([
-            np.full(n, DEG_PER_KWH * EFF_C * interval_h, dtype=np.float64),
-            np.full(n, DEG_PER_KWH * interval_h, dtype=np.float64),
+            np.full(n, throughput_cost * EFF_C * interval_h, dtype=np.float64),
+            np.full(n, throughput_cost * interval_h, dtype=np.float64),
             import_p * interval_h,
             -export_p * interval_h,
             np.zeros(n, dtype=np.float64),
         ])
     else:
+        throughput_cost = DEG_PER_KWH + max(0.0, float(throughput_cost_adder_per_kwh))
         c_obj = np.concatenate([
-            (p + DEG_PER_KWH * EFF_C) * interval_h,
-            (-p * EFF_D + DEG_PER_KWH) * interval_h,
+            (p + throughput_cost * EFF_C) * interval_h,
+            (-p * EFF_D + throughput_cost) * interval_h,
         ])
     if terminal_energy_value_per_kwh:
         c_obj[:n] -= terminal_energy_value_per_kwh * EFF_C * interval_h
@@ -368,7 +376,8 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                 extra_terminal_energy_floor_kwh: float | None = None,
                 extra_terminal_energy_cap_kwh: float | None = None,
                 min_terminal_soc_kwh: float | None = None,
-                max_terminal_soc_kwh: float | None = None) -> tuple[np.ndarray, np.ndarray]:
+                max_terminal_soc_kwh: float | None = None,
+                throughput_cost_adder_per_kwh: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """
     Backwards-compatible wrapper returning only the action arrays.
     """
@@ -389,6 +398,7 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
         min_terminal_soc_kwh=min_terminal_soc_kwh,
         max_terminal_soc_kwh=max_terminal_soc_kwh,
+        throughput_cost_adder_per_kwh=throughput_cost_adder_per_kwh,
     )
     return solve["charge_kw"], solve["discharge_kw"]
 

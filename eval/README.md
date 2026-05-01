@@ -63,9 +63,14 @@ Parallelism notes:
   `netload_tariffed` mode to leave step 0 unchanged while discounting only future export prices
   for selected tactical sources during already-high feed-in intervals; this is intended as a
   small export-monetization stress test rather than a general forecast-model change
+- inventory-discipline probes can now use `model_a_hybrid_inventory_bias` plus
+  `--inventory-discipline-*` flags in `netload_tariffed` mode to add a control-only cycle-cost
+  adder during selected regimes, for example `FIT < 300` and negative net load. This changes the
+  LP decision objective only; realized P&L still uses the normal degradation cost.
 - crossed tactical/strategic counterfactuals are supported via built-in source aliases:
   - `hybrid_tactical_amber_strategic`
   - `amber_tactical_hybrid_strategic`
+  - `model_a_hybrid_inventory_bias`
   - or the generic form `cf:<label>:<tactical_source>:<strategic_source>`
   This keeps the tactical forecast curve and strategic handoff source separable inside the same
   rolling-eval harness

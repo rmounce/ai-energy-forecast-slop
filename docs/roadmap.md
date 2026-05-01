@@ -1069,6 +1069,19 @@ So the next branch should stop thinking “big export spikes” and start thinki
   - implication: the finite-difference label is useful as a diagnostic / possible future target,
     but the first learned marginal-value model overfits the narrow slice; do not wire it into
     dispatch without better target shaping, regularization, or broader regime-aware training data
+- first eval-only inventory-discipline control hook is implemented:
+  - `solve_lp_dispatch()` accepts a control-only `throughput_cost_adder_per_kwh`
+  - `rolling_mpc_eval.py` exposes a `model_a_hybrid_inventory_bias` source alias plus
+    `--inventory-discipline-*` gates for source label, feed-in price, net load, and cycle-cost
+    adder
+  - this is deliberately not a learned finite-difference controller; it is a small bounded
+    churn-friction probe for the ordinary surplus-PV regime
+  - smoke on `2025-09-01T00:00Z -> 03:00Z`, `netload_tariffed`, `50 $/MWh` adder, exact strategic
+    handoff passed with full coverage and `32/36` gate activations
+  - smoke result was directionally large (`model_a_hybrid_inventory_bias` beat baseline Hybrid on
+    that tiny slice by about `$1.40` total) but also materially changed final SoC, so the next
+    step is a small sweep on the normal Window B / Window A gates rather than treating the smoke
+    as evidence of a deployable setting
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
