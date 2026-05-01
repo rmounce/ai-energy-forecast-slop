@@ -7,9 +7,9 @@ Phase 3 mode (price-only):
   stratified tactical eval set.  net_load_actuals=None.
 
 Phase 6 mode (price + load/PV):
-  simulate_mpc() accepts net_load_actuals (kW per 30-min step).  The LP jointly
-  optimises battery dispatch against grid import/export considering actual household
-  net load, isolating price-forecast quality as the variable under test.
+  simulate_mpc() accepts net_load_actuals or split load_actuals/pv_actuals (kW per
+  step).  The LP jointly optimises battery dispatch, grid import/export, and PV
+  curtailment, isolating price-forecast quality as the variable under test.
 
 Battery model: rolling MPC — at each step, solve LP over remaining horizon,
 execute first action, advance SoC, repeat.
@@ -90,6 +90,8 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                       import_prices_mwh: np.ndarray | None = None,
                       export_prices_mwh: np.ndarray | None = None,
                       net_load_forecast_kw: np.ndarray | None = None,
+                      load_forecast_kw: np.ndarray | None = None,
+                      pv_forecast_kw: np.ndarray | None = None,
                       terminal_energy_value_per_kwh: float = 0.0,
                       extra_terminal_energy_value_per_kwh: float = 0.0,
                       extra_terminal_energy_floor_kwh: float | None = None,
@@ -104,11 +106,11 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
     Optimal battery dispatch over a price horizon via LP.
 
     Variables in price-only mode: x = [c_0..c_{n-1}, d_0..d_{n-1}]
-    Variables in net-load mode:
+    Variables in site-flow mode:
         x = [c, d, grid_import, grid_export, curtail]
-      c_h — grid import rate (kW) at step h
-      d_h — battery export rate (kW) at step h
-      curtail_h — surplus PV curtailed before grid export (kW)
+      c_h — battery charge rate (kW) at step h
+      d_h — battery discharge rate (kW) at step h
+      curtail_h — PV curtailed before serving load, charging, or grid export (kW)
 
     terminal_energy_value_per_kwh:
         Salvage value assigned to energy remaining in the battery at the end of
@@ -144,17 +146,33 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         }
 
     p = prices_mwh / 1000.0  # $/kWh
+    use_split_load_pv_mode = (
+        import_prices_mwh is not None
+        and export_prices_mwh is not None
+        and load_forecast_kw is not None
+        and pv_forecast_kw is not None
+    )
     use_net_load_mode = (
         import_prices_mwh is not None
         and export_prices_mwh is not None
+        and not use_split_load_pv_mode
         and net_load_forecast_kw is not None
     )
-    if use_net_load_mode:
+    use_site_flow_mode = use_split_load_pv_mode or use_net_load_mode
+    if use_site_flow_mode:
         import_p = np.asarray(import_prices_mwh, dtype=np.float64) / 1000.0
         export_p = np.asarray(export_prices_mwh, dtype=np.float64) / 1000.0
-        net_load_forecast_kw = np.asarray(net_load_forecast_kw, dtype=np.float64)
-        if len(import_p) != n or len(export_p) != n or len(net_load_forecast_kw) != n:
-            raise ValueError("Net-load mode requires import/export price curves and net load forecast matching horizon length")
+        if use_split_load_pv_mode:
+            load_forecast_kw = np.asarray(load_forecast_kw, dtype=np.float64)
+            pv_forecast_kw = np.asarray(pv_forecast_kw, dtype=np.float64)
+            if len(import_p) != n or len(export_p) != n or len(load_forecast_kw) != n or len(pv_forecast_kw) != n:
+                raise ValueError("Load/PV mode requires import/export price curves and load/PV forecasts matching horizon length")
+            net_load_balance_kw = load_forecast_kw - pv_forecast_kw
+        else:
+            net_load_forecast_kw = np.asarray(net_load_forecast_kw, dtype=np.float64)
+            if len(import_p) != n or len(export_p) != n or len(net_load_forecast_kw) != n:
+                raise ValueError("Net-load mode requires import/export price curves and net load forecast matching horizon length")
+            net_load_balance_kw = net_load_forecast_kw
         c_obj = np.concatenate([
             np.full(n, DEG_PER_KWH * EFF_C * interval_h, dtype=np.float64),
             np.full(n, DEG_PER_KWH * interval_h, dtype=np.float64),
@@ -169,11 +187,11 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         ])
     if terminal_energy_value_per_kwh:
         c_obj[:n] -= terminal_energy_value_per_kwh * EFF_C * interval_h
-        c_obj[n:] += terminal_energy_value_per_kwh * interval_h
+        c_obj[n:2 * n] += terminal_energy_value_per_kwh * interval_h
 
     L = np.tril(np.ones((n, n)))
 
-    net_load_var_count = 3 * n if use_net_load_mode else 0
+    net_load_var_count = 3 * n if use_site_flow_mode else 0
     zeros_extra = np.zeros((n, net_load_var_count), dtype=np.float64)
     A_lower = np.hstack([-EFF_C * interval_h * L,  interval_h * L, zeros_extra])
     b_lower = np.full(n, soc_init)
@@ -236,7 +254,7 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
 
     A_eq = None
     b_eq = None
-    if use_net_load_mode:
+    if use_site_flow_mode:
         charge_block = -np.eye(n, dtype=np.float64)
         discharge_block = EFF_D * np.eye(n, dtype=np.float64)
         import_block = np.eye(n, dtype=np.float64)
@@ -245,25 +263,36 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         A_eq = np.hstack([charge_block, discharge_block, import_block, export_block, curtail_block])
         if use_extra_terminal_value:
             A_eq = np.hstack([A_eq, np.zeros((n, 1), dtype=np.float64)])
-        b_eq = net_load_forecast_kw
+        b_eq = net_load_balance_kw
 
     A_ub = np.vstack(A_parts)
     b_ub = np.concatenate(b_parts)
     bounds = [(0.0, max_power_kw)] * (2 * n)
-    if use_net_load_mode:
-        import_bounds = [
-            (0.0, max_power_kw + max(0.0, float(v)))
-            for v in net_load_forecast_kw
-        ]
-        export_bounds = [
-            (0.0, max_power_kw * EFF_D + max(0.0, -float(v)))
-            for v in net_load_forecast_kw
-        ]
+    if use_site_flow_mode:
+        if use_split_load_pv_mode:
+            import_bounds = [
+                (0.0, max_power_kw + max(0.0, float(load_kw)))
+                for load_kw in load_forecast_kw
+            ]
+            export_bounds = [
+                (0.0, max_power_kw * EFF_D + max(0.0, float(pv_kw)))
+                for pv_kw in pv_forecast_kw
+            ]
+            curtail_bounds = [(0.0, max(0.0, float(pv_kw))) for pv_kw in pv_forecast_kw]
+        else:
+            import_bounds = [
+                (0.0, max_power_kw + max(0.0, float(v)))
+                for v in net_load_forecast_kw
+            ]
+            export_bounds = [
+                (0.0, max_power_kw * EFF_D + max(0.0, -float(v)))
+                for v in net_load_forecast_kw
+            ]
+            # Compatibility path: with net load only, only visible surplus PV can be curtailed.
+            curtail_bounds = [(0.0, max(0.0, -float(v))) for v in net_load_forecast_kw]
         bounds.extend(import_bounds)
         bounds.extend(export_bounds)
-        # Only surplus PV can be curtailed with the current net-load-only input contract.
-        # Full PV turn-off while site load is positive needs separate load/PV forecasts.
-        bounds.extend((0.0, max(0.0, -float(v))) for v in net_load_forecast_kw)
+        bounds.extend(curtail_bounds)
     if use_extra_terminal_value:
         bounds.append((0.0, extra_terminal_energy_cap_kwh))
 
@@ -304,10 +333,10 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
             "initial_soc_shadow_price_per_kwh": float("nan"),
         }
 
-    grid_import = result.x[2 * n:3 * n] if use_net_load_mode else np.zeros(n)
-    grid_export = result.x[3 * n:4 * n] if use_net_load_mode else np.zeros(n)
-    curtail = result.x[4 * n:5 * n] if use_net_load_mode else np.zeros(n)
-    extra_terminal_idx = (5 * n if use_net_load_mode else 2 * n)
+    grid_import = result.x[2 * n:3 * n] if use_site_flow_mode else np.zeros(n)
+    grid_export = result.x[3 * n:4 * n] if use_site_flow_mode else np.zeros(n)
+    curtail = result.x[4 * n:5 * n] if use_site_flow_mode else np.zeros(n)
+    extra_terminal_idx = (5 * n if use_site_flow_mode else 2 * n)
     return {
         "charge_kw": result.x[:n],
         "discharge_kw": result.x[n:2 * n],
@@ -332,6 +361,8 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                 import_prices_mwh: np.ndarray | None = None,
                 export_prices_mwh: np.ndarray | None = None,
                 net_load_forecast_kw: np.ndarray | None = None,
+                load_forecast_kw: np.ndarray | None = None,
+                pv_forecast_kw: np.ndarray | None = None,
                 terminal_energy_value_per_kwh: float = 0.0,
                 extra_terminal_energy_value_per_kwh: float = 0.0,
                 extra_terminal_energy_floor_kwh: float | None = None,
@@ -350,6 +381,8 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         import_prices_mwh=import_prices_mwh,
         export_prices_mwh=export_prices_mwh,
         net_load_forecast_kw=net_load_forecast_kw,
+        load_forecast_kw=load_forecast_kw,
+        pv_forecast_kw=pv_forecast_kw,
         terminal_energy_value_per_kwh=terminal_energy_value_per_kwh,
         extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
         extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
@@ -365,6 +398,8 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
 def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
                  soc_init: float = SOC_INIT_KWH,
                  net_load_actuals: np.ndarray | None = None,
+                 load_actuals: np.ndarray | None = None,
+                 pv_actuals: np.ndarray | None = None,
                  interval_h: float = INTERVAL_H,
                  capacity_kwh: float = CAPACITY_KWH,
                  max_power_kw: float = MAX_POWER_KW) -> dict:
@@ -376,6 +411,11 @@ def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
       2. Execute only the first action (c_0, d_0).
       3. Book P&L against actual_prices[h].
       4. Advance SoC.
+
+    load_actuals/pv_actuals (kW, optional):
+        Split actual household load and available PV generation per step. When
+        provided, this is preferred over net_load_actuals and allows the LP to
+        curtail all controllable PV generation, not just visible surplus.
 
     net_load_actuals (kW, optional):
         Actual household net load per step: load_kw − pv_kw.
@@ -398,7 +438,19 @@ def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
     curtail_actions = np.zeros(n)
 
     for h in range(n):
-        if net_load_actuals is None:
+        if load_actuals is not None and pv_actuals is not None:
+            solve = solve_lp_dispatch(
+                forecast_prices[h:],
+                soc,
+                interval_h=interval_h,
+                capacity_kwh=capacity_kwh,
+                max_power_kw=max_power_kw,
+                import_prices_mwh=forecast_prices[h:],
+                export_prices_mwh=forecast_prices[h:],
+                load_forecast_kw=load_actuals[h:],
+                pv_forecast_kw=pv_actuals[h:],
+            )
+        elif net_load_actuals is None:
             solve = solve_lp_dispatch(
                 forecast_prices[h:],
                 soc,
@@ -426,7 +478,14 @@ def simulate_mpc(forecast_prices: np.ndarray, actual_prices: np.ndarray,
 
         p_kwh = actual_prices[h] / 1000.0  # $/kWh
 
-        if net_load_actuals is None:
+        if load_actuals is not None and pv_actuals is not None:
+            load_kw = float(load_actuals[h])
+            pv_kw = float(pv_actuals[h])
+            grid_kw = load_kw - pv_kw + c0 - d0 * EFF_D + curtail0
+            grid_pnl = -grid_kw * p_kwh * interval_h
+            degrad_cost = DEG_PER_KWH * (c0 * EFF_C + d0) * interval_h
+            pnl = grid_pnl - degrad_cost
+        elif net_load_actuals is None:
             # Price-only mode: battery arbitrage P&L
             pnl = (d0 * EFF_D * p_kwh - c0 * p_kwh
                    - DEG_PER_KWH * (c0 * EFF_C + d0)) * interval_h

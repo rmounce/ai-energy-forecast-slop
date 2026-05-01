@@ -993,16 +993,22 @@ So the next branch should stop thinking “big export spikes” and start thinki
 **Curtailment correction:**
 - the low-FIT surplus-PV branch exposed that the first `netload_tariffed` LP had no explicit
   curtailment variable, so negative net load not used for battery charging was forced to export
-- `solve_lp_dispatch()` now includes `curtail_kw` in net-load mode, bounded by current surplus:
+- `solve_lp_dispatch()` now includes `curtail_kw` in site-flow mode
+- with split load/PV inputs, curtailment is bounded by available PV:
+  `0 <= curtail_kw <= pv_kw`
+- with net-load-only inputs, curtailment is bounded by visible surplus:
   `0 <= curtail_kw <= max(0, -net_load_kw)`
-- rolling `netload_tariffed` realized PnL now includes first-step curtailment in the grid-flow
-  balance
-- label builders/analyzers now carry curtailment into path metrics
+- rolling `netload_tariffed` now uses split load/PV when available and includes first-step
+  curtailment in the grid-flow balance
+- regret/label builders now carry curtailment into path metrics and prefer split load/PV inputs
+  when newer rolling raw outputs include them
 - quick smoke:
   - negative feed-in with `2.5 kW` surplus: `export=0`, `curtail=2.5`
   - positive feed-in with `2.5 kW` surplus: `export=2.5`, `curtail=0`
-- remaining limitation: current inputs only provide net load, so this supports surplus-PV
-  curtailment; full PV turn-off while site load is positive needs separate load/PV inputs
+  - negative import/feed-in with `3.0 kW` load and `2.0 kW` PV: `curtail=2.0`,
+    `import=3.0`
+- remaining limitation: callers that provide only net load can still curtail only visible surplus;
+  full PV turn-off while site load is positive requires split load/PV inputs
 - implication: rerun the target-bucket state-transition labels under the corrected LP before
   training a churn/grid-exchange discipline model
 

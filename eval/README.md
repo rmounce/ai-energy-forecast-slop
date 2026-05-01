@@ -4,7 +4,7 @@
 
 | Script | Purpose |
 |--------|---------|
-| `dispatch_simulator.py` | Rolling MPC LP backtester (scipy HiGHS, 40 kWh/10 kW battery). Phase 3: price-only 5-min. Phase 6: 30-min with net_load_actuals. |
+| `dispatch_simulator.py` | Rolling MPC LP backtester (scipy HiGHS, 40 kWh/10 kW battery). Phase 3: price-only 5-min. Phase 6: tariffed site-flow mode with net load or split load/PV actuals. |
 | `build_holistic_eval_set.py` | Build stratified eval index (spike/low/normal) from InfluxDB + forecast log. |
 | `holistic_eval.py` | Run holistic dispatch simulation: oracle / amber_apf_lgbm / p5min_naive. `--ai-source`: add TFT q50. `--hybrid-source`: add Tier 1+TFT hybrid. |
 | `retro_tft_inference.py` | Retrospective TFT Tier 2 batch inference → `retro_tft_forecasts.pkl` ({ts → ndarray(144,6)}). |
@@ -46,11 +46,12 @@ Parallelism notes:
 - `--mp-start-method auto` prefers `fork` on Linux and has completed a real `2-day` pilot with
   `--workers 2`
 - `--economic-mode netload_tariffed` is the first production-fidelity upgrade path for Track A:
-  it uses actual 30-minute load/PV expanded to 5-minute net load plus tariffed import/feed-in
-  price curves for both the tactical solve and realized PnL
-- net-load mode supports explicit surplus-PV curtailment via `curtail_kw`, bounded by
-  `max(0, -net_load_kw)`. Full PV turn-off while site load remains positive requires separate
-  load/PV inputs rather than the current net-load-only LP contract.
+  it uses actual 30-minute load/PV expanded to 5-minute site-flow inputs plus tariffed
+  import/feed-in price curves for both the tactical solve and realized PnL
+- site-flow mode supports explicit PV curtailment via `curtail_kw`. With split load/PV inputs,
+  curtailment is bounded by available PV and can represent full PV turn-down while site load is
+  positive; with net-load-only inputs, it falls back to surplus-only curtailment bounded by
+  `max(0, -net_load_kw)`.
 - `--progress-every-steps` controls how often the script prints elapsed/ETA progress lines and
   updates `eval/results/<output_prefix>_<source>.progress.json` checkpoint files
 - still validate any new multi-worker run shape on a short pilot before leaving it unattended
