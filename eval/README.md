@@ -121,7 +121,8 @@ Then run the first diagnostic model pass:
 
 Treat this as a signal test, not a deployable controller. The model uses current-time/site/forecast
 summary features and predicts oracle-vs-target path labels such as prefix PnL, SoC delta, churn,
-import/export, and curtailment deltas.
+import/export, and curtailment deltas. `--labels` also accepts a comma-separated list of label
+files so multiple corrected windows/buckets can be pooled without hand-stitching.
 
 ---
 

@@ -95,7 +95,16 @@ def _load_labels(path: Path) -> pd.DataFrame:
     if "time" not in df.columns:
         raise ValueError("Labels file must include a time column")
     df["time"] = pd.to_datetime(df["time"], utc=True)
+    df["label_file"] = path.name
     return df.sort_values(["time", "horizon_steps"], kind="stable").reset_index(drop=True)
+
+
+def _load_label_files(label_args: list[str]) -> tuple[pd.DataFrame, list[Path]]:
+    paths = [_resolve_path(arg) for arg in label_args]
+    frames = [_load_labels(path) for path in paths]
+    df = pd.concat(frames, ignore_index=True)
+    df = df.sort_values(["time", "label_file", "horizon_steps"], kind="stable").reset_index(drop=True)
+    return df, paths
 
 
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -205,6 +214,7 @@ def train_one_target(
                 [
                     "time",
                     "horizon_steps",
+                    "label_file",
                     "target",
                     "split",
                     "y_true",
@@ -255,7 +265,11 @@ def train_one_target(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--labels", required=True, help="State-transition label CSV/parquet path or filename under eval/results")
+    parser.add_argument(
+        "--labels",
+        required=True,
+        help="Comma-separated state-transition label CSV/parquet paths or filenames under eval/results",
+    )
     parser.add_argument("--output-prefix", required=True)
     parser.add_argument("--targets", default=",".join(DEFAULT_TARGETS), help="Comma-separated label targets")
     parser.add_argument("--features", default=",".join(DEFAULT_FEATURES), help="Comma-separated feature columns")
@@ -264,8 +278,10 @@ def main() -> int:
     parser.add_argument("--model-dir", default=None, help="Optional directory to save joblib model bundles")
     args = parser.parse_args()
 
-    labels_path = _resolve_path(args.labels)
-    df = _load_labels(labels_path)
+    label_args = _parse_csv_list(args.labels, [])
+    if not label_args:
+        raise ValueError("--labels must include at least one label file")
+    df, labels_paths = _load_label_files(label_args)
     if args.max_rows is not None:
         df = df.head(max(0, int(args.max_rows))).copy()
     targets = _parse_csv_list(args.targets, DEFAULT_TARGETS)
@@ -316,7 +332,7 @@ def main() -> int:
     importances.to_csv(imp_path, index=False)
 
     manifest = {
-        "labels": str(labels_path),
+        "labels": [str(path) for path in labels_paths],
         "output_prefix": args.output_prefix,
         "targets": targets,
         "features": feature_cols,
@@ -339,7 +355,7 @@ def main() -> int:
             "targets": targets,
             "features": feature_cols,
             "lgbm_params": LGBM_PARAMS,
-            "labels": str(labels_path),
+            "labels": [str(path) for path in labels_paths],
         }
         model_path = model_dir / f"{args.output_prefix}_state_value_models.joblib"
         joblib.dump(bundle, model_path)
