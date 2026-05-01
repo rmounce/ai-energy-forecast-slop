@@ -963,3 +963,47 @@ The next production-worthy step should either narrow the state-value corrector t
 ordinary surplus-PV regime where the economic gap was found, or build a more explicitly regime
 conditioned label/model family. A pooled one-size-fits-all inventory-value bias is not supported by
 this run.
+
+### Marginal SoC Finite-Difference Probe
+
+The next target-bucket run added a direct `+1 kWh` initial-SoC finite-difference label:
+
+- run script: `run_state_value_fdiff_targetbucket_20260501.sh`
+- label output:
+  `state_transition_wb7_fitlt300_negload_fdiff1_curtail_20260501_state_transition_labels.parquet`
+- model metrics:
+  `state_transition_wb7_fitlt300_negload_fdiff1_curtail_20260501_model_state_value_model_metrics.csv`
+- bucket: `FIT < 300`, negative net load, corrected curtailment Window B raw
+- all steps completed with exit code `0`
+
+Runtime was about `90` minutes. The finite-difference solve produced `1404` label rows
+(`702` timestamps x two horizons). The finite-difference value was available on `1302` rows;
+rows at or near the usable capacity ceiling cannot always support a full `+1 kWh` perturbation.
+
+Label distribution:
+
+- mean finite-difference value: `0.082 $/kWh`
+- median: `0.084 $/kWh`
+- interquartile range: `0.050` to `0.115 $/kWh`
+- min / max: about `-0.170` to `0.413 $/kWh`
+
+This is a useful diagnostic label: it gives the branch a direct local estimate of "what is one
+more kWh in the battery worth here?" rather than relying only on path deltas such as churn or
+prefix PnL.
+
+The first diagnostic LightGBM fit, however, is not yet a strong learned value model:
+
+- finite-difference value validation MAE improves by about `19.8%` over the median baseline
+- validation `R2` is strongly negative (`~ -3.57`)
+- train `R2` is high (`~ 0.89`), so the fit is over-learning the small target-bucket slice
+- sign accuracy is unchanged from baseline (`~54.8%`)
+
+The older path labels remain similar to the prior target-bucket probe:
+
+- prefix value / PnL: validation MAE improves by about `3.8%`, `R2 ~= 0.084`
+- SoC delta: validation MAE improves by about `7.2%`, `R2 ~= 0.038`
+
+Interpretation: the finite-difference target is worth keeping as a label source, but this first
+fit is not a production candidate. It argues for either better target shaping / regularization or
+more regime-aware training data before attempting an MPC inventory-value bias. It does **not**
+justify wiring the learned finite-difference model directly into dispatch.
