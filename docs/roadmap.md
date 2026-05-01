@@ -1035,6 +1035,17 @@ So the next branch should stop thinking “big export spikes” and start thinki
 - implication: no further simulator refinement is currently blocking the modeling branch; keep
   future simulation work focused on specific audit failures or explicitly modeled inverter
   constraints
+- first diagnostic state-value model probe completed on the corrected target-bucket labels:
+  - tool: `eval/train_state_transition_value_model.py`
+  - prefix value / PnL label: validation MAE improves by about `3.8%` over a median baseline,
+    `R2 ~= 0.084`, sign accuracy `~94.5%`
+  - SoC-delta label: validation MAE improves by about `7.2%`, `R2 ~= 0.038`, sign accuracy
+    `~85.7%`
+  - direct throughput/import/export/curtail labels are not yet strong enough; most do not beat
+    the baseline on MAE
+- implication: the inventory-discipline branch has weak but real signal, but should not be wired
+  into control from this single target-bucket slice; broaden the label set or improve target
+  shaping before attempting an MPC bias
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
