@@ -1112,8 +1112,18 @@ So the next branch should stop thinking “big export spikes” and start thinki
     negative net load, Amber has lower forced-prefix regret more often than Hybrid (`36.0%` vs
     `23.1%`) while doing less charge/discharge/import/export over the pinned prefix; the tool also
     exposes a meaningful feed-in 1h shape gap in that bucket
-  - next decision should come from running this diagnostic across Window A and the falsification
-    slices, not from another control-only heuristic or immediate retrain
+  - fast diagnostic pass across Window A 7-day, Window B excluding `2025-09-01`, and the midfit
+    slice also completed for both legacy and tariff-aware raw files
+  - the result is not a clean universal target-bucket story: Window B excluding `2025-09-01` still
+    shows Amber ahead in `FIT < 300` / negative-net-load step PnL, but Window A and midfit are flat
+    to negative in that bucket, while Amber's edge often shifts to non-negative-net-load or
+    high-FIT buckets
+  - `tariffaware_v1` barely changes the dispatch-relevant forecast-shape fingerprints versus
+    legacy on these slices, which reinforces the earlier read that it is not a strong production
+    base
+  - implication: do not train a narrow `FIT < 300` / negative-net-load tactical model yet; first
+    inspect event rows and add a fuller h0-h11 forecast-vector diagnostic so the model branch is
+    aimed at the actual misranking mechanism rather than a bucket label alone
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

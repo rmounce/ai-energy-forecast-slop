@@ -90,18 +90,21 @@ def add_actual_horizon_metrics(raw_df: pd.DataFrame) -> pd.DataFrame:
     """
     df = raw_df.copy()
     df["time"] = pd.to_datetime(df["time"], utc=True)
-    actual_cols = [
+    required_actual_cols = [
         "time",
         "actual_price_mwh",
         "actual_general_price_mwh",
         "actual_feed_in_price_mwh",
         "actual_net_load_kw",
+    ]
+    optional_actual_cols = [
         "actual_load_kw",
         "actual_pv_kw",
     ]
-    missing = [c for c in actual_cols if c not in df.columns]
+    missing = [c for c in required_actual_cols if c not in df.columns]
     if missing:
         raise ValueError(f"Missing required raw columns: {missing}")
+    actual_cols = required_actual_cols + [c for c in optional_actual_cols if c in df.columns]
 
     actual = (
         df[actual_cols]
@@ -330,7 +333,7 @@ def build_pairwise_rows(df: pd.DataFrame, *, source_a: str, source_b: str) -> pd
     ]
     a = a[[c for c in keep_cols if c in a.columns]].rename(columns={c: f"a_{c}" for c in keep_cols if c != "time"})
     b = b[[c for c in keep_cols if c in b.columns]].rename(columns={c: f"b_{c}" for c in keep_cols if c != "time"})
-    context = df[df["source"] == source_a][context_cols].copy()
+    context = df[df["source"] == source_a][[c for c in context_cols if c in df.columns]].copy()
     merged = context.merge(a, on="time", how="inner", validate="one_to_one").merge(
         b,
         on="time",

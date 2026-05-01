@@ -136,7 +136,8 @@ rolling raw parquet outputs, so it only sees step-0 and persisted horizon-summar
 columns rather than the full h0-h11 tactical vector. That is intentional for this first pass:
 it audits the known mismatch between Tier 1's raw wholesale-RRP target and the tariffed site
 economics gate, then compares available 1h/4h/14h forecast-shape proxies with realized
-tariffed import/feed-in outcomes.
+tariffed import/feed-in outcomes. Older netload-only raw files are supported; split
+`actual_load_kw` / `actual_pv_kw` columns are used when present but are not required.
 
 Example Window B diagnostic:
 
