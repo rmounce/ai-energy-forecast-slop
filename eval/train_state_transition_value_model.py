@@ -55,6 +55,7 @@ DEFAULT_FEATURES = [
     "strategic_soc_target_kwh",
     "terminal_energy_value_per_kwh",
 ]
+VECTOR_FEATURE_PREFIX = "tier1_vector"
 LGBM_PARAMS = {
     "objective": "regression_l1",
     "n_estimators": 600,
@@ -105,6 +106,84 @@ def _load_label_files(label_args: list[str]) -> tuple[pd.DataFrame, list[Path]]:
     df = pd.concat(frames, ignore_index=True)
     df = df.sort_values(["time", "label_file", "horizon_steps"], kind="stable").reset_index(drop=True)
     return df, paths
+
+
+def _load_table(path: Path) -> pd.DataFrame:
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
+
+
+def build_tier1_vector_feature_frame(vector_df: pd.DataFrame, *, source: str) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Convert h0-h11 vector diagnostic rows into production-side curve-shape features.
+
+    Only forecast columns are used. Actual future prices in the diagnostic rows are deliberately
+    ignored so this remains a model-side signal probe, not an oracle leakage path.
+    """
+    required = {"time", "source", "horizon", "forecast_general_mwh", "forecast_feed_in_mwh"}
+    missing = required - set(vector_df.columns)
+    if missing:
+        raise ValueError(f"Vector rows missing columns: {sorted(missing)}")
+
+    df = vector_df[vector_df["source"] == source].copy()
+    if df.empty:
+        raise ValueError(f"No vector rows found for source: {source}")
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    df["horizon"] = pd.to_numeric(df["horizon"], errors="raise").astype(int)
+    df = df[df["horizon"].between(0, 11)].copy()
+    if df.empty:
+        raise ValueError(f"No h0-h11 vector rows found for source: {source}")
+
+    feature_frames: list[pd.DataFrame] = []
+    feature_cols: list[str] = []
+    for price_name, value_col in [
+        ("general", "forecast_general_mwh"),
+        ("feed_in", "forecast_feed_in_mwh"),
+    ]:
+        wide = df.pivot_table(index="time", columns="horizon", values=value_col, aggfunc="first")
+        wide = wide.reindex(columns=range(12))
+        wide.columns = [f"{VECTOR_FEATURE_PREFIX}_{price_name}_h{int(h):02d}_mwh" for h in wide.columns]
+        feature_frames.append(wide)
+        feature_cols.extend(wide.columns.tolist())
+
+        h0_col = f"{VECTOR_FEATURE_PREFIX}_{price_name}_h00_mwh"
+        delta = wide.sub(wide[h0_col], axis=0)
+        delta.columns = [
+            f"{VECTOR_FEATURE_PREFIX}_{price_name}_h{int(h):02d}_minus_h00_mwh"
+            for h in range(12)
+        ]
+        feature_frames.append(delta)
+        feature_cols.extend(delta.columns.tolist())
+
+        adjacent = wide.diff(axis=1)
+        adjacent.columns = [
+            f"{VECTOR_FEATURE_PREFIX}_{price_name}_h{int(h):02d}_minus_prev_mwh"
+            for h in range(12)
+        ]
+        adjacent[f"{VECTOR_FEATURE_PREFIX}_{price_name}_h00_minus_prev_mwh"] = 0.0
+        feature_frames.append(adjacent)
+        feature_cols.extend(adjacent.columns.tolist())
+
+        summary = pd.DataFrame(index=wide.index)
+        values = wide.to_numpy(dtype=np.float64, copy=True)
+        summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_mean_1h_mwh"] = np.nanmean(values, axis=1)
+        summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_max_1h_mwh"] = np.nanmax(values, axis=1)
+        summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_min_1h_mwh"] = np.nanmin(values, axis=1)
+        summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_range_1h_mwh"] = (
+            summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_max_1h_mwh"]
+            - summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_min_1h_mwh"]
+        )
+        summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_argmax_1h_step"] = np.nanargmax(values, axis=1)
+        summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_argmin_1h_step"] = np.nanargmin(values, axis=1)
+        summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_mean_minus_h00_mwh"] = (
+            summary[f"{VECTOR_FEATURE_PREFIX}_{price_name}_mean_1h_mwh"] - wide[h0_col]
+        )
+        feature_frames.append(summary)
+        feature_cols.extend(summary.columns.tolist())
+
+    features = pd.concat(feature_frames, axis=1).reset_index()
+    return features, feature_cols
 
 
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -276,6 +355,16 @@ def main() -> int:
     parser.add_argument("--train-fraction", type=float, default=0.7)
     parser.add_argument("--max-rows", type=int, default=None, help="Optional smoke-test row limit after sorting")
     parser.add_argument("--model-dir", default=None, help="Optional directory to save joblib model bundles")
+    parser.add_argument(
+        "--vector-rows",
+        default=None,
+        help="Optional h0-h11 vector diagnostic rows CSV/parquet to join as forecast-shape features",
+    )
+    parser.add_argument(
+        "--vector-source",
+        default="model_a_hybrid",
+        help="Source label to select from --vector-rows before joining by time",
+    )
     args = parser.parse_args()
 
     label_args = _parse_csv_list(args.labels, [])
@@ -286,6 +375,28 @@ def main() -> int:
         df = df.head(max(0, int(args.max_rows))).copy()
     targets = _parse_csv_list(args.targets, DEFAULT_TARGETS)
     features_requested = _parse_csv_list(args.features, DEFAULT_FEATURES)
+    vector_path: Path | None = None
+    vector_feature_cols: list[str] = []
+    if args.vector_rows:
+        vector_path = _resolve_path(args.vector_rows)
+        vector_features, vector_feature_cols = build_tier1_vector_feature_frame(
+            _load_table(vector_path),
+            source=args.vector_source,
+        )
+        before_rows = len(df)
+        df = df.merge(vector_features, on="time", how="left", validate="many_to_one")
+        matched = int(df[vector_feature_cols].notna().any(axis=1).sum())
+        if matched == 0:
+            raise ValueError(
+                f"No label rows matched vector features from {vector_path.name} for source {args.vector_source}"
+            )
+        print(
+            f"[info] joined {len(vector_feature_cols)} vector features from {vector_path.name}: "
+            f"{matched}/{before_rows} label rows matched"
+        )
+        for col in vector_feature_cols:
+            if col not in features_requested:
+                features_requested.append(col)
     missing_targets = [col for col in targets if col not in df.columns]
     if missing_targets:
         raise ValueError(f"Missing target columns: {missing_targets}")
@@ -336,6 +447,9 @@ def main() -> int:
         "output_prefix": args.output_prefix,
         "targets": targets,
         "features": feature_cols,
+        "vector_rows": str(vector_path) if vector_path is not None else None,
+        "vector_source": args.vector_source if vector_path is not None else None,
+        "vector_feature_count": len(vector_feature_cols),
         "rows": int(len(df)),
         "train_rows": int(len(train_idx)),
         "validation_rows": int(len(val_idx)),

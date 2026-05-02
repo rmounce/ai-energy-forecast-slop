@@ -1102,3 +1102,41 @@ So the next production-shaped model candidate should **not** be a narrow
 The better next branch is a richer multi-step path/value target or target transformation that can
 distinguish profitable surplus-PV preparation from wasteful churn. The vector diagnostic should
 remain the falsification lens for that branch.
+
+### Vector Features In State-Value Probe
+
+To test whether the full h0-h11 Tier 1 curve shape contains enough signal for that richer branch,
+the diagnostic state-value trainer now supports optional vector-feature ingestion:
+
+- code: [eval/train_state_transition_value_model.py](../eval/train_state_transition_value_model.py)
+- test: [tests/eval/test_train_state_transition_value_model.py](../tests/eval/test_train_state_transition_value_model.py)
+- option: `--vector-rows ... --vector-source model_a_hybrid`
+- leakage guard: only forecast vector columns are used; realized future price columns in the
+  vector diagnostic rows are ignored
+
+First full target-bucket probe:
+
+- output prefix: `state_transition_wb7_fitlt300_negload_vector_probe_20260502`
+- labels: `state_transition_wb7_fitlt300_negload_curtail_20260501_state_transition_labels.parquet`
+- vector rows: `tier1_vector_wb7_legacy_20260501_tier1_vector_rows.parquet`
+- joined vector features: `86`
+- matched label rows: `1,404 / 1,404`
+
+Validation result:
+
+| target | MAE improvement vs median baseline | R2 |
+| --- | ---: | ---: |
+| prefix PnL / value | `+0.4%` | `0.078` |
+| SoC delta | `+5.3%` | `0.080` |
+| throughput | `+1.0%` | `-0.148` |
+| import | `+0.0%` | `-0.353` |
+| export | `-0.5%` | `-0.066` |
+| curtail | `-0.4%` | `-0.164` |
+
+Feature importance shows the model does use some h0-h11 shape features, especially adjacent
+general/feed-in curve moves. But the dominant predictors remain time, SoC, strategic target,
+PV/net-load, and existing 4h forecast-summary features.
+
+Interpretation: first-hour curve shape is useful context, but not enough by itself to produce a
+strong state-value model on this single target-bucket slice. The next candidate should improve
+the target/label formulation or broaden regime-aware training data before another dispatch hook.
