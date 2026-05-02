@@ -131,6 +131,21 @@ summary features and predicts oracle-vs-target path labels such as prefix PnL, S
 import/export, and curtailment deltas. `--labels` also accepts a comma-separated list of label
 files so multiple corrected windows/buckets can be pooled without hand-stitching.
 
+After running `analyze_tier1_tactical_vector_errors.py`, the same state-value probe can ingest
+the full h0-h11 Tier 1 forecast vector as production-side curve-shape features:
+
+```bash
+nice -n 19 ./.venv/bin/python eval/train_state_transition_value_model.py \
+  --labels state_transition_wb7_fitlt300_negload_curtail_20260501_state_transition_labels.parquet \
+  --vector-rows tier1_vector_wb7_legacy_20260501_tier1_vector_rows.parquet \
+  --vector-source model_a_hybrid \
+  --targets oracle_minus_target_step_pnl,oracle_minus_target_soc_delta_kwh \
+  --output-prefix state_transition_wb7_vector_probe_20260501
+```
+
+Those vector features use forecast curves only; realized future price columns from the diagnostic
+rows are intentionally ignored.
+
 When the branch pivots back from control probes to the tactical model itself, use
 `analyze_tier1_dispatch_relevant_errors.py` before training another candidate. It works from
 rolling raw parquet outputs, so it only sees step-0 and persisted horizon-summary forecast

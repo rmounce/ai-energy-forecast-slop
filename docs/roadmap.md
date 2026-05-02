@@ -1155,6 +1155,23 @@ So the next branch should stop thinking “big export spikes” and start thinki
     `tariffaware_v1`; the next model-side candidate should use a richer multi-step path/value
     label or target transformation that can distinguish profitable surplus-PV preparation from
     wasteful churn, with vector diagnostics used as the falsification lens
+  - added optional h0-h11 vector-feature ingestion to
+    [eval/train_state_transition_value_model.py](../eval/train_state_transition_value_model.py)
+    so the state-value probe can test whether full first-hour Tier 1 curve shape contains
+    learnable multi-step path-value signal without leaking realized future prices
+  - full target-bucket vector probe completed under
+    `state_transition_wb7_fitlt300_negload_vector_probe_20260502`:
+    - joined `86` vector features from `tier1_vector_wb7_legacy_20260501_tier1_vector_rows.parquet`
+      to all `1,404` target-bucket label rows
+    - validation prefix-PnL MAE improved only `0.4%` over baseline (`R2 ~= 0.078`)
+    - validation SoC-delta MAE improved `5.3%` (`R2 ~= 0.080`)
+    - throughput, import, export, and curtail labels were at or below baseline
+  - feature importance used some h0-h11 shape features, but the dominant predictors remained
+    time, SoC, strategic target, PV/net-load, and existing 4h forecast summaries
+  - implication: the full first-hour vector has diagnostic value, but it is not by itself a
+    strong enough supervised signal for a production dispatch-shape model. The next model branch
+    should improve the label/target formulation or broaden regime-aware training data before
+    attempting another controller hook.
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
