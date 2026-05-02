@@ -296,6 +296,30 @@ def _should_apply_grid_exchange_reduction(
     )
 
 
+def _next_soc_after_first_action(soc_prev_kwh: float, charge_kw: float, discharge_kw: float) -> float:
+    return float(
+        np.clip(
+            float(soc_prev_kwh) + (float(charge_kw) * EFF_C - float(discharge_kw)) * INTERVAL_H,
+            0.0,
+            CAPACITY_KWH,
+        )
+    )
+
+
+def _should_block_grid_exchange_reduction_by_soc(
+    *,
+    candidate_next_soc_kwh: float,
+    reference_next_soc_kwh: float,
+    max_next_soc_drop_kwh: float,
+) -> bool:
+    return (
+        np.isfinite(candidate_next_soc_kwh)
+        and np.isfinite(reference_next_soc_kwh)
+        and max_next_soc_drop_kwh >= 0.0
+        and candidate_next_soc_kwh < reference_next_soc_kwh - max_next_soc_drop_kwh
+    )
+
+
 def _load_actuals_5m() -> pd.DataFrame:
     df = pd.read_parquet(ACTUALS_5M_FILE)
     if df.index.tz is None:
@@ -1067,6 +1091,7 @@ def simulate_stepwise(
             grid_exchange_reduction_cycle_cost_adder_per_kwh = 0.0
             grid_exchange_reduction_flow_cost_adder_per_kwh = 0.0
             grid_exchange_reduction_score = float("nan")
+            grid_exchange_reduction_guard_blocked = False
             if strategic_soc_handoff:
                 strategic_q50 = providers.strategic_solve_summary(
                     contract.strategic_source,
@@ -1294,6 +1319,47 @@ def simulate_stepwise(
                 ),
                 grid_exchange_cost_adder_per_kwh=grid_exchange_reduction_flow_cost_adder_per_kwh,
             )
+            if (
+                grid_exchange_reduction_applied
+                and providers.args.grid_exchange_reduction_max_next_soc_drop_kwh >= 0.0
+            ):
+                reference_solve = solve_lp_dispatch(
+                    curve,
+                    state[src],
+                    import_prices_mwh=forecast_general_price_mwh,
+                    export_prices_mwh=forecast_feed_in_price_mwh,
+                    net_load_forecast_kw=forecast_net_load_kw,
+                    load_forecast_kw=forecast_load_kw,
+                    pv_forecast_kw=forecast_pv_kw,
+                    terminal_energy_value_per_kwh=applied_terminal_energy_value_per_kwh,
+                    extra_terminal_energy_value_per_kwh=extra_terminal_energy_value_per_kwh,
+                    extra_terminal_energy_floor_kwh=extra_terminal_energy_floor_kwh,
+                    extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
+                    min_terminal_soc_kwh=min_terminal_soc_kwh,
+                    max_terminal_soc_kwh=max_terminal_soc_kwh,
+                    throughput_cost_adder_per_kwh=inventory_discipline_cycle_cost_adder_per_kwh,
+                    grid_exchange_cost_adder_per_kwh=0.0,
+                )
+                candidate_next_soc_kwh = _next_soc_after_first_action(
+                    state[src],
+                    solve["charge_kw"][0] if len(solve["charge_kw"]) else 0.0,
+                    solve["discharge_kw"][0] if len(solve["discharge_kw"]) else 0.0,
+                )
+                reference_next_soc_kwh = _next_soc_after_first_action(
+                    state[src],
+                    reference_solve["charge_kw"][0] if len(reference_solve["charge_kw"]) else 0.0,
+                    reference_solve["discharge_kw"][0] if len(reference_solve["discharge_kw"]) else 0.0,
+                )
+                if _should_block_grid_exchange_reduction_by_soc(
+                    candidate_next_soc_kwh=candidate_next_soc_kwh,
+                    reference_next_soc_kwh=reference_next_soc_kwh,
+                    max_next_soc_drop_kwh=providers.args.grid_exchange_reduction_max_next_soc_drop_kwh,
+                ):
+                    solve = reference_solve
+                    grid_exchange_reduction_applied = False
+                    grid_exchange_reduction_guard_blocked = True
+                    grid_exchange_reduction_cycle_cost_adder_per_kwh = 0.0
+                    grid_exchange_reduction_flow_cost_adder_per_kwh = 0.0
             c_plan = solve["charge_kw"]
             d_plan = solve["discharge_kw"]
             c0 = float(c_plan[0]) if len(c_plan) else 0.0
@@ -1396,6 +1462,10 @@ def simulate_stepwise(
                 "grid_exchange_reduction_applied": grid_exchange_reduction_applied,
                 "grid_exchange_reduction_score": grid_exchange_reduction_score,
                 "grid_exchange_reduction_min_score": providers.args.grid_exchange_reduction_min_score,
+                "grid_exchange_reduction_guard_blocked": grid_exchange_reduction_guard_blocked,
+                "grid_exchange_reduction_max_next_soc_drop_kwh": (
+                    providers.args.grid_exchange_reduction_max_next_soc_drop_kwh
+                ),
                 "grid_exchange_reduction_cycle_cost_adder_per_kwh": (
                     grid_exchange_reduction_cycle_cost_adder_per_kwh
                 ),
@@ -1468,6 +1538,11 @@ def simulate_stepwise(
             if not src_df.empty and "grid_exchange_reduction_applied" in src_df
             else 0
         )
+        grid_exchange_reduction_guard_blocked_steps = (
+            int(src_df["grid_exchange_reduction_guard_blocked"].sum())
+            if not src_df.empty and "grid_exchange_reduction_guard_blocked" in src_df
+            else 0
+        )
         mean_grid_exchange_reduction_cycle_cost_adder_per_kwh = (
             float(src_df["grid_exchange_reduction_cycle_cost_adder_per_kwh"].mean())
             if not src_df.empty and "grid_exchange_reduction_cycle_cost_adder_per_kwh" in src_df
@@ -1528,6 +1603,7 @@ def simulate_stepwise(
             "mean_inventory_discipline_cycle_cost_adder_per_kwh": mean_inventory_discipline_cycle_cost_adder_per_kwh,
             "max_inventory_discipline_cycle_cost_adder_per_kwh": max_inventory_discipline_cycle_cost_adder_per_kwh,
             "grid_exchange_reduction_steps": grid_exchange_reduction_steps,
+            "grid_exchange_reduction_guard_blocked_steps": grid_exchange_reduction_guard_blocked_steps,
             "mean_grid_exchange_reduction_score": mean_grid_exchange_reduction_score,
             "mean_grid_exchange_reduction_cycle_cost_adder_per_kwh": (
                 mean_grid_exchange_reduction_cycle_cost_adder_per_kwh
@@ -2237,6 +2313,16 @@ def main():
         help="Minimum external event score required for the grid-exchange-reduction gate.",
     )
     parser.add_argument(
+        "--grid-exchange-reduction-max-next-soc-drop-kwh",
+        type=float,
+        default=-1.0,
+        help=(
+            "Optional safety guard. When >= 0, compare the gated solve with the same-step "
+            "ungated solve and block the gate if the gated first action lowers next-step SoC "
+            "by more than this many kWh. Use -1 to disable."
+        ),
+    )
+    parser.add_argument(
         "--grid-exchange-reduction-label",
         default="grid_exchange_down",
         help="Label value to select from the signal file when a label column is present.",
@@ -2342,6 +2428,8 @@ def main():
         parser.error("--grid-exchange-reduction-flow-cost-mwh must be >= 0")
     if not 0.0 <= args.grid_exchange_reduction_min_score <= 1.0:
         parser.error("--grid-exchange-reduction-min-score must be in [0, 1]")
+    if args.grid_exchange_reduction_max_next_soc_drop_kwh < -1.0:
+        parser.error("--grid-exchange-reduction-max-next-soc-drop-kwh must be >= -1")
     if args.grid_exchange_reduction_sources and args.economic_mode != "netload_tariffed":
         parser.error("--grid-exchange-reduction-sources currently requires --economic-mode netload_tariffed")
     if args.grid_exchange_reduction_sources and not args.grid_exchange_reduction_signal_file:
@@ -2425,6 +2513,7 @@ def main():
         f"cycle_cost={args.grid_exchange_reduction_cycle_cost_mwh:.3f} $/MWh, "
         f"flow_cost={args.grid_exchange_reduction_flow_cost_mwh:.3f} $/MWh, "
         f"min_score={args.grid_exchange_reduction_min_score:.3f}, "
+        f"max_next_soc_drop={args.grid_exchange_reduction_max_next_soc_drop_kwh:.3f} kWh, "
         f"horizon={args.grid_exchange_reduction_horizon_steps}, "
         f"signals={len(args.grid_exchange_reduction_scores_by_time)}"
     )

@@ -1315,3 +1315,33 @@ guard/policy refinement that either:
   economically coherent, or
 - converts the event signal into a softer import/export spread adjustment rather than a flat
   flow penalty.
+
+### SoC-Guarded Flow Gate
+
+The eval hook now has a first-action inventory safety guard:
+`--grid-exchange-reduction-max-next-soc-drop-kwh`.
+
+When enabled, the rolling evaluator solves both:
+
+- the gated candidate, and
+- the same timestamp/source without the grid-exchange gate
+
+It then blocks the gated solve if the candidate first action would leave next-step SoC more than
+the configured tolerance below the ungated reference. This is a decision-time guard; it does not
+look at future realized outcomes.
+
+Window B 2h smoke, direct flow cost `50 $/MWh`:
+
+| max next-step SoC drop | mean $/day | final SoC | applied | blocked | interpretation |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| disabled | `15.048` | `21.481 kWh` | `21 / 24` | `0` | improves immediate PnL by spending inventory |
+| `0.00 kWh` | `5.330` | `26.185 kWh` | `13 / 24` | `8` | identical to ungated Hybrid |
+| `0.25 kWh` | `5.330` | `26.185 kWh` | `13 / 24` | `8` | identical to ungated Hybrid |
+
+This is a negative result for the current flat flow-cost control action. The guard can prevent
+inventory spend, but once it does so the gate no longer improves this slice. The remaining
+production path is therefore not "run this guarded gate longer." It is either:
+
+- use the event score as a selector for a different, less blunt control action, or
+- move the signal into the model/training target so the base tactical curve produces the desired
+  path without a post-hoc flow penalty.

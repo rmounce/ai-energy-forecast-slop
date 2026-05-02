@@ -1325,6 +1325,14 @@ label and less severe than the throughput proxy, but still spends inventory (`21
 vs Amber `25.67 kWh`). Do not launch longer sidecar-gate batches until the activation policy or
 control action is constrained enough that short smokes preserve terminal inventory.
 
+**SoC-guard result:** a first-action comparative guard now exists via
+`--grid-exchange-reduction-max-next-soc-drop-kwh`. It blocks the gated solve when its next-step SoC
+would be lower than the ungated solve by more than the configured tolerance. On the 2h Window B
+flow-cost smoke, both `0.00 kWh` and `0.25 kWh` tolerances preserved SoC but collapsed the gated
+source back to ungated Hybrid PnL. This means the current flat flow-cost hook has no demonstrated
+production value once inventory spend is disallowed. Next work should change the control action or
+train a model-side path-shape target, not scale up this hook.
+
 ---
 
 ## Known Open Issues

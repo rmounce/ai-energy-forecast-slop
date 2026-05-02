@@ -2,6 +2,7 @@ import pandas as pd
 
 from eval.rolling_mpc_eval import (
     _load_grid_exchange_reduction_signal,
+    _should_block_grid_exchange_reduction_by_soc,
     _should_apply_grid_exchange_reduction,
 )
 
@@ -71,4 +72,22 @@ def test_should_apply_grid_exchange_reduction_requires_source_score_and_cost():
         allowed_sources={"model_a_hybrid_grid_exchange_gate"},
         cycle_cost_adder_per_kwh=0.05,
         scores_by_time=scores,
+    )
+
+
+def test_grid_exchange_reduction_soc_guard_blocks_excessive_next_step_drop():
+    assert _should_block_grid_exchange_reduction_by_soc(
+        candidate_next_soc_kwh=20.0,
+        reference_next_soc_kwh=21.0,
+        max_next_soc_drop_kwh=0.25,
+    )
+    assert not _should_block_grid_exchange_reduction_by_soc(
+        candidate_next_soc_kwh=20.8,
+        reference_next_soc_kwh=21.0,
+        max_next_soc_drop_kwh=0.25,
+    )
+    assert not _should_block_grid_exchange_reduction_by_soc(
+        candidate_next_soc_kwh=20.0,
+        reference_next_soc_kwh=21.0,
+        max_next_soc_drop_kwh=-1.0,
     )
