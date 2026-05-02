@@ -1345,3 +1345,64 @@ production path is therefore not "run this guarded gate longer." It is either:
 - use the event score as a selector for a different, less blunt control action, or
 - move the signal into the model/training target so the base tactical curve produces the desired
   path without a post-hoc flow penalty.
+
+### Window A Finite-Difference State-Label Check
+
+The next overnight batch reran corrected Window A `7-day` under the same curtailment-capable
+`netload_tariffed` setup and built `+1 kWh` finite-difference labels across the same coarse
+regimes:
+
+- run script: `run_windowa_state_labels_fdiff_20260502.sh`
+- rolling prefix:
+  `rolling_mpc_eval_counterfactual_windowa_7day_netload_011b_curtail_20260502`
+- label prefixes:
+  - `state_transition_wa7_fitlt300_negload_fdiff1_curtail_20260502`
+  - `state_transition_wa7_fitlt300_nonnegload_fdiff1_curtail_20260502`
+  - `state_transition_wa7_fitgte300_fdiff1_curtail_20260502`
+- model prefixes:
+  - `state_transition_wa7_pooled_fdiff1_value_20260502`
+  - `state_transition_wa7_pooled_fdiff1_direction_20260502`
+
+All stages completed with exitcode `0`.
+
+Corrected Window A `7-day` dispatch summary:
+
+| source | mean $/day | final SoC |
+| --- | ---: | ---: |
+| `amber_apf_lgbm` | `-1.116` | `15.400 kWh` |
+| `amber_tactical_hybrid_strategic` | `-0.994` | `4.222 kWh` |
+| `hybrid_tactical_amber_strategic` | `-1.691` | `25.432 kWh` |
+| `model_a_hybrid` | `-1.125` | `12.732 kWh` |
+
+The full Hybrid is effectively level with Amber on this corrected Window A slice. The crossed
+Amber-tactical / Hybrid-strategic variant has the best immediate PnL, but it ends with very low
+inventory, so it is not a clean production signal by itself.
+
+The pooled continuous value model is not yet useful as a production target. On validation:
+
+| target | MAE change vs baseline | R2 |
+| --- | ---: | ---: |
+| `oracle_initial_soc_finite_diff_value_per_kwh` | `+0.2%` | `-0.403` |
+| `oracle_minus_target_step_pnl` | `-0.6%` | `-0.062` |
+| `oracle_minus_target_soc_delta_kwh` | `-0.1%` | `-0.067` |
+| `oracle_minus_target_throughput_kwh` | `-0.7%` | `-0.116` |
+| `oracle_minus_target_import_kwh` | `-0.1%` | `-0.158` |
+| `oracle_minus_target_export_kwh` | `-0.5%` | `-0.002` |
+| `oracle_minus_target_curtail_kwh` | `-0.8%` | `-0.034` |
+
+The pooled direction model retains some event-ranking signal, but it is not strong enough to
+justify another direct controller hook:
+
+| label | positive rate | ROC AUC | AP lift |
+| --- | ---: | ---: | ---: |
+| `pnl_gain` | `9.1%` | `0.735` | `2.00x` |
+| `throughput_down` | `17.2%` | `0.392` | `0.85x` |
+| `grid_exchange_down` | `10.0%` | `0.587` | `1.41x` |
+| `soc_down` | `7.6%` | `0.704` | `2.64x` |
+
+Interpretation: this constrains the state-value branch. Window A does not support a broad
+finite-difference value regressor, and the strongest WB `grid_exchange_down` sidecar signal does
+not generalize cleanly to WA. The next model-side step should compare WA/WB label and feature
+distributions directly, then test whether a pooled cross-window model can rank events
+out-of-sample. If the signal is WB-specific, it should remain diagnostic rather than become a
+production policy.

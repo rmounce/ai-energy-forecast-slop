@@ -1333,6 +1333,38 @@ source back to ungated Hybrid PnL. This means the current flat flow-cost hook ha
 production value once inventory spend is disallowed. Next work should change the control action or
 train a model-side path-shape target, not scale up this hook.
 
+**Window A finite-difference state-label result (2026-05-02):** the corrected Window A `7-day`
+batch completed successfully under prefix
+`rolling_mpc_eval_counterfactual_windowa_7day_netload_011b_curtail_20260502`, then built
+`+1 kWh` finite-difference labels for `FIT < 300` negative net load, `FIT < 300` non-negative
+net load, and `FIT >= 300`.
+
+Dispatch result:
+- `amber_apf_lgbm`: `-1.116/day`, final SoC `15.400 kWh`
+- `model_a_hybrid`: `-1.125/day`, final SoC `12.732 kWh`
+- `amber_tactical_hybrid_strategic`: `-0.994/day`, final SoC `4.222 kWh`
+- `hybrid_tactical_amber_strategic`: `-1.691/day`, final SoC `25.432 kWh`
+
+The full Hybrid is effectively level with Amber on this corrected Window A slice. The
+Amber-tactical / Hybrid-strategic crossed source has the best immediate PnL, but it spends
+inventory heavily and is not a clean production signal.
+
+The pooled continuous finite-difference value model did not validate as useful:
+- finite-difference marginal-SoC value MAE improved only `0.2%` vs baseline, with `R2 = -0.403`
+- prefix PnL, SoC delta, throughput, import, export, and curtail regressions were all at or below
+  baseline
+
+The pooled direction model retained limited ranking signal:
+- `pnl_gain`: ROC AUC `0.735`, AP lift `2.00x`
+- `soc_down`: ROC AUC `0.704`, AP lift `2.64x`
+- `grid_exchange_down`: ROC AUC `0.587`, AP lift `1.41x`
+- `throughput_down`: ROC AUC `0.392`, AP lift `0.85x`
+
+Implication: this weakens the case for a broad state-value or direct sidecar-control branch.
+The next production-relevant diagnostic should compare WA/WB label and feature distributions and
+test cross-window event ranking. If the strongest WB signal is regime-specific, keep it as a
+diagnostic lens rather than a production policy.
+
 ---
 
 ## Known Open Issues
