@@ -20,6 +20,7 @@
 | `analyze_state_transition_labels.py` | Summarize state-transition label datasets by horizon: SoC movement, throughput/churn, import/export energy, prefix PnL, and direction rates for oracle/comparator relative to the target source. |
 | `train_state_transition_value_model.py` | Train a small diagnostic LightGBM model on state-transition labels using production-side/current-time features. Reports whether oracle-vs-target path labels are learnable before any control integration. |
 | `train_state_transition_direction_model.py` | Train small diagnostic classifiers on zero-inflated state-transition direction/event labels, e.g. "oracle wants less throughput" or "oracle leaves material prefix value." Useful before another regression target or controller hook. |
+| `score_state_transition_direction_model.py` | Apply a saved direction-model bundle to ordinary rolling raw rows and emit the external event score file used by eval-only grid-exchange gates. |
 | `analyze_tier1_dispatch_relevant_errors.py` | Dispatch-relevant Tier 1 tactical forecast diagnostic from rolling raw parquet outputs. Compares Amber-vs-Hybrid horizon-summary forecast shape, tariffed buy/sell error, act-now-vs-wait ordering, and optional forced-prefix / state-transition labels by regime bucket. |
 | `analyze_tier1_tactical_vector_errors.py` | Reconstruct full h0-h11 first-hour tactical vectors for Amber APF and Tier 1 from local forecast/model inputs, then compare per-horizon tariffed import/feed-in errors and act-now-vs-wait shape by bucket. Use `nice` for real-window runs because it reloads the large local Amber forecast log. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
@@ -162,11 +163,24 @@ nice -n 19 ./.venv/bin/python eval/train_state_transition_direction_model.py \
   --vector-rows tier1_vector_wb7_legacy_20260501_tier1_vector_rows.parquet \
   --vector-source model_a_hybrid \
   --direction-labels pnl_gain,throughput_down,grid_exchange_down,soc_down \
+  --model-dir eval/results \
   --output-prefix state_transition_wb7_direction_probe_20260502
 ```
 
 This asks whether the model can classify material path-change events before trying to predict
 their exact dollar/kWh magnitude.
+
+To score a separate rolling raw file with the saved bundle:
+
+```bash
+nice -n 19 ./.venv/bin/python eval/score_state_transition_direction_model.py \
+  --model-bundle state_transition_wb7_direction_probe_20260502_direction_models.joblib \
+  --raw rolling_mpc_eval_tariffaware_wa7_baseline_20260427_raw.parquet \
+  --source model_a_hybrid \
+  --labels grid_exchange_down \
+  --horizon-steps 12 \
+  --output-prefix wa7_grid_exchange_direction_scores_20260502
+```
 
 The `grid_exchange_down` prediction file can be used for an eval-only rolling MPC gate:
 
@@ -175,15 +189,17 @@ nice -n 19 ./.venv/bin/python eval/rolling_mpc_eval.py \
   --sources amber_tactical_hybrid_strategic,model_a_hybrid,model_a_hybrid_grid_exchange_gate \
   --economic-mode netload_tariffed \
   --grid-exchange-reduction-sources model_a_hybrid_grid_exchange_gate \
-  --grid-exchange-reduction-signal-file state_transition_wb7_fitlt300_negload_direction_base_20260502_direction_model_predictions.parquet \
+  --grid-exchange-reduction-signal-file wa7_grid_exchange_direction_scores_20260502_direction_scores.parquet \
   --grid-exchange-reduction-cycle-cost-mwh 50 \
-  --grid-exchange-reduction-min-score 0.8 \
+  --grid-exchange-reduction-min-score 0.4 \
   --grid-exchange-reduction-horizon-steps 12 \
   ...
 ```
 
 This does not train or load a production model inside the controller. It consumes an externally
 generated event score file and applies the bounded throughput nudge only on matching timestamps.
+Use a threshold consistent with the saved bundle's manifest/score file; the early pooled
+`grid_exchange_down` bundle selected `0.4`, while the older hand-inspection smokes used `0.8`.
 
 When the branch pivots back from control probes to the tactical model itself, use
 `analyze_tier1_dispatch_relevant_errors.py` before training another candidate. It works from

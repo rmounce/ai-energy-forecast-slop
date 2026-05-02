@@ -1229,3 +1229,41 @@ export of surplus PV during the triggered interval.
 Next decision rule: only continue this branch if short Window A/B runs show improvement after
 accounting for final SoC, import/export decomposition, and day concentration. A near-term PnL win
 that merely spends inventory is not production progress.
+
+### Saved Sidecar Scoring Smoke
+
+The grid-exchange event path now has a reusable sidecar scoring step:
+
+- train/save bundle:
+  [eval/train_state_transition_direction_model.py](../eval/train_state_transition_direction_model.py)
+  with `--model-dir`
+- score ordinary rolling raw rows:
+  [eval/score_state_transition_direction_model.py](../eval/score_state_transition_direction_model.py)
+- consume the scored parquet in the eval-only rolling gate
+
+Smoke checks:
+
+| check | result |
+| --- | --- |
+| unit tests | `5 passed` |
+| target-bucket saved bundle | `grid_exchange_down` validation ROC AUC `0.825`, AP lift `2.30x` |
+| pooled-regime saved bundle | `grid_exchange_down` validation ROC AUC `0.781`, AP lift `2.58x`, precision `0.985`, recall `0.393` |
+| Window A raw sidecar scoring | `2,016` rows, mean score `0.243`, prediction rate `13.7%` |
+| Window B raw sidecar scoring | `2,016` rows, mean score `0.238`, prediction rate `19.6%` |
+
+The first integration smoke accidentally reused the old hand-tuned `0.8` score threshold and loaded
+zero signals because the saved pooled bundle selected a `0.4` threshold. Re-running the same
+`2025-09-01T01:00Z -> 03:00Z` smoke with `--grid-exchange-reduction-min-score 0.4` loaded `396`
+signals and activated the gate on `21 / 24` evaluated steps:
+
+| source | mean $/day | final SoC | gate activations |
+| --- | ---: | ---: | ---: |
+| Amber tactical + Hybrid strategic | `6.431` | `25.675 kWh` | `0` |
+| ungated Hybrid | `5.330` | `26.185 kWh` | `0` |
+| scored grid-exchange-gated Hybrid | `17.299` | `19.591 kWh` | `21 / 24` |
+
+This is a useful engineering checkpoint rather than a production result. The sidecar path is now
+real enough to evaluate, but the gate is much too aggressive on this tiny slice and appears to buy
+near-term PnL partly by spending inventory. The next production-relevant check is a short Window
+A/B run with explicit terminal-inventory valuation or a stricter activation policy, followed by
+decomposition of import, export, degradation, curtailment, and final SoC.
