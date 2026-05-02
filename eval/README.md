@@ -70,10 +70,16 @@ Parallelism notes:
   `--inventory-discipline-*` flags in `netload_tariffed` mode to add a control-only cycle-cost
   adder during selected regimes, for example `FIT < 300` and negative net load. This changes the
   LP decision objective only; realized P&L still uses the normal degradation cost.
+- event-gated grid-exchange probes can use `model_a_hybrid_grid_exchange_gate` plus
+  `--grid-exchange-reduction-*` flags in `netload_tariffed` mode. The signal file is usually a
+  `train_state_transition_direction_model.py` prediction parquet/CSV filtered to a high-confidence
+  `grid_exchange_down` score. This is still eval-only: it applies a bounded throughput nudge only
+  on externally supplied event times.
 - crossed tactical/strategic counterfactuals are supported via built-in source aliases:
   - `hybrid_tactical_amber_strategic`
   - `amber_tactical_hybrid_strategic`
   - `model_a_hybrid_inventory_bias`
+  - `model_a_hybrid_grid_exchange_gate`
   - or the generic form `cf:<label>:<tactical_source>:<strategic_source>`
   This keeps the tactical forecast curve and strategic handoff source separable inside the same
   rolling-eval harness
@@ -161,6 +167,23 @@ nice -n 19 ./.venv/bin/python eval/train_state_transition_direction_model.py \
 
 This asks whether the model can classify material path-change events before trying to predict
 their exact dollar/kWh magnitude.
+
+The `grid_exchange_down` prediction file can be used for an eval-only rolling MPC gate:
+
+```bash
+nice -n 19 ./.venv/bin/python eval/rolling_mpc_eval.py \
+  --sources amber_tactical_hybrid_strategic,model_a_hybrid,model_a_hybrid_grid_exchange_gate \
+  --economic-mode netload_tariffed \
+  --grid-exchange-reduction-sources model_a_hybrid_grid_exchange_gate \
+  --grid-exchange-reduction-signal-file state_transition_wb7_fitlt300_negload_direction_base_20260502_direction_model_predictions.parquet \
+  --grid-exchange-reduction-cycle-cost-mwh 50 \
+  --grid-exchange-reduction-min-score 0.8 \
+  --grid-exchange-reduction-horizon-steps 12 \
+  ...
+```
+
+This does not train or load a production model inside the controller. It consumes an externally
+generated event score file and applies the bounded throughput nudge only on matching timestamps.
 
 When the branch pivots back from control probes to the tactical model itself, use
 `analyze_tier1_dispatch_relevant_errors.py` before training another candidate. It works from

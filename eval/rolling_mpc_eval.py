@@ -124,6 +124,56 @@ def _parse_csv_set(text: str) -> set[str]:
     return {item.strip() for item in str(text).split(",") if item.strip()}
 
 
+def _resolve_results_path(path_arg: str) -> Path:
+    p = Path(path_arg)
+    if p.exists():
+        return p.resolve()
+    p_results = RESULTS_DIR / path_arg
+    if p_results.exists():
+        return p_results.resolve()
+    raise FileNotFoundError(f"Could not find path: {path_arg}")
+
+
+def _read_table(path: Path) -> pd.DataFrame:
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
+
+
+def _load_grid_exchange_reduction_signal(
+    path_arg: str,
+    *,
+    label: str,
+    score_col: str,
+    min_score: float,
+    horizon_steps: int | None = None,
+    split: str = "",
+) -> dict[pd.Timestamp, float]:
+    if not path_arg:
+        return {}
+    path = _resolve_results_path(path_arg)
+    df = _read_table(path)
+    required = {"time", score_col}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Grid-exchange signal file missing columns: {sorted(missing)}")
+    if "label" in df.columns:
+        df = df[df["label"] == label].copy()
+    if split and "split" in df.columns:
+        df = df[df["split"] == split].copy()
+    if horizon_steps is not None and horizon_steps > 0 and "horizon_steps" in df.columns:
+        df = df[pd.to_numeric(df["horizon_steps"], errors="coerce") == int(horizon_steps)].copy()
+    if df.empty:
+        return {}
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    df[score_col] = pd.to_numeric(df[score_col], errors="coerce")
+    df = df[np.isfinite(df[score_col]) & (df[score_col] >= float(min_score))].copy()
+    if df.empty:
+        return {}
+    grouped = df.groupby("time", sort=True)[score_col].max()
+    return {pd.Timestamp(ts): float(score) for ts, score in grouped.items()}
+
+
 def _progress_path(output_prefix: str, source: str | None = None) -> Path:
     suffix = f"_{source}" if source else ""
     return RESULTS_DIR / f"{output_prefix}{suffix}.progress.json"
@@ -225,6 +275,23 @@ def _should_apply_inventory_discipline(
         or not np.isfinite(current_net_load_kw)
         or current_feed_in_price_mwh >= feed_in_max_mwh
         or current_net_load_kw >= net_load_max_kw
+    )
+
+
+def _should_apply_grid_exchange_reduction(
+    *,
+    source: str,
+    ts: pd.Timestamp,
+    allowed_sources: set[str],
+    cycle_cost_adder_per_kwh: float,
+    scores_by_time: dict[pd.Timestamp, float],
+) -> bool:
+    return not (
+        not allowed_sources
+        or source not in allowed_sources
+        or cycle_cost_adder_per_kwh <= 0.0
+        or not scores_by_time
+        or pd.Timestamp(ts) not in scores_by_time
     )
 
 
@@ -417,6 +484,11 @@ COUNTERFACTUAL_SOURCE_ALIASES = {
     ),
     "model_a_hybrid_inventory_bias": SourceContract(
         name="model_a_hybrid_inventory_bias",
+        tactical_source="model_a_hybrid",
+        strategic_source="model_a_hybrid",
+    ),
+    "model_a_hybrid_grid_exchange_gate": SourceContract(
+        name="model_a_hybrid_grid_exchange_gate",
         tactical_source="model_a_hybrid",
         strategic_source="model_a_hybrid",
     ),
@@ -990,6 +1062,9 @@ def simulate_stepwise(
             max_terminal_soc_kwh = None
             inventory_discipline_applied = False
             inventory_discipline_cycle_cost_adder_per_kwh = 0.0
+            grid_exchange_reduction_applied = False
+            grid_exchange_reduction_cycle_cost_adder_per_kwh = 0.0
+            grid_exchange_reduction_score = float("nan")
             if strategic_soc_handoff:
                 strategic_q50 = providers.strategic_solve_summary(
                     contract.strategic_source,
@@ -1157,6 +1232,20 @@ def simulate_stepwise(
                     inventory_discipline_cycle_cost_adder_per_kwh = (
                         providers.args.inventory_discipline_cycle_cost_per_kwh
                     )
+                grid_exchange_reduction_applied = _should_apply_grid_exchange_reduction(
+                    source=src,
+                    ts=ts,
+                    allowed_sources=providers.args.grid_exchange_reduction_sources,
+                    cycle_cost_adder_per_kwh=providers.args.grid_exchange_reduction_cycle_cost_per_kwh,
+                    scores_by_time=providers.args.grid_exchange_reduction_scores_by_time,
+                )
+                if grid_exchange_reduction_applied:
+                    grid_exchange_reduction_cycle_cost_adder_per_kwh = (
+                        providers.args.grid_exchange_reduction_cycle_cost_per_kwh
+                    )
+                    grid_exchange_reduction_score = providers.args.grid_exchange_reduction_scores_by_time[
+                        pd.Timestamp(ts)
+                    ]
             if dual_terminal_scale > 0.0:
                 probe = solve_lp_dispatch(
                     curve,
@@ -1193,7 +1282,10 @@ def simulate_stepwise(
                 extra_terminal_energy_cap_kwh=extra_terminal_energy_cap_kwh,
                 min_terminal_soc_kwh=min_terminal_soc_kwh,
                 max_terminal_soc_kwh=max_terminal_soc_kwh,
-                throughput_cost_adder_per_kwh=inventory_discipline_cycle_cost_adder_per_kwh,
+                throughput_cost_adder_per_kwh=(
+                    inventory_discipline_cycle_cost_adder_per_kwh
+                    + grid_exchange_reduction_cycle_cost_adder_per_kwh
+                ),
             )
             c_plan = solve["charge_kw"]
             d_plan = solve["discharge_kw"]
@@ -1294,6 +1386,13 @@ def simulate_stepwise(
                 "inventory_discipline_cycle_cost_adder_per_kwh": inventory_discipline_cycle_cost_adder_per_kwh,
                 "inventory_discipline_feed_in_max_mwh": providers.args.inventory_discipline_feed_in_max_mwh,
                 "inventory_discipline_net_load_max_kw": providers.args.inventory_discipline_net_load_max_kw,
+                "grid_exchange_reduction_applied": grid_exchange_reduction_applied,
+                "grid_exchange_reduction_score": grid_exchange_reduction_score,
+                "grid_exchange_reduction_min_score": providers.args.grid_exchange_reduction_min_score,
+                "grid_exchange_reduction_cycle_cost_adder_per_kwh": (
+                    grid_exchange_reduction_cycle_cost_adder_per_kwh
+                ),
+                "grid_exchange_reduction_horizon_steps": providers.args.grid_exchange_reduction_horizon_steps,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
             })
@@ -1354,6 +1453,30 @@ def simulate_stepwise(
             if not src_df.empty and "inventory_discipline_cycle_cost_adder_per_kwh" in src_df
             else 0.0
         )
+        grid_exchange_reduction_steps = (
+            int(src_df["grid_exchange_reduction_applied"].sum())
+            if not src_df.empty and "grid_exchange_reduction_applied" in src_df
+            else 0
+        )
+        mean_grid_exchange_reduction_cycle_cost_adder_per_kwh = (
+            float(src_df["grid_exchange_reduction_cycle_cost_adder_per_kwh"].mean())
+            if not src_df.empty and "grid_exchange_reduction_cycle_cost_adder_per_kwh" in src_df
+            else 0.0
+        )
+        max_grid_exchange_reduction_cycle_cost_adder_per_kwh = (
+            float(src_df["grid_exchange_reduction_cycle_cost_adder_per_kwh"].max())
+            if not src_df.empty and "grid_exchange_reduction_cycle_cost_adder_per_kwh" in src_df
+            else 0.0
+        )
+        mean_grid_exchange_reduction_score = (
+            float(src_df.loc[src_df["grid_exchange_reduction_applied"], "grid_exchange_reduction_score"].mean())
+            if (
+                not src_df.empty
+                and "grid_exchange_reduction_applied" in src_df
+                and bool(src_df["grid_exchange_reduction_applied"].any())
+            )
+            else float("nan")
+        )
         summary.append({
             "source": src,
             "tactical_source": contract.tactical_source,
@@ -1384,6 +1507,14 @@ def simulate_stepwise(
             "inventory_discipline_steps": inventory_discipline_steps,
             "mean_inventory_discipline_cycle_cost_adder_per_kwh": mean_inventory_discipline_cycle_cost_adder_per_kwh,
             "max_inventory_discipline_cycle_cost_adder_per_kwh": max_inventory_discipline_cycle_cost_adder_per_kwh,
+            "grid_exchange_reduction_steps": grid_exchange_reduction_steps,
+            "mean_grid_exchange_reduction_score": mean_grid_exchange_reduction_score,
+            "mean_grid_exchange_reduction_cycle_cost_adder_per_kwh": (
+                mean_grid_exchange_reduction_cycle_cost_adder_per_kwh
+            ),
+            "max_grid_exchange_reduction_cycle_cost_adder_per_kwh": (
+                max_grid_exchange_reduction_cycle_cost_adder_per_kwh
+            ),
             "tier1_quantile_blend": providers.args.tier1_quantile_blend,
             "tier2_quantile_blend": providers.args.tier2_quantile_blend,
             "tier2_upper_quantile": providers.args.tier2_upper_quantile,
@@ -2038,6 +2169,58 @@ def main():
         default=0.0,
         help="Inventory-discipline gate applies only when current actual net load is below this kW value.",
     )
+    parser.add_argument(
+        "--grid-exchange-reduction-signal-file",
+        default="",
+        help=(
+            "Eval-only event gate: CSV/parquet with time and score columns, typically from "
+            "train_state_transition_direction_model.py predictions."
+        ),
+    )
+    parser.add_argument(
+        "--grid-exchange-reduction-sources",
+        default="",
+        help=(
+            "Comma-separated source labels eligible for event-gated grid-exchange reduction. "
+            "Example: model_a_hybrid_grid_exchange_gate"
+        ),
+    )
+    parser.add_argument(
+        "--grid-exchange-reduction-cycle-cost-mwh",
+        type=float,
+        default=0.0,
+        help=(
+            "Eval-only event-gated churn guard, in $/MWh, applied only when the external "
+            "grid-exchange-reduction score is above the threshold."
+        ),
+    )
+    parser.add_argument(
+        "--grid-exchange-reduction-min-score",
+        type=float,
+        default=0.8,
+        help="Minimum external event score required for the grid-exchange-reduction gate.",
+    )
+    parser.add_argument(
+        "--grid-exchange-reduction-label",
+        default="grid_exchange_down",
+        help="Label value to select from the signal file when a label column is present.",
+    )
+    parser.add_argument(
+        "--grid-exchange-reduction-score-col",
+        default="y_score",
+        help="Score column in the signal file.",
+    )
+    parser.add_argument(
+        "--grid-exchange-reduction-horizon-steps",
+        type=int,
+        default=12,
+        help="Optional horizon_steps value to select from the signal file. Use 0 to disable filtering.",
+    )
+    parser.add_argument(
+        "--grid-exchange-reduction-split",
+        default="",
+        help="Optional split value to select from the signal file when a split column is present.",
+    )
     parser.add_argument("--output-prefix", default="rolling_mpc_eval_model_a")
     parser.add_argument(
         "--progress-every-steps",
@@ -2099,10 +2282,33 @@ def main():
     args.split_curve_tactical_sources = _parse_csv_set(args.split_curve_tactical_sources)
     args.inventory_discipline_sources = _parse_csv_set(args.inventory_discipline_sources)
     args.inventory_discipline_cycle_cost_per_kwh = args.inventory_discipline_cycle_cost_mwh / 1000.0
+    args.grid_exchange_reduction_sources = _parse_csv_set(args.grid_exchange_reduction_sources)
+    args.grid_exchange_reduction_cycle_cost_per_kwh = args.grid_exchange_reduction_cycle_cost_mwh / 1000.0
+    args.grid_exchange_reduction_horizon_steps = (
+        None if args.grid_exchange_reduction_horizon_steps <= 0 else args.grid_exchange_reduction_horizon_steps
+    )
+    args.grid_exchange_reduction_scores_by_time = _load_grid_exchange_reduction_signal(
+        args.grid_exchange_reduction_signal_file,
+        label=args.grid_exchange_reduction_label,
+        score_col=args.grid_exchange_reduction_score_col,
+        min_score=args.grid_exchange_reduction_min_score,
+        horizon_steps=args.grid_exchange_reduction_horizon_steps,
+        split=args.grid_exchange_reduction_split,
+    )
     if args.inventory_discipline_cycle_cost_mwh < 0.0:
         parser.error("--inventory-discipline-cycle-cost-mwh must be >= 0")
     if args.inventory_discipline_sources and args.economic_mode != "netload_tariffed":
         parser.error("--inventory-discipline-sources currently requires --economic-mode netload_tariffed")
+    if args.grid_exchange_reduction_cycle_cost_mwh < 0.0:
+        parser.error("--grid-exchange-reduction-cycle-cost-mwh must be >= 0")
+    if not 0.0 <= args.grid_exchange_reduction_min_score <= 1.0:
+        parser.error("--grid-exchange-reduction-min-score must be in [0, 1]")
+    if args.grid_exchange_reduction_sources and args.economic_mode != "netload_tariffed":
+        parser.error("--grid-exchange-reduction-sources currently requires --economic-mode netload_tariffed")
+    if args.grid_exchange_reduction_sources and not args.grid_exchange_reduction_signal_file:
+        parser.error("--grid-exchange-reduction-sources requires --grid-exchange-reduction-signal-file")
+    if args.grid_exchange_reduction_sources and args.grid_exchange_reduction_cycle_cost_mwh <= 0.0:
+        parser.error("--grid-exchange-reduction-sources requires --grid-exchange-reduction-cycle-cost-mwh > 0")
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
         parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
     if args.dynamic_bridge_target_scale < 0:
@@ -2166,6 +2372,13 @@ def main():
         f"cycle_cost={args.inventory_discipline_cycle_cost_mwh:.3f} $/MWh, "
         f"feed_in_max={args.inventory_discipline_feed_in_max_mwh:.3f} $/MWh, "
         f"net_load_max={args.inventory_discipline_net_load_max_kw:.3f} kW"
+    )
+    print(
+        f"  Grid-exchange reduction: sources={sorted(args.grid_exchange_reduction_sources)}, "
+        f"cycle_cost={args.grid_exchange_reduction_cycle_cost_mwh:.3f} $/MWh, "
+        f"min_score={args.grid_exchange_reduction_min_score:.3f}, "
+        f"horizon={args.grid_exchange_reduction_horizon_steps}, "
+        f"signals={len(args.grid_exchange_reduction_scores_by_time)}"
     )
     print(f"  Workers: {workers}")
     if workers > 1:

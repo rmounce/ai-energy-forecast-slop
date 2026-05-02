@@ -1183,3 +1183,49 @@ surviving signal is narrow. The next candidate should not be a broad state-value
 plausible branch is an event-gated grid-exchange-reduction signal: identify high-confidence
 periods where the oracle wants materially less import+export exchange over 30-60 minutes, then
 test a bounded MPC nudge only in those events.
+
+### Eval-Only Grid-Exchange Gate
+
+The first production-shaped falsification hook for that signal is now implemented in
+[eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py):
+
+- source alias: `model_a_hybrid_grid_exchange_gate`
+- flags: `--grid-exchange-reduction-*`
+- signal input: external direction-model prediction CSV/parquet
+- default label: `grid_exchange_down`
+- control action: bounded throughput-cost nudge only when the source is eligible and the event
+  score passes the configured threshold
+
+This is deliberately still eval-only. The rolling controller does not train or load a model; it
+consumes an externally generated signal file so the signal can be falsified before any production
+interface exists.
+
+First smoke:
+
+- window: `2025-09-01T01:00Z -> 03:00Z`
+- source comparison:
+  - `amber_tactical_hybrid_strategic`
+  - `model_a_hybrid`
+  - `model_a_hybrid_grid_exchange_gate`
+- event file:
+  `state_transition_wb7_fitlt300_negload_direction_base_20260502_direction_model_predictions.parquet`
+- label/horizon: `grid_exchange_down`, `N=12`
+- score threshold: `0.8`
+- throughput nudge: `50 $/MWh`
+
+Result:
+
+| source | mean $/day | final SoC | activations |
+| --- | ---: | ---: | ---: |
+| Amber tactical + Hybrid strategic | `6.431` | `25.675 kWh` | `0` |
+| ungated Hybrid | `5.330` | `26.185 kWh` | `0` |
+| grid-exchange-gated Hybrid | `16.299` | `19.949 kWh` | `19 / 24` |
+
+The smoke is mechanically encouraging but not yet architecturally convincing. It shows the hook
+can hit a real action channel and improve near-term PnL, but it also leaves the battery materially
+lower. Raw inspection shows the gate mainly suppresses charging/import and allows more immediate
+export of surplus PV during the triggered interval.
+
+Next decision rule: only continue this branch if short Window A/B runs show improvement after
+accounting for final SoC, import/export decomposition, and day concentration. A near-term PnL win
+that merely spends inventory is not production progress.

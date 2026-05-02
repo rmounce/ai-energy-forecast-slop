@@ -1191,6 +1191,23 @@ So the next branch should stop thinking “big export spikes” and start thinki
     regressor. It is a narrow event-gated **grid-exchange reduction** signal: identify when the
     oracle wants materially less import+export exchange over the next 30-60 minutes, then test a
     bounded MPC nudge only in those high-confidence events.
+  - eval-only grid-exchange gate implemented in
+    [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py):
+    - new source alias: `model_a_hybrid_grid_exchange_gate`
+    - new `--grid-exchange-reduction-*` flags consume an external direction-model prediction
+      CSV/parquet, threshold `grid_exchange_down` scores by timestamp, and apply a bounded
+      throughput-cost nudge only for eligible source/time pairs
+    - raw outputs record gate activation, score, threshold, horizon, and applied cost
+  - short Window B smoke (`2025-09-01T01:00Z -> 03:00Z`, score `>= 0.8`, `50 $/MWh` nudge)
+    passed with full coverage:
+    - Amber tactical + Hybrid strategic: `6.431/day`, final SoC `25.675 kWh`
+    - ungated Hybrid: `5.330/day`, final SoC `26.185 kWh`
+    - grid-exchange-gated Hybrid: `16.299/day`, final SoC `19.949 kWh`
+    - activations: `19 / 24` steps, mean score `0.911`
+  - interpretation: the hook is mechanically effective and hits a real action channel, but the
+    tiny smoke also shows the danger: it can harvest near-term PnL by suppressing charge/import
+    and leaving the battery much lower. The next run must judge gap closure with final SoC,
+    import/export decomposition, and Window A sanity before treating this as a candidate.
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
