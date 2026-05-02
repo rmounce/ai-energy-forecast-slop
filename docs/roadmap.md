@@ -1134,8 +1134,27 @@ So the next branch should stop thinking “big export spikes” and start thinki
     by roughly `3-7 $/MWh`, while in `FIT >= 300` Amber is much higher than Hybrid in the first
     15-20 minutes and materially lower later in the hour. This explains why a broad bucket or
     act-now classifier is too crude for the next model branch.
-  - immediate next diagnostic should run the same vector tool across Window A, Window B excluding
-    `2025-09-01`, and the midfit slice before choosing a target transformation or calibrator
+  - the broader vector batch completed on `2026-05-01` with exit code `0` under
+    `tier1_vector_*_20260501` prefixes:
+    - Window A 7-day, legacy and `tariffaware_v1`
+    - Window B excluding `2025-09-01`, legacy and `tariffaware_v1`
+    - moderate-FIT middle window, legacy and `tariffaware_v1`
+    - Window A and Window B 6-week Track A tactical windows, legacy
+  - this broader pass weakens the neat target-bucket story:
+    - `FIT < 300` / negative net load is still relevant in Window B excluding `2025-09-01`,
+      but it is flat-to-negative for Amber on Window A, midfit, and the two 6-week windows on
+      the immediate step-PnL lens
+    - Amber's clearer local edge often appears in `FIT >= 300` or `FIT < 300` /
+      non-negative-net-load buckets
+    - `tariffaware_v1` remains nearly fingerprint-identical to legacy, reinforcing that the
+      feature-only tariff-aware branch is not a strong production base
+  - the apparent tension with forced-prefix regret is useful rather than contradictory:
+    vector diagnostics measure local first-hour curve/step behavior, while forced-prefix regret
+    measures multi-step path value after pinning the controller
+  - implication: do **not** train a narrow `FIT < 300` / negative-net-load model or revive
+    `tariffaware_v1`; the next model-side candidate should use a richer multi-step path/value
+    label or target transformation that can distinguish profitable surplus-PV preparation from
+    wasteful churn, with vector diagnostics used as the falsification lens
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
