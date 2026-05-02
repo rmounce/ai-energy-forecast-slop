@@ -284,12 +284,13 @@ def _should_apply_grid_exchange_reduction(
     ts: pd.Timestamp,
     allowed_sources: set[str],
     cycle_cost_adder_per_kwh: float,
+    flow_cost_adder_per_kwh: float = 0.0,
     scores_by_time: dict[pd.Timestamp, float],
 ) -> bool:
     return not (
         not allowed_sources
         or source not in allowed_sources
-        or cycle_cost_adder_per_kwh <= 0.0
+        or (cycle_cost_adder_per_kwh <= 0.0 and flow_cost_adder_per_kwh <= 0.0)
         or not scores_by_time
         or pd.Timestamp(ts) not in scores_by_time
     )
@@ -1064,6 +1065,7 @@ def simulate_stepwise(
             inventory_discipline_cycle_cost_adder_per_kwh = 0.0
             grid_exchange_reduction_applied = False
             grid_exchange_reduction_cycle_cost_adder_per_kwh = 0.0
+            grid_exchange_reduction_flow_cost_adder_per_kwh = 0.0
             grid_exchange_reduction_score = float("nan")
             if strategic_soc_handoff:
                 strategic_q50 = providers.strategic_solve_summary(
@@ -1237,11 +1239,15 @@ def simulate_stepwise(
                     ts=ts,
                     allowed_sources=providers.args.grid_exchange_reduction_sources,
                     cycle_cost_adder_per_kwh=providers.args.grid_exchange_reduction_cycle_cost_per_kwh,
+                    flow_cost_adder_per_kwh=providers.args.grid_exchange_reduction_flow_cost_per_kwh,
                     scores_by_time=providers.args.grid_exchange_reduction_scores_by_time,
                 )
                 if grid_exchange_reduction_applied:
                     grid_exchange_reduction_cycle_cost_adder_per_kwh = (
                         providers.args.grid_exchange_reduction_cycle_cost_per_kwh
+                    )
+                    grid_exchange_reduction_flow_cost_adder_per_kwh = (
+                        providers.args.grid_exchange_reduction_flow_cost_per_kwh
                     )
                     grid_exchange_reduction_score = providers.args.grid_exchange_reduction_scores_by_time[
                         pd.Timestamp(ts)
@@ -1286,6 +1292,7 @@ def simulate_stepwise(
                     inventory_discipline_cycle_cost_adder_per_kwh
                     + grid_exchange_reduction_cycle_cost_adder_per_kwh
                 ),
+                grid_exchange_cost_adder_per_kwh=grid_exchange_reduction_flow_cost_adder_per_kwh,
             )
             c_plan = solve["charge_kw"]
             d_plan = solve["discharge_kw"]
@@ -1392,6 +1399,9 @@ def simulate_stepwise(
                 "grid_exchange_reduction_cycle_cost_adder_per_kwh": (
                     grid_exchange_reduction_cycle_cost_adder_per_kwh
                 ),
+                "grid_exchange_reduction_flow_cost_adder_per_kwh": (
+                    grid_exchange_reduction_flow_cost_adder_per_kwh
+                ),
                 "grid_exchange_reduction_horizon_steps": providers.args.grid_exchange_reduction_horizon_steps,
                 "probe_initial_soc_shadow_price_per_kwh": probe_shadow_price_per_kwh,
                 "control_initial_soc_shadow_price_per_kwh": solve["initial_soc_shadow_price_per_kwh"],
@@ -1468,6 +1478,16 @@ def simulate_stepwise(
             if not src_df.empty and "grid_exchange_reduction_cycle_cost_adder_per_kwh" in src_df
             else 0.0
         )
+        mean_grid_exchange_reduction_flow_cost_adder_per_kwh = (
+            float(src_df["grid_exchange_reduction_flow_cost_adder_per_kwh"].mean())
+            if not src_df.empty and "grid_exchange_reduction_flow_cost_adder_per_kwh" in src_df
+            else 0.0
+        )
+        max_grid_exchange_reduction_flow_cost_adder_per_kwh = (
+            float(src_df["grid_exchange_reduction_flow_cost_adder_per_kwh"].max())
+            if not src_df.empty and "grid_exchange_reduction_flow_cost_adder_per_kwh" in src_df
+            else 0.0
+        )
         mean_grid_exchange_reduction_score = (
             float(src_df.loc[src_df["grid_exchange_reduction_applied"], "grid_exchange_reduction_score"].mean())
             if (
@@ -1514,6 +1534,12 @@ def simulate_stepwise(
             ),
             "max_grid_exchange_reduction_cycle_cost_adder_per_kwh": (
                 max_grid_exchange_reduction_cycle_cost_adder_per_kwh
+            ),
+            "mean_grid_exchange_reduction_flow_cost_adder_per_kwh": (
+                mean_grid_exchange_reduction_flow_cost_adder_per_kwh
+            ),
+            "max_grid_exchange_reduction_flow_cost_adder_per_kwh": (
+                max_grid_exchange_reduction_flow_cost_adder_per_kwh
             ),
             "tier1_quantile_blend": providers.args.tier1_quantile_blend,
             "tier2_quantile_blend": providers.args.tier2_quantile_blend,
@@ -2195,6 +2221,16 @@ def main():
         ),
     )
     parser.add_argument(
+        "--grid-exchange-reduction-flow-cost-mwh",
+        type=float,
+        default=0.0,
+        help=(
+            "Eval-only event-gated import/export flow guard, in $/MWh, applied directly to "
+            "grid import and grid export when the external grid-exchange-reduction score "
+            "is above the threshold."
+        ),
+    )
+    parser.add_argument(
         "--grid-exchange-reduction-min-score",
         type=float,
         default=0.8,
@@ -2284,6 +2320,7 @@ def main():
     args.inventory_discipline_cycle_cost_per_kwh = args.inventory_discipline_cycle_cost_mwh / 1000.0
     args.grid_exchange_reduction_sources = _parse_csv_set(args.grid_exchange_reduction_sources)
     args.grid_exchange_reduction_cycle_cost_per_kwh = args.grid_exchange_reduction_cycle_cost_mwh / 1000.0
+    args.grid_exchange_reduction_flow_cost_per_kwh = args.grid_exchange_reduction_flow_cost_mwh / 1000.0
     args.grid_exchange_reduction_horizon_steps = (
         None if args.grid_exchange_reduction_horizon_steps <= 0 else args.grid_exchange_reduction_horizon_steps
     )
@@ -2301,14 +2338,24 @@ def main():
         parser.error("--inventory-discipline-sources currently requires --economic-mode netload_tariffed")
     if args.grid_exchange_reduction_cycle_cost_mwh < 0.0:
         parser.error("--grid-exchange-reduction-cycle-cost-mwh must be >= 0")
+    if args.grid_exchange_reduction_flow_cost_mwh < 0.0:
+        parser.error("--grid-exchange-reduction-flow-cost-mwh must be >= 0")
     if not 0.0 <= args.grid_exchange_reduction_min_score <= 1.0:
         parser.error("--grid-exchange-reduction-min-score must be in [0, 1]")
     if args.grid_exchange_reduction_sources and args.economic_mode != "netload_tariffed":
         parser.error("--grid-exchange-reduction-sources currently requires --economic-mode netload_tariffed")
     if args.grid_exchange_reduction_sources and not args.grid_exchange_reduction_signal_file:
         parser.error("--grid-exchange-reduction-sources requires --grid-exchange-reduction-signal-file")
-    if args.grid_exchange_reduction_sources and args.grid_exchange_reduction_cycle_cost_mwh <= 0.0:
-        parser.error("--grid-exchange-reduction-sources requires --grid-exchange-reduction-cycle-cost-mwh > 0")
+    if (
+        args.grid_exchange_reduction_sources
+        and args.grid_exchange_reduction_cycle_cost_mwh <= 0.0
+        and args.grid_exchange_reduction_flow_cost_mwh <= 0.0
+    ):
+        parser.error(
+            "--grid-exchange-reduction-sources requires either "
+            "--grid-exchange-reduction-cycle-cost-mwh > 0 or "
+            "--grid-exchange-reduction-flow-cost-mwh > 0"
+        )
     if args.dual_terminal_scale > 0 and args.terminal_energy_value_mwh != 0.0:
         parser.error("Use either --terminal-energy-value-mwh or --dual-terminal-scale, not both")
     if args.dynamic_bridge_target_scale < 0:
@@ -2376,6 +2423,7 @@ def main():
     print(
         f"  Grid-exchange reduction: sources={sorted(args.grid_exchange_reduction_sources)}, "
         f"cycle_cost={args.grid_exchange_reduction_cycle_cost_mwh:.3f} $/MWh, "
+        f"flow_cost={args.grid_exchange_reduction_flow_cost_mwh:.3f} $/MWh, "
         f"min_score={args.grid_exchange_reduction_min_score:.3f}, "
         f"horizon={args.grid_exchange_reduction_horizon_steps}, "
         f"signals={len(args.grid_exchange_reduction_scores_by_time)}"

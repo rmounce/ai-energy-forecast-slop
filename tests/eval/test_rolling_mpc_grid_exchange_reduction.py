@@ -50,6 +50,14 @@ def test_should_apply_grid_exchange_reduction_requires_source_score_and_cost():
         cycle_cost_adder_per_kwh=0.05,
         scores_by_time=scores,
     )
+    assert _should_apply_grid_exchange_reduction(
+        source="model_a_hybrid_grid_exchange_gate",
+        ts=pd.Timestamp("2025-09-01T00:00:00Z"),
+        allowed_sources={"model_a_hybrid_grid_exchange_gate"},
+        cycle_cost_adder_per_kwh=0.0,
+        flow_cost_adder_per_kwh=0.05,
+        scores_by_time=scores,
+    )
     assert not _should_apply_grid_exchange_reduction(
         source="model_a_hybrid",
         ts=pd.Timestamp("2025-09-01T00:00:00Z"),

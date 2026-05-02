@@ -1267,3 +1267,51 @@ real enough to evaluate, but the gate is much too aggressive on this tiny slice 
 near-term PnL partly by spending inventory. The next production-relevant check is a short Window
 A/B run with explicit terminal-inventory valuation or a stricter activation policy, followed by
 decomposition of import, export, degradation, curtailment, and final SoC.
+
+### Grid-Exchange Gate Follow-Up
+
+The first broader smokes confirmed that the throughput-cost version of the gate is not yet a
+production candidate:
+
+| slice | source | mean $/day | final SoC | activations |
+| --- | --- | ---: | ---: | ---: |
+| Window B 6h | Amber tactical + Hybrid strategic | `-1.550` | `39.771 kWh` | `0` |
+| Window B 6h | ungated Hybrid | `2.178` | `35.286 kWh` | `0` |
+| Window B 6h | throughput-gated Hybrid | `5.816` | `29.029 kWh` | `25 / 72` |
+| Window A 6h | Amber tactical + Hybrid strategic | `-0.323` | `40.000 kWh` | `0` |
+| Window A 6h | ungated Hybrid | `-0.487` | `40.000 kWh` | `0` |
+| Window A 6h | throughput-gated Hybrid | `-0.487` | `40.000 kWh` | `30 / 72` |
+
+The Window B behavior decomposition showed the throughput gate mostly improved immediate PnL by
+charging less, not by discovering a clean export edge:
+
+- ungated Hybrid charge energy: `22.23 kWh`
+- throughput-gated Hybrid charge energy: `15.64 kWh`
+- discharge energy unchanged at `5.83 kWh`
+- final SoC fell by another `6.26 kWh` versus ungated Hybrid
+
+A static `100 $/MWh` terminal value did not change this result under exact strategic handoff.
+That matches earlier terminal-value notes: with an exact target, the scalar terminal value often
+has little room to alter the solve.
+
+This exposed a contract mismatch: the learned label is `grid_exchange_down`, but the first control
+hook penalized battery throughput. A second eval-only hook now supports direct import/export flow
+cost via `--grid-exchange-reduction-flow-cost-mwh`.
+
+First direct-flow smoke, Window B 2h, `50 $/MWh` flow cost:
+
+| source | mean $/day | final SoC | activations |
+| --- | ---: | ---: | ---: |
+| Amber tactical + Hybrid strategic | `6.431` | `25.675 kWh` | `0` |
+| ungated Hybrid | `5.330` | `26.185 kWh` | `0` |
+| flow-gated Hybrid | `15.048` | `21.481 kWh` | `21 / 24` |
+
+The direct-flow hook is better aligned with the label and drains less inventory than the
+throughput proxy on the same 2h slice, but it still leaves SoC far below both Amber and ungated
+Hybrid. The next step should not be a long confirmation run yet. It should be a constrained
+guard/policy refinement that either:
+
+- only applies flow cost when forecast surplus/headroom conditions make reduced grid exchange
+  economically coherent, or
+- converts the event signal into a softer import/export spread adjustment rather than a flat
+  flow penalty.

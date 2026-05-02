@@ -107,3 +107,30 @@ def test_solve_lp_dispatch_throughput_adder_can_suppress_marginal_cycle():
     assert baseline["discharge_kw"][1] > 0.0
     assert np.isclose(guarded["charge_kw"][0], 0.0)
     assert np.isclose(guarded["discharge_kw"][1], 0.0)
+
+
+def test_solve_lp_dispatch_grid_exchange_adder_can_curtail_marginal_export():
+    baseline = solve_lp_dispatch(
+        prices_mwh=np.array([0.0]),
+        soc_init=40.0,
+        import_prices_mwh=np.array([0.0]),
+        export_prices_mwh=np.array([100.0]),
+        load_forecast_kw=np.array([0.0]),
+        pv_forecast_kw=np.array([5.0]),
+    )
+    guarded = solve_lp_dispatch(
+        prices_mwh=np.array([0.0]),
+        soc_init=40.0,
+        import_prices_mwh=np.array([0.0]),
+        export_prices_mwh=np.array([100.0]),
+        load_forecast_kw=np.array([0.0]),
+        pv_forecast_kw=np.array([5.0]),
+        grid_exchange_cost_adder_per_kwh=0.2,
+    )
+
+    assert baseline["success"] is True
+    assert guarded["success"] is True
+    assert baseline["grid_export_kw"][0] > 0.0
+    assert np.isclose(baseline["curtail_kw"][0], 0.0)
+    assert np.isclose(guarded["grid_export_kw"][0], 0.0)
+    assert np.isclose(guarded["curtail_kw"][0], 5.0)

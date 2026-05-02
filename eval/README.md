@@ -190,7 +190,7 @@ nice -n 19 ./.venv/bin/python eval/rolling_mpc_eval.py \
   --economic-mode netload_tariffed \
   --grid-exchange-reduction-sources model_a_hybrid_grid_exchange_gate \
   --grid-exchange-reduction-signal-file wa7_grid_exchange_direction_scores_20260502_direction_scores.parquet \
-  --grid-exchange-reduction-cycle-cost-mwh 50 \
+  --grid-exchange-reduction-flow-cost-mwh 50 \
   --grid-exchange-reduction-min-score 0.4 \
   --grid-exchange-reduction-horizon-steps 12 \
   ...
@@ -200,6 +200,9 @@ This does not train or load a production model inside the controller. It consume
 generated event score file and applies the bounded throughput nudge only on matching timestamps.
 Use a threshold consistent with the saved bundle's manifest/score file; the early pooled
 `grid_exchange_down` bundle selected `0.4`, while the older hand-inspection smokes used `0.8`.
+Prefer `--grid-exchange-reduction-flow-cost-mwh` for this label: it penalizes import/export
+exchange directly. `--grid-exchange-reduction-cycle-cost-mwh` is retained as the older throughput
+proxy and should be treated as a diagnostic comparator.
 
 When the branch pivots back from control probes to the tactical model itself, use
 `analyze_tier1_dispatch_relevant_errors.py` before training another candidate. It works from
