@@ -1062,3 +1062,43 @@ a production path. The guard suppresses too much useful Window B surplus/export 
 remaining plausible direction is not "more friction whenever ordinary surplus PV is present"; it
 would need a sharper opportunity-aware state-value gate that distinguishes wasteful churn from
 profitable charging/export preparation.
+
+### Tier 1 Tactical Vector Generalization Batch
+
+After adding the first dispatch-relevant Tier 1 diagnostic, we ran the fuller h0-h11 vector
+diagnostic across the main falsification slices and longer tactical windows:
+
+- output prefixes: `tier1_vector_*_20260501`
+- script: [eval/analyze_tier1_tactical_vector_errors.py](../eval/analyze_tier1_tactical_vector_errors.py)
+- windows:
+  - Window A 7-day, legacy and `tariffaware_v1`
+  - Window B excluding `2025-09-01`, legacy and `tariffaware_v1`
+  - moderate-FIT middle window, legacy and `tariffaware_v1`
+  - Window A and Window B 6-week Track A tactical windows, legacy
+- batch exit code: `0`
+
+The result is helpful mainly because it prevents an over-simple next model branch.
+
+Key reads:
+
+- `tariffaware_v1` is still close to inert. Its vector fingerprints remain very close to the
+  legacy Tier 1 fingerprints across the tested slices.
+- `FIT < 300` with negative net load is not a universal local-error bucket. It remains relevant
+  on Window B excluding `2025-09-01`, but Amber is flat-to-worse on Window A, midfit, and the
+  6-week tactical windows on the immediate step-PnL lens.
+- Amber's more stable local vector edge often appears in `FIT >= 300` or `FIT < 300` with
+  non-negative net load.
+
+That does not invalidate the forced-prefix result. It says the two diagnostics are looking at
+different pieces of the problem:
+
+- forced-prefix regret says the controller can lose multi-step path value when 30-60 minutes of
+  behavior are pinned
+- vector diagnostics say the loss is not explained by one clean bucket-specific price-curve
+  level error
+
+So the next production-shaped model candidate should **not** be a narrow
+`FIT < 300` / negative-net-load retrain, and it should not build on `tariffaware_v1` as a base.
+The better next branch is a richer multi-step path/value target or target transformation that can
+distinguish profitable surplus-PV preparation from wasteful churn. The vector diagnostic should
+remain the falsification lens for that branch.
