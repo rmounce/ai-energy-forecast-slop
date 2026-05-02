@@ -1140,3 +1140,46 @@ PV/net-load, and existing 4h forecast-summary features.
 Interpretation: first-hour curve shape is useful context, but not enough by itself to produce a
 strong state-value model on this single target-bucket slice. The next candidate should improve
 the target/label formulation or broaden regime-aware training data before another dispatch hook.
+
+### Direction/Event Label Probe
+
+Because the state-transition labels are heavily zero-inflated, plain L1 regression is probably
+the wrong first question. Many prefixes are already close to oracle, while the useful signal is
+whether a material path change is needed at all.
+
+The new diagnostic classifier asks that event question directly:
+
+- code: [eval/train_state_transition_direction_model.py](../eval/train_state_transition_direction_model.py)
+- test: [tests/eval/test_train_state_transition_direction_model.py](../tests/eval/test_train_state_transition_direction_model.py)
+- labels include:
+  - `pnl_gain`
+  - `throughput_down`
+  - `grid_exchange_down`
+  - `soc_down`
+  - plus symmetric import/export/curtail/SOC variants
+
+Target-bucket result, `FIT < 300` + negative net load:
+
+| label | feature set | positive rate | ROC AUC | AP lift | note |
+| --- | --- | ---: | ---: | ---: | --- |
+| `grid_exchange_down` | base features | `35.1%` | `0.825` | `2.30x` | strongest |
+| `grid_exchange_down` | base + h0-h11 vector | `35.1%` | `0.788` | `1.88x` | vector features did not help |
+| `pnl_gain` | base features | `45.3%` | `0.680` | `1.47x` | weaker |
+| `throughput_down` | base features | `35.8%` | `0.630` | `1.47x` | weaker |
+| `soc_down` | base features | `44.8%` | `0.682` | `1.35x` | weaker |
+
+Pooled-regime result across `FIT < 300` negative net load, `FIT < 300` non-negative net load,
+and `FIT >= 300`:
+
+| label | positive rate | ROC AUC | AP lift | precision | recall |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `grid_exchange_down` | `28.1%` | `0.781` | `2.58x` | `0.985` | `0.393` |
+
+Most other pooled labels collapsed, including `pnl_gain`, `throughput_down`, `soc_up`, and
+export direction labels.
+
+Interpretation: the direction/event framing is more promising than sparse regression, but the
+surviving signal is narrow. The next candidate should not be a broad state-value model. A more
+plausible branch is an event-gated grid-exchange-reduction signal: identify high-confidence
+periods where the oracle wants materially less import+export exchange over 30-60 minutes, then
+test a bounded MPC nudge only in those events.
