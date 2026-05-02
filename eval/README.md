@@ -19,6 +19,7 @@
 | `build_state_transition_label_dataset.py` | Build the first state-value / inventory-discipline label dataset from rolling raw parquet. Solves the realized-future tariffed oracle, then compares oracle/target/comparator 30-60 minute path metrics. Optional `--soc-finite-diff-kwh` adds a finite-difference marginal initial-SoC value label, at the cost of one extra LP solve per row. |
 | `analyze_state_transition_labels.py` | Summarize state-transition label datasets by horizon: SoC movement, throughput/churn, import/export energy, prefix PnL, and direction rates for oracle/comparator relative to the target source. |
 | `train_state_transition_value_model.py` | Train a small diagnostic LightGBM model on state-transition labels using production-side/current-time features. Reports whether oracle-vs-target path labels are learnable before any control integration. |
+| `train_state_transition_direction_model.py` | Train small diagnostic classifiers on zero-inflated state-transition direction/event labels, e.g. "oracle wants less throughput" or "oracle leaves material prefix value." Useful before another regression target or controller hook. |
 | `analyze_tier1_dispatch_relevant_errors.py` | Dispatch-relevant Tier 1 tactical forecast diagnostic from rolling raw parquet outputs. Compares Amber-vs-Hybrid horizon-summary forecast shape, tariffed buy/sell error, act-now-vs-wait ordering, and optional forced-prefix / state-transition labels by regime bucket. |
 | `analyze_tier1_tactical_vector_errors.py` | Reconstruct full h0-h11 first-hour tactical vectors for Amber APF and Tier 1 from local forecast/model inputs, then compare per-horizon tariffed import/feed-in errors and act-now-vs-wait shape by bucket. Use `nice` for real-window runs because it reloads the large local Amber forecast log. |
 | `compare_tft_dispatch.py` | TFT vs LightGBM dispatch comparison on 130 overlapping 30-min boundary runs (Phase 3). |
@@ -145,6 +146,21 @@ nice -n 19 ./.venv/bin/python eval/train_state_transition_value_model.py \
 
 Those vector features use forecast curves only; realized future price columns from the diagnostic
 rows are intentionally ignored.
+
+If regression is weak because the labels are sparse / zero-inflated, run the companion direction
+probe:
+
+```bash
+nice -n 19 ./.venv/bin/python eval/train_state_transition_direction_model.py \
+  --labels state_transition_wb7_fitlt300_negload_curtail_20260501_state_transition_labels.parquet \
+  --vector-rows tier1_vector_wb7_legacy_20260501_tier1_vector_rows.parquet \
+  --vector-source model_a_hybrid \
+  --direction-labels pnl_gain,throughput_down,grid_exchange_down,soc_down \
+  --output-prefix state_transition_wb7_direction_probe_20260502
+```
+
+This asks whether the model can classify material path-change events before trying to predict
+their exact dollar/kWh magnitude.
 
 When the branch pivots back from control probes to the tactical model itself, use
 `analyze_tier1_dispatch_relevant_errors.py` before training another candidate. It works from

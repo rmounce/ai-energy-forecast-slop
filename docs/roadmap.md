@@ -1172,6 +1172,25 @@ So the next branch should stop thinking “big export spikes” and start thinki
     strong enough supervised signal for a production dispatch-shape model. The next model branch
     should improve the label/target formulation or broaden regime-aware training data before
     attempting another controller hook.
+  - added [eval/train_state_transition_direction_model.py](../eval/train_state_transition_direction_model.py)
+    as a zero-inflated label diagnostic: instead of predicting exact sparse dollar/kWh deltas,
+    it classifies directional path-change events such as `pnl_gain`, `throughput_down`,
+    `grid_exchange_down`, and `soc_down`
+  - target-bucket direction probe on corrected `FIT < 300` / negative-net-load labels:
+    - with h0-h11 vector features, `grid_exchange_down` validation ROC AUC `0.788`, average
+      precision lift `1.88x`
+    - without vector features, `grid_exchange_down` improved to ROC AUC `0.825`, average
+      precision lift `2.30x`
+    - other labels were weaker but still more informative than the corresponding regression
+      labels: `pnl_gain` ROC AUC `0.680`, `throughput_down` `0.630`, `soc_down` `0.682`
+  - pooled-regime direction probe across `FIT < 300` negative net load, `FIT < 300`
+    non-negative net load, and `FIT >= 300`:
+    - most labels collapsed, but `grid_exchange_down` remained strong with ROC AUC `0.781`,
+      average precision lift `2.58x`, precision `0.985`, recall `0.393`
+  - implication: the most promising next abstraction is no longer a broad scalar state-value
+    regressor. It is a narrow event-gated **grid-exchange reduction** signal: identify when the
+    oracle wants materially less import+export exchange over the next 30-60 minutes, then test a
+    bounded MPC nudge only in those high-confidence events.
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
 [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
