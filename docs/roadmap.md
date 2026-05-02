@@ -1313,6 +1313,18 @@ below Amber. Treat this as proof the channel is controllable, not proof the poli
 Next gate: short Window A/B tests must include final SoC valuation and import/export/degradation/
 curtailment decomposition before any longer run or production-facing interface.
 
+**Follow-up:** the throughput-cost implementation was the wrong control abstraction for the
+`grid_exchange_down` label. A 6h Window B smoke improved immediate PnL but mostly by suppressing
+charge and leaving the battery much lower (`29.03 kWh` vs Amber `39.77 kWh`). Window A did not
+change dispatch despite activations. A static `100 $/MWh` terminal value did not mitigate the
+Window B inventory drain under exact handoff.
+
+The eval hook now also supports direct import/export flow cost via
+`--grid-exchange-reduction-flow-cost-mwh`. The first 2h Window B smoke is better aligned with the
+label and less severe than the throughput proxy, but still spends inventory (`21.48 kWh` final SoC
+vs Amber `25.67 kWh`). Do not launch longer sidecar-gate batches until the activation policy or
+control action is constrained enough that short smokes preserve terminal inventory.
+
 ---
 
 ## Known Open Issues

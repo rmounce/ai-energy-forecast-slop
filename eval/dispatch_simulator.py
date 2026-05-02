@@ -99,6 +99,7 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                       min_terminal_soc_kwh: float | None = None,
                       max_terminal_soc_kwh: float | None = None,
                       throughput_cost_adder_per_kwh: float = 0.0,
+                      grid_exchange_cost_adder_per_kwh: float = 0.0,
                       force_first_charge_kw: float | None = None,
                       force_first_discharge_kw: float | None = None,
                       force_prefix_charge_kw: np.ndarray | None = None,
@@ -133,6 +134,11 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         Optional control-only friction added to battery throughput in the LP
         objective. This does not change realized degradation accounting; it is
         an eval hook for conservative churn / inventory-discipline probes.
+
+    grid_exchange_cost_adder_per_kwh:
+        Optional control-only friction added to grid import and grid export in
+        site-flow mode. This targets import+export exchange directly, unlike
+        `throughput_cost_adder_per_kwh`, which targets battery charge/discharge.
 
     Returns a dict containing the optimal actions and LP diagnostics.
     Infeasible solves return zero actions with status metadata.
@@ -169,6 +175,7 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         import_p = np.asarray(import_prices_mwh, dtype=np.float64) / 1000.0
         export_p = np.asarray(export_prices_mwh, dtype=np.float64) / 1000.0
         throughput_cost = DEG_PER_KWH + max(0.0, float(throughput_cost_adder_per_kwh))
+        grid_exchange_cost = max(0.0, float(grid_exchange_cost_adder_per_kwh))
         if use_split_load_pv_mode:
             load_forecast_kw = np.asarray(load_forecast_kw, dtype=np.float64)
             pv_forecast_kw = np.asarray(pv_forecast_kw, dtype=np.float64)
@@ -183,8 +190,8 @@ def solve_lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         c_obj = np.concatenate([
             np.full(n, throughput_cost * EFF_C * interval_h, dtype=np.float64),
             np.full(n, throughput_cost * interval_h, dtype=np.float64),
-            import_p * interval_h,
-            -export_p * interval_h,
+            (import_p + grid_exchange_cost) * interval_h,
+            (-export_p + grid_exchange_cost) * interval_h,
             np.zeros(n, dtype=np.float64),
         ])
     else:
@@ -377,7 +384,8 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
                 extra_terminal_energy_cap_kwh: float | None = None,
                 min_terminal_soc_kwh: float | None = None,
                 max_terminal_soc_kwh: float | None = None,
-                throughput_cost_adder_per_kwh: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+                throughput_cost_adder_per_kwh: float = 0.0,
+                grid_exchange_cost_adder_per_kwh: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """
     Backwards-compatible wrapper returning only the action arrays.
     """
@@ -399,6 +407,7 @@ def lp_dispatch(prices_mwh: np.ndarray, soc_init: float,
         min_terminal_soc_kwh=min_terminal_soc_kwh,
         max_terminal_soc_kwh=max_terminal_soc_kwh,
         throughput_cost_adder_per_kwh=throughput_cost_adder_per_kwh,
+        grid_exchange_cost_adder_per_kwh=grid_exchange_cost_adder_per_kwh,
     )
     return solve["charge_kw"], solve["discharge_kw"]
 
