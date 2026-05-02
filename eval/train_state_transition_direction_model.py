@@ -19,6 +19,7 @@ from pathlib import Path
 import sys
 from typing import Iterable
 
+import joblib
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -261,6 +262,7 @@ def main() -> int:
     parser.add_argument("--max-rows", type=int, default=None)
     parser.add_argument("--vector-rows", default=None, help="Optional h0-h11 vector rows CSV/parquet")
     parser.add_argument("--vector-source", default="model_a_hybrid")
+    parser.add_argument("--model-dir", default=None, help="Optional directory to save the diagnostic model bundle")
     args = parser.parse_args()
 
     label_args = _parse_csv_list(args.labels, [])
@@ -309,6 +311,8 @@ def main() -> int:
     metrics_parts: list[pd.DataFrame] = []
     pred_parts: list[pd.DataFrame] = []
     importance_parts: list[pd.DataFrame] = []
+    models: dict[str, lgb.LGBMClassifier] = {}
+    thresholds: dict[str, float] = {}
     skipped: list[dict[str, str]] = []
 
     for label in direction_labels:
@@ -323,6 +327,17 @@ def main() -> int:
         except ValueError as exc:
             skipped.append({"label": label, "reason": str(exc)})
             continue
+        models[label] = model
+        threshold_rows = metrics_df[
+            (metrics_df["split"] == "train")
+            & (metrics_df["horizon_steps"] == -1)
+            & (metrics_df["label"] == label)
+        ]
+        thresholds[label] = (
+            float(threshold_rows["threshold"].iloc[0])
+            if not threshold_rows.empty
+            else float(predictions_df["threshold"].iloc[0])
+        )
         metrics_parts.append(metrics_df)
         pred_parts.append(predictions_df)
         importance_parts.append(
@@ -370,6 +385,30 @@ def main() -> int:
         "predictions": str(pred_path),
         "feature_importance": str(imp_path),
     }
+
+    if args.model_dir:
+        model_dir = Path(args.model_dir)
+        if not model_dir.is_absolute():
+            model_dir = ROOT / model_dir
+        model_dir.mkdir(parents=True, exist_ok=True)
+        bundle = {
+            "models": models,
+            "thresholds": thresholds,
+            "direction_labels": direction_labels,
+            "trained_labels": sorted(models.keys()),
+            "features": feature_cols,
+            "lgbm_params": LGBM_CLASSIFIER_PARAMS,
+            "pnl_deadband": float(args.pnl_deadband),
+            "kwh_deadband": float(args.kwh_deadband),
+            "labels": [str(path) for path in label_paths],
+            "vector_rows": str(vector_path) if vector_path is not None else None,
+            "vector_source": args.vector_source if vector_path is not None else None,
+            "vector_feature_count": len(vector_feature_cols),
+        }
+        model_path = model_dir / f"{args.output_prefix}_direction_models.joblib"
+        joblib.dump(bundle, model_path)
+        manifest["model_bundle"] = str(model_path)
+
     manifest_path = RESULTS_DIR / f"{args.output_prefix}_direction_model_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
 

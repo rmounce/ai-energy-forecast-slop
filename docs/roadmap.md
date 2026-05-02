@@ -1300,6 +1300,19 @@ shadow-price-informed execution bias a credible next experiment: use the margina
 value of stored energy to resist premature discharge and improve spread capture, especially
 when near-term forecasts understate downstream opportunity.
 
+**Current sidecar gate checkpoint (2026-05-02):** the strongest near-production probe is no
+longer a broad state-value regression. It is an eval-only `grid_exchange_down` event gate:
+train a saved direction-model bundle, score ordinary rolling raw rows out-of-band, then let
+`rolling_mpc_eval.py` consume the scored event file. The saved pooled bundle is modest but real
+on validation (`ROC AUC 0.781`, `AP lift 2.58x`, high precision at the selected threshold).
+
+A tiny Window B smoke with scored sidecar signals confirmed the full plumbing works:
+`model_a_hybrid_grid_exchange_gate` activated on `21 / 24` steps and improved immediate
+`netload_tariffed` PnL on `2025-09-01T01:00Z -> 03:00Z`, but it left final SoC about `6 kWh`
+below Amber. Treat this as proof the channel is controllable, not proof the policy is safe.
+Next gate: short Window A/B tests must include final SoC valuation and import/export/degradation/
+curtailment decomposition before any longer run or production-facing interface.
+
 ---
 
 ## Known Open Issues
