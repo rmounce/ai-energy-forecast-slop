@@ -1399,6 +1399,24 @@ transferable ranking signal for `grid_exchange_down` and `soc_down`, but the nex
 model-side calibration or candidate forecast shaping evaluated through `netload_tariffed`, not
 another raw event-gated MPC hook.
 
+**Direction score calibration result (2026-05-03):** added
+[eval/analyze_direction_score_calibration.py](../eval/analyze_direction_score_calibration.py) and
+ran it on both cross-window prediction sets. Naive isotonic calibration trained on one window does
+not transfer to the other: for WA->WB `grid_exchange_down`, ROC AUC fell from `0.796` to `0.645`
+and AP fell from `0.568` to `0.410`; for WB->WA `grid_exchange_down`, ROC AUC fell from `0.738`
+to `0.708` and AP from `0.425` to `0.368`.
+
+Raw rank bands are useful:
+- WA->WB `grid_exchange_down`: top `5%` precision `73.9%` (`2.87x` lift), top `10%` precision
+  `65.3%` (`2.54x` lift)
+- WB->WA `grid_exchange_down`: top `5%` precision `55.5%` (`2.82x` lift), top `10%` precision
+  `52.0%` (`2.64x` lift)
+- WB->WA `soc_down`: top `10%` precision `43.8%` (`2.03x` lift)
+
+Updated implication: do not use these scores as calibrated probabilities. The next candidate
+should be rank-safe: select a small high-confidence band, generate a model-side forecast-shape
+candidate, and evaluate it through `netload_tariffed`.
+
 ---
 
 ## Known Open Issues
