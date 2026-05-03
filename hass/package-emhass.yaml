@@ -246,7 +246,7 @@ template:
 
 rest_command:
   emhass_dayahead_optim:
-    url: http://emhass.REDACTED/action/naive-mpc-optim
+    url: !secret emhass_url_optim
     method: POST
     timeout: 120
     headers:
@@ -459,7 +459,7 @@ rest_command:
       }
 
   emhass_publish_data_dh:
-    url: http://emhass.REDACTED/action/publish-data
+    url: !secret emhass_url_publish
     method: POST
     headers:
       content-type: application/json
@@ -469,7 +469,7 @@ rest_command:
       }
 
   emhass_mpc:
-    url: http://emhass.REDACTED/action/naive-mpc-optim
+    url: !secret emhass_url_optim
     method: POST
     timeout: 120
     headers:
@@ -857,7 +857,7 @@ rest_command:
       }
 
   emhass_publish_data_mpc:
-    url: http://emhass.REDACTED/action/publish-data
+    url: !secret emhass_url_publish
     method: POST
     headers:
       content-type: application/json
@@ -868,7 +868,7 @@ rest_command:
 
 
   emhass_publish_data_all:
-    url: http://emhass.REDACTED/action/publish-data
+    url: !secret emhass_url_publish
     method: POST
     headers:
       content-type: application/json
@@ -878,14 +878,14 @@ rest_command:
       }
 
   emhass_action_naive_mpc_optim:
-    url: http://emhass.REDACTED/action/naive-mpc-optim
+    url: !secret emhass_url_optim
     method: POST
     content_type: "application/json"
     timeout: 240
     payload: "{{ payload }}"
 
   emhass_action_publish_data:
-    url: http://emhass.REDACTED/action/publish-data
+    url: !secret emhass_url_publish
     method: POST
     content_type: "application/json"
     timeout: 240
