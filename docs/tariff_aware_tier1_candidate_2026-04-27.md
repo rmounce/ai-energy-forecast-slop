@@ -1406,3 +1406,64 @@ not generalize cleanly to WA. The next model-side step should compare WA/WB labe
 distributions directly, then test whether a pooled cross-window model can rank events
 out-of-sample. If the signal is WB-specific, it should remain diagnostic rather than become a
 production policy.
+
+### Cross-Window Direction Transfer Check
+
+The follow-up unattended batch filled the missing Window B finite-difference buckets, trained the
+Window B pooled models, and ran explicit WA/WB transfer diagnostics:
+
+- run script: `run_cross_window_fdiff_direction_20260503.sh`
+- new WB label prefixes:
+  - `state_transition_wb7_fitlt300_nonnegload_fdiff1_curtail_20260503`
+  - `state_transition_wb7_fitgte300_fdiff1_curtail_20260503`
+- WB pooled model prefixes:
+  - `state_transition_wb7_pooled_fdiff1_value_20260503`
+  - `state_transition_wb7_pooled_fdiff1_direction_20260503`
+- transfer prefixes:
+  - `state_transition_cross_wa_to_wb_direction_20260503`
+  - `state_transition_cross_wb_to_wa_direction_20260503`
+
+All stages completed with exitcode `0`.
+
+WB pooled validation remains split by target type:
+
+| target / label | validation result |
+| --- | --- |
+| finite-difference marginal-SoC value | MAE `+21.5%` vs baseline, but `R2 = -0.101` |
+| other continuous value labels | essentially baseline or worse |
+| `grid_exchange_down` direction | ROC AUC `0.781`, AP lift `2.58x`, precision `0.985`, recall `0.393` |
+| `pnl_gain` direction | ROC AUC `0.342`, below useful |
+| `throughput_down` direction | ROC AUC `0.482`, below useful |
+| `soc_down` direction | ROC AUC `0.527`, weak |
+
+The cross-window classifiers are more informative than the WA-only pooled result suggested:
+
+| train -> test | label | positive rate on test | ROC AUC | AP lift | note |
+| --- | --- | ---: | ---: | ---: | --- |
+| WA -> WB | `grid_exchange_down` | `25.7%` | `0.796` | `2.21x` | strongest transfer |
+| WA -> WB | `soc_down` | `21.7%` | `0.686` | `1.53x` | moderate |
+| WA -> WB | `throughput_down` | `32.1%` | `0.611` | `1.31x` | weak/moderate |
+| WA -> WB | `pnl_gain` | `20.2%` | `0.601` | `1.36x` | weak/moderate |
+| WB -> WA | `soc_down` | `21.5%` | `0.775` | `1.94x` | strongest reverse transfer |
+| WB -> WA | `grid_exchange_down` | `19.7%` | `0.738` | `2.16x` | solid reverse transfer |
+| WB -> WA | `pnl_gain` | `23.2%` | `0.729` | `1.84x` | solid reverse transfer |
+| WB -> WA | `throughput_down` | `22.7%` | `0.624` | `1.52x` | weak/moderate |
+
+However, the thresholded decisions are not yet safe. In the transfer runs, accuracy often remains
+below the majority-class baseline even when ROC AUC and average precision are useful. That means
+the models can rank candidate events, but the current F1-derived thresholds are not calibrated
+well enough to drive an MPC hook.
+
+The label-distribution contrast also remains real:
+
+| window | mean feed-in price | mean net load | `grid_exchange_down` rate | `throughput_down` rate |
+| --- | ---: | ---: | ---: | ---: |
+| WA pooled labels | `44.9 $/MWh` | `+0.235 kW` | `19.7%` | `22.7%` |
+| WB pooled labels | `72.5 $/MWh` | `-0.370 kW` | `25.7%` | `32.1%` |
+
+Interpretation: the useful signal is not purely a single-window artifact. There is transferable
+ranking signal for path-shape events, especially `grid_exchange_down` and `soc_down`. But it is
+still a diagnostic/model-target result, not a production-control result. The next production path
+should be model-side calibration or candidate generation: use these labels to shape or select
+tactical forecasts, then evaluate through `netload_tariffed`, instead of wiring the raw event
+classifier directly into dispatch.
