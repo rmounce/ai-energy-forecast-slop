@@ -58,6 +58,10 @@ Implementation status:
 - DH canonical sensors use the TFT Tier 2 30-minute / 72-hour price forecast.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
+- `hass/package-emhass.yaml` now declares source selectors plus read-only
+  status sensors for the canonical AI MPC/DH forecast entities. The selectors
+  default to the existing production sources and do not change EMHASS behavior
+  until the REST payload templates are explicitly wired to them.
 
 ## Switching Model
 
@@ -82,18 +86,20 @@ payload templates.
 
 1. Publish canonical AI forecast sensors alongside the existing Amber-shaped AI
    combined sensors. **Done in `forecast.py`; verify against live HA state.**
-2. Add read-only diagnostic template sensors that render the selected MPC/DH
+2. Add source selectors and AI forecast health/status sensors. **Done in
+   `hass/package-emhass.yaml`; sync to HA and verify after template reload.**
+3. Add read-only diagnostic template sensors that render the selected MPC/DH
    import/export arrays without calling EMHASS.
-3. Add source selectors and adapter macros/template sensors.
-4. Run shadow mode:
+4. Add adapter logic to the EMHASS REST payload templates.
+5. Run shadow mode:
    - selected source remains Amber
    - AI arrays are rendered and logged
    - no inverter behavior changes
-5. Switch DH first, if desired, because it changes the strategic plan but not
+6. Switch DH first, if desired, because it changes the strategic plan but not
    the immediate 5-minute action as directly as MPC.
-6. Switch MPC only after source freshness, sign, length, and unit checks are
+7. Switch MPC only after source freshness, sign, length, and unit checks are
    visible and stable.
-7. Keep one-action rollback by setting the selectors back to the legacy source.
+8. Keep one-action rollback by setting the selectors back to the legacy source.
 
 ## Acceptance Checks
 

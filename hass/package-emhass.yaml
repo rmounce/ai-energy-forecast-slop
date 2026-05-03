@@ -1,3 +1,18 @@
+input_select:
+  emhass_mpc_price_source:
+    name: EMHASS MPC Price Source
+    options:
+      - amber
+      - ai_shadow
+    initial: amber
+
+  emhass_dh_price_source:
+    name: EMHASS DH Price Source
+    options:
+      - amber_lgbm_extrapolated
+      - ai_shadow
+    initial: amber_lgbm_extrapolated
+
 template:
   - sensor:
     - name: 'Amber Effective General Price'
@@ -80,6 +95,81 @@ template:
         {#                END: DNSP FREE TIER ADJUSTMENT                     #}
         {# ================================================================= #}
 
+    - name: 'EMHASS Selected MPC Price Source'
+      state: "{{ states('input_select.emhass_mpc_price_source') }}"
+      attributes:
+        production_default: amber
+        ai_import_entity: sensor.ai_mpc_import_price_forecast
+        ai_export_entity: sensor.ai_mpc_export_price_forecast
+
+    - name: 'EMHASS Selected DH Price Source'
+      state: "{{ states('input_select.emhass_dh_price_source') }}"
+      attributes:
+        production_default: amber_lgbm_extrapolated
+        ai_import_entity: sensor.ai_dh_import_price_forecast
+        ai_export_entity: sensor.ai_dh_export_price_forecast
+
+    - name: 'AI MPC Price Forecast Status'
+      state: >
+        {%- set import_forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+        {%- set export_forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
+        {%- if import_forecast | count >= 168 and export_forecast | count >= 168 %}
+          ready
+        {%- else %}
+          not_ready
+        {%- endif %}
+      attributes:
+        expected_count: 168
+        interval_minutes: 5
+        import_count: >
+          {{ state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) | count }}
+        export_count: >
+          {{ state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) | count }}
+        import_first_value: >
+          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].native_value if forecast | count > 0 else none }}
+        export_first_value: >
+          {%- set forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].native_value if forecast | count > 0 else none }}
+        import_first_datetime: >
+          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].datetime if forecast | count > 0 else none }}
+        export_first_datetime: >
+          {%- set forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].datetime if forecast | count > 0 else none }}
+        convention: haeo_positive_import_export
+        timestamp_convention: utc_iso8601
+
+    - name: 'AI DH Price Forecast Status'
+      state: >
+        {%- set import_forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+        {%- set export_forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
+        {%- if import_forecast | count >= 144 and export_forecast | count >= 144 %}
+          ready
+        {%- else %}
+          not_ready
+        {%- endif %}
+      attributes:
+        expected_count: 144
+        interval_minutes: 30
+        import_count: >
+          {{ state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) | count }}
+        export_count: >
+          {{ state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) | count }}
+        import_first_value: >
+          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].native_value if forecast | count > 0 else none }}
+        export_first_value: >
+          {%- set forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].native_value if forecast | count > 0 else none }}
+        import_first_datetime: >
+          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].datetime if forecast | count > 0 else none }}
+        export_first_datetime: >
+          {%- set forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[0].datetime if forecast | count > 0 else none }}
+        convention: haeo_positive_import_export
+        timestamp_convention: utc_iso8601
 
 rest_command:
   emhass_dayahead_optim:
