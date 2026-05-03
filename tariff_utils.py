@@ -36,6 +36,41 @@ def load_tariff_profile(config: dict, root: Path) -> tuple[dict[str, float], dic
     )
 
 
+def ensure_utc_index(df: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    """
+    Return a copy with a timezone-aware UTC DatetimeIndex.
+
+    Internal code should keep timestamps in UTC. Local time is a boundary concern
+    used only for tariff lookup, display, and provider-specific API parsing.
+    """
+    out = df.copy()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index, utc=True)
+    elif out.index.tz is None:
+        out.index = out.index.tz_localize("UTC")
+    else:
+        out.index = out.index.tz_convert("UTC")
+    return out
+
+
+def export_value_to_amber_feed_in_price(export_value_per_kwh: float) -> float:
+    """
+    Convert canonical export value to Amber feed-in price convention.
+
+    Canonical internal convention:
+      positive export value = consumer earns money by exporting.
+
+    Amber/Home Assistant feed-in convention:
+      negative price = consumer earns money by exporting.
+    """
+    return -float(export_value_per_kwh)
+
+
+def amber_feed_in_price_to_export_value(amber_feed_in_price_per_kwh: float) -> float:
+    """Inverse of export_value_to_amber_feed_in_price()."""
+    return -float(amber_feed_in_price_per_kwh)
+
+
 def tariffed_price_frame_from_wholesale_mwh(
     wholesale_prices_mwh: pd.Series,
     *,
@@ -58,6 +93,7 @@ def tariffed_price_frame_from_wholesale_mwh(
       feed_in_price_mwh
     where `*_price` is in $/kWh and `*_price_mwh` is in $/MWh.
     """
+    wholesale_prices_mwh = ensure_utc_index(wholesale_prices_mwh)
     frame = pd.DataFrame(index=wholesale_prices_mwh.index.copy())
     frame["wholesale_price"] = wholesale_prices_mwh.astype(np.float64) / 1000.0
 

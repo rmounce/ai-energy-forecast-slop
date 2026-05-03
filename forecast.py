@@ -29,7 +29,12 @@ import io
 import re
 import zipfile
 
-from tariff_utils import load_tariff_profile, tariffed_price_frame_from_wholesale_mwh
+from tariff_utils import (
+    ensure_utc_index,
+    export_value_to_amber_feed_in_price,
+    load_tariff_profile,
+    tariffed_price_frame_from_wholesale_mwh,
+)
 from eval.retro_tier1_inference import build_feature_dict as build_tier1_feature_dict, build_long_matrix_for_model as build_tier1_long_matrix
 
 # Suppress warnings for cleaner output
@@ -2004,6 +2009,7 @@ def _build_combined_forecast_items(
 
     frames = {'p50': p50_df.copy(), 'low': low_df.copy(), 'high': high_df.copy()}
     for key, df in frames.items():
+        df = ensure_utc_index(df)
         if 'wholesale_price' not in df.columns:
             df.rename(columns={df.columns[0]: 'wholesale_price'}, inplace=True)
         df = _expand_forecast_to_publish_interval(df, source_interval_minutes, publish_interval_minutes)
@@ -2026,16 +2032,15 @@ def _build_combined_forecast_items(
             'advanced_price_low':       round(glow,  6),
             'per_kwh':                  round(gp50,  6),
         })
-        # Amber feed-in convention: negative = consumer earns, positive = consumer pays to export.
-        # Our feed_in_price formula gives positive when wholesale is positive, so negate.
-        # Negation also reverses high/low: higher wholesale → more negative → more earning → "high".
+        # Boundary conversion only: internal feed_in_price is positive export value;
+        # Amber-style HA feed-in sensors encode earning as negative prices.
         feed_in_items.append({
             'start_time': ts.isoformat(),
             'end_time':   (ts + interval_delta).isoformat(),
-            'advanced_price_predicted': round(-fp50,  6),
-            'advanced_price_high':      round(-fhigh, 6),
-            'advanced_price_low':       round(-flow,  6),
-            'per_kwh':                  round(-fp50,  6),
+            'advanced_price_predicted': round(export_value_to_amber_feed_in_price(fp50),  6),
+            'advanced_price_high':      round(export_value_to_amber_feed_in_price(fhigh), 6),
+            'advanced_price_low':       round(export_value_to_amber_feed_in_price(flow),  6),
+            'per_kwh':                  round(export_value_to_amber_feed_in_price(fp50),  6),
         })
 
     return general_items, feed_in_items

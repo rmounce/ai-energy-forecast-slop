@@ -12,6 +12,11 @@ import pytest
 
 from conftest import ROOT, _make_price_df
 import forecast as fc
+from tariff_utils import (
+    amber_feed_in_price_to_export_value,
+    ensure_utc_index,
+    export_value_to_amber_feed_in_price,
+)
 
 
 LOSS = 1.05
@@ -111,3 +116,33 @@ def test_no_nan_output():
     _apply(df)
     assert df["general_price"].notna().all()
     assert df["feed_in_price"].notna().all()
+
+
+def test_export_value_amber_feed_in_boundary_conversion():
+    """Internal export value stays positive; Amber-style feed-in price is negated at the boundary."""
+    assert export_value_to_amber_feed_in_price(0.25) == -0.25
+    assert amber_feed_in_price_to_export_value(-0.25) == 0.25
+    assert amber_feed_in_price_to_export_value(
+        export_value_to_amber_feed_in_price(0.25)
+    ) == 0.25
+
+
+def test_ensure_utc_index_localizes_naive_index():
+    df = pd.DataFrame({"x": [1]}, index=[pd.Timestamp("2025-01-01 00:00:00")])
+
+    out = ensure_utc_index(df)
+
+    assert str(out.index.tz) == "UTC"
+    assert out.index[0] == pd.Timestamp("2025-01-01T00:00:00Z")
+
+
+def test_ensure_utc_index_converts_aware_index():
+    df = pd.DataFrame(
+        {"x": [1]},
+        index=[pd.Timestamp("2025-01-01 10:30:00", tz="Australia/Adelaide")],
+    )
+
+    out = ensure_utc_index(df)
+
+    assert str(out.index.tz) == "UTC"
+    assert out.index[0] == pd.Timestamp("2025-01-01T00:00:00Z")
