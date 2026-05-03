@@ -33,6 +33,37 @@ Existing exceptions are intentional when they match model training contracts:
 - Simulation columns should keep units in their names, for example
   `actual_general_price_mwh` and `actual_feed_in_price_mwh`.
 
+## HAEO / HAFO Alignment
+
+The canonical Home Assistant-facing convention should follow HAEO/HAFO where it
+is practical:
+
+- Import price is a positive cost in `$ / kWh`.
+- Export price is a positive revenue in `$ / kWh`.
+- Negative export price means the customer pays to export.
+- Import and export power should be separate positive-or-zero flows where the
+  integration/control surface supports that shape.
+- Forecast sensors should expose a standard `forecast` attribute using
+  timezone-aware ISO timestamps. Prefer the HAFO-style point shape:
+
+```yaml
+forecast:
+  - datetime: "2025-01-15T10:00:00+00:00"
+    native_value: 0.25
+```
+
+This repo should publish future production/shadow price forecasts in that
+HAEO-compatible shape alongside any legacy Amber-compatible adapter sensors.
+
+References:
+
+- HAEO grid price convention:
+  <https://haeo.io/user-guide/elements/grid/>
+- HAFO forecast point convention:
+  <https://hafo.haeo.io/user-guide/forecasters/historical-shift/>
+- Amber Express HAEO compatibility note:
+  <https://github.com/hass-energy/amber-express>
+
 ## Amber Feed-In Sign
 
 Amber/Home Assistant feed-in sensors use the opposite sign convention:
