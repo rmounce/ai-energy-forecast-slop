@@ -58,15 +58,21 @@ Implementation status:
 - DH canonical sensors use the TFT Tier 2 30-minute / 72-hour price forecast.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
-- `hass/package-emhass.yaml` now declares source selectors plus read-only
-  status sensors for the canonical AI MPC/DH forecast entities. The selectors
-  default to the existing production sources and do not change EMHASS behavior
-  until the REST payload templates are explicitly wired to them.
+- `hass/package-emhass.yaml` now declares source selectors, read-only status
+  sensors, and diagnostic sensors for both MPC and DH price sources. Selectors
+  default to existing production sources and do not change EMHASS behavior until
+  explicitly switched.
 - The day-ahead EMHASS payload is wired to
-  `input_select.emhass_dh_price_source`. It still defaults to the existing
-  Amber/APF-derived LightGBM-extrapolated source, with `ai_shadow` available
-  as an explicit opt-in when the canonical AI DH sensors are present and have
-  the full 144-point horizon.
+  `input_select.emhass_dh_price_source`. Defaults to Amber/APF-derived
+  LightGBM-extrapolated source; `ai_shadow` available as explicit opt-in when
+  AI DH sensors have the full 144-point horizon.
+- The MPC EMHASS payload is wired to `input_select.emhass_mpc_price_source`.
+  Defaults to Amber 5-min extended source; `ai_shadow` available when AI MPC
+  sensors have the full 168-point horizon. Current-interval price always stays
+  on the confirmed Amber sensor regardless of selector.
+- `sensor.emhass_mpc_price_diagnostic` and `sensor.emhass_dh_price_diagnostic`
+  expose side-by-side first values and 1h/24h means for both sources without
+  calling EMHASS. State = currently selected source.
 
 ## Switching Model
 
@@ -93,10 +99,11 @@ payload templates.
    combined sensors. **Done in `forecast.py`; verify against live HA state.**
 2. Add source selectors and AI forecast health/status sensors. **Done in
    `hass/package-emhass.yaml`; sync to HA and verify after template reload.**
-3. Add read-only diagnostic template sensors that render the selected MPC/DH
-   import/export arrays without calling EMHASS.
-4. Add adapter logic to the EMHASS REST payload templates. **DH price source
-   switch is wired; MPC remains on the legacy Amber 5-minute source.**
+3. Add read-only diagnostic template sensors. **Done: `sensor.emhass_mpc_price_diagnostic`
+   and `sensor.emhass_dh_price_diagnostic` expose side-by-side first values and hourly/daily
+   means for both sources.**
+4. Add adapter logic to the EMHASS REST payload templates. **Done: both DH and MPC payloads
+   read from their respective source selectors.**
 5. Run shadow mode:
    - selected source remains Amber
    - AI arrays are rendered and logged
