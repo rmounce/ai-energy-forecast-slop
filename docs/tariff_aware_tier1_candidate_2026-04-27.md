@@ -1467,3 +1467,39 @@ still a diagnostic/model-target result, not a production-control result. The nex
 should be model-side calibration or candidate generation: use these labels to shape or select
 tactical forecasts, then evaluate through `netload_tariffed`, instead of wiring the raw event
 classifier directly into dispatch.
+
+### Direction Score Calibration Check
+
+The first calibration pass added
+[eval/analyze_direction_score_calibration.py](../eval/analyze_direction_score_calibration.py) and
+ran it on both cross-window prediction sets:
+
+- `state_transition_cross_wa_to_wb_calibration_20260503`
+- `state_transition_cross_wb_to_wa_calibration_20260503`
+
+Result: naive isotonic calibration trained on the source window does **not** transfer. It worsens
+ranking and calibration metrics on the opposite window:
+
+| transfer | label | raw ROC AUC | calibrated ROC AUC | raw AP | calibrated AP | raw ECE | calibrated ECE |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| WA -> WB | `grid_exchange_down` | `0.796` | `0.645` | `0.568` | `0.410` | `0.134` | `0.208` |
+| WA -> WB | `soc_down` | `0.686` | `0.521` | `0.332` | `0.236` | `0.198` | `0.225` |
+| WB -> WA | `grid_exchange_down` | `0.738` | `0.708` | `0.425` | `0.368` | `0.145` | `0.195` |
+| WB -> WA | `soc_down` | `0.775` | `0.741` | `0.419` | `0.367` | `0.164` | `0.235` |
+
+The useful object is therefore raw rank, not calibrated probability. Top-score bands are
+materially enriched:
+
+| transfer | label | top band | base rate | band precision | precision lift | recall |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| WA -> WB | `grid_exchange_down` | `5%` | `25.7%` | `73.9%` | `2.87x` | `14.4%` |
+| WA -> WB | `grid_exchange_down` | `10%` | `25.7%` | `65.3%` | `2.54x` | `25.4%` |
+| WB -> WA | `grid_exchange_down` | `5%` | `19.7%` | `55.5%` | `2.82x` | `14.1%` |
+| WB -> WA | `grid_exchange_down` | `10%` | `19.7%` | `52.0%` | `2.64x` | `26.4%` |
+| WB -> WA | `soc_down` | `10%` | `21.5%` | `43.8%` | `2.03x` | `20.3%` |
+
+Interpretation: do not treat the direction scores as portable probabilities yet. The production
+path should use rank-safe policies first: score candidate events, select only a small top band
+or high raw-score threshold, generate a side-by-side forecast-shape candidate, and then judge the
+candidate through `netload_tariffed`. This preserves the learned signal while avoiding another
+uncalibrated direct-dispatch hook.
