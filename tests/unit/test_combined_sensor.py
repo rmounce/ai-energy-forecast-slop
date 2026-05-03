@@ -135,3 +135,72 @@ def test_no_nan_in_feed_in_items(tier1_dfs):
     for item in fin_items:
         for k in ("per_kwh", "advanced_price_predicted", "advanced_price_high", "advanced_price_low"):
             assert item[k] == item[k], f"NaN in feed-in item field {k}"
+
+
+# ── HAEO/HAFO canonical forecast output ───────────────────────────────────────
+
+def test_haeo_price_forecast_items_use_datetime_native_value(tier1_dfs):
+    import_items, export_items = fc._build_haeo_price_forecast_items(
+        tier1_dfs["p50"], 5, 5
+    )
+
+    assert len(import_items) == 12
+    assert len(export_items) == 12
+    assert set(import_items[0]) == {"datetime", "native_value"}
+    assert set(export_items[0]) == {"datetime", "native_value"}
+    assert pd.Timestamp(import_items[0]["datetime"]).tzinfo is not None
+
+
+def test_haeo_export_value_positive_for_positive_wholesale(tier1_dfs):
+    _, export_items = fc._build_haeo_price_forecast_items(tier1_dfs["p50"], 5, 5)
+
+    assert all(item["native_value"] >= 0 for item in export_items)
+
+
+def test_haeo_export_value_negative_when_export_costs_money():
+    prices = [-0.30, -0.50, -0.20]
+    p50 = _make_price_df(prices)
+
+    _, export_items = fc._build_haeo_price_forecast_items(p50, 5, 5)
+
+    assert all(item["native_value"] <= 0 for item in export_items)
+
+
+def test_haeo_tier2_can_publish_as_5min(tier2_dfs):
+    import_items, export_items = fc._build_haeo_price_forecast_items(
+        tier2_dfs["p50"], 30, 5
+    )
+
+    assert len(import_items) == 144 * 6
+    assert len(export_items) == 144 * 6
+    first = pd.Timestamp(import_items[0]["datetime"])
+    second = pd.Timestamp(import_items[1]["datetime"])
+    seventh = pd.Timestamp(import_items[6]["datetime"])
+    assert second == first + pd.Timedelta(minutes=5)
+    assert seventh == first + pd.Timedelta(minutes=30)
+
+
+def test_publish_haeo_forecast_sensor_payload(monkeypatch):
+    calls = []
+    items = [{"datetime": "2025-01-01T00:00:00+00:00", "native_value": 0.25}]
+
+    def fake_call(method, endpoint, payload=None):
+        calls.append((method, endpoint, payload))
+        return {}
+
+    monkeypatch.setattr(fc, "call_ha_api", fake_call)
+
+    fc._publish_haeo_forecast_sensor(
+        "sensor.test_import_price_forecast",
+        items,
+        "Test Import Price Forecast",
+        interval_minutes=5,
+    )
+
+    assert calls[0][0] == "POST"
+    assert calls[0][1] == "states/sensor.test_import_price_forecast"
+    payload = calls[0][2]
+    assert payload["state"] == 0.25
+    assert payload["attributes"]["forecast"] == items
+    assert payload["attributes"]["unit_of_measurement"] == "$/kWh"
+    assert payload["attributes"]["forecast_convention"] == "haeo_positive_import_export"
