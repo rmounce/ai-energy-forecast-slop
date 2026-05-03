@@ -151,6 +151,52 @@ Ingested by `ingest/ingest-sevendayoutlook.py`, queried at inference via `_get_i
 
 ## Infrastructure
 
+### Migrate from amber2mqtt to Amber Express
+
+**Context:** Both amber2mqtt and the native Amber Express HA integration are currently installed
+and running in parallel (as of 2026-05-03). amber2mqtt is the active production source.
+Amber Express entities (`sensor.amber_express_home_*`) are unused by any code or automation
+in this repo.
+
+**Why migrate at all:** Amber Express is the actively maintained native integration;
+amber2mqtt is a community MQTT bridge. Fewer moving parts, cleaner entity naming, official
+support for new Amber API features.
+
+**When to migrate:** After both EMHASS source selectors (`emhass_mpc_price_source` and
+`emhass_dh_price_source`) are switched to `ai_shadow` and running stably. At that point Amber's
+role shrinks to spot reference and fallback — amber2mqtt's richer entity set is no longer
+needed, and Amber Express covers the remaining use cases cleanly.
+
+**What changes in the migration:**
+
+| Aspect | amber2mqtt | Amber Express |
+|---|---|---|
+| Forecast attribute name | `Forecasts` (capital F) | `forecasts` (lowercase) on `_detailed` sensors |
+| APF structure | Flat: `item.advanced_price_predicted` (float) | Nested: `item.advanced_price_predicted.predicted` |
+| APF high/low | `item.advanced_price_high` / `item.advanced_price_low` | `item.advanced_price_predicted.high` / `.low` |
+| `end_time` timezone | UTC in forecast items; UTC on current sensor | UTC in forecast items; **local Adelaide time** on current price sensor |
+| `spike_status`, `descriptor` in forecast items | ✓ present | ✗ absent (only on current price sensor) |
+| Separate 5-min / 30-min / extended sensors | Yes (multiple entity names) | No — single `_detailed` sensor, mixed durations |
+| Horizon | ~24–37h depending on sensor | ~24h |
+| Individual period sensors (period_1..12) | ✓ 36 sensors | ✗ absent |
+
+**Migration scope once AI sources are primary:**
+
+1. `package-emhass.yaml`: Replace `sensor.amber_5min_current_general_price` / `end_time` check
+   with `sensor.amber_express_home_general_price_detailed` current state. Replace `Forecasts`
+   attribute lookups with `forecasts` + nested APF accessor.
+2. `package-emhass.yaml`: Update `sensor.amber_effective_general_price` and `amber_effective_feed_in_price`
+   template sensors to use Amber Express entities.
+3. `forecast.py`: `get_amber_spot_price_forecast()` and `get_amber_advanced_forecast()` — update
+   entity IDs and attribute paths. APF values move from flat to `item.advanced_price_predicted.predicted`.
+4. `config.json`: Update `amber_entity`, `amber_feed_in_entity`, `amber_billing_entity`.
+5. Delete: amber2mqtt MQTT integration config and the 36 unused `amber_5min_period_N_*` sensors
+   will disappear automatically.
+6. Dashboards / ApexCharts configs referencing `amber_5min_*` entity IDs will need updating.
+
+**Current status:** Deferred. Do not migrate while APF quartile data feeds the LightGBM
+dynamic handoff in `forecast.py`.
+
 ### UTC-first timezone handling
 
 The codebase mixes timezone conventions in a way that creates recurring train/inference skew:
