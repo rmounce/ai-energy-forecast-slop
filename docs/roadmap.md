@@ -1365,6 +1365,40 @@ The next production-relevant diagnostic should compare WA/WB label and feature d
 test cross-window event ranking. If the strongest WB signal is regime-specific, keep it as a
 diagnostic lens rather than a production policy.
 
+**Cross-window direction transfer result (2026-05-03):** the follow-up unattended batch completed
+successfully under `run_cross_window_fdiff_direction_20260503.sh`. It filled the missing WB
+finite-difference buckets, trained WB pooled value/direction models, and ran explicit WA->WB and
+WB->WA direction-transfer checks.
+
+WB pooled validation:
+- finite-difference marginal-SoC value improved MAE by `21.5%` vs baseline, but still had
+  negative `R2 = -0.101`
+- other continuous value labels were essentially baseline or worse
+- `grid_exchange_down` remained strong: ROC AUC `0.781`, AP lift `2.58x`, precision `0.985`,
+  recall `0.393`
+- `pnl_gain`, `throughput_down`, and `soc_down` were weak in the within-WB pooled split
+
+Cross-window transfer was more encouraging:
+- WA->WB:
+  - `grid_exchange_down`: ROC AUC `0.796`, AP lift `2.21x`
+  - `soc_down`: ROC AUC `0.686`, AP lift `1.53x`
+  - `throughput_down`: ROC AUC `0.611`, AP lift `1.31x`
+  - `pnl_gain`: ROC AUC `0.601`, AP lift `1.36x`
+- WB->WA:
+  - `soc_down`: ROC AUC `0.775`, AP lift `1.94x`
+  - `grid_exchange_down`: ROC AUC `0.738`, AP lift `2.16x`
+  - `pnl_gain`: ROC AUC `0.729`, AP lift `1.84x`
+  - `throughput_down`: ROC AUC `0.624`, AP lift `1.52x`
+
+Thresholded decisions are still not production-ready: transfer accuracy is often below the
+majority-class baseline despite useful ROC AUC / AP lift. Treat the classifiers as event-rankers
+and model-target diagnostics, not direct dispatch policies.
+
+Updated implication: the path-shape signal is not purely a Window B artifact. There is
+transferable ranking signal for `grid_exchange_down` and `soc_down`, but the next step should be
+model-side calibration or candidate forecast shaping evaluated through `netload_tariffed`, not
+another raw event-gated MPC hook.
+
 ---
 
 ## Known Open Issues
