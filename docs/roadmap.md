@@ -1,11 +1,110 @@
 # Pipeline Roadmap
 
-**Last updated: 2026-04-21**
+**Last updated: 2026-05-03**
 
 Full architecture: `ARCHITECTURE.md`. Model design rationale: `docs/tft_price_forecast.md`.
 Data sources: `docs/data_sources.md`. Load TFT: `docs/tft_load_forecast.md`.
 
 ---
+
+## Current Handoff: Production Forecast Source Switch
+
+**Status as of 2026-05-03:** the project is deliberately pivoting away from more MPC
+eval/control experiments and toward a deployable Home Assistant forecast-source switch. The
+production path should keep the existing EMHASS/Sigenergy control stack and make the new AI
+forecast source easy to compare, enable, and roll back.
+
+Current committed state:
+
+- `forecast.py --publish-hass` publishes canonical HAEO-style AI price forecast entities:
+  - `sensor.ai_mpc_import_price_forecast`
+  - `sensor.ai_mpc_export_price_forecast`
+  - `sensor.ai_dh_import_price_forecast`
+  - `sensor.ai_dh_export_price_forecast`
+- These canonical entities use:
+  - `forecast` attribute points shaped as `{datetime, native_value}`
+  - UTC ISO timestamps
+  - `$ / kWh`
+  - positive import cost
+  - positive export revenue, with negative values only when exporting costs money
+- Existing Amber-shaped compatibility sensors still exist:
+  - `sensor.ai_combined_general_price_forecast`
+  - `sensor.ai_combined_feed_in_price_forecast`
+- `hass/package-emhass.yaml` declares source selectors:
+  - `input_select.emhass_mpc_price_source`
+  - `input_select.emhass_dh_price_source`
+- `hass/package-emhass.yaml` declares AI forecast health/status sensors:
+  - `sensor.ai_mpc_price_forecast_status`
+  - `sensor.ai_dh_price_forecast_status`
+- The DH EMHASS payload is already wired behind `input_select.emhass_dh_price_source`.
+  Default remains `amber_lgbm_extrapolated`; selecting `ai_shadow` uses the canonical AI DH
+  import/export forecasts when both have the full 144-point horizon.
+- MPC is **not yet wired**. It still uses the existing Amber 5-minute forecast path.
+- None of the latest HA package changes have been deployed into the user's live Home Assistant
+  instance yet.
+
+Important production constraint:
+
+- Amber's negative feed-in convention should remain isolated at compatibility boundaries.
+  Internal repo logic and the new canonical HA entities should use positive export value.
+- Use UTC timestamps at publisher/template boundaries where practical. Convert to local time only
+  for local tariff windows such as SAPN free export allowance or charge-weight ramps.
+
+Immediate next actions for the next implementer:
+
+1. **Sync and verify current HA package changes before adding more behavior.**
+   - Sync `hass/package-emhass.yaml` into HA.
+   - Restart HA or reload enough YAML domains to create the new `input_select` helpers and
+     template sensors.
+   - Verify the new AI status sensors are `ready`.
+   - Keep both selectors on their production defaults initially.
+
+2. **Wire MPC behind `input_select.emhass_mpc_price_source`.**
+   - Default must remain `amber`.
+   - `ai_shadow` should use:
+     - `sensor.ai_mpc_import_price_forecast`
+     - `sensor.ai_mpc_export_price_forecast`
+   - Require full 168-point 5-minute horizon before using AI; otherwise fall back to Amber.
+   - Preserve existing DNSP free-export adjustment and battery charge-weight ramp.
+   - Do not reintroduce Amber's negative feed-in convention inside the AI branch.
+   - After wiring, test by YAML parse plus live HA template rendering before any production flip.
+
+3. **Add a graph-friendly spot-price forecast entity for ApexCharts.**
+   - The user has HA ApexCharts comparing spot price between forecast sources.
+   - The existing canonical import/export entities are tariff-adjusted and are not the right
+     source for a pure spot-price graph.
+   - Add a new canonical entity, likely:
+     - `sensor.ai_spot_price_forecast`
+   - Shape should match HAEO-style forecast points:
+     - `forecast: [{datetime, native_value}, ...]`
+     - `native_value` should be wholesale/spot price in `$ / kWh`, not tariff-adjusted
+     - UTC ISO timestamps
+   - It should combine the current best stack:
+     - Tier 1 tactical 5-minute spot/wholesale forecast for the first 60 minutes
+     - Tier 2 TFT 30-minute spot/wholesale forecast after that
+   - For charting, a 5-minute publication cadence over the MPC horizon plus expanded 30-minute
+     Tier 2 points is acceptable. If chart size becomes a problem, also publish a separate
+     30-minute/72-hour spot entity.
+
+4. **Document HA deployment steps after MPC and spot entities are added.**
+   - Update `docs/production_forecast_switch_plan.md`.
+   - Include exact entities, selectors, fallback behavior, and recommended flip order.
+   - Keep rollback as a one-action selector change.
+
+Recommended rollout after implementation:
+
+1. Publish forecasts and confirm all four canonical import/export sensors plus the spot graph
+   sensor are populated.
+2. Deploy HA package changes with selectors still on legacy defaults.
+3. Verify DH and MPC selected-source/status sensors.
+4. Flip DH to `ai_shadow` first if testing live behavior.
+5. Flip MPC only after the AI MPC arrays render with correct length/sign/unit and fallback behavior.
+6. If behavior is undesirable, roll back by setting the selector back to legacy.
+
+Do not resume broad MPC eval sweeps unless a specific production issue appears. The next useful
+work is integration hardening, observability, and safe switching.
+
+See also: `docs/production_forecast_switch_plan.md` and `docs/conventions.md`.
 
 ## Design Principles
 
