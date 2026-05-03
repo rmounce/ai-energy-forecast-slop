@@ -40,11 +40,10 @@ models/
 
 # Explicitly include
 !config.example.json
-!eval/results/*.json
-!eval/results/*.csv
-!eval/results/*.parquet
 !tests/fixtures/*.json
 
-# Exploratory rolling MPC eval outputs
-eval/results/rolling_mpc_eval_*.csv
-eval/results/rolling_mpc_eval_*.parquet
+# Local/generated eval and reviewer scratch artifacts. Tracked historical
+# eval/results files remain tracked; new generated outputs should be added
+# explicitly with `git add -f` only when they are deliberately preserved.
+eval/results/*
+docs/review_*.md
