@@ -62,6 +62,11 @@ Implementation status:
   status sensors for the canonical AI MPC/DH forecast entities. The selectors
   default to the existing production sources and do not change EMHASS behavior
   until the REST payload templates are explicitly wired to them.
+- The day-ahead EMHASS payload is wired to
+  `input_select.emhass_dh_price_source`. It still defaults to the existing
+  Amber/APF-derived LightGBM-extrapolated source, with `ai_shadow` available
+  as an explicit opt-in when the canonical AI DH sensors are present and have
+  the full 144-point horizon.
 
 ## Switching Model
 
@@ -90,7 +95,8 @@ payload templates.
    `hass/package-emhass.yaml`; sync to HA and verify after template reload.**
 3. Add read-only diagnostic template sensors that render the selected MPC/DH
    import/export arrays without calling EMHASS.
-4. Add adapter logic to the EMHASS REST payload templates.
+4. Add adapter logic to the EMHASS REST payload templates. **DH price source
+   switch is wired; MPC remains on the legacy Amber 5-minute source.**
 5. Run shadow mode:
    - selected source remains Amber
    - AI arrays are rendered and logged

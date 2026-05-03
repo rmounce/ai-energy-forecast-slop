@@ -257,71 +257,106 @@ rest_command:
         {#- Prepare empty lists to store the new forecasts. #}
         {%- set data = namespace(load_cost_list=[], prod_price_list=[], weight_charge_list=[]) %}
 
-        {#- Pre-load all forecast data sources into variables. #}
-        {%- set p50_forecasts = state_attr('sensor.ai_price_forecast', 'forecasts') %}
-        {%- set low_forecasts = state_attr('sensor.ai_price_forecast_low', 'forecasts') %}
-        {%- set high_forecasts = state_attr('sensor.ai_price_forecast_high', 'forecasts') %}
-
         {#- Get the current allowance state ONCE before the loop. #}
         {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
 
-        {#- Loop through the forecasts by index to process them in parallel. #}
-        {%- for i in range(p50_forecasts | length) %}
+        {%- set ai_load_forecasts = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+        {%- set ai_prod_forecasts = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
+        {%- set use_ai_dh_prices = is_state('input_select.emhass_dh_price_source', 'ai_shadow') and ai_load_forecasts | count >= 144 and ai_prod_forecasts | count >= 144 %}
 
-          {#- --- Process BUY Price (load_cost) --- #}
-          {%- set p50_buy = p50_forecasts[i].general_price %}
-          {%- set high_buy = high_forecasts[i].general_price %}
-          {%- set low_buy = low_forecasts[i].general_price %}
-          
-          {%- if k_buy > 0 %}
-            {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
-          {%- else %}
-            {%- set adjusted_buy_price = p50_buy - (p50_buy - low_buy) * (k_buy | abs) %}
-          {%- endif %}
-          {%- set data.load_cost_list = data.load_cost_list + [adjusted_buy_price | round(4)] %}
+        {%- if use_ai_dh_prices %}
+          {#- Canonical AI source: positive import cost, positive export revenue, UTC timestamps. #}
+          {%- set loop_len = [ai_load_forecasts | count, ai_prod_forecasts | count, 144] | min %}
+          {%- for i in range(loop_len) %}
+            {%- set buy_price = ai_load_forecasts[i].native_value | float(0) %}
+            {%- set sell_price = ai_prod_forecasts[i].native_value | float(0) %}
+            {%- set forecast_time_local = as_local(as_datetime(ai_load_forecasts[i].datetime)) %}
 
-          {#- --- Process SELL Price (prod_price) --- #}
-          {%- set p50_sell = p50_forecasts[i].feed_in_price %}
-          {%- set high_sell = high_forecasts[i].feed_in_price %}
-          {%- set low_sell = low_forecasts[i].feed_in_price %}
+            {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
+              {%- set final_sell_price = sell_price + 0.01 %}
+            {%- else %}
+              {%- set final_sell_price = sell_price %}
+            {%- endif %}
 
-          {%- if k_sell > 0 %}
-            {#- Positive weight blends towards optimistic (higher) feed-in price #}
-            {%- set adjusted_sell_price = p50_sell + (high_sell - p50_sell) * k_sell %}
-          {%- else %}
-            {#- Negative weight blends towards pessimistic (lower) feed-in price #}
-            {%- set adjusted_sell_price = p50_sell - (p50_sell - low_sell) * (k_sell | abs) %}
-          {%- endif %}
-          
-          {#- Adjust for DNSP free tier #}
-          {%- set forecast_time_local = as_local(as_datetime(p50_forecasts[i].timestamp)) %}
-          {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
-            {%- set final_sell_price = adjusted_sell_price + 0.01 %}
-          {%- else %}
-            {%- set final_sell_price = adjusted_sell_price %}
-          {%- endif %}
+            {%- set data.load_cost_list = data.load_cost_list + [buy_price | round(4)] %}
+            {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
 
-          {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
+            {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
+            {#- Use END of period time. Add 30 minutes to start time. #}
+            {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
+            {%- set m = end_time.hour * 60 + end_time.minute %}
 
-          {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
-          {#- 00:00-15:29 = 0.0 | 15:30-20:59 = Ramp 0->0.012 | 21:00-23:59 = 0.0 #}
-          {#- REVERT to 15:45: change 930->945 and 330->315 #}
-          {#- REVERT to 16:00: change 930->960 and 330->300 #}
-          {#- Use END of period time. Add 30 minutes to start time. #}
-          {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
-          {%- set m = end_time.hour * 60 + end_time.minute %}
+            {%- if 930 < m <= 1260 %}
+               {%- set w_charge = 0.0120 * ((m - 930) / 330) %}
+            {%- else %}
+               {%- set w_charge = 0.0 %}
+            {%- endif %}
+            {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+          {%- endfor %}
+        {%- else %}
+          {#- Legacy source: APF-derived p50/low/high forecasts with user quantile knobs. #}
+          {%- set p50_forecasts = state_attr('sensor.ai_price_forecast', 'forecasts') %}
+          {%- set low_forecasts = state_attr('sensor.ai_price_forecast_low', 'forecasts') %}
+          {%- set high_forecasts = state_attr('sensor.ai_price_forecast_high', 'forecasts') %}
 
-          {#- 15:30 is 930. 21:00 is 1260. Window is 330 mins. #}
-          {#- We use > 930 so the 15:30-16:00 block picks up an initial weight. #}
-          {#- We use <= 1260 because 21:00 exactly (end of 20:30-21:00) is the peak of the ramp. #}
-          {%- if 930 < m <= 1260 %}
-             {%- set w_charge = 0.0120 * ((m - 930) / 330) %}
-          {%- else %}
-             {%- set w_charge = 0.0 %}
-          {%- endif %}
-          {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+          {#- Loop through the forecasts by index to process them in parallel. #}
+          {%- for i in range(p50_forecasts | length) %}
 
-        {%- endfor %}
+            {#- --- Process BUY Price (load_cost) --- #}
+            {%- set p50_buy = p50_forecasts[i].general_price %}
+            {%- set high_buy = high_forecasts[i].general_price %}
+            {%- set low_buy = low_forecasts[i].general_price %}
+            
+            {%- if k_buy > 0 %}
+              {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
+            {%- else %}
+              {%- set adjusted_buy_price = p50_buy - (p50_buy - low_buy) * (k_buy | abs) %}
+            {%- endif %}
+            {%- set data.load_cost_list = data.load_cost_list + [adjusted_buy_price | round(4)] %}
+
+            {#- --- Process SELL Price (prod_price) --- #}
+            {%- set p50_sell = p50_forecasts[i].feed_in_price %}
+            {%- set high_sell = high_forecasts[i].feed_in_price %}
+            {%- set low_sell = low_forecasts[i].feed_in_price %}
+
+            {%- if k_sell > 0 %}
+              {#- Positive weight blends towards optimistic (higher) feed-in price #}
+              {%- set adjusted_sell_price = p50_sell + (high_sell - p50_sell) * k_sell %}
+            {%- else %}
+              {#- Negative weight blends towards pessimistic (lower) feed-in price #}
+              {%- set adjusted_sell_price = p50_sell - (p50_sell - low_sell) * (k_sell | abs) %}
+            {%- endif %}
+            
+            {#- Adjust for DNSP free tier #}
+            {%- set forecast_time_local = as_local(as_datetime(p50_forecasts[i].timestamp)) %}
+            {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
+              {%- set final_sell_price = adjusted_sell_price + 0.01 %}
+            {%- else %}
+              {%- set final_sell_price = adjusted_sell_price %}
+            {%- endif %}
+
+            {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
+
+            {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
+            {#- 00:00-15:29 = 0.0 | 15:30-20:59 = Ramp 0->0.012 | 21:00-23:59 = 0.0 #}
+            {#- REVERT to 15:45: change 930->945 and 330->315 #}
+            {#- REVERT to 16:00: change 930->960 and 330->300 #}
+            {#- Use END of period time. Add 30 minutes to start time. #}
+            {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
+            {%- set m = end_time.hour * 60 + end_time.minute %}
+
+            {#- 15:30 is 930. 21:00 is 1260. Window is 330 mins. #}
+            {#- We use > 930 so the 15:30-16:00 block picks up an initial weight. #}
+            {#- We use <= 1260 because 21:00 exactly (end of 20:30-21:00) is the peak of the ramp. #}
+            {%- if 930 < m <= 1260 %}
+               {%- set w_charge = 0.0120 * ((m - 930) / 330) %}
+            {%- else %}
+               {%- set w_charge = 0.0 %}
+            {%- endif %}
+            {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+
+          {%- endfor %}
+        {%- endif %}
 
         "load_cost_forecast": {{ data.load_cost_list | tojson }},
         "prod_price_forecast": {{ data.prod_price_list | tojson }},
