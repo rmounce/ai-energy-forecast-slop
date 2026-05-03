@@ -127,10 +127,10 @@ rest_command:
         {# 2. Get GROSS Load Forecast #}
         {%- set load_forecast_gross = state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list %}
 
-        {# 3. Apply the "65W Logic" to create NET Forecasts #}
-        {#    PV pays 65W first. If PV < 65, the remainder is added to Load. #}
+        {# 3. Apply the "140W Logic" to create NET Forecasts #}
+        {#    PV pays 140W first. If PV < 140, the remainder is added to Load. #}
         {%- set data = namespace(pv_net=[], load_net=[]) %}
-        {%- set fixed_loss = 65 %}
+        {%- set fixed_loss = 140 %}
         
         {#- Ensure we iterate only up to the length of the shortest list (usually matched, but safe to check) #}
         {%- set loop_len = [pv_forecast_gross.values | length, load_forecast_gross | length] | min %}
@@ -214,16 +214,18 @@ rest_command:
           {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
 
           {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
-          {#- 00:00-15:59 = 0.0 | 16:00-20:59 = Ramp 0->0.006 | 21:00-23:59 = 0.0 #}
+          {#- 00:00-15:29 = 0.0 | 15:30-20:59 = Ramp 0->0.012 | 21:00-23:59 = 0.0 #}
+          {#- REVERT to 15:45: change 930->945 and 330->315 #}
+          {#- REVERT to 16:00: change 930->960 and 330->300 #}
           {#- Use END of period time. Add 30 minutes to start time. #}
           {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
           {%- set m = end_time.hour * 60 + end_time.minute %}
-          
-          {#- 16:00 is 960. 21:00 is 1260. #}
-          {#- We use > 960 because 16:00 exactly (end of 15:30-16:00) should be 0. #}
+
+          {#- 15:30 is 930. 21:00 is 1260. Window is 330 mins. #}
+          {#- We use > 930 so the 15:30-16:00 block picks up an initial weight. #}
           {#- We use <= 1260 because 21:00 exactly (end of 20:30-21:00) is the peak of the ramp. #}
-          {%- if 960 < m <= 1260 %}
-             {%- set w_charge = 0.0060 * ((m - 960) / 300) %}
+          {%- if 930 < m <= 1260 %}
+             {%- set w_charge = 0.0120 * ((m - 930) / 330) %}
           {%- else %}
              {%- set w_charge = 0.0 %}
           {%- endif %}
@@ -254,8 +256,8 @@ rest_command:
         {#- Step 2: Calculate the target SOC by adding the offset. #}
         {%- set final_soc_percentage = current_soc + target_soc_offset %}
 
-        {#- Step 3: Clamp the final SOC to a maximum of 100% and set it. #}
-        "soc_final": {{ ([final_soc_percentage, 100] | min / 100) | round(4) }}
+        {#- Step 3: Clamp the final SOC between min_soc, 100% and set it. #}
+        "soc_final": {{ (([states('input_number.battery_soc_min_target') | float, final_soc_percentage, 100] | sort)[1] / 100) | round(4) }}
       }
 
   emhass_publish_data_dh:
@@ -279,9 +281,9 @@ rest_command:
         "entity_save": true,
         "publish_prefix":"mpc_",
         
-        {#- Modded soc_init: If 100%, report 1.0. Else, subtract 0.05% offset to force charging. #}
+        {#- Modded soc_init: If 100%, report 1.0. Else, subtract 0.20% offset to force charging. #}
         {%- set real_soc = states('input_number.battery_soc_5_minute') | float(0) %}
-        "soc_init": {{ (1.0 if real_soc >= 100 else ([0, real_soc - 0.05] | max / 100)) | round(4) }},
+        "soc_init": {{ (1.0 if real_soc >= 100 else ([0, real_soc - 0.20] | max / 100)) | round(4) }},
 
         {# ========================================================================================= #}
         {#               1. INITIAL VARIABLE SETUP & ASYMMETRICAL FLOATING TARGET                    #}
@@ -438,8 +440,10 @@ rest_command:
         {%- endif %}
         
         {#- --- CONFIGURATION: Relative Panic Curve --- #}
-        {%- set slope = 0.0060 / 300 %}   {# Max cost / Duration in mins #}
-        {%- set win_start = 960 %}        {# 16:00 #}
+        {#- REVERT to 15:45: change 330->315 and 930->945 #}
+        {#- REVERT to 16:00: change 330->300 and 930->960 #}
+        {%- set slope = 0.0120 / 330 %}   {# Max cost / Duration in mins #}
+        {%- set win_start = 930 %}        {# 15:30 #}
         {%- set win_end = 1260 %}         {# 21:00 #}
         
         {#- Calculate NOW (minutes from midnight, end of current 5min block) #}
@@ -553,10 +557,10 @@ rest_command:
         {%- set gross_load_now = states('sensor.sigen_plant_consumed_power') | int(0) %}
         {%- set total_inverter_losses = states('sensor.sigen_inverter_conversion_loss') | int(0) %}
 
-        {# 2. Apply "65W Logic" to the Current timestep. #}
-        {#    We use the logic max(65) to match the forecast logic, or you can use real sensor loss if preferred. #}
-        {#    Using the fixed 65 logic ensures consistency with the forecast logic we added to DH. #}
-        {%- set max_fixed_loss = 65 %}
+        {# 2. Apply "140W Logic" to the Current timestep. #}
+        {#    We use the logic max(140) to match the forecast logic, or you can use real sensor loss if preferred. #}
+        {#    Using the fixed 140 logic ensures consistency with the forecast logic we added to DH. #}
+        {%- set max_fixed_loss = 140 %}
         {%- set fixed_loss_to_account = [0, [total_inverter_losses, max_fixed_loss] | min] | max %}
         
         {%- set net_pv_now = [0, gross_pv_now - fixed_loss_to_account] | max %}
@@ -577,7 +581,7 @@ rest_command:
         {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) or (actual_soc_now >= 99.9) %}
         
         {%- if pv_currently_curtailed %}
-          {# Solcast provides Gross, so we must apply the 65W subtraction to the Solcast Now estimate too #}
+          {# Solcast provides Gross, so we must apply the 140W subtraction to the Solcast Now estimate too #}
           {%- set k_pv = states('input_number.emhass_weight_pv_forecast') | float(0) %}
           {%- set p50_now = state_attr('sensor.solcast_pv_forecast_power_now', 'estimate') | float(0) %}
           {%- set p10_now = state_attr('sensor.solcast_pv_forecast_power_now', 'estimate10') | float(0) %}
