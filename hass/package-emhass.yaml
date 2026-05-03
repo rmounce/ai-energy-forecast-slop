@@ -171,6 +171,24 @@ template:
         convention: haeo_positive_import_export
         timestamp_convention: utc_iso8601
 
+    - name: 'AI Spot Price Forecast'
+      unit_of_measurement: "$/kWh"
+      device_class: monetary
+      state: >
+        {%- set fc = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
+        {{ fc[0].wholesale_price | round(4) if fc | count > 0 else 'unknown' }}
+      attributes:
+        forecasts: >
+          {%- set p5min = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
+          {%- set p30min = state_attr('sensor.ai_price_forecast', 'forecasts') | default([], true) %}
+          {%- if p5min | count > 0 %}
+            {%- set cutoff = (p5min | last).timestamp %}
+            {%- set tail = p30min | selectattr('timestamp', 'gt', cutoff) | list %}
+            {{ (p5min + tail) | tojson }}
+          {%- else %}
+            {{ p30min | tojson }}
+          {%- endif %}
+
     - name: 'EMHASS MPC Price Diagnostic'
       state: "{{ states('input_select.emhass_mpc_price_source') }}"
       attributes:
