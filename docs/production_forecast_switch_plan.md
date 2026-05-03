@@ -48,6 +48,17 @@ Suggested canonical entities:
 - `sensor.ai_dh_import_price_forecast`
 - `sensor.ai_dh_export_price_forecast`
 
+Implementation status:
+
+- `forecast.py --publish-hass` now publishes these four canonical AI price
+  sensors alongside the existing Amber-shaped combined forecast sensors.
+- MPC canonical sensors use the current best-known hybrid price stack:
+  Tier 1 tactical LightGBM for the first 60 minutes, then TFT Tier 2 expanded
+  to 5-minute cadence, truncated to the 14-hour MPC horizon.
+- DH canonical sensors use the TFT Tier 2 30-minute / 72-hour price forecast.
+- All four canonical sensors use HAEO-style `forecast` points with UTC
+  `datetime` and positive economic `native_value` prices.
+
 ## Switching Model
 
 Add explicit Home Assistant selectors rather than editing templates for each
@@ -70,7 +81,7 @@ payload templates.
 ## Rollout Sequence
 
 1. Publish canonical AI forecast sensors alongside the existing Amber-shaped AI
-   combined sensors.
+   combined sensors. **Done in `forecast.py`; verify against live HA state.**
 2. Add read-only diagnostic template sensors that render the selected MPC/DH
    import/export arrays without calling EMHASS.
 3. Add source selectors and adapter macros/template sensors.

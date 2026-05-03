@@ -2046,6 +2046,61 @@ def _build_combined_forecast_items(
     return general_items, feed_in_items
 
 
+def _build_haeo_price_forecast_items(
+    p50_df,
+    source_interval_minutes,
+    publish_interval_minutes=None,
+):
+    """
+    Convert a p50 wholesale price DataFrame into HAEO/HAFO-style forecast points.
+
+    Returns (import_items, export_items), where both use positive economic values:
+      - import native_value: cost to import in $/kWh
+      - export native_value: revenue to export in $/kWh; negative means paying to export
+    """
+    publish_interval_minutes = publish_interval_minutes or source_interval_minutes
+    df = ensure_utc_index(p50_df)
+    if "wholesale_price" not in df.columns:
+        df = df.rename(columns={df.columns[0]: "wholesale_price"})
+    df = _expand_forecast_to_publish_interval(df, source_interval_minutes, publish_interval_minutes)
+    apply_tariffs_to_forecast(df)
+
+    import_items = []
+    export_items = []
+    for ts, row in df.iterrows():
+        import_items.append({
+            "datetime": ts.isoformat(),
+            "native_value": round(float(row["general_price"]), 6),
+        })
+        export_items.append({
+            "datetime": ts.isoformat(),
+            "native_value": round(float(row["feed_in_price"]), 6),
+        })
+    return import_items, export_items
+
+
+def _publish_haeo_forecast_sensor(entity_id, items, label, *, interval_minutes):
+    state = round(float(items[0]["native_value"]), 6) if items else 0.0
+    now_iso = datetime.now(pytz.UTC).isoformat()
+    payload = {
+        "state": state,
+        "attributes": {
+            "forecast": items,
+            "last_updated": now_iso,
+            "friendly_name": label,
+            "icon": "mdi:chart-line",
+            "unit_of_measurement": "$/kWh",
+            "device_class": "monetary",
+            "forecast_interval_minutes": int(interval_minutes),
+            "forecast_count": len(items),
+            "forecast_convention": "haeo_positive_import_export",
+            "timestamp_convention": "UTC ISO-8601",
+        },
+    }
+    call_ha_api("POST", f"states/{entity_id}", payload=payload)
+    logging.info(f"Published {entity_id} (state={state}, {len(items)} forecast points).")
+
+
 def _publish_combined_price_forecasts(tactical_results, tft_results):
     """
     Combine Tier 1 (0–55 min, 5-min) and Tier 2 (60 min–72h, 30-min) into two
@@ -2112,6 +2167,46 @@ def _publish_combined_price_forecasts(tactical_results, tft_results):
         }
         call_ha_api('POST', f'states/{entity_id}', payload=payload)
         logging.info(f"Published {entity_id} (state={state}, {len(items)} intervals).")
+
+    # HAEO/HAFO-style canonical sensors. These use positive import cost and
+    # positive export revenue, avoiding Amber's negative feed-in convention.
+    mpc_import_t1, mpc_export_t1 = _build_haeo_price_forecast_items(t1_p50, 5, 5)
+    if t2_p50_after.empty:
+        mpc_import_all, mpc_export_all = mpc_import_t1, mpc_export_t1
+    else:
+        mpc_import_t2, mpc_export_t2 = _build_haeo_price_forecast_items(t2_p50_after, 30, 5)
+        mpc_import_all = mpc_import_t1 + mpc_import_t2
+        mpc_export_all = mpc_export_t1 + mpc_export_t2
+
+    dh_import_all, dh_export_all = _build_haeo_price_forecast_items(t2_p50, 30, 30)
+
+    for entity_id, items, label, interval_minutes in [
+        (
+            "sensor.ai_mpc_import_price_forecast",
+            mpc_import_all[:168],
+            "AI MPC Import Price Forecast",
+            5,
+        ),
+        (
+            "sensor.ai_mpc_export_price_forecast",
+            mpc_export_all[:168],
+            "AI MPC Export Price Forecast",
+            5,
+        ),
+        (
+            "sensor.ai_dh_import_price_forecast",
+            dh_import_all[:144],
+            "AI Day Ahead Import Price Forecast",
+            30,
+        ),
+        (
+            "sensor.ai_dh_export_price_forecast",
+            dh_export_all[:144],
+            "AI Day Ahead Export Price Forecast",
+            30,
+        ),
+    ]:
+        _publish_haeo_forecast_sensor(entity_id, items, label, interval_minutes=interval_minutes)
 
 
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
