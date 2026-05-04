@@ -121,19 +121,53 @@ ENC_5M_MISSING_IDX = len(ENC_CONTINUOUS) + len(TIME_FEATURES)          # index o
 
 LOG_SCALE_FACTOR = 60.0  # reference price for log-scaling: log1p(x/60)
 
-# Decoder: forecast covariates (PREDISPATCH/PD7Day/SDO) + time + horizon
-# Phase 7: pd7_rrp added as parallel PD7Day signal across all 144 steps.
-# pd_rrp is now PREDISPATCH-only (0-filled steps 56-143); pd7_rrp carries PD7Day.
-DEC_CONTINUOUS = ["pd_rrp", "pd_demand", "pd_net_interchange",
-                  "vic1_pd_rrp", "nsw1_pd_rrp",
-                  "pd7_rrp",                        # NEW: PD7Day rrp, all 144 steps
-                  "sd_demand", "sd_net_interchange"]
-DEC_FEATURES   = DEC_CONTINUOUS + TIME_FEATURES + [
-    "horizon_norm",
-    "predispatch_active",   # 1 where PREDISPATCH present (replaces covar_missing, flipped)
-    "pd7_generation_hour",  # PD7Day run hour normalised /23 (0 if no PD7Day)
-    "pd7_available",        # 1 if a PD7Day run existed at T, 0 for pre-2026-02 samples
-]  # 18 features total
+DECODER_CONTRACTS = {
+    # Current Phase 7 expanded-input contract. This is the Run 014/015 shape.
+    "phase7_18": {
+        "dec_continuous": [
+            "pd_rrp", "pd_demand", "pd_net_interchange",
+            "vic1_pd_rrp", "nsw1_pd_rrp",
+            "pd7_rrp",
+            "sd_demand", "sd_net_interchange",
+        ],
+        "extra_features": [
+            "horizon_norm",
+            "predispatch_active",
+            "pd7_generation_hour",
+            "pd7_available",
+        ],
+    },
+    # Narrow Run-011b-compatible contract for the next controlled retrain:
+    # keep the 15-feature width but replace the weak `covar_missing` flag with
+    # explicit PREDISPATCH activity. PD7Day is folded into `pd_rrp` after the
+    # PREDISPATCH horizon, matching the old 15-feature price-covariate shape.
+    "run011b_active_15": {
+        "dec_continuous": [
+            "pd_rrp", "pd_demand", "pd_net_interchange",
+            "vic1_pd_rrp", "nsw1_pd_rrp",
+            "sd_demand", "sd_net_interchange",
+        ],
+        "extra_features": [
+            "horizon_norm",
+            "predispatch_active",
+        ],
+    },
+}
+
+DECODER_CONTRACT = "phase7_18"
+DEC_CONTINUOUS = list(DECODER_CONTRACTS[DECODER_CONTRACT]["dec_continuous"])
+DEC_FEATURES = DEC_CONTINUOUS + TIME_FEATURES + list(DECODER_CONTRACTS[DECODER_CONTRACT]["extra_features"])
+
+
+def configure_decoder_contract(contract: str):
+    global DECODER_CONTRACT, DEC_CONTINUOUS, DEC_FEATURES, PD7_FEATURES
+    if contract not in DECODER_CONTRACTS:
+        raise ValueError(f"Unknown decoder contract: {contract}")
+    DECODER_CONTRACT = contract
+    spec = DECODER_CONTRACTS[contract]
+    DEC_CONTINUOUS = list(spec["dec_continuous"])
+    DEC_FEATURES = DEC_CONTINUOUS + TIME_FEATURES + list(spec["extra_features"])
+    PD7_FEATURES = {"pd7_rrp"} if "pd7_rrp" in DEC_CONTINUOUS else set()
 
 # VIC1/NSW1 data only covers steps 0-55 (PREDISPATCH horizon); steps 56-143 are 0-filled.
 ADJ_REGION_FEATURES = {"vic1_pd_rrp", "nsw1_pd_rrp"}
@@ -337,10 +371,12 @@ def build_samples(actuals: pd.DataFrame,
             except KeyError:
                 pass   # no matching run — stays 0
 
-        # -- PD7Day: pd7_rrp for ALL 144 steps (parallel to pd_rrp; pd_rrp stays 0 for 56-143)
-        pd7_rrp_idx    = DEC_CONTINUOUS.index("pd7_rrp")
-        pd7_gen_hr_idx = len(DEC_CONTINUOUS) + len(TIME_FEATURES) + 2  # after horizon_norm+predispatch_active
-        pd7_avail_idx  = len(DEC_CONTINUOUS) + len(TIME_FEATURES) + 3
+        # -- PD7Day. In the expanded contract this is a parallel pd7_rrp signal
+        # across all 144 steps. In the narrow 15-feature contract it is folded
+        # into pd_rrp after the PREDISPATCH horizon, matching Run 011b's shape.
+        pd7_rrp_idx = DEC_CONTINUOUS.index("pd7_rrp") if "pd7_rrp" in DEC_CONTINUOUS else 0
+        pd7_gen_hr_idx = DEC_FEATURES.index("pd7_generation_hour") if "pd7_generation_hour" in DEC_FEATURES else None
+        pd7_avail_idx = DEC_FEATURES.index("pd7_available") if "pd7_available" in DEC_FEATURES else None
         bisect_idx = bisect.bisect_right(pd7day_run_times_sorted, run_t) - 1
         if bisect_idx >= 0:
             pd7day_run_t = pd7day_run_times_sorted[bisect_idx]
@@ -349,11 +385,17 @@ def build_samples(actuals: pd.DataFrame,
                 pd7_sub = (pd7_run.set_index("interval_dt")
                            .reindex(dec_intervals)["rrp"])   # all 144 steps
                 valid_pd7 = ~pd7_sub.isna()
-                dec_arr[:, pd7_rrp_idx] = pd7_sub.fillna(0.0).values
-                mask_arr[56:]           = valid_pd7.values[56:]  # PREDISPATCH mask owns 0-55
-                gen_hour = pd7day_run_t.tz_convert("Australia/Brisbane").hour
-                dec_arr[:, pd7_gen_hr_idx] = np.float32(gen_hour) / 23.0
-                dec_arr[:, pd7_avail_idx]  = np.float32(1.0)
+                if "pd7_rrp" in DEC_CONTINUOUS:
+                    dec_arr[:, pd7_rrp_idx] = pd7_sub.fillna(0.0).values
+                    mask_arr[56:]           = valid_pd7.values[56:]  # PREDISPATCH mask owns 0-55
+                else:
+                    dec_arr[56:, pd7_rrp_idx] = pd7_sub.iloc[56:].fillna(0.0).values
+                    mask_arr[56:]             = valid_pd7.values[56:]
+                if pd7_gen_hr_idx is not None:
+                    gen_hour = pd7day_run_t.tz_convert("Australia/Brisbane").hour
+                    dec_arr[:, pd7_gen_hr_idx] = np.float32(gen_hour) / 23.0
+                if pd7_avail_idx is not None:
+                    dec_arr[:, pd7_avail_idx]  = np.float32(1.0)
             except KeyError:
                 pass
         # pd7_available=0 and pd7_generation_hour=0 stay at default for pre-PD7Day samples
@@ -378,7 +420,9 @@ def build_samples(actuals: pd.DataFrame,
                     pass   # no SDO run ≤ run_t (shouldn't happen after 2025-03)
 
         covar_mask = mask_arr.copy()
-        dec_arr[:, n_cont + 7] = covar_mask.astype(np.float32)  # predispatch_active (1=present)
+        if "predispatch_active" in DEC_FEATURES:
+            pd_active_idx = DEC_FEATURES.index("predispatch_active")
+            dec_arr[:56, pd_active_idx] = mask_arr[:56].astype(np.float32)
 
         # -- Targets: actual RRP (sets mask to False where actuals unavailable)
         target_actual = actuals.loc[
@@ -425,11 +469,17 @@ def build_samples(actuals: pd.DataFrame,
     print(f"  SDO coverage: {sdo_covar_mask.mean():.1%} of all steps "
           f"({sdo_covar_mask[:, :56].mean():.1%} PREDISPATCH, "
           f"{sdo_covar_mask[:, 56:].mean():.1%} PD7Day)")
-    pd7_rrp_col = DEC_CONTINUOUS.index("pd7_rrp")
-    pd7_cov = (X_dec[:, :, pd7_rrp_col] != 0.0).mean()
-    pd7_avail_frac = X_dec[:, 0, DEC_FEATURES.index("pd7_available")].mean()
-    print(f"  PD7Day coverage: {pd7_avail_frac:.1%} of samples have PD7Day; "
-          f"{pd7_cov:.1%} of all decoder steps non-zero")
+    if "pd7_rrp" in DEC_CONTINUOUS:
+        pd7_rrp_col = DEC_CONTINUOUS.index("pd7_rrp")
+        pd7_cov = (X_dec[:, :, pd7_rrp_col] != 0.0).mean()
+        pd7_avail_frac = X_dec[:, 0, DEC_FEATURES.index("pd7_available")].mean()
+        print(f"  PD7Day coverage: {pd7_avail_frac:.1%} of samples have PD7Day; "
+              f"{pd7_cov:.1%} of all decoder steps non-zero")
+    else:
+        pd_price_col = DEC_CONTINUOUS.index("pd_rrp")
+        pd7_tail_cov = (X_dec[:, 56:, pd_price_col] != 0.0).mean()
+        print(f"  PD7Day tail coverage: {pd7_tail_cov:.1%} of decoder steps 57–144 non-zero "
+              f"(folded into pd_rrp)")
 
     return (X_enc,
             X_dec,
@@ -490,8 +540,11 @@ def fit_scalers(X_enc_train, X_dec_train, y_train, y_mask_train, y_covar_mask_tr
             fit_one(feat, valid_vals)
         else:
             fit_one(feat, X_enc_train[:, :, j])
-    pd7_avail_idx_dec = DEC_FEATURES.index("pd7_available")
-    pd7_available_train = X_dec_train[:, 0, pd7_avail_idx_dec].astype(bool)  # [N] constant per sample
+    if "pd7_available" in DEC_FEATURES:
+        pd7_avail_idx_dec = DEC_FEATURES.index("pd7_available")
+        pd7_available_train = X_dec_train[:, 0, pd7_avail_idx_dec].astype(bool)  # [N] constant per sample
+    else:
+        pd7_available_train = None
 
     for j, feat in enumerate(DEC_CONTINUOUS):
         if feat in ADJ_REGION_FEATURES:
@@ -546,8 +599,11 @@ def apply_scalers(X_enc, X_dec, y_raw, y_mask, y_covar_mask, scalers,
         else:
             X_enc_n[:, :, j] = transform(X_enc_n[:, :, j], scalers[feat]).reshape(X_enc_n[:, :, j].shape)
 
-    pd7_avail_idx_dec = DEC_FEATURES.index("pd7_available")
-    pd7_available = X_dec_n[:, 0, pd7_avail_idx_dec].astype(bool)  # [N]
+    if "pd7_available" in DEC_FEATURES:
+        pd7_avail_idx_dec = DEC_FEATURES.index("pd7_available")
+        pd7_available = X_dec_n[:, 0, pd7_avail_idx_dec].astype(bool)  # [N]
+    else:
+        pd7_available = None
 
     for j, feat in enumerate(DEC_CONTINUOUS):
         if feat in ADJ_REGION_FEATURES:
@@ -584,15 +640,21 @@ def main():
                         help="Skip normalisation (saves raw arrays for inspection)")
     parser.add_argument("--target-scaling", choices=["quantile", "log"], default="log",
                         help="Scaling method for rrp/target (default: log)")
+    parser.add_argument("--decoder-contract", choices=sorted(DECODER_CONTRACTS), default=DECODER_CONTRACT,
+                        help=("Decoder feature contract. phase7_18 is the current expanded contract; "
+                              "run011b_active_15 keeps Run-011b width but swaps covar_missing for "
+                              "predispatch_active."))
     parser.add_argument("--output-length", type=int, default=OUTPUT_LENGTH,
                         help=f"Decoder steps (default: {OUTPUT_LENGTH} = 72h)")
     parser.add_argument("--min-valid-steps", type=int, default=MIN_VALID_STEPS,
                         help=f"Minimum valid masked steps to include a sample (default: {MIN_VALID_STEPS})")
     args = parser.parse_args()
+    configure_decoder_contract(args.decoder_contract)
     out_len = args.output_length
 
     print("=== Building training dataset ===")
     print(f"  output_length={out_len}, min_valid_steps={args.min_valid_steps}")
+    print(f"  decoder_contract={DECODER_CONTRACT} ({len(DEC_FEATURES)} features)")
 
     # ── Load Parquet files
     print("\nLoading Parquet files...")
@@ -797,6 +859,7 @@ def main():
         "input_length": INPUT_LENGTH,
         "output_length": out_len,
         "min_valid_steps": args.min_valid_steps,
+        "decoder_contract": DECODER_CONTRACT,
         "enc_features": ENC_FEATURES,
         "dec_features": DEC_FEATURES,
         "enc_continuous": ENC_CONTINUOUS,
