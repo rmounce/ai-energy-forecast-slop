@@ -47,9 +47,7 @@ EVAL_START = "2025-07-21T00:00:00Z"  # first full day after first forecast log e
 EVAL_END   = "2026-04-01T00:00:00Z"  # leave most recent 2-3 weeks for out-of-sample guard
 
 
-def load_config():
-    with open(ROOT / "config.json") as f:
-        return json.load(f)
+from config_utils import load_config
 
 
 def query_actual_prices(client: InfluxDBClient, start: str, end: str) -> pd.Series:

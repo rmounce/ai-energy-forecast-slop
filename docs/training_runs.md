@@ -86,7 +86,7 @@ as the apples-to-apples Phase 7 comparison; Run 015 isolates the objective chang
 
 ---
 
-## TFT Price Run 015 — 2026-04-20 — Flat wMAPE ablation (no horizon decay)
+## TFT Price Run 015 — 2026-04-20 — Flat wMAPE ablation (no horizon decay) ⚠️ checkpoint_best.pt points here — do NOT promote
 
 **COMPLETE — FAILED.** Direct follow-up to Run 014. Keeps the Phase 7 decoder/input contract
 unchanged (18-feature decoder with parallel PREDISPATCH + PD7Day) and changes only the
@@ -779,8 +779,9 @@ convergence pattern. Not a meaningful regression.
 - Upper tail excellent — q90/q95/q99 all within ±0.02. These are safe for dispatch use.
 - q50 mild over-coverage (+0.043) is acceptable for EMHASS median input; conformal layer will
   tighten this too.
-- **Current production checkpoint.** Upper tail quantiles (q90/q95/q99) reliable. Lower tail
-  (q05/q10) should not be used for dispatch thresholds until Phase 4 calibration is applied.
+- **Active production checkpoint (promoted 2026-05-04).** Loaded via `models/tft_price/checkpoint_active.pt`.
+  Upper tail quantiles (q90/q95/q99) reliable. Lower tail (q05/q10) should not be used for
+  dispatch thresholds until Phase 4 calibration is applied.
 
 ---
 

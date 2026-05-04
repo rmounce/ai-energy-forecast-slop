@@ -69,11 +69,10 @@ NEMWEB_ARCHIVE_BASE = (
 )
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+sys.path.insert(0, str(ROOT))
+from config_utils import load_config
 
-def load_config(path="config.json"):
-    with open(path) as f:
-        return json.load(f)
+# ── helpers ──────────────────────────────────────────────────────────────────
 
 
 def influx_client(cfg):

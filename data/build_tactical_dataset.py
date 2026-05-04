@@ -61,8 +61,8 @@ OUTPUT_STEPS = 12   # 12 × 5-min = 60-min horizon
 VAL_DAYS     = 60   # last N days of run_times → validation split
 TRAIN_GAP_H  = 1    # hours gap between train and val to avoid leakage
 
-with open(ROOT / "config.json") as f:
-    CONFIG = json.load(f)
+from config_utils import load_config
+CONFIG = load_config(ROOT / "config.json")
 
 GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = load_tariff_profile(CONFIG, ROOT)
 

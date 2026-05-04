@@ -12,12 +12,11 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+import sys
+sys.path.insert(0, str(ROOT))
+from config_utils import load_config
 
-def load_config(path=ROOT / "config.json"):
-    with open(path) as f:
-        return json.load(f)
-
-cfg = load_config()
+cfg = load_config(ROOT / "config.json")
 ic = cfg["influxdb"]
 
 INFLUXDB_HOST = ic["host"]

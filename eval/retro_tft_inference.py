@@ -54,9 +54,7 @@ ENC_STEPS    = 96
 BATCH_SIZE   = 32
 
 
-def load_config():
-    with open(ROOT / "config.json") as f:
-        return json.load(f)
+from config_utils import load_config
 
 
 # ── InfluxDB bulk fetch ───────────────────────────────────────────────────────

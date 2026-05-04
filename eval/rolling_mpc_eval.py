@@ -78,9 +78,7 @@ TACTICAL_STEPS = 12         # 0–60 min at 5-min resolution
 STRATEGIC_HORIZON_5M_STEPS = 72 * 12  # 72h × 12 steps/hour = 864
 
 
-def load_config() -> dict:
-    with open(ROOT / "config.json") as f:
-        return json.load(f)
+from config_utils import load_config
 
 
 CONFIG = load_config()

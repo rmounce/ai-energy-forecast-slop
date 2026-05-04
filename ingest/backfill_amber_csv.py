@@ -1,20 +1,19 @@
-import pandas as pd
-from influxdb import InfluxDBClient
-import pytz
-import logging
+import sys
+import os
 import datetime
 import json
-import os
+import logging
+from pathlib import Path
 
-# --- Configuration ---
-# Load configuration from config.json to ensure credentials match
-try:
-    with open('../config.json', 'r') as f:
-        CONFIG = json.load(f)
-except FileNotFoundError:
-    # Fallback if running from a different directory (though typically run from root or ingest)
-    with open('config.json', 'r') as f:
-        CONFIG = json.load(f)
+import pandas as pd
+import pytz
+from influxdb import InfluxDBClient
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from config_utils import load_config
+
+CONFIG = load_config(ROOT / "config.json")
 
 INFLUXDB_HOST = CONFIG['influxdb']['host']
 INFLUXDB_PORT = CONFIG['influxdb']['port']
