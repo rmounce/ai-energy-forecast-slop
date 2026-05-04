@@ -197,6 +197,35 @@ is to make the PREDISPATCH-to-PD7Day quality transition explicit without repeati
 18-feature Run 014 expansion. Retrain the debiaser/TFT/scalers as a matched bundle and A/B against
 Run 011b before changing any shadow or production forecast source.
 
+Implementation prep:
+
+- `data/build_training_dataset.py` now supports `--decoder-contract`.
+- Default remains `phase7_18`, preserving the existing expanded Phase 7 builder.
+- The controlled next-run contract is `run011b_active_15`:
+  - 15 decoder features total
+  - same continuous decoder width as Run 011b
+  - last feature changed from `covar_missing` to `predispatch_active`
+  - PD7Day tail values are folded into `pd_rrp` after the PREDISPATCH horizon, matching the old
+    15-feature price-covariate shape
+- Smoke checks passed:
+  - `nice -n 19 ./.venv/bin/python -m py_compile data/build_training_dataset.py`
+  - `nice -n 19 ./.venv/bin/python data/build_training_dataset.py --dry-run --decoder-contract phase7_18`
+  - `nice -n 19 ./.venv/bin/python data/build_training_dataset.py --dry-run --decoder-contract run011b_active_15`
+
+Recommended next long-run sequence:
+
+```bash
+./.venv/bin/python data/build_training_dataset.py --decoder-contract run011b_active_15
+./.venv/bin/python train/train_tft_price.py --lr 1e-4 --patience 15
+```
+
+Before promoting any checkpoint, inspect `data/parquet/dataset_meta.json` or the checkpoint meta
+and confirm:
+
+- `decoder_contract == "run011b_active_15"`
+- `n_dec_features == 15`
+- `dec_features[-1] == "predispatch_active"`
+
 **COMPLETE — FAILED.** Retrain on same dataset as Run 011b, with one structural change: the OOF
 PREDISPATCH debiaser now takes `prob_spike` as an 11th feature (see PD Debiaser Run 002 below).
 Spike-classified windows in the decoder training data now receive higher (less suppressed) `pd_rrp`
