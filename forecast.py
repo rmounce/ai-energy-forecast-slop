@@ -52,17 +52,7 @@ logging.basicConfig(
 # --------------------------------------------------------------------------- #
 # 3. CENTRALIZED CONFIGURATION
 # --------------------------------------------------------------------------- #
-def load_config(config_path='config.json'):
-    """Loads the configuration from a JSON file."""
-    try:
-        with open(config_path, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logging.error(f"Configuration file not found at {config_path}")
-        raise
-    except json.JSONDecodeError:
-        logging.error(f"Error decoding JSON from the configuration file at {config_path}")
-        raise
+from config_utils import load_config
 
 CONFIG = load_config()
 ROOT = Path(__file__).resolve().parent

@@ -21,10 +21,12 @@ import csv
 import io
 import json
 import re
+import sys
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import urljoin
 
 import pytz
@@ -42,10 +44,9 @@ MEASUREMENT = "aemo_predispatch_forecast"
 RETENTION_POLICY = "rp_30m"
 DEFAULT_REGIONS = {"SA1", "VIC1", "NSW1"}
 
-
-def load_config(path="config.json"):
-    with open(path) as f:
-        return json.load(f)
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from config_utils import load_config
 
 
 def influx_client(cfg):

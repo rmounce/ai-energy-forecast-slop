@@ -39,6 +39,8 @@ models/
 *.pt
 
 # Explicitly include
+!config.json
+!config.secrets.json.example
 !config.example.json
 !tests/fixtures/*.json
 

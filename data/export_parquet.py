@@ -32,17 +32,14 @@ from influxdb import InfluxDBClient
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "data" / "parquet"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(ROOT))
+from config_utils import load_config
 
 REGION = "SA1"
 RP = "rp_30m"
 
 ACTUALS_START = "2022-01-01T00:00:00Z"   # Use full history in InfluxDB
 PERSISTENCE_THRESHOLD = 150.0             # $/MWh — price level tracked by rrp_persistence
-
-
-def load_config(path=ROOT / "config.json"):
-    with open(path) as f:
-        return json.load(f)
 
 
 def influx_client(cfg):

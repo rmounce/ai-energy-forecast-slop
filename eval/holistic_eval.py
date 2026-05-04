@@ -56,9 +56,7 @@ SPIKE_THRESH = 300.0
 LOW_THRESH   = -50.0
 
 
-def load_config():
-    with open(ROOT / "config.json") as f:
-        return json.load(f)
+from config_utils import load_config
 
 
 # ── Bulk InfluxDB fetch ───────────────────────────────────────────────────────

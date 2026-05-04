@@ -24,8 +24,18 @@ Checksums of the copied local files:
 - checkpoint: `fb976ec4a0f9ff6224811d235431b27fcaa5c402196c17fd8f712a7f13056033`
 - scalers: `4458deabc72e80b9fd0cbaa59f7d06dde577e8f9c4b0bd566a9831fc75b978a8`
 
-Caveat:
-- this pair is still best described as a **recovered Run 011b candidate** rather than a
-  formally promoted incumbent artifact
-- it is suitable for rolling-eval diagnostic and counterfactual work
-- broader architecture conclusions should still wait for fuller incumbent-backed validation
+## Promotion status — 2026-05-04
+
+This pair was promoted to production on 2026-05-04 after confirming that `checkpoint_best.pt`
+contained the Run 015 artifact (failed, −65.9% holistic eval) rather than Run 011b.
+
+Promotion steps taken:
+1. Copied both files to the new active paths:
+   - `models/tft_price/checkpoint_active.pt`
+   - `models/tft_price/scalers_active.pkl`
+2. Updated `config.json` `tft_price_model` / `tft_price_scalers` to reference the `_active` paths.
+3. SHA-256 checksums verified against the values recorded above.
+
+`config.json` now points to `checkpoint_active.pt` rather than `checkpoint_best.pt`.
+Future training runs write to `checkpoint_best.pt` and do not touch `checkpoint_active.pt`.
+See `models/tft_price/README.md` for the promotion protocol.

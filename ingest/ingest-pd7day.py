@@ -41,10 +41,9 @@ MEASUREMENT = "aemo_pd7day_forecast"
 RETENTION_POLICY = "rp_30m"
 DEFAULT_REGIONS = ["SA1", "VIC1", "NSW1"]
 
-
-def load_config(config_path: str = "config.json") -> dict:
-    with open(config_path) as f:
-        return json.load(f)
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from config_utils import load_config
 
 
 def influx_client(cfg: dict) -> InfluxDBClient:

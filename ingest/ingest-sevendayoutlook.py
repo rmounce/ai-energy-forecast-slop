@@ -59,9 +59,7 @@ RETENTION_POLICY = "rp_30m"
 DEFAULT_REGIONS = {"SA1", "VIC1", "NSW1"}
 
 
-def load_config(path="config.json"):
-    with open(path) as f:
-        return json.load(f)
+from config_utils import load_config
 
 
 def influx_client(cfg):

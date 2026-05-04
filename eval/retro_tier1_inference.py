@@ -58,9 +58,7 @@ OUTPUT_STEPS = 12   # 12 × 5min = 60min
 LOOKBACK_H   = 3    # hours of 5min history needed before each window start
 
 
-def load_config():
-    with open(ROOT / "config.json") as f:
-        return json.load(f)
+from config_utils import load_config
 
 
 CONFIG = load_config()

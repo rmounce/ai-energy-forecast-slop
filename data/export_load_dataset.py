@@ -21,15 +21,13 @@ from influxdb import InfluxDBClient
 ROOT    = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "data" / "parquet"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(ROOT))
 
 # Start from when load sensor data begins (earlier than actuals_sa1.parquet)
 LOAD_START = "2021-01-01T00:00:00Z"
 RP         = "rp_30m"
 
-
-def load_config(path=ROOT / "config.json"):
-    with open(path) as f:
-        return json.load(f)
+from config_utils import load_config
 
 
 def influx_client(cfg):

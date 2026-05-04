@@ -77,9 +77,8 @@ def main():
     end_iso   = end_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"Eval period: {start_iso} → {end_iso}")
 
-    import json
-    with open(ROOT / "config.json") as f:
-        config = json.load(f)
+    from config_utils import load_config
+    config = load_config(ROOT / "config.json")
 
     from influxdb import InfluxDBClient
     client = InfluxDBClient(**config["influxdb"])
