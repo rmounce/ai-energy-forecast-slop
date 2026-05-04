@@ -1132,7 +1132,8 @@ def _select_tft_decoder_features(fut, dec_feature_names):
     return dec[dec_feature_names].values.astype(np.float32), dec_feature_names
 
 
-def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, dec_index, preds_raw):
+def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, dec_index, preds_raw,
+                     fut_raw=None):
     """Print side-by-side diagnostic table for TFT inputs and outputs.
 
     Helps diagnose systematic underestimation: shows what the model actually
@@ -1154,18 +1155,87 @@ def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, 
           f"max={enc_rrp_raw.max():.1f}  last={enc_rrp_raw.iloc[-1]:.1f}")
     print(f"\n  {'Time (UTC)':>22}  {'rrp $/MWh':>10}  {'5m_missing':>10}")
     print(f"  {'─'*22}  {'─'*10}  {'─'*10}")
-    # Print last 8 encoder steps as sample
     for ts, rrp, miss in zip(enc_rrp_raw.index[-8:], enc_rrp_raw.values[-8:], enc_5m_missing.values[-8:]):
         print(f"  {str(ts):>22}  {rrp:>10.2f}  {int(miss):>10}")
 
-    # ── Decoder table (next 144 steps = 72h)
+    # ── Detailed per-step covariate + output table (first 30 steps = 15h)
+    if fut_raw is not None:
+        # Fetch Amber APF for comparison (best-effort)
+        amber_apf = {}
+        try:
+            amber_state = get_entity_state(CONFIG['home_assistant']['amber_entity'])
+            if amber_state:
+                for item in amber_state.get('attributes', {}).get('Forecasts', []):
+                    ts_key = pd.Timestamp(item['start_time']).tz_convert('UTC').floor('30min')
+                    amber_apf[ts_key] = float(item.get('advanced_price_predicted', 0)) * 1000.0  # c/kWh→$/MWh
+        except Exception:
+            pass
+
+        tz_local = pytz.timezone(CONFIG.get('timezone', 'Australia/Adelaide'))
+        N = min(30, len(fut_raw))
+
+        # Compute covar_missing the same way _select_tft_decoder_features does
+        pd_active = fut_raw['predispatch_active'].values
+        pd7_avail = fut_raw.get('pd7_available', pd.Series(0.0, index=fut_raw.index)).values
+        pd7_rrp_v = fut_raw.get('pd7_rrp', pd.Series(0.0, index=fut_raw.index)).values
+        combined_avail = np.maximum(pd_active, ((pd7_avail > 0) & (pd7_rrp_v != 0)).astype(float))
+        covar_missing = 1.0 - combined_avail
+
+        pd_rrp_v     = fut_raw['pd_rrp'].values           # debiased PREDISPATCH
+        pd_rrp_raw_v = fut_raw.get('pd_rrp_raw', pd.Series(np.nan, index=fut_raw.index)).values
+        combined_price = np.where(pd_active > 0, pd_rrp_v, pd7_rrp_v)
+
+        print(f"\n{SEP}")
+        print("TFT DEBUG — First 30 decoder steps (15h): debiaser + covariate inputs vs outputs")
+        hdr = (f"  {'Local time':>19}  {'PD?':>3}  {'miss':>4}"
+               f"  {'raw_PD':>7}  {'deb_PD':>7}  {'ratio':>6}  {'PD7':>7}  {'→model':>7}"
+               f"  {'q30':>7}  {'q50':>7}  {'q70':>7}  {'AmberAPF':>9}")
+        print(hdr)
+        print(f"  {'─'*19}  {'─'*3}  {'─'*4}"
+              f"  {'─'*7}  {'─'*7}  {'─'*6}  {'─'*7}  {'─'*7}"
+              f"  {'─'*7}  {'─'*7}  {'─'*7}  {'─'*9}")
+        for i in range(N):
+            ts_utc = fut_raw.index[i]
+            ts_loc = ts_utc.tz_convert(tz_local).strftime('%m-%d %H:%M')
+            pd_a   = int(pd_active[i])
+            c_miss = int(covar_missing[i])
+            raw_p  = pd_rrp_raw_v[i]
+            deb_p  = pd_rrp_v[i]
+            pd7_p  = pd7_rrp_v[i]
+            comb   = combined_price[i]
+            q30    = preds_raw[i, 0]
+            q50    = preds_raw[i, 1]
+            q70    = preds_raw[i, 2]
+            apf    = amber_apf.get(ts_utc.floor('30min'), float('nan'))
+            apf_s  = f"{apf:>9.1f}" if not np.isnan(apf) else f"{'—':>9}"
+            if not np.isnan(raw_p) and raw_p != 0:
+                ratio_s = f"{deb_p/raw_p:>6.2f}"
+            else:
+                ratio_s = f"{'—':>6}"
+            raw_s  = f"{raw_p:>7.1f}" if not np.isnan(raw_p) else f"{'—':>7}"
+            print(f"  {ts_loc:>19}  {pd_a:>3}  {c_miss:>4}"
+                  f"  {raw_s}  {deb_p:>7.1f}  {ratio_s}  {pd7_p:>7.1f}  {comb:>7.1f}"
+                  f"  {q30:>7.1f}  {q50:>7.1f}  {q70:>7.1f}  {apf_s}")
+
+        # Debiaser summary over active PD steps
+        active_mask = (pd_active[:N] > 0) & (~np.isnan(pd_rrp_raw_v[:N])) & (pd_rrp_raw_v[:N] != 0)
+        if active_mask.sum() > 0:
+            mean_ratio = (pd_rrp_v[:N][active_mask] / pd_rrp_raw_v[:N][active_mask]).mean()
+            mean_raw   = pd_rrp_raw_v[:N][active_mask].mean()
+            mean_deb   = pd_rrp_v[:N][active_mask].mean()
+            print(f"\n  Debiaser (PD-active steps): raw={mean_raw:.1f}  debiased={mean_deb:.1f}"
+                  f"  mean_ratio={mean_ratio:.2f}  compression={(1-mean_ratio)*100:+.0f}%")
+        n_pd  = int(pd_active[:N].sum())
+        n_miss = int(covar_missing[:N].sum())
+        print(f"  Steps 0–{N-1}: PD active={n_pd}/{N}  covar_missing={n_miss}/{N}")
+
+    # ── Sparse decoder table (full 72h, every 2h)
     print(f"\n{SEP}")
-    print("TFT DEBUG — Decoder covariates vs TFT output (next 72h)")
+    print("TFT DEBUG — Decoder covariates vs TFT output (next 72h, every 2h)")
     print(SEP)
     print(f"  {'Time (UTC)':>22}  {'PD_RRP $/MWh':>13}  {'TFT q30':>8}  {'TFT q50':>8}  {'TFT q70':>8}  {'delta q50-PD':>13}")
     print(f"  {'─'*22}  {'─'*13}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*13}")
 
-    # Print every 4th step (every 2h) for readability, plus always the first/last
     n = len(dec_index)
     show_idx = sorted(set([0, 1] + list(range(0, n, 4)) + [n - 1]))
     for i in show_idx:
@@ -1178,7 +1248,6 @@ def _print_tft_debug(enc_rrp_raw, enc_load_raw, enc_5m_missing, dec_pd_rrp_raw, 
         pd_str = f"{pd_rrp:>13.2f}" if pd_rrp != 0.0 else f"{'(zero)':>13}"
         print(f"  {str(ts):>22}  {pd_str}  {q30:>8.2f}  {q50:>8.2f}  {q70:>8.2f}  {delta:>+13.2f}")
 
-    # Summary stats
     q50_vals = preds_raw[:, 1]
     pd_vals = dec_pd_rrp_raw.values[:len(q50_vals)]
     nonzero = pd_vals != 0
@@ -1664,6 +1733,9 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     predispatch_active = fut['pd_rrp'].notna().astype(np.float32)
     predispatch_active.iloc[56:] = 0.0
 
+    # Capture raw (pre-debiaser) PREDISPATCH for diagnostic comparison.
+    _pd_rrp_raw_pre_debias = fut['pd_rrp'].copy() if _DEBUG_TFT else None
+
     # ── 3.5 Debias PREDISPATCH (Run 011+ contract)
     fut = _apply_pd_debiaser(fut, start_t, historical_df=hist)
 
@@ -1707,6 +1779,14 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         np.where(fut["predispatch_active"].values > 0, fut["pd_rrp"].values, fut["pd7_rrp"].values),
         index=fut.index,
     )
+
+    # Capture unscaled decoder frame for the debug table (all prices in $/MWh).
+    if _DEBUG_TFT:
+        _fut_raw_diag = fut[['pd_rrp', 'pd7_rrp', 'pd_demand', 'sd_demand',
+                              'predispatch_active', 'pd7_available']].copy()
+        _fut_raw_diag['pd_rrp_raw'] = _pd_rrp_raw_pre_debias.reindex(_fut_raw_diag.index)
+    else:
+        _fut_raw_diag = None
 
     DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp",
                 "pd7_rrp", "sd_demand", "sd_net_interchange"]
@@ -1770,6 +1850,7 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
             dec_pd_rrp_raw=_dec_price_raw,
             dec_index=fut.index,
             preds_raw=preds_raw,
+            fut_raw=_fut_raw_diag,
         )
 
     logging.info(

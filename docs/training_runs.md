@@ -164,6 +164,39 @@ strategic `soc_final` guide for the downstream 5m/14h MPC tier rather than as a 
 
 ## TFT Price Run 012 — 2026-04-20 — Unified debiaser (prob_spike as decoder feature)
 
+### Live Diagnostic Follow-Up — 2026-05-04
+
+`forecast.py --debug-tft` now prints a first-30-step decoder diagnostic with raw
+PREDISPATCH, debiased PREDISPATCH, compression ratio, PD7Day value, model input, TFT
+q30/q50/q70, and Amber APF comparison.
+
+Initial live diagnostic confirms a **double-compression** failure mode in the Run 011b-era
+TFT stack during the inspected event:
+
+| Stage | Mean price |
+|---|---:|
+| Raw PREDISPATCH | `2324 $/MWh` |
+| After PREDISPATCH debiaser | `153 $/MWh` |
+| TFT q50 output | `~87 $/MWh` |
+| Amber APF | `~286 $/MWh` |
+
+Observed mechanism:
+
+- The encoder history was dominated by low solar-period prices, so the spike classifier produced
+  low `prob_spike`.
+- The PREDISPATCH debiaser compressed the active PREDISPATCH steps heavily (`mean_ratio ~= 0.16`,
+  about `84%` compression).
+- The TFT then discounted the already-compressed decoder signal further.
+- Run 011b's 15-feature decoder contract has `covar_missing`, but that feature is effectively
+  inactive when PREDISPATCH or PD7Day is available. It does not tell the model which decoder steps
+  are genuine PREDISPATCH-backed steps.
+
+Current architectural hypothesis for the next retrain: replace `covar_missing` with
+`predispatch_active` in the 15-feature decoder contract, keeping feature count stable. The intent
+is to make the PREDISPATCH-to-PD7Day quality transition explicit without repeating the broader
+18-feature Run 014 expansion. Retrain the debiaser/TFT/scalers as a matched bundle and A/B against
+Run 011b before changing any shadow or production forecast source.
+
 **COMPLETE — FAILED.** Retrain on same dataset as Run 011b, with one structural change: the OOF
 PREDISPATCH debiaser now takes `prob_spike` as an 11th feature (see PD Debiaser Run 002 below).
 Spike-classified windows in the decoder training data now receive higher (less suppressed) `pd_rrp`
