@@ -2,7 +2,6 @@
 Description=Ingest latest AEMO PREDISPATCH forecast into InfluxDB
 
 [Service]
-User=energy-user
 Type=oneshot
 WorkingDirectory=%h/src/ai-energy-forecast-slop
 ExecStart=/bin/bash -c 'source .venv/bin/activate && python ingest/ingest-predispatch.py --fetch'
