@@ -29,8 +29,8 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
                   every 5 min (Tier 1)          every 30 min (Tier 2)
                          │                              │
                          ▼                              ▼
-                  Tactical LightGBM           TFT price (0–72h q5–q99)
-                  (0–60 min q05/50/95)        LightGBM price (legacy)
+                  Tactical LightGBM           APF/LightGBM price (incumbent)
+                  (0–60 min q05/50/95)        TFT price (shadow, 0–72h)
                          │                    TFT load / LightGBM load
                          └──────────┬─────────────────┘
                                     │ ◄── HA future covariates (Solcast,
@@ -40,11 +40,12 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
              │                      │
              ▼                      ▼
      predictions.json       HA sensor entities:
-     *_forecast_log.csv     sensor.ai_p5min_price_forecast  (Tier 1)
-                            sensor.ai_price_forecast        (Tier 2 p50)
+     *_forecast_log.csv     sensor.ai_p5min_price_forecast  (tactical, 5-min)
+                            sensor.ai_price_forecast        (APF/LightGBM p50, incumbent)
                             sensor.ai_price_forecast_low/high
+                            sensor.ai_tft_price_forecast    (TFT shadow)
                             sensor.ai_load_forecast
-                            sensor.ai_combined_*_price_forecast  (shadow)
+                            sensor.ai_combined_*_price_forecast  (TFT-based, shadow)
                                     │
                                     ▼
                              EMHASS optimiser
@@ -118,7 +119,7 @@ The file contains ~28 functions that fall naturally into these logical groups:
 
 | Group | Functions | Responsibility |
 |---|---|---|
-| **Config / utilities** | `load_config`, `add_time_features`, `add_gst`, `remove_gst` | Shared utilities |
+| **Config / utilities** | `add_time_features`, `add_gst`, `remove_gst` | Shared utilities (`load_config` delegated to `config_utils.py`) |
 | **HA API** | `call_ha_api`, `get_entity_state` | Generic HA HTTP wrappers |
 | **Data fetching** | `get_amber_spot_price_forecast`, `get_amber_advanced_forecast`, `get_solcast_forecast`, `get_weather_forecast`, `get_aemo_forecast`, `_get_aemo_short_term_forecast`, `_get_aemo_short_term_price_sa1`, `_get_aemo_7_day_outlook_forecast` | Future covariate data from external sources |
 | **Training** | `train_single_model`, `train_models` | Model fitting and serialisation |
@@ -265,9 +266,9 @@ InfluxDB, thresholds set by Phase 6). **Both must pass before Phase 5 sub-tasks 
 
 ---
 
-### `data/` and `train/` — TFT Price Model (V4, in development)
+### `data/` and `train/` — TFT Price Model (V4, shadow mode)
 
-A new price forecasting model is being developed to replace the LightGBM+Amber APF approach. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
+A TFT price model has been trained and published to HA in shadow mode alongside the APF/LightGBM incumbent. The active production checkpoint is Run 011b (+9.7% vs amber_apf_lgbm baseline); Phase 7 decoder expansion attempts (Run 014, Run 015) failed the holistic eval gate and were not promoted. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
 - Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` + time encodings (6) + `rrp_5m_missing` flag (1)
@@ -394,7 +395,7 @@ Note: several older model files exist (`price_p10`, `price_p20`, `price_p50`, `p
 - Per-model hyperparameters (n\_estimators, lags, horizon, quantiles, recency weighting)
 - Adjuster settings
 
-**Credential management:** `config.json` is git-ignored. The ingest scripts have credentials hardcoded (historical — they predate `config.json`). The HA YAML files need URL redaction before committing.
+**Credential management:** `config.json` is committed with secrets stripped (`influxdb.password` and `home_assistant.token` are empty strings). Real secrets live in `config.secrets.json` (git-ignored), which `config_utils.load_config()` deep-merges at runtime. See `config.secrets.json.example` for the required structure. The HA YAML files need URL redaction before committing.
 
 The systemd services load secrets from `.env` in the repo root (git-ignored). This file must be created manually:
 
@@ -419,9 +420,9 @@ open issues.
 
 2. **`hass/package-emhass.yaml` Jinja complexity.** The EMHASS REST command payload is built entirely in Jinja2 template syntax inside a YAML string. It's ~350 lines of logic that is hard to debug, diff, and maintain.
 
-3. **Ingest scripts are disconnected.** They have hardcoded credentials, no systemd timers, and are run manually or ad-hoc. There is no clear trigger or documented procedure for keeping InfluxDB current beyond the HA CQs.
+3. **Ad-hoc ingest scripts are disconnected.** The manual/historical backfill scripts (`ingest-ha-data.py`, `ingest-nem-data.py`, etc.) are run ad-hoc with no systemd timers. The automated ingest scripts (predispatch, p5min, pd7day, sevendayoutlook) all use `config_utils.load_config()` and run via systemd.
 
-4. **HA backups require manual redaction.** Every time `hass/` files are committed, URLs must be manually redacted. This creates friction and risk.
+4. **HA backups require manual redaction.** Every time `hass/` files are committed, any private hostnames or URLs must be manually redacted. This creates friction and risk.
 
 5. **Forecast log CSVs are very large.** `price_forecast_log.csv` and `load_forecast_log.csv` are each ~330–340MB and growing. They live outside the repo (git-ignored) but are depended on by `backfill-actuals` and `update-adjusters`.
 
