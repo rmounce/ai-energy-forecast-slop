@@ -102,16 +102,16 @@ Published by `systemd/ai-energy-forecast.{service,timer}` (every 5 min) and
 
 | Entity | Description | Items | Resolution | Horizon | Attribute |
 |---|---|---|---|---|---|
-| `sensor.ai_price_forecast` | Tier 2 TFT q50 general import price ($/kWh) | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_price_forecast_high` | Tier 2 TFT q90 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_price_forecast_low` | Tier 2 TFT q10 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_aemo_price_forecast` | Tier 2 TFT q50 as raw AEMO $/MWh (pre-tariff) | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_p5min_price_forecast` | Tier 1 LightGBM q50 ($/kWh) | 12 | 5-min | 60 min | `forecasts` |
-| `sensor.ai_p5min_price_forecast_high` | Tier 1 LightGBM q90 | 12 | 5-min | 60 min | `forecasts` |
-| `sensor.ai_p5min_price_forecast_low` | Tier 1 LightGBM q10 | 12 | 5-min | 60 min | `forecasts` |
-| `sensor.ai_tft_price_forecast` | TFT standalone q50 (no LightGBM hybrid) | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_tft_price_forecast_high` | TFT standalone q90 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_tft_price_forecast_low` | TFT standalone q10 | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_price_forecast` | **Production incumbent** — APF/LightGBM p50 general import price ($/kWh); Amber APF seeded, LightGBM-extrapolated beyond the ~36h APF horizon | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_price_forecast_high` | APF/LightGBM p70 | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_price_forecast_low` | APF/LightGBM p30 | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_aemo_price_forecast` | **Debug only** — merged PREDISPATCH/PD7Day decoder input in $/kWh; not a model output, published for visualisation alongside TFT forecasts | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_p5min_price_forecast` | Tactical LightGBM p50 ($/kWh) | 12 | 5-min | 60 min | `forecasts` |
+| `sensor.ai_p5min_price_forecast_high` | Tactical LightGBM p95 | 12 | 5-min | 60 min | `forecasts` |
+| `sensor.ai_p5min_price_forecast_low` | Tactical LightGBM p05 | 12 | 5-min | 60 min | `forecasts` |
+| `sensor.ai_tft_price_forecast` | **Shadow** — TFT Run 011b q50 ($/kWh); published but not currently fed to EMHASS | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_tft_price_forecast_high` | TFT Run 011b q70 | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_tft_price_forecast_low` | TFT Run 011b q30 | 144 | 30-min | 72h | `forecasts` |
 
 **Amber-shaped compatibility sensors** (for legacy EMHASS template compatibility):
 
@@ -194,8 +194,8 @@ the `forecasts` attribute.
 
 | Entity | Options | Default | Purpose |
 |---|---|---|---|
-| `input_select.emhass_mpc_price_source` | `amber`, `ai_shadow` | `amber` | Switch MPC REST payload between Amber 5-min and AI canonical sensors |
-| `input_select.emhass_dh_price_source` | `amber_lgbm_extrapolated`, `ai_shadow` | `amber_lgbm_extrapolated` | Switch DH REST payload between Amber 30-min LightGBM and AI canonical sensors |
+| `input_select.emhass_mpc_price_source` | `amber`, `ai_shadow` | `amber` | Switch MPC REST payload between Amber 5-min extended forecast and AI canonical sensors |
+| `input_select.emhass_dh_price_source` | `amber_lgbm_extrapolated`, `ai_shadow` | `amber_lgbm_extrapolated` | Switch DH REST payload between `sensor.ai_price_forecast` (APF/LightGBM 72h) and TFT AI canonical sensors |
 
 ### Tuning knobs
 
