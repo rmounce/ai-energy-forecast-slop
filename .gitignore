@@ -49,3 +49,4 @@ models/
 # explicitly with `git add -f` only when they are deliberately preserved.
 eval/results/*
 docs/review_*.md
+HANDOVER.md
