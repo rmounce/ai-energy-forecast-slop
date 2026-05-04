@@ -1,5 +1,7 @@
+[Unit]
+Description=Train AI energy forecast models (load + price)
+
 [Service]
-User=saltspork
 Type=oneshot
 Nice=19
 WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop

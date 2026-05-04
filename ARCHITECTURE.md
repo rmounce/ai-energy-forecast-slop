@@ -64,14 +64,19 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
 
 ## Scheduled Jobs (systemd)
 
-Unit files are tracked in [`systemd/`](systemd/) in this repo. To install or update them:
+Unit files are tracked in [`systemd/`](systemd/) in this repo and symlinked into `~/.config/systemd/user/` — edits to the repo files take effect after `systemctl --user daemon-reload`. To set up on a new machine:
 
 ```bash
-sudo cp systemd/ai-energy-*.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
+mkdir -p ~/.config/systemd/user
+for f in systemd/ai-energy-*.{service,timer}; do
+  ln -sf "$(pwd)/$f" ~/.config/systemd/user/
+done
+systemctl --user daemon-reload
+systemctl --user enable --now ai-energy-*.timer
+sudo loginctl enable-linger "$USER"   # keep units running after logout
 ```
 
-Six pairs of `.service` + `.timer` units drive the pipeline:
+Seven pairs of `.service` + `.timer` units drive the pipeline:
 
 **Forecast pipeline:**
 
@@ -90,7 +95,7 @@ Six pairs of `.service` + `.timer` units drive the pipeline:
 | `ai-energy-sevendayoutlook.timer` | Every 30 min (`:01` and `:31`) | `ingest/ingest-sevendayoutlook.py --fetch` |
 | `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch` — SA1/VIC1/NSW1 5-min predispatch → `rp_5m.aemo_p5min_forecast` |
 
-All services run as user `saltspork`, `WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority).
+All units run as systemd user units (`systemctl --user`), `WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority). Linger is enabled so units run without an active login session.
 
 ---
 

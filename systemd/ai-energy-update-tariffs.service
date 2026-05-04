@@ -1,5 +1,7 @@
+[Unit]
+Description=Update tariff profile, backfill actuals, and update covariate adjusters
+
 [Service]
-User=saltspork
 Type=oneshot
 Nice=19
 WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop

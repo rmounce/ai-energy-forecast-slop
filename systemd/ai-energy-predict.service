@@ -1,5 +1,7 @@
+[Unit]
+Description=Run AI energy predictions and publish to Home Assistant
+
 [Service]
-User=saltspork
 Type=oneshot
 WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
 EnvironmentFile=/home/saltspork/src/ai-energy-forecast-slop/.env
