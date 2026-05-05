@@ -226,6 +226,53 @@ and confirm:
 - `n_dec_features == 15`
 - `dec_features[-1] == "predispatch_active"`
 
+Evaluation result — 2026-05-05:
+
+The controlled `run011b_active_15` retrain completed and was evaluated without promotion. It
+should **not** replace active Run 011b.
+
+Training:
+
+- best epoch: `4`
+- best val loss: `0.0502`
+- price/horizon weighted wMAPE: `39.15%`
+- artifacts produced as latest training output only:
+  - `models/tft_price/checkpoint_best.pt`
+  - `models/tft_price/scalers.pkl`
+- active production files remained unchanged:
+  - `models/tft_price/checkpoint_active.pt`
+  - `models/tft_price/scalers_active.pkl`
+
+Stratified accuracy eval (`eval/results/tft_active15_stratified_evaluation_results_20260505_active15_eval.csv`)
+was worse than the LGBM baseline at every reported horizon:
+
+| horizon | active15 TFT nMAPE | LGBM nMAPE | delta |
+|---|---:|---:|---:|
+| 1h | `80.0%` | `63.9%` | `+16.1` |
+| 4h | `74.6%` | `66.4%` | `+8.2` |
+| 16h | `73.7%` | `65.1%` | `+8.6` |
+| 28h | `74.9%` | `71.0%` | `+3.9` |
+
+`netload_tariffed` rolling gates with strategic SoC handoff:
+
+| slice | Amber $/day | active15 Hybrid $/day | delta $/day | active15 final SoC note |
+|---|---:|---:|---:|---|
+| Window B 2-day | `6.475` | `4.946` | `-1.529` | higher than Amber (`19.10` vs `11.34 kWh`) |
+| Window B 7-day | `1.634` | `0.879` | `-0.755` | essentially same as Amber (`26.59` vs `27.10 kWh`) |
+| Window A 7-day | `-1.108` | `-0.939` | `+0.169` | much lower than Amber (`1.86` vs `15.40 kWh`) |
+
+Interpretation:
+
+- The narrow `predispatch_active` swap did not solve the practical model problem.
+- It improved neither stratified accuracy nor the main Window B tariffed gate.
+- The Window A gain is not robust production evidence because it is accompanied by severe terminal
+  inventory depletion.
+- Do not promote `checkpoint_best.pt` / `scalers.pkl` from this run.
+- The stronger conclusion is that the issue is not just the missing activity flag in the 15-feature
+  decoder. The double-compression diagnosis still matters, but the next model branch needs to
+  address debiaser aggressiveness / target construction or forecast-source architecture more
+  directly, not another narrow metadata-flag swap.
+
 **COMPLETE — FAILED.** Retrain on same dataset as Run 011b, with one structural change: the OOF
 PREDISPATCH debiaser now takes `prob_spike` as an 11th feature (see PD Debiaser Run 002 below).
 Spike-classified windows in the decoder training data now receive higher (less suppressed) `pd_rrp`

@@ -106,6 +106,29 @@ work is integration hardening, observability, and safe switching.
 
 See also: `docs/production_forecast_switch_plan.md` and `docs/conventions.md`.
 
+## Current Model Checkpoint: Active15 Retrain Rejected
+
+The 2026-05-05 `run011b_active_15` TFT retrain tested the narrowest handover hypothesis:
+keep the Run 011b 15-feature decoder width but replace `covar_missing` with
+`predispatch_active`.
+
+Result: **do not promote**.
+
+- Stratified accuracy was worse than LGBM at every reported horizon.
+- Window B `netload_tariffed` remained materially worse than Amber:
+  - 2-day: `4.946/day` vs Amber `6.475/day`
+  - 7-day: `0.879/day` vs Amber `1.634/day`
+- Window A 7-day was slightly better on immediate PnL (`-0.939/day` vs Amber `-1.108/day`) but
+  ended with very low SoC (`1.86 kWh` vs Amber `15.40 kWh`), so it is not a clean production win.
+
+Production remains on `models/tft_price/checkpoint_active.pt` and
+`models/tft_price/scalers_active.pkl` (Run 011b snapshot-backed active pair). The active15 retrain
+only updated latest training-output files (`checkpoint_best.pt`, `scalers.pkl`).
+
+Implication: the TFT double-compression diagnosis is still valid, but a simple
+`predispatch_active` metadata swap is insufficient. Next model work should address debiaser
+aggressiveness, target/label construction, or the Tier 2 forecast architecture more directly.
+
 ## Design Principles
 
 **Predict distributions, not averages.** Battery economics are asymmetric — a model trained
