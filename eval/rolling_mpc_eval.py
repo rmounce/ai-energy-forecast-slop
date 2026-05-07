@@ -753,6 +753,30 @@ class ForecastProviders:
     def _blend_series(self, base: pd.Series, upper: pd.Series, weight: float) -> pd.Series:
         return base + float(weight) * (upper - base)
 
+    def _pd_direct_band_attenuation(self, q50_curve: pd.Series) -> float:
+        """Phase α-prime Step 4b: scale band shift down on low-volatility forecasts.
+
+        Wide buy/sell bands hurt dispatch when there is no real peak structure to
+        capture (shoulder3 regressed -35% in Step 3 with full bands). This computes
+        an attenuation factor in [0, 1] from the q50 forecast amplitude over the LP
+        horizon — multiplied into the blend so flat days collapse toward q50 and
+        peak days keep the full band.
+
+        Linear ramp:
+          amplitude ≤ low_thresh  → attenuation = 0  (bands fully off)
+          amplitude ≥ high_thresh → attenuation = 1  (bands fully on)
+        """
+        low = float(getattr(self.args, "pd_direct_band_attenuation_low_mwh", 0.0))
+        high = float(getattr(self.args, "pd_direct_band_attenuation_high_mwh", 0.0))
+        if high <= 0.0 or high <= low:
+            return 1.0  # disabled
+        amp = float(q50_curve.max() - q50_curve.min())
+        if amp <= low:
+            return 0.0
+        if amp >= high:
+            return 1.0
+        return (amp - low) / (high - low)
+
     def _build_pd_direct_curve(self, ts: pd.Timestamp, *, band_side: str = "q50", blend: float = 1.0) -> np.ndarray | None:
         """14h LP curve for the pd_direct source: Tier 1 LGBM q50 for the first 60 min,
         debiased PREDISPATCH (with PD7Day/seasonal fallback) for the remainder.
@@ -773,14 +797,18 @@ class ForecastProviders:
             if tier1_q05 is None:
                 return None
             pd_lower, _ = self.pd_direct_bands_expanded(ts, HORIZON_5M_STEPS)
+            # Attenuate the strategic-side band shift on low-volatility forecasts;
+            # Tier 1 quantiles are LGBM-native and stay at the requested blend.
+            atten = self._pd_direct_band_attenuation(pd_curve)
             tier1 = self._blend_series(tier1_q50, tier1_q05, blend)
-            strategic = self._blend_series(pd_curve, pd_lower, blend)
+            strategic = self._blend_series(pd_curve, pd_lower, blend * atten)
         elif band_side == "upper":
             if tier1_q95 is None:
                 return None
             _, pd_upper = self.pd_direct_bands_expanded(ts, HORIZON_5M_STEPS)
+            atten = self._pd_direct_band_attenuation(pd_curve)
             tier1 = self._blend_series(tier1_q50, tier1_q95, blend)
-            strategic = self._blend_series(pd_curve, pd_upper, blend)
+            strategic = self._blend_series(pd_curve, pd_upper, blend * atten)
         else:
             tier1 = tier1_q50
             strategic = pd_curve
@@ -2213,6 +2241,27 @@ def main():
             "Optional residual band parquet for pd_direct split curves. Defaults empty "
             "(degenerate q50-only PD-direct). Build with eval/build_pd_residual_bands.py. "
             f"Recommended path: {RESIDUAL_BANDS_PARQUET}"
+        ),
+    )
+    parser.add_argument(
+        "--pd-direct-band-attenuation-low-mwh",
+        type=float,
+        default=0.0,
+        help=(
+            "Phase α-prime Step 4b: low-volatility band attenuation. Below this q50 "
+            "forecast amplitude (max-min over the 14h LP horizon, $/MWh), buy/sell "
+            "band shifts collapse to zero. Linearly ramps up to full bands at "
+            "--pd-direct-band-attenuation-high-mwh. Set both to 0 to disable. "
+            "Recommended starting value: 60."
+        ),
+    )
+    parser.add_argument(
+        "--pd-direct-band-attenuation-high-mwh",
+        type=float,
+        default=0.0,
+        help=(
+            "Phase α-prime Step 4b: forecast amplitude at which bands are fully on. "
+            "Recommended starting value: 150."
         ),
     )
     parser.add_argument(
