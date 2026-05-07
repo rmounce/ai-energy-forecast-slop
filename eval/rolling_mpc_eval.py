@@ -65,6 +65,8 @@ from retro_tier1_inference import (  # noqa: E402
 from train_tft_price import TFTPriceModel  # noqa: E402
 from eval.pd_direct_baseline import (  # noqa: E402
     PDDirectContext,
+    RESIDUAL_BANDS_PARQUET,
+    apply_pd_residual_bands,
     build_pd_direct_30m_curve,
     expand_30m_to_5m,
     load_pd_direct_context,
@@ -698,6 +700,9 @@ class ForecastProviders:
             seasonal_end=seasonal_end,
             seasonal_window_days=int(getattr(args, "pd_direct_seasonal_window_days", 28)),
             pd7day_cap=float(getattr(args, "pd_direct_pd7day_cap", 300.0)),
+            residual_bands_path=Path(args.pd_direct_residual_bands)
+            if getattr(args, "pd_direct_residual_bands", "")
+            else None,
         )
 
         self._tier1_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
@@ -737,7 +742,7 @@ class ForecastProviders:
     def _blend_series(self, base: pd.Series, upper: pd.Series, weight: float) -> pd.Series:
         return base + float(weight) * (upper - base)
 
-    def _build_pd_direct_curve(self, ts: pd.Timestamp) -> np.ndarray | None:
+    def _build_pd_direct_curve(self, ts: pd.Timestamp, *, band_side: str = "q50", blend: float = 1.0) -> np.ndarray | None:
         """14h LP curve for the pd_direct source: Tier 1 LGBM q50 for the first 60 min,
         debiased PREDISPATCH (with PD7Day/seasonal fallback) for the remainder.
 
@@ -748,13 +753,30 @@ class ForecastProviders:
         if np.isnan(current_actual):
             return None
         tier1_q50 = self.tier1_quantile(ts, 0.50)
+        tier1_q05 = self.tier1_quantile(ts, 0.05) if band_side == "lower" else None
+        tier1_q95 = self.tier1_quantile(ts, 0.95) if band_side == "upper" else None
         pd_curve = self.pd_direct_expanded(ts, HORIZON_5M_STEPS)
         if tier1_q50 is None or pd_curve is None:
             return None
+        if band_side == "lower":
+            if tier1_q05 is None:
+                return None
+            pd_lower, _ = self.pd_direct_bands_expanded(ts, HORIZON_5M_STEPS)
+            tier1 = self._blend_series(tier1_q50, tier1_q05, blend)
+            strategic = self._blend_series(pd_curve, pd_lower, blend)
+        elif band_side == "upper":
+            if tier1_q95 is None:
+                return None
+            _, pd_upper = self.pd_direct_bands_expanded(ts, HORIZON_5M_STEPS)
+            tier1 = self._blend_series(tier1_q50, tier1_q95, blend)
+            strategic = self._blend_series(pd_curve, pd_upper, blend)
+        else:
+            tier1 = tier1_q50
+            strategic = pd_curve
         out = pd.Series(index=idx, dtype=np.float64)
-        out.loc[idx[:TACTICAL_STEPS]] = tier1_q50.reindex(idx[:TACTICAL_STEPS]).ffill().bfill().values
+        out.loc[idx[:TACTICAL_STEPS]] = tier1.reindex(idx[:TACTICAL_STEPS]).ffill().bfill().values
         later_idx = idx[TACTICAL_STEPS:]
-        out.loc[later_idx] = pd_curve.reindex(later_idx).ffill().bfill().values
+        out.loc[later_idx] = strategic.reindex(later_idx).ffill().bfill().values
         return self._finalize_curve("pd_direct", out.values.astype(np.float64), current_actual)
 
     def _build_model_a_curve(
@@ -844,6 +866,18 @@ class ForecastProviders:
         self._pd_direct_cache[cache_key] = curve_30m
         idx_5m = pd.date_range(start=ts, periods=horizon_5m_steps, freq="5min", tz="UTC")
         return expand_30m_to_5m(curve_30m, idx_5m)
+
+    def pd_direct_bands_expanded(self, ts: pd.Timestamp, horizon_5m_steps: int) -> tuple[pd.Series, pd.Series]:
+        """Return lower/upper empirical-residual PD-direct bands expanded to 5-min."""
+        q50 = self.pd_direct_expanded(ts, horizon_5m_steps)
+        if q50 is None:
+            idx = pd.date_range(start=ts, periods=horizon_5m_steps, freq="5min", tz="UTC")
+            empty = pd.Series(np.nan, index=idx, dtype=np.float64)
+            return empty, empty
+        if self.pd_direct_ctx is None or self.pd_direct_ctx.residual_bands is None:
+            return q50.copy(), q50.copy()
+        lower, upper = apply_pd_residual_bands(q50, ts, self.pd_direct_ctx.residual_bands)
+        return lower, upper
 
     def amber_expanded(self, ts: pd.Timestamp) -> pd.Series | None:
         if len(self.amber_creation_ns) == 0:
@@ -974,7 +1008,7 @@ class ForecastProviders:
         if base_curve is None:
             return None
         if (
-            source != "model_a_hybrid"
+            source not in {"model_a_hybrid", "pd_direct"}
             or source not in self.args.split_curve_tactical_sources
             or (
                 self.args.buy_curve_quantile_blend == 0.0
@@ -982,6 +1016,20 @@ class ForecastProviders:
             )
         ):
             return base_curve, base_curve.copy(), base_curve.copy()
+        if source == "pd_direct":
+            buy_curve = self._build_pd_direct_curve(
+                ts,
+                band_side="lower",
+                blend=self.args.buy_curve_quantile_blend,
+            )
+            sell_curve = self._build_pd_direct_curve(
+                ts,
+                band_side="upper",
+                blend=self.args.sell_curve_quantile_blend,
+            )
+            if buy_curve is None or sell_curve is None:
+                return None
+            return base_curve, buy_curve, sell_curve
         buy_curve = self._build_model_a_curve(
             ts,
             tier1_signed_blend=-self.args.buy_curve_quantile_blend,
@@ -2145,6 +2193,15 @@ def main():
             "PREDISPATCH coverage. Raw PD7Day frequently sits at the soft cap "
             "($980.89) as a spike-risk indicator; capping prevents that masquerading "
             "as a literal price in the LP."
+        ),
+    )
+    parser.add_argument(
+        "--pd-direct-residual-bands",
+        default="",
+        help=(
+            "Optional residual band parquet for pd_direct split curves. Defaults empty "
+            "(degenerate q50-only PD-direct). Build with eval/build_pd_residual_bands.py. "
+            f"Recommended path: {RESIDUAL_BANDS_PARQUET}"
         ),
     )
     parser.add_argument(
