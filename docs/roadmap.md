@@ -156,15 +156,74 @@ Validate on held-out months *before* wiring into the LP via `--buy-curve-quantil
 `--sell-curve-quantile-blend`. If bands only help the windows used to choose strata, they
 are not a production candidate.
 
-**Step 4 — PD7Day/HoD fallback blend.** Replace the current hard `$300` cap + pure HoD
-seasonal mean with a horizon-dependent blend (e.g. `0.7·debiased_PD + 0.3·PD7Day_capped`
-in the PREDISPATCH→PD7Day handoff zone, blended toward HoD-mean with a recent-regime
-level adjustment beyond). Goal: sane inventory posture for the 14h LP and 72h DH, **not**
-minute-perfect price shape.
+**Step 4 — PD7Day/HoD fallback blend** *(scope refined 2026-05-08 after Step 3 result)*.
+Replace the current hard `$300` cap + pure HoD seasonal mean with a horizon-dependent
+blend (e.g. `0.7·debiased_PD + 0.3·PD7Day_capped` in the PREDISPATCH→PD7Day handoff
+zone, blended toward HoD-mean with a recent-regime level adjustment beyond). Goal: sane
+inventory posture for the 14h LP and 72h DH, **not** minute-perfect price shape.
 
 **Step 5 — Phase β escalation.** Only if Steps 3+4 fail to close the Amber gap. The
 one-page hypothesis is written *after* Steps 3+4, not before, so it can incorporate what
 those steps revealed.
+
+##### Step 3 result (2026-05-08, commit `ad0d202`)
+
+The other implementer landed horizon × HoD × PD-level residual bands per spec.
+Validation (q20/q80) passed: 59.25% overall coverage on the held-out 2025-07 to
+2025-12 window, stable 58–60% across all four horizon buckets. Bands transfer cleanly.
+
+Dispatch result (re-run of the same four-window same-run matrix, banded PD-direct vs
+Amber yardstick; "no bands" column shows the Step 2 baseline for reference):
+
+| Window | Amber $/day | PD-direct no bands | **PD-direct + bands** | Amber SoC | No-band SoC | Bands SoC |
+|---|---:|---:|---:|---:|---:|---:|
+| Shoulder3 | 1.426 | 1.818 | **1.180** | 33.59 | 23.71 | 34.45 |
+| WB 2-day | 6.473 | 5.572 | **6.899** | 11.34 | 19.33 | 14.35 |
+| WB 7-day | 1.632 | 1.340 | **2.154** | 27.10 | 26.59 | 27.32 |
+| WA 7-day | -1.119 | -1.256 | -0.929 | 15.40 | 14.82 | **4.03** |
+
+**Reading:** the bands deliver dramatic dispatch lift on the export-rich Window B
+slices (WB2 +6.6%, **WB7 +32%**) with sane SoCs — these are the first clean Amber-beats
+on the production-relevant gates. WA7 PnL also improves but the final SoC depletes to
+4.03 kWh, which is a known failure mode (same shape as active15's WA7 collapse) and
+disqualifies it as a clean win. Shoulder3 regresses materially (-35% PnL) despite high
+final SoC, which is the more diagnostic of the two: wide bands hurt in low-volatility
+periods because the LP becomes too cautious — buying earlier than needed, selling later
+than optimal, when daily price variance is too small for the band to point at real
+opportunity.
+
+**Decision rule outcome:** 2 of 4 windows clean wins, 1 SoC-confounded, 1 regression.
+Per the spec, this is the middle case → proceed to **Step 4 (refined scope)**.
+
+**Step 4 scope refined (per Step 3 implementer):** the original "smarter PD7Day/HoD
+blend" framing is too speculative. The Step 3 failures point at two specific operational
+fixes that should land before any new tail-blend work or any Phase β escalation:
+
+1. **Inventory/terminal guard** to prevent WA7 SoC depletion. Either a salvage value on
+   final SoC or a minimum-final-SoC constraint in the LP. Same control lever the
+   sidecar-gate work explored before being parked, but applied to PD-direct rather
+   than to a TFT-derived signal.
+2. **Low-volatility band attenuation.** Detect shoulder/calm regimes (e.g. rolling
+   24h price std below a threshold, or low forecast-band-spread itself) and shrink
+   the buy/sell shift toward q50. Goal: protect the WB peak-capture wins while not
+   being aggressive in shoulder periods where there is no peak to capture.
+
+PD7Day/HoD blending is parked until these two operational fixes have been measured.
+The shoulder-regime issue is unlikely to be a tail-blend problem; it is a band-shape
+problem. WA depletion is plausibly fixable by either fix — terminal-value first because
+it has the cleanest implementation in the existing LP path.
+
+**Standing recommendations from Step 3 implementer:**
+
+- Keep the band artifact (`models/pd_residual/residual_bands.parquet`) and the
+  non-degenerate live HA publishing path. They are useful shadow infrastructure even
+  pre-promotion.
+- The shoulder regression matters as a robustness warning for any future band/blend
+  work — narrow wins only on PV-rich peak slices is not a production-deployable
+  posture.
+- TFT shadow retirement is now even better justified (PD-direct + bands beats it on
+  every PnL slice now), but the HA Jinja switchability work remains the gate before
+  retirement happens, and that work is reserved for the user.
 
 **Killed/deferred (per reviewer):** broad q05/q95 widening without horizon buckets; any
 TFT retrain before PD-direct is exhausted; immediate retirement of

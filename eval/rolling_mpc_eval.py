@@ -23,6 +23,17 @@ import argparse
 import concurrent.futures
 import json
 import multiprocessing as mp
+import warnings
+
+# Tactical LGBM models were fitted with feature names but are predicted via positional
+# numpy arrays (intentional — feature_dict is built dictionary-order at line ~760).
+# sklearn emits one UserWarning per call which floods the eval log without changing
+# behaviour. Suppress just this one known warning in eval workers.
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names",
+    category=UserWarning,
+)
 import os
 import pickle
 import sys
