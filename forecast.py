@@ -1887,6 +1887,8 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
     # Lazy import so the eval module's parquet load only happens when this path runs.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from eval.pd_direct_baseline import (
+        RESIDUAL_BANDS_PARQUET,
+        apply_pd_residual_bands,
         load_pd_direct_context,
         PD7DAY_CAP_DEFAULT,
     )
@@ -1937,7 +1939,8 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
         fut = _apply_pd_debiaser(fut, start_t, historical_df=historical_df)
 
         # ── 4. Build the layered q50 strategic curve in $/MWh
-        ctx = load_pd_direct_context()  # for the seasonal HoD fallback table
+        residual_bands_path = RESIDUAL_BANDS_PARQUET if RESIDUAL_BANDS_PARQUET.exists() else None
+        ctx = load_pd_direct_context(residual_bands_path=residual_bands_path)  # seasonal HoD + bands
         out = pd.Series(index=fut.index, dtype=np.float64)
 
         # Layer 1: debiased PREDISPATCH wherever available (typically steps 0–55)
@@ -1965,18 +1968,26 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
                             "filling with $60/MWh.")
             out = out.fillna(60.0)
 
-        # ── 5. Convert $/MWh → $/kWh, package as TFT-shaped result dict
+        # ── 5. Apply empirical residual bands if available, then convert $/MWh → $/kWh.
+        q30_mwh, q70_mwh = apply_pd_residual_bands(out, start_t, ctx.residual_bands)
         out_kwh = out / 1000.0
+        q30_kwh = q30_mwh / 1000.0
+        q70_kwh = q70_mwh / 1000.0
         df_q50 = pd.DataFrame({'wholesale_price': out_kwh.values}, index=fut.index)
         df_q50['general_tariff'] = fut.get('general_tariff', 0.0)
         df_q50['feed_in_tariff'] = fut.get('feed_in_tariff', 0.0)
 
-        # First-cut: degenerate quantile bands (q30=q70=q50). Phase α-prime Step 3 will
-        # replace these with horizon-stratified empirical residual bands.
+        df_q30 = pd.DataFrame({'wholesale_price': q30_kwh.values}, index=fut.index)
+        df_q30['general_tariff'] = fut.get('general_tariff', 0.0)
+        df_q30['feed_in_tariff'] = fut.get('feed_in_tariff', 0.0)
+        df_q70 = pd.DataFrame({'wholesale_price': q70_kwh.values}, index=fut.index)
+        df_q70['general_tariff'] = fut.get('general_tariff', 0.0)
+        df_q70['feed_in_tariff'] = fut.get('feed_in_tariff', 0.0)
+
         res = {
             'pd_direct_price':     df_q50,
-            'pd_direct_price_q30': df_q50.copy(),
-            'pd_direct_price_q70': df_q50.copy(),
+            'pd_direct_price_q30': df_q30,
+            'pd_direct_price_q70': df_q70,
         }
 
         # Diagnostics
@@ -1986,7 +1997,8 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
         logging.info(
             f"PD-direct: {len(out_kwh)} steps "
             f"(debiased PD: {layer_pd}, PD7Day: {layer_p7}, seasonal: {layer_seas}); "
-            f"q50 range ${out.min():.1f}–${out.max():.1f}/MWh"
+            f"q50 range ${out.min():.1f}–${out.max():.1f}/MWh; "
+            f"bands={'loaded' if ctx.residual_bands is not None else 'degenerate'}"
         )
         return res
 
