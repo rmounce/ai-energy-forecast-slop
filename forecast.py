@@ -1860,6 +1860,141 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
     return res
 
 
+def _execute_pd_direct_prediction(historical_df, future_covariates_df):
+    """PD-direct strategic forecast: no-ML baseline (Phase α-prime, 2026-05-05 pivot).
+
+    Produces a 30-min, 144-step ($/kWh) strategic price forecast using:
+      - debiased PREDISPATCH for steps 0–55 (uses the live `_apply_pd_debiaser` on
+        InfluxDB-sourced raw PREDISPATCH — the same final-model debiaser the rest of
+        forecast.py uses)
+      - PD7Day capped at $300/MWh for any tail steps where it's available
+      - Hour-of-day seasonal mean (from the eval module) as a final fallback
+
+    Returned dict mirrors the TFT result shape so the publish layer can treat them
+    interchangeably:
+        {
+          'pd_direct_price':     df_q50,
+          'pd_direct_price_q30': df_q50,   # degenerate q30 = q50 (no native quantile
+          'pd_direct_price_q70': df_q50,   # spread; horizon-stratified bands land in
+                                           # Phase α-prime Step 3)
+        }
+
+    Live values will be very close to but not identical to the eval framework's OOF
+    debiased values — the eval correctly uses OOF for leakage-free historical comparison;
+    live correctly uses the final model trained on all data. See
+    docs/pd_direct_publish_rfc.md for the expected delta and audit guidance.
+    """
+    # Lazy import so the eval module's parquet load only happens when this path runs.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from eval.pd_direct_baseline import (
+        load_pd_direct_context,
+        PD7DAY_CAP_DEFAULT,
+    )
+
+    try:
+        # ── 1. Build start_t and 144-step decoder window (mirror TFT path semantics)
+        now_utc = datetime.now(pytz.UTC)
+        start_t = now_utc.replace(minute=30 if now_utc.minute >= 30 else 0,
+                                  second=0, microsecond=0)
+        fut = future_covariates_df[future_covariates_df.index >= start_t].head(144).copy()
+        if fut.empty:
+            logging.warning("PD-direct: future_covariates_df empty after start_t slice; "
+                            "skipping.")
+            return {}
+        if len(fut) < 144:
+            logging.warning(f"PD-direct: only {len(fut)} decoder steps available "
+                            f"(expected 144); short curve will be published.")
+
+        # ── 2. Pull raw PREDISPATCH + PD7Day from InfluxDB (same queries TFT uses)
+        forecast_run_time = start_t - pd.Timedelta(minutes=30)
+        client = InfluxDBClient(**CONFIG['influxdb'])
+        try:
+            influx_pd_prices = _get_influx_pd_prices(
+                client, fut.index.min(), fut.index.max())
+            pd7_df, pd7_run_time = _get_influx_latest_pd7day_prices(
+                client, forecast_run_time, fut.index)
+        finally:
+            client.close()
+
+        if not influx_pd_prices.empty:
+            fut = fut.join(influx_pd_prices, how='left')
+        if not pd7_df.empty:
+            fut = fut.join(pd7_df, how='left')
+
+        # The debiaser expects 'pd_demand' / 'pd_net_interchange' columns. The TFT path
+        # renames 'total_demand_sa1'/'net_interchange_sa1' from PREDISPATCH; pull those
+        # in if present, otherwise leave NaN — debiaser handles missing covariates
+        # gracefully (returns input unchanged on exception).
+        fut.rename(columns={
+            'total_demand_sa1': 'pd_demand',
+            'net_interchange_sa1': 'pd_net_interchange',
+        }, inplace=True)
+        for c in ['pd_rrp', 'pd_demand', 'pd_net_interchange', 'pd7_rrp']:
+            if c not in fut.columns:
+                fut[c] = np.nan
+
+        # ── 3. Debias PREDISPATCH steps 0–55 (modifies fut['pd_rrp'] in place)
+        fut = _apply_pd_debiaser(fut, start_t, historical_df=historical_df)
+
+        # ── 4. Build the layered q50 strategic curve in $/MWh
+        ctx = load_pd_direct_context()  # for the seasonal HoD fallback table
+        out = pd.Series(index=fut.index, dtype=np.float64)
+
+        # Layer 1: debiased PREDISPATCH wherever available (typically steps 0–55)
+        mask_pd = fut['pd_rrp'].notna()
+        out.loc[mask_pd] = fut.loc[mask_pd, 'pd_rrp'].values.astype(np.float64)
+
+        # Layer 2: PD7Day capped, fills any still-NaN steps (typically 56+)
+        if 'pd7_rrp' in fut.columns:
+            pd7_capped = np.minimum(
+                fut['pd7_rrp'].values.astype(np.float64),
+                float(PD7DAY_CAP_DEFAULT),
+            )
+            still_nan = out.isna() & fut['pd7_rrp'].notna()
+            out.loc[still_nan] = pd7_capped[still_nan.values]
+
+        # Layer 3: hour-of-day seasonal mean for any remaining gaps
+        if out.isna().any():
+            hods = out.index.hour * 2 + (out.index.minute // 30)
+            seasonal_vals = ctx.seasonal_hod_table.reindex(hods).to_numpy(dtype=np.float64)
+            out = out.where(~out.isna(), pd.Series(seasonal_vals, index=out.index))
+
+        # Final guard: shouldn't happen but don't propagate NaN into HA payload.
+        if out.isna().any():
+            logging.warning("PD-direct: residual NaNs after all fallback layers; "
+                            "filling with $60/MWh.")
+            out = out.fillna(60.0)
+
+        # ── 5. Convert $/MWh → $/kWh, package as TFT-shaped result dict
+        out_kwh = out / 1000.0
+        df_q50 = pd.DataFrame({'wholesale_price': out_kwh.values}, index=fut.index)
+        df_q50['general_tariff'] = fut.get('general_tariff', 0.0)
+        df_q50['feed_in_tariff'] = fut.get('feed_in_tariff', 0.0)
+
+        # First-cut: degenerate quantile bands (q30=q70=q50). Phase α-prime Step 3 will
+        # replace these with horizon-stratified empirical residual bands.
+        res = {
+            'pd_direct_price':     df_q50,
+            'pd_direct_price_q30': df_q50.copy(),
+            'pd_direct_price_q70': df_q50.copy(),
+        }
+
+        # Diagnostics
+        layer_pd  = int(mask_pd.sum())
+        layer_p7  = int(((~mask_pd) & fut['pd7_rrp'].notna()).sum()) if 'pd7_rrp' in fut.columns else 0
+        layer_seas = 144 - layer_pd - layer_p7
+        logging.info(
+            f"PD-direct: {len(out_kwh)} steps "
+            f"(debiased PD: {layer_pd}, PD7Day: {layer_p7}, seasonal: {layer_seas}); "
+            f"q50 range ${out.min():.1f}–${out.max():.1f}/MWh"
+        )
+        return res
+
+    except Exception as e:
+        logging.error(f"PD-direct prediction failed: {e}", exc_info=True)
+        return {}
+
+
 def _time_sin_cos_local(timestamps):
     """Like time_sin_cos() but uses Australia/Adelaide — matches build_load_dataset.py training."""
     t = timestamps.tz_convert("Australia/Adelaide")
@@ -2280,6 +2415,121 @@ def _publish_combined_price_forecasts(tactical_results, tft_results):
         _publish_haeo_forecast_sensor(entity_id, items, label, interval_minutes=interval_minutes)
 
 
+def _publish_pd_direct_price_forecasts(tactical_results, pd_direct_results):
+    """PD-direct sibling of _publish_combined_price_forecasts (Phase α-prime Step 2).
+
+    Same Tier-1 + strategic combination logic, same Amber-shaped + HAEO-style entity
+    schemas, same tariff plumbing. Only differences:
+      - Strategic source is PD-direct (debiased PREDISPATCH + PD7Day + seasonal HoD)
+        instead of TFT q50.
+      - Entity names use the `ai_pd_direct_*` prefix so live A/B comparison against the
+        existing `ai_*` family is possible without flipping any selector.
+      - Friendly names say "AI PD-Direct ..." instead of "AI Combined ..." / "AI MPC ...".
+
+    Quantile bands are degenerate in this first cut (q30=q70=q50). Phase α-prime Step 3
+    will replace these with horizon-stratified empirical residual bands without
+    requiring any change to this publishing path.
+    """
+    t1_p50  = tactical_results.get('p5min_price')
+    t1_low  = tactical_results.get('p5min_price_q05')
+    t1_high = tactical_results.get('p5min_price_q95')
+    t2_p50  = pd_direct_results.get('pd_direct_price')
+    t2_low  = pd_direct_results.get('pd_direct_price_q30')
+    t2_high = pd_direct_results.get('pd_direct_price_q70')
+
+    if any(df is None for df in [t1_p50, t1_low, t1_high, t2_p50, t2_low, t2_high]):
+        logging.warning("PD-direct combined forecast skipped: one or more required "
+                        "model outputs missing.")
+        return
+
+    # Tier 1: 12 steps × 5 min (already 5-minute native cadence)
+    t1_end = t1_p50.index[-1]
+    gen_t1, fin_t1 = _build_combined_forecast_items(t1_p50, t1_low, t1_high, 5, 5)
+
+    # Strategic: any 30-min steps after Tier 1 ends
+    t2_p50_after  = t2_p50[t2_p50.index > t1_end]
+    t2_low_after  = t2_low[t2_low.index > t1_end]
+    t2_high_after = t2_high[t2_high.index > t1_end]
+
+    if t2_p50_after.empty:
+        logging.warning("PD-direct combined forecast: no strategic steps beyond "
+                        "Tier 1 window.")
+        gen_all, fin_all = gen_t1, fin_t1
+    else:
+        gen_t2, fin_t2 = _build_combined_forecast_items(
+            t2_p50_after, t2_low_after, t2_high_after, 30, 5,
+        )
+        gen_all = gen_t1 + gen_t2
+        fin_all = fin_t1 + fin_t2
+
+    logging.info(
+        f"PD-direct combined forecast: {len(gen_t1)} Tier-1 (5-min) + "
+        f"{len(gen_all) - len(gen_t1)} strategic (published 5-min) = "
+        f"{len(gen_all)} total intervals"
+    )
+
+    now_iso = datetime.now(pytz.UTC).isoformat()
+    for entity_id, items, label in [
+        ('sensor.ai_pd_direct_combined_general_price_forecast', gen_all,
+         'AI PD-Direct Combined General Price Forecast'),
+        ('sensor.ai_pd_direct_combined_feed_in_price_forecast', fin_all,
+         'AI PD-Direct Combined Feed In Price Forecast'),
+    ]:
+        state = round(items[0]['advanced_price_predicted'], 6) if items else 0.0
+        payload = {
+            'state': state,
+            'attributes': {
+                'Forecasts':     items,
+                'last_updated':  now_iso,
+                'friendly_name': label,
+                'icon':          'mdi:chart-line',
+            },
+        }
+        call_ha_api('POST', f'states/{entity_id}', payload=payload)
+        logging.info(f"Published {entity_id} (state={state}, {len(items)} intervals).")
+
+    # HAEO/HAFO-style canonical sensors with positive import cost / positive export
+    # revenue. EMHASS template branches read these directly when the source selector is
+    # set to `ai_pd_direct`.
+    mpc_import_t1, mpc_export_t1 = _build_haeo_price_forecast_items(t1_p50, 5, 5)
+    if t2_p50_after.empty:
+        mpc_import_all, mpc_export_all = mpc_import_t1, mpc_export_t1
+    else:
+        mpc_import_t2, mpc_export_t2 = _build_haeo_price_forecast_items(t2_p50_after, 30, 5)
+        mpc_import_all = mpc_import_t1 + mpc_import_t2
+        mpc_export_all = mpc_export_t1 + mpc_export_t2
+
+    dh_import_all, dh_export_all = _build_haeo_price_forecast_items(t2_p50, 30, 30)
+
+    for entity_id, items, label, interval_minutes in [
+        (
+            "sensor.ai_pd_direct_mpc_import_price_forecast",
+            mpc_import_all[:168],
+            "AI PD-Direct MPC Import Price Forecast",
+            5,
+        ),
+        (
+            "sensor.ai_pd_direct_mpc_export_price_forecast",
+            mpc_export_all[:168],
+            "AI PD-Direct MPC Export Price Forecast",
+            5,
+        ),
+        (
+            "sensor.ai_pd_direct_dh_import_price_forecast",
+            dh_import_all[:144],
+            "AI PD-Direct Day Ahead Import Price Forecast",
+            30,
+        ),
+        (
+            "sensor.ai_pd_direct_dh_export_price_forecast",
+            dh_export_all[:144],
+            "AI PD-Direct Day Ahead Export Price Forecast",
+            30,
+        ),
+    ]:
+        _publish_haeo_forecast_sensor(entity_id, items, label, interval_minutes=interval_minutes)
+
+
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
     WORKER: Executes prediction for a model type (e.g. 'price' or 'load'),
@@ -2418,6 +2668,28 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 )
             except Exception as e:
                 logging.error(f"FATAL ERROR in combined forecast publish: {e}", exc_info=True)
+
+        # PD-direct shadow forecast (Phase α-prime Step 2). Built and published
+        # in its own try/except so a failure here cannot affect the existing TFT
+        # publish path. Kept local to this scope (not added to all_results) because
+        # the JSON-save loop below expects each entry to be a registered model in
+        # CONFIG; PD-direct is HA-publish-only for now. RFC:
+        # docs/pd_direct_publish_rfc.md.
+        try:
+            pd_direct_results = _execute_pd_direct_prediction(
+                historical_df, adjusted_covariates_for_prediction)
+        except Exception as e:
+            logging.error(f"FATAL ERROR in PD-direct execution: {e}", exc_info=True)
+            pd_direct_results = {}
+
+        if publish_hass and pd_direct_results:
+            try:
+                _publish_pd_direct_price_forecasts(
+                    tactical_results if 'p5min_tactical' in all_results else {},
+                    pd_direct_results,
+                )
+            except Exception as e:
+                logging.error(f"FATAL ERROR in PD-direct publish: {e}", exc_info=True)
 
     if 'load' in models_to_run:
         try:
