@@ -63,6 +63,12 @@ from retro_tier1_inference import (  # noqa: E402
     build_long_matrix_for_model as build_tier1_long_matrix,
 )
 from train_tft_price import TFTPriceModel  # noqa: E402
+from eval.pd_direct_baseline import (  # noqa: E402
+    PDDirectContext,
+    build_pd_direct_30m_curve,
+    expand_30m_to_5m,
+    load_pd_direct_context,
+)
 PARQUET_DIR = ROOT / "data" / "parquet"
 RESULTS_DIR = ROOT / "eval" / "results"
 PRICE_FORECAST_LOG = ROOT / "price_forecast_log.csv"
@@ -492,7 +498,7 @@ class SourceContract:
     strategic_source: str
 
 
-VALID_BASE_SOURCES = {"p5min_naive", "amber_apf_lgbm", "model_a_hybrid"}
+VALID_BASE_SOURCES = {"p5min_naive", "amber_apf_lgbm", "model_a_hybrid", "pd_direct"}
 
 COUNTERFACTUAL_SOURCE_ALIASES = {
     "hybrid_tactical_amber_strategic": SourceContract(
@@ -679,8 +685,24 @@ class ForecastProviders:
         if args.tft_checkpoint and args.tft_scalers:
             self.tft_ctx = _load_tft_context(Path(args.tft_checkpoint), Path(args.tft_scalers))
 
+        self.pd_direct_ctx: PDDirectContext | None = None
+        if getattr(args, "pd_direct_seasonal_end", None):
+            seasonal_end = pd.Timestamp(args.pd_direct_seasonal_end).tz_convert("UTC") \
+                if pd.Timestamp(args.pd_direct_seasonal_end).tzinfo \
+                else pd.Timestamp(args.pd_direct_seasonal_end, tz="UTC")
+        else:
+            seasonal_end = None
+        # Always load — cheap (~1s) and avoids per-source conditional pathing. The lookup
+        # is keyed by anchor timestamp so it works for any eval window.
+        self.pd_direct_ctx = load_pd_direct_context(
+            seasonal_end=seasonal_end,
+            seasonal_window_days=int(getattr(args, "pd_direct_seasonal_window_days", 28)),
+            pd7day_cap=float(getattr(args, "pd_direct_pd7day_cap", 300.0)),
+        )
+
         self._tier1_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
         self._tft_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
+        self._pd_direct_cache: dict[pd.Timestamp, pd.Series] = {}
         self._amber_cache: dict[pd.Timestamp, pd.Series] = {}
         self._strategic_solve_cache: dict[tuple[str, pd.Timestamp, float, float], StrategicSolveSummary | None] = {}
         self._last_curve_repaired: dict[str, bool] = {}
@@ -714,6 +736,26 @@ class ForecastProviders:
 
     def _blend_series(self, base: pd.Series, upper: pd.Series, weight: float) -> pd.Series:
         return base + float(weight) * (upper - base)
+
+    def _build_pd_direct_curve(self, ts: pd.Timestamp) -> np.ndarray | None:
+        """14h LP curve for the pd_direct source: Tier 1 LGBM q50 for the first 60 min,
+        debiased PREDISPATCH (with PD7Day/seasonal fallback) for the remainder.
+
+        Mirrors the structure of `_build_model_a_curve` but with no TFT / blend layers.
+        """
+        idx = pd.date_range(start=ts, periods=HORIZON_5M_STEPS, freq="5min", tz="UTC")
+        current_actual = self.current_actual_price(ts)
+        if np.isnan(current_actual):
+            return None
+        tier1_q50 = self.tier1_quantile(ts, 0.50)
+        pd_curve = self.pd_direct_expanded(ts, HORIZON_5M_STEPS)
+        if tier1_q50 is None or pd_curve is None:
+            return None
+        out = pd.Series(index=idx, dtype=np.float64)
+        out.loc[idx[:TACTICAL_STEPS]] = tier1_q50.reindex(idx[:TACTICAL_STEPS]).ffill().bfill().values
+        later_idx = idx[TACTICAL_STEPS:]
+        out.loc[later_idx] = pd_curve.reindex(later_idx).ffill().bfill().values
+        return self._finalize_curve("pd_direct", out.values.astype(np.float64), current_actual)
 
     def _build_model_a_curve(
         self,
@@ -781,6 +823,28 @@ class ForecastProviders:
         self._tft_cache[cache_key] = series
         return series
 
+    def pd_direct_expanded(self, ts: pd.Timestamp, horizon_5m_steps: int) -> pd.Series | None:
+        """Return a 5-min PD-direct strategic curve covering `horizon_5m_steps` from `ts`.
+
+        Layered: debiased PREDISPATCH → PD7Day (capped) → hour-of-day seasonal mean.
+        Cached by 30-min anchor since the underlying 30-min curve is run-time-aligned.
+        """
+        if self.pd_direct_ctx is None:
+            return None
+        anchor_30m = ts.floor("30min")
+        cache_key = anchor_30m
+        if cache_key in self._pd_direct_cache:
+            cached_30m = self._pd_direct_cache[cache_key]
+            # Ensure cached curve is long enough for this horizon; if not, rebuild larger.
+            if len(cached_30m) >= int(np.ceil(horizon_5m_steps / 6)) + 2:
+                idx_5m = pd.date_range(start=ts, periods=horizon_5m_steps, freq="5min", tz="UTC")
+                return expand_30m_to_5m(cached_30m, idx_5m)
+        horizon_30m_steps = int(np.ceil(horizon_5m_steps / 6)) + 2
+        curve_30m = build_pd_direct_30m_curve(self.pd_direct_ctx, anchor_30m, horizon_30m_steps)
+        self._pd_direct_cache[cache_key] = curve_30m
+        idx_5m = pd.date_range(start=ts, periods=horizon_5m_steps, freq="5min", tz="UTC")
+        return expand_30m_to_5m(curve_30m, idx_5m)
+
     def amber_expanded(self, ts: pd.Timestamp) -> pd.Series | None:
         if len(self.amber_creation_ns) == 0:
             return None
@@ -819,6 +883,13 @@ class ForecastProviders:
             if tft is None:
                 return None
             out = tft.reindex(idx).ffill().bfill().values.astype(np.float64)
+            return self._finalize_curve(source, out, current_actual, expected_steps=STRATEGIC_HORIZON_5M_STEPS)
+
+        if source == "pd_direct":
+            pd_curve = self.pd_direct_expanded(ts, STRATEGIC_HORIZON_5M_STEPS)
+            if pd_curve is None:
+                return None
+            out = pd_curve.reindex(idx).ffill().bfill().values.astype(np.float64)
             return self._finalize_curve(source, out, current_actual, expected_steps=STRATEGIC_HORIZON_5M_STEPS)
 
         return None
@@ -888,6 +959,9 @@ class ForecastProviders:
                 tier1_signed_blend=self.args.tier1_quantile_blend,
                 tier2_signed_blend=self.args.tier2_quantile_blend,
             )
+
+        if source == "pd_direct":
+            return self._build_pd_direct_curve(ts)
 
         raise ValueError(f"Unknown source: {source}")
 
@@ -2048,6 +2122,31 @@ def main():
     )
     parser.add_argument("--tft-checkpoint", default="", help="Path to TFT checkpoint for model_a_hybrid")
     parser.add_argument("--tft-scalers", default="", help="Path to matching TFT scalers for model_a_hybrid")
+    parser.add_argument(
+        "--pd-direct-seasonal-end",
+        default="",
+        help=(
+            "Anchor for the pd_direct hour-of-day seasonal fallback table. Use the eval "
+            "start to prevent look-ahead. Empty = use most recent actuals."
+        ),
+    )
+    parser.add_argument(
+        "--pd-direct-seasonal-window-days",
+        type=int,
+        default=28,
+        help="Trailing window for pd_direct seasonal table (default 28 days).",
+    )
+    parser.add_argument(
+        "--pd-direct-pd7day-cap",
+        type=float,
+        default=300.0,
+        help=(
+            "Cap on PD7Day RRP values used as pd_direct fallback for steps beyond "
+            "PREDISPATCH coverage. Raw PD7Day frequently sits at the soft cap "
+            "($980.89) as a spike-risk indicator; capping prevents that masquerading "
+            "as a literal price in the LP."
+        ),
+    )
     parser.add_argument(
         "--tactical-model-dir",
         default=str(DEFAULT_TACTICAL_MODEL_DIR),

@@ -273,7 +273,15 @@ InfluxDB, thresholds set by Phase 6). **Both must pass before Phase 5 sub-tasks 
 
 ### `data/` and `train/` — TFT Price Model (V4, shadow mode)
 
-A TFT price model has been trained and published to HA in shadow mode alongside the APF/LightGBM incumbent. The active production checkpoint is Run 011b (+9.7% vs amber_apf_lgbm baseline); Phase 7 decoder expansion attempts (Run 014, Run 015) failed the holistic eval gate and were not promoted. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
+> **2026-05-05 status.** TFT iteration is paused. A live `--debug-tft` run on 2026-05-05
+> showed Run 011b outputting 30–50% below its own debiased PREDISPATCH input even with the
+> debiaser passive — i.e. the TFT compresses on its own, not just because of the debiaser.
+> The 2026-05-05 `run011b_active_15` retrain was rejected on Window A/B `netload_tariffed`
+> gates. No further TFT training is to be launched until a no-ML "PD-direct" baseline has
+> been measured through the same gates. Full plan in `docs/roadmap.md` (top section,
+> 2026-05-05 Strategic Pivot); structural critique in `docs/tft_price_forecast.md`.
+
+A TFT price model has been trained and published to HA in shadow mode alongside the APF/LightGBM incumbent. The active production checkpoint is Run 011b (+9.7% vs amber_apf_lgbm baseline); Phase 7 decoder expansion attempts (Run 014, Run 015) failed the holistic eval gate and were not promoted; the 2026-05-05 active15 retrain was also rejected. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
 - Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` + time encodings (6) + `rrp_5m_missing` flag (1)

@@ -1,5 +1,12 @@
 # TFT Price Forecast: Design Rationale and Implementation Guide
 
+> **2026-05-05 status banner.** This document describes the TFT price forecast as designed
+> and built. It is **not** a current production endorsement. As of 2026-05-05 the project
+> is paused on TFT iteration and is measuring a no-ML baseline first — see the strategic
+> pivot section at the top of `docs/roadmap.md` and the *Structural Critique (2026-05-05)*
+> section near the end of this file. Run 011b remains the published shadow asset; the
+> APF/LightGBM incumbent remains the production price source.
+
 **Current goal (V4 architecture, April 2026):** Replace Amber/CSIRO APF entirely with a
 three-tier cascaded pipeline: (1) a multi-output LightGBM tactical model (0–60 min, 5-min
 resolution), (2) a TFT strategic model (0–72h, 30-min resolution) using explicitly debiased
@@ -531,3 +538,93 @@ python train/evaluate_tft.py
 All steps are idempotent (overwrite outputs). Typical runtime: actuals export ~5 min, backfill ~2 min (cached), build ~3 min, train ~70 min on CPU (100 epochs), evaluate ~2 min.
 
 **Important:** `data/export_parquet.py` (without `--actuals-only`) overwrites `aemo_predispatch_sa1.parquet` with InfluxDB data only (2025-03+), losing the NEMSEER backfill. Always use `--actuals-only` for routine refreshes. The backfill cache in `data/nemseer_cache/` is gitignored but safe to keep; re-running the backfill is fast (~2 min) because all ZIPs are cached locally.
+
+---
+
+## Structural Critique (2026-05-05)
+
+This section captures why the TFT price-forecast line of work has been paused. It is the
+companion to the strategic-pivot section in `docs/roadmap.md`.
+
+### What the live diagnostic shows
+
+A `forecast.py predict-price --debug-tft` run on 2026-05-05 22:30 local in non-volatile
+conditions:
+
+- **Encoder (last 48h)** — `rrp` median $60.3, max $165.9, last 8 steps $118–129/MWh.
+  Recent prices moderate-to-elevated; not anomalous.
+- **Debiaser** — essentially passive on this slice. Compression ratio 0.84–1.14 for normal
+  values; the headline `+10352%` summary stat is division-by-near-zero noise from daytime
+  negative PD7 entries. On the actual evening peak, raw PD ≈ debiased PD.
+- **Decoder vs TFT q50 for the next ~10h evening peak:**
+
+  | Local | deb_PD (input) | TFT q50 | TFT vs input | Amber APF |
+  |---|---:|---:|---:|---:|
+  | 23:00 | 83 | 72 | -13% | 263 |
+  | 00:00 | 109 | 58 | **-47%** | 277 |
+  | 01:00 | 103 | 57 | -45% | 294 |
+  | 05:30 | 127 | 65 | **-49%** | 294 |
+  | 06:30 | 119 | 67 | -44% | 306 |
+  | 08:00 | 113 | 73 | -36% | 268 |
+
+The TFT outputs 30–50% **below the very PREDISPATCH signal it is being fed**, even when the
+debiaser is innocent. Output trends toward the encoder 48h median (~$60), not the encoder
+recent state (~$120) and not the decoder PD covariate.
+
+### Five structural problems
+
+1. **Validation loss is misaligned with the production task.** active15 won on val loss
+   (`0.0502`) and lost on dispatch (Window B 2-day `4.946/day` vs Amber `6.475/day`).
+   The training objective rewards smoothing and median-regression; dispatch performance
+   is dominated by getting the *shape and timing of peaks* right. Tuning the val-loss knob
+   does not move the dispatch knob.
+2. **The model learned to over-discount its own input.** In training, raw PREDISPATCH
+   often overshot, so the model learned a discount. The debiaser was added upstream to
+   remove that bias. The TFT still applies a learned discount on top, because the
+   architecture has no "this input is already calibrated" signal. `predispatch_active` —
+   tested in active15 — is not enough on its own.
+3. **PD7Day is a categorical signal smuggled in as continuous.** $980.89 is not a price
+   prediction; it is "AEMO can't rule out a spike". Folding this into `pd_rrp` confuses the
+   model and pollutes the training distribution of the very feature SHAP says matters most.
+4. **TFT is the wrong shape of model for this problem.** TFT shines when decoder
+   covariates are known with certainty (calendar, weather forecast treated as ground
+   truth). Here, the decoder covariates are themselves *forecasts of the target*. A model
+   that takes "AEMO's forecast of price" and outputs "price" is really learning *AEMO's
+   forecast error distribution* — a much lower-SNR problem than what TFT is designed for.
+   The fact that this hasn't worked across Run 011b, Run 014/015, and active15 is
+   consistent with the architecture itself being mismatched.
+5. **Yesterday's "double-compression" framing was incomplete.** When the encoder showed
+   low recent prices (2026-05-04 run), the debiaser was aggressive (mean ratio 0.16, +84%
+   compression) and stacked with TFT discount. That is real, but it is not the only mode
+   of failure: tonight's run shows the TFT compresses the same 30–50% with the debiaser
+   passive. The TFT itself is the dominant problem.
+
+### Why the previous "fixes" did not generalise
+
+- Spike-trigger shaping, first-action imitation, heuristic overlays — all attempted to
+  treat symptoms (q50 too low at peak time) without addressing the structural fact that
+  the model has no incentive in its loss function to follow the PD covariate when doing so
+  hurts MSE/wMAPE on the median.
+- Replacing `covar_missing` with `predispatch_active` (active15) only added an
+  identification flag; it did not change what the model is *allowed* to output. The model
+  could still collapse output toward the encoder median, and it did.
+
+### Implication for next work
+
+The work has been re-sequenced into three phases (full text in `docs/roadmap.md`):
+
+- **Phase α — measure a no-ML baseline first.** Stitch Tier 1 LGBM (0–60 min) +
+  debiased PREDISPATCH (60 min – 30h) + smoothed PD7Day (30h–7d), with empirical residual
+  quantile bands. Run it through the same Window A/B `netload_tariffed` gates that
+  rejected active15. The result anchors every future decision: if the baseline matches or
+  beats Run 011b TFT, the TFT line is over.
+- **Phase β — residual learning, only if α justifies more ML.** Reframe the target as
+  `actual_RRP − debiased_PD`. Remove PD from the decoder in absolute form. The model can
+  only contribute deviation from AEMO. This is the smallest architectural change that
+  fixes the "model over-discounts its own input" failure mode.
+- **Phase γ — production switchability** (HA source selectors, side-by-side comparison),
+  in parallel with α.
+
+The MPC eval framework, tariffed gates, Window A/B slices, stratified evaluation, and the
+`--debug-tft` diagnostic survive this pivot — they grade *any* forecast and remain the
+gates anything new must pass.

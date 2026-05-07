@@ -131,10 +131,37 @@ CREATE CONTINUOUS QUERY cq_dump_load_raw_to_5m ON hass BEGIN SELECT mean(value) 
 CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_value) AS mean_value, min(min_value) AS min_value, max(max_value) AS max_value INTO hass.rp_30m.power_dump_load_30m FROM hass.rp_5m.power_dump_load_5m GROUP BY time(30m), entity_id END
 ```
 
-## Future Work
--   **Holistic dispatch simulation (Phase 6):** Backtest full pipeline profit vs baselines using actual load, PV, and prices from InfluxDB.
--   **Test framework (Phase 8):** Regression tests against canned fixtures — code correctness gate before model promotion.
--   **Event-driven service (Phase 7):** Replace systemd timers with a persistent process using HA WebSocket subscriptions; eliminates model cold-start overhead (~30s/run).
+## Status and Next Work
+
+**2026-05-05.** Production price source is the APF/LightGBM incumbent. A TFT shadow
+forecast (Run 011b) is published alongside it but is currently **not** the production
+endpoint — diagnostic work shows it systematically compresses peaks, and recent retrain
+attempts (Run 014/015, active15) failed the dispatch-gate eval. The active goal is best
+economic dispatch performance **without** depending on proprietary inputs (Amber APF), with
+"consistently beat Amber APF across scenarios" as the milestone.
+
+The full plan and abandonment list live in `docs/roadmap.md` (top section, *2026-05-05
+Strategic Pivot*). Live status is `HANDOVER.md`. Structural critique of the TFT line is in
+`docs/tft_price_forecast.md`.
+
+Near-term work, in order:
+
+-   **Phase α — No-ML baseline ("PD-direct"):** Tier 1 LGBM (0–60 min) + debiased
+    PREDISPATCH (60 min – 30h) + smoothed PD7Day (30h–7d), with empirical residual
+    quantile bands. Evaluated through the same Window A/B `netload_tariffed` gates that
+    rejected active15. Decision rule: if it matches Run 011b TFT, ship it.
+-   **Phase β — Residual learning** (only if α justifies more ML): retrain with target
+    `actual_RRP − debiased_PD`, PD removed from decoder in absolute form.
+-   **Phase γ — Production switchability:** finish the HA `input_select.emhass_mpc_price_source`
+    wiring so any winning forecast can be promoted with one click and rolled back fast.
+
+Older infrastructure work that remains relevant regardless of which forecast wins:
+
+-   **Holistic dispatch simulation (Phase 6):** the eval framework (`rolling_mpc_eval.py`,
+    Window A/B tariffed gates, Amber yardstick) is what grades all of the above.
+-   **Test framework (Phase 8):** regression tests against canned fixtures.
+-   **Event-driven service (Phase 7):** replace systemd timers with a persistent process
+    using HA WebSocket subscriptions.
 
 ## Acknowledgements
 The initial version of the core `forecast.py` script was generated with assistance from Google's Gemini.
