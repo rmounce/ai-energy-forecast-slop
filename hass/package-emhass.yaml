@@ -4,6 +4,11 @@ input_select:
     options:
       - amber
       - ai_shadow
+      # 2026-05-07 — Phase α-prime Step 2. PD-direct option declared so it can be
+      # selected; until the BUY/SELL template branches below are wired (search for
+      # "PD-DIRECT TODO"), selecting this falls through to the Amber legacy path
+      # (safe default — no production behaviour change).
+      - ai_pd_direct
     initial: amber
 
   emhass_dh_price_source:
@@ -11,6 +16,7 @@ input_select:
     options:
       - amber_lgbm_extrapolated
       - ai_shadow
+      - ai_pd_direct
     initial: amber_lgbm_extrapolated
 
 template:
@@ -366,6 +372,16 @@ rest_command:
         {%- set ai_prod_forecasts = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
         {%- set use_ai_dh_prices = is_state('input_select.emhass_dh_price_source', 'ai_shadow') and ai_load_forecasts | count >= 144 and ai_prod_forecasts | count >= 144 %}
 
+        {#- PD-DIRECT TODO (2026-05-07): mirror the use_ai_dh_prices block by adding
+            a parallel set of bindings reading from `sensor.ai_pd_direct_dh_import_price_forecast`
+            and `sensor.ai_pd_direct_dh_export_price_forecast`, plus a `use_ai_pd_direct_dh_prices`
+            check against `is_state('input_select.emhass_dh_price_source', 'ai_pd_direct')`.
+            Restructure the `{%- if use_ai_dh_prices %}` ladder below into
+            `{%- if use_ai_pd_direct_dh_prices %} ... {%- elif use_ai_dh_prices %} ... {%- else %} ...`
+            so all three sources are reachable. The PD-direct entity payload schema is
+            identical to ai_dh — same `forecast` attribute with `{datetime, native_value}`
+            items, same UTC, same positive import/export convention. -#}
+
         {%- if use_ai_dh_prices %}
           {#- Canonical AI source: positive import cost, positive export revenue, UTC timestamps. #}
           {%- set loop_len = [ai_load_forecasts | count, ai_prod_forecasts | count, 144] | min %}
@@ -701,6 +717,14 @@ rest_command:
         {%- set ai_mpc_import_forecasts = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
         {%- set ai_mpc_export_forecasts = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
         {%- set use_ai_mpc_prices = is_state('input_select.emhass_mpc_price_source', 'ai_shadow') and ai_mpc_import_forecasts | count >= 168 and ai_mpc_export_forecasts | count >= 168 %}
+
+        {#- PD-DIRECT TODO (2026-05-07): mirror the use_ai_mpc_prices binding by adding
+            a parallel pair reading from `sensor.ai_pd_direct_mpc_import_price_forecast`
+            and `sensor.ai_pd_direct_mpc_export_price_forecast`, plus a
+            `use_ai_pd_direct_mpc_prices` check against `is_state(..., 'ai_pd_direct')`.
+            Restructure both the BUY loop and the SELL loop below as
+            `{%- if use_ai_pd_direct_mpc_prices %} ... {%- elif use_ai_mpc_prices %} ... {%- else %} ...`.
+            Same payload schema as ai_mpc — no schema changes required, just routing. -#}
 
         {#- Loop for BUY price forecast #}
         {%- if use_ai_mpc_prices %}
