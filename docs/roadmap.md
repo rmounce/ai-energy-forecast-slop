@@ -1,9 +1,217 @@
 # Pipeline Roadmap
 
-**Last updated: 2026-05-03**
+**Last updated: 2026-05-05**
 
 Full architecture: `ARCHITECTURE.md`. Model design rationale: `docs/tft_price_forecast.md`.
 Data sources: `docs/data_sources.md`. Load TFT: `docs/tft_load_forecast.md`.
+
+---
+
+## 2026-05-05 — Strategic Pivot: Baseline-First, Beat Amber APF
+
+This section supersedes the active near-term plan. Older sections are preserved below as the
+historical evolution.
+
+### Goal (re-stated)
+
+Best economic performance (battery dispatch PnL) achievable **without** depending on
+proprietary data sources. Amber APF is allowed as a yardstick to beat, not as an input.
+**Consistently beating Amber APF across different scenarios is the milestone.** The user
+makes the call on when the result is satisfactory.
+
+### Why we are stepping back
+
+A live `--debug-tft` run on 2026-05-05 in non-volatile conditions revealed a structural
+problem that is not addressable by another retrain or feature swap:
+
+- Encoder shows recent prices ~$120/MWh, last RRP $118.
+- Debiased PREDISPATCH for the next 10h sits in $83–135/MWh (debiaser ratio ≈ 1.0; it is
+  essentially passive on this slice).
+- Run 011b TFT q50 outputs $58–94/MWh — 30–50% **below its own debiased PD input**, even
+  though the debiaser is not compressing.
+- Amber APF for the same window is $263–298/MWh.
+
+The TFT is regressing toward the 48h encoder median (~$60), not following its strongest
+covariate. This pattern is consistent across Run 011b production, Run 014/015 attempts,
+and the 2026-05-05 active15 retrain — better validation loss does not produce better
+dispatch. Yesterday's "double-compression" hypothesis was incomplete: even with the
+debiaser passive, the TFT compresses on its own.
+
+The full critique is in `docs/tft_price_forecast.md` under "Structural Critique
+(2026-05-05)".
+
+### Concrete abandonment / pause list
+
+| Item | State | Reason |
+|---|---|---|
+| `run011b_active_15` retrain (active15) | **Abandoned** | Worse than LGBM on all stratified horizons; Window B 2-day/7-day materially below Amber. Artifacts kept under `checkpoint_best.pt` / `scalers.pkl` for forensic reference only. Production stays on `checkpoint_active.pt` (Run 011b). |
+| Further blind TFT retrains | **Paused** | No retrain to be launched until the baseline below has been measured *and* there is a written hypothesis explaining why a lower validation loss should this time produce better dispatch. |
+| Direction-model / sidecar gate / state-value branches | **Parked (tools retained)** | Cross-window transfer showed weak ranking signal (`grid_exchange_down` AUC 0.74–0.80) but isotonic calibration did not transfer and short MPC smokes drained inventory. Useful as a diagnostic lens, not a production policy. The MPC eval framework, tariffed gates, Window A/B slices remain valuable for evaluating any new approach. |
+| Phase 7 decoder expansion (Runs 014/015) | **Closed** | Failed holistic eval gate previously; superseded by the structural critique. |
+| `covar_missing` ↔ `predispatch_active` swap | **Closed** | Tested in active15. Negative result. |
+| First-action imitation, spike-trigger shaping, broad heuristic overlays | **Closed** | Already falsified or exhausted in earlier branches; the structural critique reinforces that these were treating symptoms. |
+
+### What we are keeping
+
+- **Run 011b TFT shadow** stays published as `sensor.ai_tft_price_forecast` while the
+  baseline work proceeds. It remains the best-known TFT asset, but it is no longer the
+  expected production endpoint.
+- **APF/LightGBM incumbent** stays as the production price source for EMHASS/dispatch.
+- **Tier 1 tactical LightGBM** (0–60 min, 5-min) stays — it is the only place where
+  short-horizon market state is being captured well, and it is a usable component of the
+  proposed baseline stack below.
+- **Production HA wiring**: source selectors (`input_select.emhass_mpc_price_source`,
+  `input_select.emhass_dh_price_source`) and canonical AI sensors stay. The DH selector is
+  already live; the MPC selector remains the next deployable piece. None of this depends on
+  the TFT being good.
+- **Eval framework**: `rolling_mpc_eval.py`, the Window A/B tariffed gates, stratified
+  evaluation, the Amber yardstick, the `--debug-tft` diagnostic. All of these grade *any*
+  forecast, not just TFT.
+
+### Plan forward
+
+Three phases, in order. Each phase has a clear go/no-go before the next.
+
+#### Phase α — No-ML baseline ("PD-direct")
+
+Build a deterministic forecast that uses no ML beyond what we already trust:
+
+1. **0–60 min**: existing Tier 1 tactical LightGBM (already production-quality on its
+   horizon).
+2. **60 min – 30h**: debiased PREDISPATCH directly as the q50 point forecast. Quantile bands
+   from the empirical distribution of historical (actual_RRP − debiased_PD) residuals,
+   stratified by hour-of-day and absolute PD level.
+3. **30h – 7d**: PD7Day, smoothed and seasonal-blended; same residual-band approach.
+
+Then evaluate this through the **same** Window A/B tariffed `netload_tariffed` gates that
+graded active15.
+
+**Decision rule:**
+
+- If PD-direct ≥ Run 011b TFT on Window B 2-day and 7-day, and at least matches on Window A:
+  retire the TFT and ship PD-direct as the production price source.
+- If PD-direct beats Amber APF on most slices: that is the milestone, and is the new
+  defensible production stack.
+- If PD-direct underperforms Run 011b TFT consistently, that is direct evidence the TFT
+  *is* adding value above PREDISPATCH, and Phase β becomes the next move.
+
+This phase is cheap (a few hundred lines, no GPU, no training data rebuild) and is also
+useful as a permanent reference baseline regardless of outcome.
+
+##### Phase α result (2026-05-06)
+
+Phase α completed. Four-way comparison on `netload_tariffed` gates (mixed reruns; Amber
+baseline drifted by `~0.01/day` between files — methodology gap noted by reviewer):
+
+| Window | Amber | **PD-direct** | **Run 011b TFT** | active15 TFT |
+|---|---:|---:|---:|---:|
+| WB 2-day | 6.475 | 5.583 | **5.916** | 4.946 |
+| WB 7-day | 1.634 | **1.341** | 1.043 | 0.879 |
+| WA 7-day | -1.119 | **-1.258** | -1.355 | -0.939 (depleted SoC) |
+
+**Reading:** PD-direct beats active15 cleanly on every window; beats Run 011b on 2 of 3
+(loses WB2 by 6%, wins WB7 by 29%, wins WA7 marginally); loses to Amber on every window
+(milestone not hit). Run 011b's WB2 advantage is partly unrealised inventory carryover
+(final SoC 24.33 kWh vs Amber 11.34 kWh).
+
+Decision: Run 011b TFT does not earn its existence on these gates, but should not be
+retired until PD-direct has a production-compatible HA shadow entity and a reversible
+source-selector switch. Phase β (residual learner) is not justified — adding more ML
+before improving the baseline is the wrong sequencing.
+
+#### Phase α-prime — Reviewer-integrated next iteration (live as of 2026-05-07)
+
+Reordered to put operational moves before model tuning, per the 2026-05-07 reviewer
+reaction (logged in the corresponding `HANDOVER.md`).
+
+**Step 1 — Clean three-way same-run matrix + shoulder week.** Single launcher, single
+config, three sources (`amber_apf_lgbm`, `pd_direct`, `model_a_hybrid`) on the existing
+WB2/WB7/WA7 windows plus a 3-day shoulder slice (2025-10-15 → 10-18, moderate-PV, no
+known headline spike). This is the gate for "consider retiring Run 011b shadow".
+
+**Step 2 — PD-direct production switchability.** `forecast.py` learns to publish a
+`pd_direct` forecast as a new family of shadow HA entities (`sensor.ai_pd_direct_*`);
+`hass/package-emhass.yaml` exposes `ai_pd_direct` as a third option in each source
+selector (default unchanged). Six entities for full parity with the existing `ai_shadow`
+family; parallel status sensors for stale-data safety. Live inference uses the existing
+final-model debiaser (`models/pd_debiaser/lgbm_final.pkl` via `_apply_pd_debiaser`); the
+eval-vs-live delta is expected and documented. Detailed design and resolved decisions
+are in `docs/pd_direct_publish_rfc.md`. This is the bar the reviewer set for retirement:
+until PD-direct is switchable in production, the TFT shadow keeps publishing. Runs in
+parallel with Step 1.
+
+**Step 3 — Horizon-stratified residual bands for PD-direct.** Build from
+`(actual_RRP − debiased_PD)` history with strata:
+
+- **Horizon bucket** (essential): `1–6h`, `6–14h`, `14–30h`, `30h+`. A 90-min residual and
+  a 26-hour residual are different objects — do not pool them.
+- Half-hour slot (UTC).
+- Absolute debiased-PD level bucket (`<0`, `0–60`, `60–150`, `150–300`, `>300`).
+- Optional weekday/weekend split if data supports.
+
+Quantile choices: **q20/q80 first, q10/q90 if too narrow.** Not q05/q95. Cap absolute
+residual magnitude. Add a monotonicity guard so `buy ≤ q50 ≤ sell` always holds.
+
+Validate on held-out months *before* wiring into the LP via `--buy-curve-quantile-blend` /
+`--sell-curve-quantile-blend`. If bands only help the windows used to choose strata, they
+are not a production candidate.
+
+**Step 4 — PD7Day/HoD fallback blend.** Replace the current hard `$300` cap + pure HoD
+seasonal mean with a horizon-dependent blend (e.g. `0.7·debiased_PD + 0.3·PD7Day_capped`
+in the PREDISPATCH→PD7Day handoff zone, blended toward HoD-mean with a recent-regime
+level adjustment beyond). Goal: sane inventory posture for the 14h LP and 72h DH, **not**
+minute-perfect price shape.
+
+**Step 5 — Phase β escalation.** Only if Steps 3+4 fail to close the Amber gap. The
+one-page hypothesis is written *after* Steps 3+4, not before, so it can incorporate what
+those steps revealed.
+
+**Killed/deferred (per reviewer):** broad q05/q95 widening without horizon buckets; any
+TFT retrain before PD-direct is exhausted; immediate retirement of
+`sensor.ai_tft_price_forecast` before Step 2 lands.
+
+#### Phase β — Residual learner (only if α-prime fails to close the gap)
+
+If Phase α shows that ML on top of PREDISPATCH adds real dispatch value, retrain a small
+model with the target reframed as `actual_RRP − debiased_PD` (a residual), not absolute
+price. Decoder retains demand/weather/calendar but **does not contain PD in absolute form**.
+The published forecast is `debiased_PD + predicted_residual`.
+
+This directly addresses the "model learned to over-discount its own input" failure mode,
+because the model can no longer collapse output toward the encoder median — its only degree
+of freedom is the deviation from AEMO. Model class is open: a smaller residual-target TFT,
+LightGBM with the same target, or N-BEATS-style residual decoder are all candidates.
+
+Do not start Phase β until Phase α is measured **and** a one-page hypothesis is written
+explaining why this time validation loss should track dispatch performance.
+
+#### Phase γ — Production switchability and HA visibility
+
+Independent of α/β, finish the work the previous handover identified as the user's
+near-term priority:
+
+- Wire the MPC source selector (`input_select.emhass_mpc_price_source`) end-to-end, default
+  Amber, with one-click switch to whichever forecast wins Phase α/β.
+- Make Run 011b TFT, PD-direct, and Amber APF easy to compare side-by-side as published HA
+  entities — even before any of them is the chosen MPC input.
+- Preserve fast rollback to the existing Amber stack at all times.
+
+Phase γ work is allowed to proceed in parallel with α; it does not depend on which
+forecast wins.
+
+### Explicit non-goals
+
+- Any new TFT training run before Phase α is measured.
+- Any further sidecar-gate / direction-model dispatch hooks.
+- Any optimisation against Amber APF as an input — Amber APF is a yardstick, not a feature.
+- Documentation of "ideas to revisit" inside this section. Speculative items go in
+  `docs/ideas.md`; the historical sections below are kept as evolution, not as live plans.
+
+### Pointer to live status
+
+The single source of truth for "where we are right now" is `HANDOVER.md` at the repo root.
+That file should always either point at this section or describe the active deviation from
+it.
 
 ---
 
@@ -107,6 +315,10 @@ work is integration hardening, observability, and safe switching.
 See also: `docs/production_forecast_switch_plan.md` and `docs/conventions.md`.
 
 ## Current Model Checkpoint: Active15 Retrain Rejected
+
+> **2026-05-05 update:** the conclusions in this section still stand, but the broader
+> implication is now captured in the *Strategic Pivot* section above. No further TFT
+> retrains are planned until Phase α (no-ML baseline) has been measured.
 
 The 2026-05-05 `run011b_active_15` TFT retrain tested the narrowest handover hypothesis:
 keep the Run 011b 15-feature decoder width but replace `covar_missing` with

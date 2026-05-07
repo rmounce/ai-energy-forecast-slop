@@ -105,6 +105,32 @@ proxy and much simpler to debug.
 
 ## Price Forecasting
 
+### PD-direct baseline (Phase α — promoted from idea to active plan, 2026-05-05)
+
+A no-ML forecast stitched from components we already trust:
+
+- 0–60 min: existing Tier 1 tactical LightGBM.
+- 60 min – 30h: debiased PREDISPATCH directly as the q50 point forecast.
+- 30h – 7d: PD7Day, smoothed and seasonal-blended.
+- Quantile bands: empirical distribution of historical (`actual_RRP − debiased_PD`)
+  residuals, stratified by hour-of-day and absolute PD level.
+
+This is now the active near-term plan, not just a speculative idea. Tracked in
+`docs/roadmap.md` *Strategic Pivot* section. Listed here so it stays visible as a candidate
+even after Phase α completes — if it ships, it is also the natural fallback baseline for
+every future ML experiment.
+
+### Residual-target reframing (Phase β — candidate)
+
+Train any future price model on target `actual_RRP − debiased_PD`, with PD removed from
+the decoder in absolute form. Published forecast is `debiased_PD + predicted_residual`.
+The model can only contribute deviation from AEMO, which is the only thing it can
+plausibly add. Directly addresses the failure mode observed on 2026-05-05 where the TFT
+collapsed output toward the encoder median despite a strong debiased PD signal in the
+decoder. Open on model class — small TFT, LightGBM, or N-BEATS-style residual decoder are
+all candidates. **Do not start until Phase α is measured and a one-page hypothesis is
+written explaining why this time validation loss should track dispatch performance.**
+
 ### ~~Temporal sample weighting~~ ✅ Done
 
 Event-stratified importance weighting implemented: exponential decay (half-life ~90 days)
