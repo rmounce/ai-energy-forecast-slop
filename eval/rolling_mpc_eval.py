@@ -511,7 +511,10 @@ class SourceContract:
     strategic_source: str
 
 
-VALID_BASE_SOURCES = {"p5min_naive", "amber_apf_lgbm", "model_a_hybrid", "pd_direct"}
+VALID_BASE_SOURCES = {
+    "p5min_naive", "amber_apf_lgbm", "model_a_hybrid", "pd_direct",
+    "pd_direct_tft_tail",
+}
 
 COUNTERFACTUAL_SOURCE_ALIASES = {
     "hybrid_tactical_amber_strategic": SourceContract(
@@ -967,6 +970,38 @@ class ForecastProviders:
             out = pd_curve.reindex(idx).ffill().bfill().values.astype(np.float64)
             return self._finalize_curve(source, out, current_actual, expected_steps=STRATEGIC_HORIZON_5M_STEPS)
 
+        if source == "pd_direct_tft_tail":
+            # Phase α-prime Step 5b: PD-direct near-term + TFT q50 tail, with a
+            # 2-hour linear crossfade centred at the ~28h PREDISPATCH→PD7Day
+            # boundary (5-min step 336). The 14h LP curve is unchanged from
+            # pd_direct (build_forecast_curve), since 14h is well before the
+            # crossfade window. This is the falsification probe for "does TFT's
+            # smoother tail repair PD-direct's WA7 SoC depletion?".
+            pd_curve = self.pd_direct_expanded(ts, STRATEGIC_HORIZON_5M_STEPS)
+            tft_curve = self.tft_quantile_expanded(ts, quantile)
+            if pd_curve is None or tft_curve is None:
+                return None
+            pd_arr = pd_curve.reindex(idx).ffill().bfill().to_numpy(dtype=np.float64)
+            tft_arr = tft_curve.reindex(idx).ffill().bfill().to_numpy(dtype=np.float64)
+
+            boundary_step = 56 * 6  # 30-min step 56 → 5-min step 336 (=28h)
+            half_window = 12        # 1h × 12 5-min steps each side → 2h total
+            fade_start = max(0, boundary_step - half_window)
+            fade_end = min(STRATEGIC_HORIZON_5M_STEPS, boundary_step + half_window)
+            weights = np.empty(STRATEGIC_HORIZON_5M_STEPS, dtype=np.float64)
+            weights[:fade_start] = 0.0
+            weights[fade_end:] = 1.0
+            fade_width = fade_end - fade_start
+            if fade_width > 0:
+                weights[fade_start:fade_end] = np.linspace(
+                    0.0, 1.0, fade_width, endpoint=False
+                )
+            out = (1.0 - weights) * pd_arr + weights * tft_arr
+            return self._finalize_curve(
+                source, out, current_actual,
+                expected_steps=STRATEGIC_HORIZON_5M_STEPS,
+            )
+
         return None
 
     def strategic_solve_summary(
@@ -1038,6 +1073,11 @@ class ForecastProviders:
         if source == "pd_direct":
             return self._build_pd_direct_curve(ts)
 
+        if source == "pd_direct_tft_tail":
+            # 14h LP horizon < 28h crossfade boundary, so the forecast curve is
+            # identical to pd_direct (Step 5b is a strategic-tail change only).
+            return self._build_pd_direct_curve(ts)
+
         raise ValueError(f"Unknown source: {source}")
 
     def build_effective_netload_curves(
@@ -1049,7 +1089,7 @@ class ForecastProviders:
         if base_curve is None:
             return None
         if (
-            source not in {"model_a_hybrid", "pd_direct"}
+            source not in {"model_a_hybrid", "pd_direct", "pd_direct_tft_tail"}
             or source not in self.args.split_curve_tactical_sources
             or (
                 self.args.buy_curve_quantile_blend == 0.0
@@ -1057,7 +1097,14 @@ class ForecastProviders:
             )
         ):
             return base_curve, base_curve.copy(), base_curve.copy()
-        if source == "pd_direct":
+        if source in {"pd_direct", "pd_direct_tft_tail"}:
+            # Step 5b note: pd_direct_tft_tail's 14h LP curve is identical to
+            # pd_direct (forecast curve diverges only beyond 28h, which is the
+            # strategic-curve regime). The buy/sell band path therefore reuses
+            # pd_direct's residual bands; if the user passes
+            # --split-curve-tactical-sources pd_direct_tft_tail, this gives a
+            # one-variable ablation against pd_direct under the same tightatten
+            # band+attenuation knobs.
             buy_curve = self._build_pd_direct_curve(
                 ts,
                 band_side="lower",
@@ -2703,11 +2750,16 @@ def main():
     ):
         parser.error("Dynamic bridge options require --strategic-soc-handoff")
 
+    tft_requiring_sources = {"model_a_hybrid", "pd_direct_tft_tail"}
     if any(
-        "model_a_hybrid" in (contract.tactical_source, contract.strategic_source)
+        contract.tactical_source in tft_requiring_sources
+        or contract.strategic_source in tft_requiring_sources
         for contract in source_contracts
     ) and (not args.tft_checkpoint or not args.tft_scalers):
-        parser.error("model_a_hybrid requires --tft-checkpoint and --tft-scalers")
+        parser.error(
+            f"Sources {sorted(tft_requiring_sources)} require --tft-checkpoint "
+            f"and --tft-scalers"
+        )
     if baseline_source not in source_names:
         parser.error("--baseline-source must be one of --sources")
 
