@@ -283,6 +283,7 @@
         "prediction_output_file": "predictions.json",
         "price_forecast_log_file": "price_forecast_log.csv",
         "tft_price_forecast_log_file": "tft_price_forecast_log.csv",
+        "pd_direct_forecast_log_file": "pd_direct_forecast_log.csv",
         "p5min_forecast_log_file": "p5min_forecast_log.csv",
         "load_forecast_log_file": "load_forecast_log.csv",
         "tft_price_model": "models/tft_price/checkpoint_active.pt",

@@ -701,6 +701,9 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
     # Determine the base name for finding the log file (e.g., 'price' from 'price_p30')
     if model_name.startswith('tft_'):
         log_file_path = Path(CONFIG['paths'].get('tft_price_forecast_log_file', 'tft_forecast_log.csv'))
+    elif model_name.startswith('pd_direct'):
+        log_file_path = Path(CONFIG['paths'].get(
+            'pd_direct_forecast_log_file', 'pd_direct_forecast_log.csv'))
     else:
         base_model_name = model_name.split('_')[0]
         log_file_path = Path(CONFIG['paths'][f'{base_model_name}_forecast_log_file'])
@@ -2709,6 +2712,27 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 )
             except Exception as e:
                 logging.error(f"FATAL ERROR in PD-direct publish: {e}", exc_info=True)
+
+        # Always log PD-direct q50 forecasts (independent of publish_hass) so the
+        # shadow-and-compare analysis can compute forecast quality + what-if dispatch
+        # against realised prices over time. Mirrors the TFT/Tier-1 forecast logs.
+        if pd_direct_results and 'pd_direct_price' in pd_direct_results:
+            try:
+                # apply_tariffs_to_forecast mutates in place; copy first so the live
+                # publish path's tariff-applied frame isn't double-tariffed by the log.
+                pdd_log_df = pd_direct_results['pd_direct_price'].copy()
+                if 'wholesale_price' not in pdd_log_df.columns:
+                    pdd_log_df.rename(
+                        columns={pdd_log_df.columns[0]: 'wholesale_price'},
+                        inplace=True,
+                    )
+                apply_tariffs_to_forecast(pdd_log_df)
+                log_forecast_data(
+                    'pd_direct_price', 'phase_alpha_prime_step4',
+                    'pd_direct', pdd_log_df, original_covariates_for_log,
+                )
+            except Exception as e:
+                logging.error(f"FATAL ERROR in PD-direct log: {e}", exc_info=True)
 
     if 'load' in models_to_run:
         try:
