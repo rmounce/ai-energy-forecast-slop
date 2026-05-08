@@ -714,6 +714,8 @@ class ForecastProviders:
             residual_bands_path=Path(args.pd_direct_residual_bands)
             if getattr(args, "pd_direct_residual_bands", "")
             else None,
+            regime_window_days=int(getattr(args, "pd_direct_tail_regime_window_days", 0)),
+            regime_offset_cap_mwh=float(getattr(args, "pd_direct_tail_regime_cap_mwh", 150.0)),
         )
 
         self._tier1_cache: dict[tuple[pd.Timestamp, float], pd.Series] = {}
@@ -2262,6 +2264,29 @@ def main():
         help=(
             "Phase α-prime Step 4b: forecast amplitude at which bands are fully on. "
             "Recommended starting value: 150."
+        ),
+    )
+    parser.add_argument(
+        "--pd-direct-tail-regime-window-days",
+        type=int,
+        default=0,
+        help=(
+            "Phase α-prime Step 4 (regime adjust). Trailing days of actuals used to "
+            "compute the recent_median for the seasonal-HoD tail offset. Setting to 0 "
+            "disables the offset (default; preserves Step 3 reproducibility). "
+            "Recommended value: 7. The offset = recent_median − seasonal_overall_mean is "
+            "added to every HoD slot, so the 30h+ strategic-curve tail tracks current "
+            "price level instead of long-run mean. Targets WA7 SoC depletion."
+        ),
+    )
+    parser.add_argument(
+        "--pd-direct-tail-regime-cap-mwh",
+        type=float,
+        default=150.0,
+        help=(
+            "Phase α-prime Step 4 (regime adjust). Cap on the absolute regime offset "
+            "to protect against pathological windows (e.g. a single market-cap event "
+            "in the trailing window). Default 150."
         ),
     )
     parser.add_argument(

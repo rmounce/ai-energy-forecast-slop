@@ -1940,7 +1940,14 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
 
         # ── 4. Build the layered q50 strategic curve in $/MWh
         residual_bands_path = RESIDUAL_BANDS_PARQUET if RESIDUAL_BANDS_PARQUET.exists() else None
-        ctx = load_pd_direct_context(residual_bands_path=residual_bands_path)  # seasonal HoD + bands
+        # Phase α-prime Step 4 regime adjust: 7-day trailing window for the recent-regime
+        # offset on the HoD seasonal tail. Enabled live so the published shadow tracks
+        # current price level — eval validation lands the same tail behaviour.
+        ctx = load_pd_direct_context(
+            residual_bands_path=residual_bands_path,
+            regime_window_days=7,
+            regime_offset_cap_mwh=150.0,
+        )
         out = pd.Series(index=fut.index, dtype=np.float64)
 
         # Layer 1: debiased PREDISPATCH wherever available (typically steps 0–55)
