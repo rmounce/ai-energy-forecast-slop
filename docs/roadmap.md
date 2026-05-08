@@ -333,6 +333,80 @@ foot-gun. Triplet sensors (`sensor.ai_tft_price_forecast` etc.) keep publishing 
 dashboard use. Re-add as a control option only with a deliberate decision to make
 that path controllable.
 
+##### TFT shadow sunset — paused 2026-05-09
+
+Pause introduced after the 2026-05-09 architectural-rethink reviewer call (logged
+below). The sunset itself is not removed — the calendar review on 2026-06-05 still
+happens — but a fourth retire-or-keep criterion is added:
+
+- **Did TFT tail shape prove useful as a component or diagnostic?** This is now a
+  load-bearing question because the architectural rethink is investigating whether
+  TFT's PD7Day-tail smoothing is dispatch-relevant in a way the structural critique
+  missed. If the no-training hybrid-tail probe (Step 5b below) shows TFT tail has
+  measurable component value, retirement is deferred until that question is fully
+  resolved.
+
+The other sunset triggers (calendar, events, operational) remain active. Default
+action at the 2026-06-05 review still = retire unless evidence says keep.
+
+##### Phase α-prime Step 5 — Architectural rethink (2026-05-09 reviewer reframe)
+
+The user surfaced a visual-shape observation 2026-05-09 that exposed a gap in the
+evaluation framework: "TFT gave an unrealistically shaped forecast in the near term,
+but seemed more plausible when debiasing PD7Day. PD-direct is mostly passing through
+quite a biased / noisy PD7Day forecast." Empirically confirmed: 41% of PD7Day-zone
+steps in PD-direct's published forecast are pinned at the $300 cap, producing
+non-physical step-functions in the back half.
+
+The reviewer's reframe (HANDOVER 2026-05-09, preserved in commit history): **the
+first missing artefact is not a model, it's a metric/diagnostic that says when a
+forecast curve is structurally pathological**. The dispatch eval's averaging
+behaviour can hide forecast-shape pathology because the LP extracts whatever spread
+is there regardless of physical plausibility. The repo needs an explicit
+forecast-shape gate alongside `netload_tariffed`.
+
+Revised work ordering (replaces the previous Step 4 follow-up framing):
+
+**5a — Forecast shape diagnostics** (active, this commit). Compute per-source
+per-horizon-bucket: cap-hit rate, step-to-step abs change, direction-flip count,
+local extrema count, splice jump at PREDISPATCH→tail boundary, tail spread. Join to
+existing eval outputs (final SoC, strategic target, terminal shadow, PnL) so we can
+test whether shape pathology correlates with dispatch failure. If it does not
+correlate, the user's visual concern is interesting but not load-bearing for
+production. If it does, shape becomes decision-relevant evidence.
+
+**5b — No-training hybrid-tail probe.** PD-direct near-term + TFT tail (blended at a
+2–4h transition window, with splice-jump metric). Evaluated on the four-window
+matrix with shape-metric overlay. Falsifies "TFT tail is good where PD-direct's PD7Day
+cap-tail fails" — if it improves WA7 SoC without destroying WB2/WB7, the architectural
+question changes materially.
+
+**5c — PD7Day cap-materialisation analysis.** For each PD7Day cap-flagged interval
+in history, what fraction become actual `>$150` / `>$300` / `>$500`, by horizon and
+hour? This determines whether a router/classifier or a regression debiaser is the
+appropriate model class if 5b shows tail shape matters.
+
+**5d — Architecture decision (only after 5a/5b/5c).** Possible outcomes ranked:
+- TFT-tail splice as a production-safe smoothed-tail component (if 5b clearly wins)
+- Cap-materialisation classifier + tail level/shape generator (if 5c shows the cap
+  is structured)
+- Phase β-light (PD7Day-only residual learner) (if shape is learnable from richer
+  context than a pure debiaser)
+- A simple PD7Day debiaser (if other options fail and de-capping baselines beat it)
+- No architecture change: keep PD-direct shadow, document the tail-shape defect, do
+  not promote to control default
+
+Reviewer's explicit pushback on the previous A/B/C framing: the model-centric option
+list was premature. Build the diagnostic first.
+
+**Rejected as starting points** (per reviewer):
+- A dedicated PD7Day debiaser as the first move — training data thin (~3 months of
+  PD7Day backfill), seasonally unrepresentative, cap-dominated distribution may
+  produce a model that just learns to smear caps.
+- Phase β-light as the first move — same data scarcity issues, more design surface.
+- Treating the eyeball pathology as definitive evidence without measuring its
+  dispatch correlation.
+
 #### Phase β — Residual learner (only if α-prime fails to close the gap)
 
 If Phase α shows that ML on top of PREDISPATCH adds real dispatch value, retrain a small
