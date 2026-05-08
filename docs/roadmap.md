@@ -229,6 +229,77 @@ it has the cleanest implementation in the existing LP path.
 TFT retrain before PD-direct is exhausted; immediate retirement of
 `sensor.ai_tft_price_forecast` before Step 2 lands.
 
+##### Step 4 result and 2026-05-08 adversarial review
+
+Step 4 sweep (commits `272e176`, `7c741a1`) tested terminal salvage value (4a) and
+low-volatility band attenuation (4b). Findings:
+
+- **tightatten** (`term=60, atten=80/180`) gives 4/4 PnL beats over Amber:
+  shoulder3 +1.2%, WB2 +1.9%, WB7 +25%, WA7 +17% — first config to beat Amber on
+  every window of the same-run matrix.
+- **WA7 final SoC stays at ~4 kWh** across all Step 4 variants and all three
+  diagnostic handoff modes (`exact`/`floor`/no-handoff). Three independent levers
+  failed to fix it.
+- **Tail regime offset** (`models/pd_residual/...` + 7-day median feedback) gave
+  a tiny PnL improvement and slightly worse SoC. Confirmed that level shifts cannot
+  change LP arbitrage view; the strategic LP optimises spread, not absolute level.
+
+Adversarial review (2026-05-08; record preserved in commit history of
+`HANDOVER.md`) pushed back on shipping Step 4 as production default:
+
+- Break-even terminal value for the WA7 PnL "win" is `$117/MWh` — not high in
+  winter context. Once any moderate ending-energy value is priced in, WA7 PnL no
+  longer beats Amber.
+- "Backtest artifact" framing for WA7 SoC depletion was plausible but constructed
+  after three failed fixes — not a falsifiable prediction.
+- "PD7Day starts in 2026 is not a free pass" — production has missing-data and
+  stale-data regimes too; if PD-direct only behaves safely with PD7Day available
+  and useful, production needs an explicit fallback safety policy.
+- Don't escalate to Phase β — no-ML baseline too competitive to abandon.
+
+Production terminal-SoC policy (DH offset feedback to ~98% at +72h, MPC inheritance
+of planned SoC at +14h with positive-only deviation correction) is documented in
+`docs/production_soc_policy.md`. The eval framework matches the +14h inheritance
+mechanism cleanly; it lacks the soft +72h terminal-end constraint, but the
+propagation-to-+14h effect is small. The eval-vs-production gap does **not**
+substantially explain the WA7 SoC depletion.
+
+##### Phase α-prime Step 5 — Shadow-and-compare (live as of 2026-05-08)
+
+User direction: first deployment goal is "shadow and compare", not "promote to
+control default". The Step 4 candidate (PD-direct + bands + tightatten) is marked
+**candidate / guarded**. Promotion to control default is a separate future decision
+that requires an inventory-safety contract.
+
+What's in place:
+
+- `forecast.py` publishes the PD-direct shadow forecast across six
+  `sensor.ai_pd_direct_*` HA entities every run (Phase α-prime Step 2,
+  commit `b9afd1c`).
+- `forecast.py` writes `pd_direct_forecast_log.csv` every run alongside the
+  existing TFT/incumbent/Tier-1 logs (this commit).
+- `eval/compare_shadow_forecasts.py` scaffold reads all four logs, joins with
+  `actuals_sa1.parquet`, and computes per-source per-horizon per-regime forecast
+  quality metrics. Works today on TFT/incumbent/Tier-1 data; PD-direct data is
+  accumulating from 2026-05-08 onward.
+
+What's still TODO:
+
+- **HA Jinja template branches** for `ai_pd_direct` source-selector option in
+  `hass/package-emhass.yaml` (PD-DIRECT TODO markers at line ~377 and ~712).
+  Reserved for the user.
+- **What-if dispatch comparison** in the compare script — currently does forecast
+  quality only. Adding a rolling-MPC pass that consumes log entries (not the
+  framework's regenerated forecasts) is a natural extension once data accumulates.
+- **Inventory-safety contract** before any promotion-to-control-default. Specific
+  open question: minimum reserve / SoC floor for missing-tail regimes, or terminal
+  inventory accounting in the selection gate, or disable PD-direct control when the
+  long tail is seasonal fallback rather than PD7Day.
+
+Timing note: the user has flagged that May is a low-volatility time of year for
+SA1, so material differentiation between sources may take weeks. No further model
+iteration is planned in the meantime.
+
 #### Phase β — Residual learner (only if α-prime fails to close the gap)
 
 If Phase α shows that ML on top of PREDISPATCH adds real dispatch value, retrain a small
