@@ -359,6 +359,9 @@ Neither notebook imports from `forecast.py`. They are standalone exploratory too
 
 These files live in HA but are backed up here. They are **not loaded directly from this directory** — they must be manually imported/updated in HA. URLs are redacted before committing.
 
+> Production terminal-SoC policy (DH offset feedback, MPC inheritance, eval-vs-production
+> correspondence): see [docs/production_soc_policy.md](docs/production_soc_policy.md).
+
 | File | Purpose |
 |---|---|
 | `package-emhass.yaml` | HA package: template sensors for price/feed-in blending, `rest_command` to trigger EMHASS day-ahead optimisation with Jinja-built JSON payload |
