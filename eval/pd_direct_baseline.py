@@ -41,6 +41,17 @@ SEASONAL_WINDOW_DAYS_DEFAULT = 28
 RESIDUAL_BAND_MIN_SAMPLES_DEFAULT = 30
 RESIDUAL_BAND_CAP_DEFAULT = 300.0
 
+# Phase α-prime Step 4 (regime adjustment, 2026-05-08). The bare 28-day HoD seasonal
+# mean undershoots the strategic curve in winter regimes (WA7 diagnostic 2026-05-08
+# showed PD-direct's strategic-solve target was 4 kWh while Amber's was 15.4 kWh on the
+# same week, because the HoD tail anchored ~$60/MWh while recent actuals were ~$120).
+# A regime offset adds (recent_median − seasonal_overall_mean) to every HoD slot so the
+# tail tracks current price level rather than long-run average.
+REGIME_WINDOW_DAYS_DEFAULT = 7
+# Cap protects against pathological windows (e.g. a single market-cap event in the
+# trailing window can blow the recent_median up by hundreds of $/MWh).
+REGIME_OFFSET_CAP_DEFAULT = 150.0
+
 HORIZON_BUCKETS = ("1-6h", "6-14h", "14-30h", "30h+")
 PD_LEVEL_BUCKETS = ("<0", "0-60", "60-150", "150-300", ">300")
 
@@ -62,6 +73,11 @@ class PDDirectContext:
 
     pd7day_cap: float = PD7DAY_CAP_DEFAULT
     residual_bands: pd.DataFrame | None = None
+
+    # Phase α-prime Step 4 regime adjustment ($/MWh). Added to every seasonal HoD
+    # value at fill time so the strategic-curve tail tracks current price level.
+    # Default 0.0 means disabled (unchanged behaviour for existing callers).
+    tail_regime_offset_mwh: float = 0.0
 
 
 def _index_runs(df: pd.DataFrame, value_col: str) -> tuple[dict, np.ndarray, np.ndarray]:
@@ -107,6 +123,39 @@ def _build_seasonal_hod_table(
     return seasonal.astype(np.float64)
 
 
+def _compute_tail_regime_offset(
+    actuals: pd.DataFrame,
+    seasonal_end: pd.Timestamp | None,
+    regime_window_days: int,
+    seasonal_overall_mean: float,
+    cap_mwh: float,
+) -> float:
+    """Compute the regime offset = recent_median − seasonal_overall_mean, clipped.
+
+    The offset is added to every HoD slot before fill, so the strategic-curve tail
+    tracks the current price level rather than the long-run mean. Setting
+    `regime_window_days <= 0` returns 0.0 (disabled).
+    """
+    if regime_window_days <= 0:
+        return 0.0
+    actuals = actuals.copy()
+    actuals["time"] = pd.to_datetime(actuals["time"], utc=True)
+    if seasonal_end is None:
+        seasonal_end = actuals["time"].max()
+    seasonal_end = pd.Timestamp(seasonal_end).tz_convert("UTC")
+    regime_start = seasonal_end - pd.Timedelta(days=int(regime_window_days))
+    mask = (actuals["time"] >= regime_start) & (actuals["time"] < seasonal_end)
+    recent = actuals.loc[mask, "rrp"].dropna()
+    if recent.empty or not np.isfinite(seasonal_overall_mean):
+        return 0.0
+    recent_median = float(recent.median())
+    raw_offset = recent_median - float(seasonal_overall_mean)
+    cap = float(cap_mwh)
+    if cap > 0.0:
+        return float(np.clip(raw_offset, -cap, cap))
+    return float(raw_offset)
+
+
 def load_pd_direct_context(
     debiased_path: Path = DEBIASED_PARQUET,
     pd7_path: Path = PD7DAY_PARQUET,
@@ -115,11 +164,18 @@ def load_pd_direct_context(
     seasonal_window_days: int = SEASONAL_WINDOW_DAYS_DEFAULT,
     pd7day_cap: float = PD7DAY_CAP_DEFAULT,
     residual_bands_path: Path | None = None,
+    regime_window_days: int = 0,
+    regime_offset_cap_mwh: float = REGIME_OFFSET_CAP_DEFAULT,
 ) -> PDDirectContext:
     """Load and pre-index everything the curve builder needs.
 
     `seasonal_end` should be set to the eval anchor (start) to prevent look-ahead. If None,
     the most recent timestamp in the actuals parquet is used (fine for live inference).
+
+    `regime_window_days > 0` enables the Phase α-prime Step 4 tail regime offset
+    (default 0 = disabled, preserves existing eval reproducibility).
+    Recommended starting value: 7. Capped at ±`regime_offset_cap_mwh` $/MWh to protect
+    against pathological windows.
     """
     deb = pd.read_parquet(debiased_path)
     debiased_runs, deb_rt_sorted, deb_rt_ns = _index_runs(
@@ -139,6 +195,14 @@ def load_pd_direct_context(
 
     actuals = pd.read_parquet(actuals_path)
     seasonal = _build_seasonal_hod_table(actuals, seasonal_end, seasonal_window_days)
+    seasonal_overall_mean = float(seasonal.mean()) if not seasonal.empty else 60.0
+    tail_regime_offset = _compute_tail_regime_offset(
+        actuals=actuals,
+        seasonal_end=seasonal_end,
+        regime_window_days=int(regime_window_days),
+        seasonal_overall_mean=seasonal_overall_mean,
+        cap_mwh=float(regime_offset_cap_mwh),
+    )
     residual_bands = None
     if residual_bands_path is not None and Path(residual_bands_path).exists():
         residual_bands = pd.read_parquet(residual_bands_path)
@@ -153,6 +217,7 @@ def load_pd_direct_context(
         seasonal_hod_table=seasonal,
         pd7day_cap=float(pd7day_cap),
         residual_bands=residual_bands,
+        tail_regime_offset_mwh=tail_regime_offset,
     )
 
 
@@ -204,10 +269,12 @@ def build_pd_direct_30m_curve(
                 out.loc[common] = capped
 
     # Layer 3: hour-of-day seasonal mean for any remaining gaps (PD7Day not available, e.g.
-    # 2025-era eval slices, or slots beyond PD7Day horizon).
+    # 2025-era eval slices, or slots beyond PD7Day horizon). Add the regime offset so the
+    # tail tracks current price level rather than the long-run 28-day mean.
     if out.isna().any():
         hods = out.index.hour.values * 2 + (out.index.minute.values // 30)
         seasonal_vals = ctx.seasonal_hod_table.reindex(hods).to_numpy(dtype=np.float64)
+        seasonal_vals = seasonal_vals + float(ctx.tail_regime_offset_mwh)
         seasonal_series = pd.Series(seasonal_vals, index=out.index)
         out = out.where(~out.isna(), seasonal_series)
 
