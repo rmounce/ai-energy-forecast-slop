@@ -1,16 +1,20 @@
 input_select:
+  # 2026-05-08: ai_shadow removed from EMHASS source-selector options per reviewer
+  # call. Rationale: live visual shadowing (TFT/PD-direct triplet sensors) and
+  # selectable EMHASS control are different risk surfaces. Leaving an option that
+  # routes control to potentially-stale bundle entities is a foot-gun. Re-add when
+  # there is a deliberate decision to make a controllable path. Dashboard sensors
+  # continue publishing.
   emhass_mpc_price_source:
     name: EMHASS MPC Price Source
     options:
       - amber
-      - ai_shadow
     initial: amber
 
   emhass_dh_price_source:
     name: EMHASS DH Price Source
     options:
       - amber_lgbm_extrapolated
-      - ai_shadow
     initial: amber_lgbm_extrapolated
 
 template:

@@ -300,6 +300,39 @@ Timing note: the user has flagged that May is a low-volatility time of year for
 SA1, so material differentiation between sources may take weeks. No further model
 iteration is planned in the meantime.
 
+##### TFT shadow sunset (2026-05-08 reviewer call)
+
+Reviewer's call (HANDOVER 2026-05-08, hand-back): **keep TFT predict/publish for now
+as a live A/B comparator, on an explicit sunset.** Concretely:
+
+- **Sunset trigger A — calendar:** review on or after **2026-06-05** (4 weeks).
+  Default action at review = **retire unless evidence says keep**.
+- **Sunset trigger B — events:** if two material price events occur in the live
+  shadow period before 2026-06-05 and TFT does not uniquely win on either, retire
+  ahead of the calendar trigger.
+- **Sunset trigger C — operational:** retire immediately if TFT inference (~30s/cycle)
+  causes missed or late publish cycles.
+
+Retire-at-sunset criteria (any one is sufficient):
+
+- PD-direct and/or incumbent beat TFT on live forecast error across the shadow period
+  (`eval/compare_shadow_forecasts.py` produces the relevant tables).
+- TFT does not win a clearly-defined operationally-relevant regime.
+- The user is not using the TFT chart as a decision aid.
+
+If retired, **keep `models/tft_price/checkpoint_active.pt` and `scalers_active.pkl`**
+on disk, mark as legacy/reference in `docs/tft_price_forecast.md`, and stop the
+scheduled inference path only. Do not move/delete artifacts unless all scripts and
+docs are updated to match.
+
+EMHASS source-selector decision (independent of the TFT sunset, applied 2026-05-08):
+**`ai_shadow` removed from `input_select.emhass_*_price_source` options** because
+selectable control routing and visual shadow comparison are different risk surfaces;
+keeping a control option that routes to potentially-stale bundle entities is a
+foot-gun. Triplet sensors (`sensor.ai_tft_price_forecast` etc.) keep publishing for
+dashboard use. Re-add as a control option only with a deliberate decision to make
+that path controllable.
+
 #### Phase β — Residual learner (only if α-prime fails to close the gap)
 
 If Phase α shows that ML on top of PREDISPATCH adds real dispatch value, retrain a small
