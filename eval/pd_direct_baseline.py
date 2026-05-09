@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -29,11 +30,47 @@ DEBIASED_PARQUET = REPO_ROOT / "data" / "parquet" / "debiased_pd_rrp_oof.parquet
 PD7DAY_PARQUET = REPO_ROOT / "data" / "parquet" / "aemo_pd7day_sa1.parquet"
 ACTUALS_PARQUET = REPO_ROOT / "data" / "parquet" / "actuals_sa1.parquet"
 RESIDUAL_BANDS_PARQUET = REPO_ROOT / "models" / "pd_residual" / "residual_bands.parquet"
+PD7DAY_DEBIASER_MODEL = REPO_ROOT / "models" / "pd7day_debiaser" / "lgbm_final.pkl"
 
 # PD7Day reaches the soft cap ($980.89) as a categorical "spike-risk" indicator. Treat that
 # as "above-baseload" but not as a literal price: cap to a value that lets the LP charge
 # during cheap periods and discharge during PD7Day-flagged peaks without overcommitting.
 PD7DAY_CAP_DEFAULT = 300.0
+PD7DAY_TRANSFORM_HARD_CAP = "hard_cap"
+PD7DAY_TRANSFORM_MATERIALISED_Q50 = "materialised_q50"
+PD7DAY_TRANSFORM_LGBM_DEBIASER = "lgbm_debiaser"
+PD7DAY_TRANSFORM_DEFAULT = PD7DAY_TRANSFORM_HARD_CAP
+
+# Phase alpha-prime Step 7 cosmetic debiaser. Local materialisation analysis
+# (2026-05-09) found PD7Day >= $300/MWh materialises as actual >= $300/MWh only
+# ~0.5% of the time, with median actuals around $100/MWh. This deterministic
+# transform keeps the signal monotonic but compresses high PD7Day values into a
+# plausible q50 band instead of publishing flat hard-capped plateaus.
+PD7DAY_MATERIALISED_Q50_PIVOT_MWH = 100.0
+PD7DAY_MATERIALISED_Q50_CEILING_MWH = 140.0
+PD7DAY_MATERIALISED_Q50_SCALE_MWH = 500.0
+PD7DAY_DEBIASER_FEATURES = [
+    "pd7_rrp",
+    "pd7_clip_300",
+    "pd7_log_abs",
+    "horizon_hours",
+    "horizon_days",
+    "target_hour_sin",
+    "target_hour_cos",
+    "target_dow_sin",
+    "target_dow_cos",
+    "target_month_sin",
+    "target_month_cos",
+    "run_hour_sin",
+    "run_hour_cos",
+    "is_ge_150",
+    "is_ge_300",
+    "is_ge_980",
+    "is_ge_1000",
+    "is_ge_20300",
+    "cap_run_length",
+    "cap_run_pos",
+]
 
 # 28-day trailing window for the hour-of-day seasonal fallback. Captures recent regime
 # without smearing across season changes.
@@ -72,6 +109,8 @@ class PDDirectContext:
     seasonal_hod_table: pd.Series = field(default_factory=lambda: pd.Series(dtype=np.float64))
 
     pd7day_cap: float = PD7DAY_CAP_DEFAULT
+    pd7day_transform: str = PD7DAY_TRANSFORM_DEFAULT
+    pd7day_debiaser_model: object | None = None
     residual_bands: pd.DataFrame | None = None
 
     # Phase α-prime Step 4 regime adjustment ($/MWh). Added to every seasonal HoD
@@ -163,6 +202,8 @@ def load_pd_direct_context(
     seasonal_end: pd.Timestamp | None = None,
     seasonal_window_days: int = SEASONAL_WINDOW_DAYS_DEFAULT,
     pd7day_cap: float = PD7DAY_CAP_DEFAULT,
+    pd7day_transform: str = PD7DAY_TRANSFORM_DEFAULT,
+    pd7day_debiaser_model_path: Path = PD7DAY_DEBIASER_MODEL,
     residual_bands_path: Path | None = None,
     regime_window_days: int = 0,
     regime_offset_cap_mwh: float = REGIME_OFFSET_CAP_DEFAULT,
@@ -206,6 +247,12 @@ def load_pd_direct_context(
     residual_bands = None
     if residual_bands_path is not None and Path(residual_bands_path).exists():
         residual_bands = pd.read_parquet(residual_bands_path)
+    pd7day_debiaser_model = None
+    if pd7day_transform == PD7DAY_TRANSFORM_LGBM_DEBIASER:
+        model_path = Path(pd7day_debiaser_model_path)
+        if model_path.exists():
+            with model_path.open("rb") as f:
+                pd7day_debiaser_model = pickle.load(f)
 
     return PDDirectContext(
         debiased_runs=debiased_runs,
@@ -216,8 +263,127 @@ def load_pd_direct_context(
         pd7_run_times_ns=pd7_rt_ns,
         seasonal_hod_table=seasonal,
         pd7day_cap=float(pd7day_cap),
+        pd7day_transform=str(pd7day_transform),
+        pd7day_debiaser_model=pd7day_debiaser_model,
         residual_bands=residual_bands,
         tail_regime_offset_mwh=tail_regime_offset,
+    )
+
+
+def transform_pd7day_values(
+    values: np.ndarray | pd.Series,
+    *,
+    cap_mwh: float = PD7DAY_CAP_DEFAULT,
+    mode: str = PD7DAY_TRANSFORM_DEFAULT,
+) -> np.ndarray:
+    """Return deterministic q50 PD7Day values for the PD-direct tail layer.
+
+    ``hard_cap`` preserves the existing production/eval behaviour.
+
+    ``materialised_q50`` is a cosmetic q50 compression based on cap-materialisation
+    diagnostics. Values up to the pivot are unchanged; higher values asymptotically
+    approach the ceiling. This avoids hard flat plateaus while reflecting that PD7Day
+    cap/high flags rarely materialise as actual high prices.
+    """
+    raw = np.asarray(values, dtype=np.float64)
+    if mode == PD7DAY_TRANSFORM_HARD_CAP:
+        return np.minimum(raw, float(cap_mwh))
+    if mode == PD7DAY_TRANSFORM_MATERIALISED_Q50:
+        out = raw.copy()
+        pivot = PD7DAY_MATERIALISED_Q50_PIVOT_MWH
+        ceiling = PD7DAY_MATERIALISED_Q50_CEILING_MWH
+        scale = PD7DAY_MATERIALISED_Q50_SCALE_MWH
+        mask = np.isfinite(out) & (out > pivot)
+        out[mask] = pivot + (ceiling - pivot) * (
+            1.0 - np.exp(-(out[mask] - pivot) / scale)
+        )
+        return out
+    raise ValueError(f"Unsupported PD7Day transform: {mode}")
+
+
+def _cyclic(values: pd.Series, period: float) -> tuple[np.ndarray, np.ndarray]:
+    angle = 2.0 * np.pi * values.astype(float).to_numpy() / float(period)
+    return np.sin(angle), np.cos(angle)
+
+
+def _cap_run_features(values: np.ndarray, cap_threshold: float = 300.0) -> tuple[np.ndarray, np.ndarray]:
+    flags = np.asarray(values, dtype=np.float64) >= float(cap_threshold)
+    lengths = np.zeros(len(flags), dtype=np.float32)
+    positions = np.zeros(len(flags), dtype=np.float32)
+    if len(flags) == 0:
+        return lengths, positions
+    starts = np.r_[True, flags[1:] != flags[:-1]]
+    group_ids = np.cumsum(starts) - 1
+    for group_id in np.unique(group_ids[flags]):
+        pos = np.where(group_ids == group_id)[0]
+        pos = pos[flags[pos]]
+        if len(pos) == 0:
+            continue
+        lengths[pos] = float(len(pos))
+        positions[pos] = np.arange(1, len(pos) + 1, dtype=np.float32)
+    return lengths, positions
+
+
+def pd7day_debiaser_feature_frame(
+    values: np.ndarray | pd.Series,
+    intervals: pd.DatetimeIndex,
+    run_time: pd.Timestamp,
+) -> pd.DataFrame:
+    """Build the feature matrix expected by ``train/train_pd7day_debiaser.py``."""
+    idx = pd.DatetimeIndex(intervals).tz_convert("UTC")
+    rt = pd.Timestamp(run_time).tz_convert("UTC")
+    raw = np.asarray(values, dtype=np.float64)
+    out = pd.DataFrame(index=idx)
+    out["pd7_rrp"] = raw
+    out["pd7_clip_300"] = np.minimum(raw, 300.0)
+    out["pd7_log_abs"] = np.sign(raw) * np.log1p(np.abs(raw))
+    out["horizon_hours"] = (idx - rt).total_seconds() / 3600.0
+    out["horizon_days"] = out["horizon_hours"] / 24.0
+    hour_sin, hour_cos = _cyclic(pd.Series(idx.hour, index=idx), 24.0)
+    out["target_hour_sin"] = hour_sin
+    out["target_hour_cos"] = hour_cos
+    dow_sin, dow_cos = _cyclic(pd.Series(idx.dayofweek, index=idx), 7.0)
+    out["target_dow_sin"] = dow_sin
+    out["target_dow_cos"] = dow_cos
+    month_sin, month_cos = _cyclic(pd.Series(idx.month - 1, index=idx), 12.0)
+    out["target_month_sin"] = month_sin
+    out["target_month_cos"] = month_cos
+    run_hour_sin, run_hour_cos = _cyclic(pd.Series([rt.hour] * len(idx), index=idx), 24.0)
+    out["run_hour_sin"] = run_hour_sin
+    out["run_hour_cos"] = run_hour_cos
+    for threshold in (150, 300, 980, 1000, 20300):
+        out[f"is_ge_{threshold}"] = (raw >= float(threshold)).astype(np.float32)
+    lengths, positions = _cap_run_features(raw)
+    out["cap_run_length"] = lengths
+    out["cap_run_pos"] = positions
+    return out[PD7DAY_DEBIASER_FEATURES]
+
+
+def transform_pd7day_series(
+    series: pd.Series,
+    *,
+    run_time: pd.Timestamp,
+    cap_mwh: float = PD7DAY_CAP_DEFAULT,
+    mode: str = PD7DAY_TRANSFORM_DEFAULT,
+    debiaser_model: object | None = None,
+) -> pd.Series:
+    """Transform a full PD7Day run while preserving its timestamp index."""
+    values = series.to_numpy(dtype=np.float64)
+    if mode == PD7DAY_TRANSFORM_LGBM_DEBIASER:
+        if debiaser_model is None:
+            transformed = transform_pd7day_values(
+                values,
+                cap_mwh=cap_mwh,
+                mode=PD7DAY_TRANSFORM_HARD_CAP,
+            )
+        else:
+            X = pd7day_debiaser_feature_frame(values, pd.DatetimeIndex(series.index), run_time)
+            transformed = debiaser_model.predict(X.astype(np.float32))
+        return pd.Series(transformed, index=series.index, dtype=np.float64)
+    return pd.Series(
+        transform_pd7day_values(values, cap_mwh=cap_mwh, mode=mode),
+        index=series.index,
+        dtype=np.float64,
     )
 
 
@@ -257,7 +423,7 @@ def build_pd_direct_30m_curve(
         if len(common) > 0:
             out.loc[common] = deb_series.loc[common].values
 
-    # Layer 2: PD7Day capped, fills any still-NaN slots.
+    # Layer 2: PD7Day transformed, fills any still-NaN slots.
     if out.isna().any():
         pd7_rt = _latest_run_at(ctx.pd7_run_times_ns, ctx.pd7_run_times_sorted, anchor_ns)
         if pd7_rt is not None:
@@ -265,8 +431,14 @@ def build_pd_direct_30m_curve(
             missing = out.index[out.isna()]
             common = pd7_series.index.intersection(missing)
             if len(common) > 0:
-                capped = np.minimum(pd7_series.loc[common].values.astype(np.float64), ctx.pd7day_cap)
-                out.loc[common] = capped
+                transformed_series = transform_pd7day_series(
+                    pd7_series,
+                    run_time=pd7_rt,
+                    cap_mwh=ctx.pd7day_cap,
+                    mode=ctx.pd7day_transform,
+                    debiaser_model=ctx.pd7day_debiaser_model,
+                )
+                out.loc[common] = transformed_series.loc[common].values
 
     # Layer 3: hour-of-day seasonal mean for any remaining gaps (PD7Day not available, e.g.
     # 2025-era eval slices, or slots beyond PD7Day horizon). Add the regime offset so the
