@@ -557,7 +557,7 @@ Future work (parked, not blocking inventory-normalised comparison):
   the appropriate LP machinery (MILP / soft penalty / outer feedback simulation).
   The reviewer's call: park, don't block the inventory-normalised comparison.
 
-##### Phase α-prime Step 7 — Cosmetic improvement (queued after Step 6)
+##### Phase α-prime Step 7 — Cosmetic PD7Day debiasing (active 2026-05-09)
 
 User direction (2026-05-09): training a PD7Day-specific debiaser is in scope,
 provided it's architecturally sound and improves with time as PD7Day data
@@ -582,6 +582,28 @@ Reviewer-mandated sub-sequencing for Step 7:
    - Shape diagnostics as first-class metrics, not only MAE
 4. **Publish/eval as a tail-quality improvement**, not as evidence for dispatch
    architecture, until it passes dispatch gates too.
+
+Implementation checkpoint (2026-05-09):
+
+- Added `eval/analyze_pd7day_cap_materialisation.py`.
+- Local materialised history: `51,012` PD7Day rows from `186` runs, covering
+  `2026-02-09 21:30 UTC -> 2026-04-12 12:00 UTC`.
+- At the production-relevant high flag (`PD7Day >= $300/MWh`), only `0.5%` of
+  rows materialise as actual `>= $300/MWh`, and only `14.1%` materialise as
+  actual `>= $150/MWh`. Median actual is about `$104/MWh`.
+- Added `train/train_pd7day_debiaser.py` and trained an initial LightGBM q50
+  debiaser. This is expected to improve as PD7Day history accumulates; it is not
+  a spike-risk model.
+- OOF validation:
+  - overall MAE: raw `543.18`, hard-cap-300 `74.96`, debiased `36.98` $/MWh
+  - forecast `>= $300/MWh` MAE: raw `2978.50`, hard-cap-300 `199.27`,
+    debiased `45.92` $/MWh
+  - actual `>= $300/MWh` MAE: hard-cap-300 `159.06`, debiased `326.66` $/MWh
+- Interpretation: the trained debiaser is appropriate as the **q50 / cosmetic
+  PD7Day tail level**, but it suppresses rare realised spikes. Tail-risk bands or
+  a later classifier/router must still carry spike risk.
+- Live PD-direct publishing now requests the trained PD7Day q50 debiaser for the
+  PD7Day tail layer, with hard-cap fallback if the model artifact is missing.
 
 Rejected for cosmetic Step 7:
 

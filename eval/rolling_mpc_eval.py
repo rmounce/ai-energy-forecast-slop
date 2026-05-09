@@ -77,6 +77,9 @@ from train_tft_price import TFTPriceModel  # noqa: E402
 from eval.pd_direct_baseline import (  # noqa: E402
     PDDirectContext,
     RESIDUAL_BANDS_PARQUET,
+    PD7DAY_TRANSFORM_HARD_CAP,
+    PD7DAY_TRANSFORM_LGBM_DEBIASER,
+    PD7DAY_TRANSFORM_MATERIALISED_Q50,
     apply_pd_residual_bands,
     build_pd_direct_30m_curve,
     expand_30m_to_5m,
@@ -714,6 +717,7 @@ class ForecastProviders:
             seasonal_end=seasonal_end,
             seasonal_window_days=int(getattr(args, "pd_direct_seasonal_window_days", 28)),
             pd7day_cap=float(getattr(args, "pd_direct_pd7day_cap", 300.0)),
+            pd7day_transform=str(getattr(args, "pd_direct_pd7day_transform", PD7DAY_TRANSFORM_HARD_CAP)),
             residual_bands_path=Path(args.pd_direct_residual_bands)
             if getattr(args, "pd_direct_residual_bands", "")
             else None,
@@ -2339,6 +2343,22 @@ def main():
             "PREDISPATCH coverage. Raw PD7Day frequently sits at the soft cap "
             "($980.89) as a spike-risk indicator; capping prevents that masquerading "
             "as a literal price in the LP."
+        ),
+    )
+    parser.add_argument(
+        "--pd-direct-pd7day-transform",
+        choices=[
+            PD7DAY_TRANSFORM_HARD_CAP,
+            PD7DAY_TRANSFORM_MATERIALISED_Q50,
+            PD7DAY_TRANSFORM_LGBM_DEBIASER,
+        ],
+        default=PD7DAY_TRANSFORM_HARD_CAP,
+        help=(
+            "Transform applied to PD7Day values in the pd_direct tail. hard_cap preserves "
+            "the existing min(raw, --pd-direct-pd7day-cap) behaviour. materialised_q50 "
+            "is a deterministic cosmetic compression derived from cap-materialisation "
+            "diagnostics. lgbm_debiaser uses models/pd7day_debiaser/lgbm_final.pkl "
+            "for a trained q50 tail-level correction."
         ),
     )
     parser.add_argument(

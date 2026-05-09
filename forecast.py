@@ -1890,10 +1890,12 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
     # Lazy import so the eval module's parquet load only happens when this path runs.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from eval.pd_direct_baseline import (
+        PD7DAY_TRANSFORM_LGBM_DEBIASER,
         RESIDUAL_BANDS_PARQUET,
         apply_pd_residual_bands,
         load_pd_direct_context,
         PD7DAY_CAP_DEFAULT,
+        transform_pd7day_series,
     )
 
     try:
@@ -1948,6 +1950,7 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
         # current price level — eval validation lands the same tail behaviour.
         ctx = load_pd_direct_context(
             residual_bands_path=residual_bands_path,
+            pd7day_transform=PD7DAY_TRANSFORM_LGBM_DEBIASER,
             regime_window_days=7,
             regime_offset_cap_mwh=150.0,
         )
@@ -1957,14 +1960,24 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
         mask_pd = fut['pd_rrp'].notna()
         out.loc[mask_pd] = fut.loc[mask_pd, 'pd_rrp'].values.astype(np.float64)
 
-        # Layer 2: PD7Day capped, fills any still-NaN steps (typically 56+)
+        # Layer 2: PD7Day q50 debiased, fills any still-NaN steps (typically 56+).
+        # The debiaser is deliberately q50-only; residual bands still carry tail risk.
         if 'pd7_rrp' in fut.columns:
-            pd7_capped = np.minimum(
-                fut['pd7_rrp'].values.astype(np.float64),
-                float(PD7DAY_CAP_DEFAULT),
-            )
             still_nan = out.isna() & fut['pd7_rrp'].notna()
-            out.loc[still_nan] = pd7_capped[still_nan.values]
+            if still_nan.any():
+                run_time = pd7_run_time if pd7_run_time is not None else forecast_run_time
+                pd7_series = pd.Series(
+                    fut['pd7_rrp'].values.astype(np.float64),
+                    index=fut.index,
+                )
+                pd7_transformed = transform_pd7day_series(
+                    pd7_series,
+                    run_time=run_time,
+                    cap_mwh=float(PD7DAY_CAP_DEFAULT),
+                    mode=PD7DAY_TRANSFORM_LGBM_DEBIASER,
+                    debiaser_model=ctx.pd7day_debiaser_model,
+                )
+                out.loc[still_nan] = pd7_transformed.loc[still_nan].values
 
         # Layer 3: hour-of-day seasonal mean for any remaining gaps
         if out.isna().any():
