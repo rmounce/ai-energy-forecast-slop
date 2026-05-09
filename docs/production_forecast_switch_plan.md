@@ -93,11 +93,12 @@ The AI forecast stack now has two publish layers:
    - refreshes APF/LGBM, PD-direct, TFT shadows, load, covariates, and the cached
      30-minute Tier 2 curve used by the cheap publisher
 
-2. **Cheap tactical refresh** — `systemd/ai-energy-tactical-publish.timer`
-   - runs `forecast.py publish-tactical --publish-hass`
-   - scheduled at `:04, :09, ..., :59`, after the P5MIN ingest timer at
-     `:02, :07, ..., :57`
-   - recomputes only Tier 1 tactical LightGBM from fresh P5MIN/dispatch data
+2. **Cheap tactical refresh** — chained inside `systemd/ai-energy-p5min.service`
+   - the existing `ai-energy-p5min.timer` runs at `:02, :07, ..., :57`
+   - the service first runs `python ingest/ingest-p5min.py --fetch`
+   - if ingest succeeds, it immediately runs
+     `nice -n 19 ./forecast.py publish-tactical --publish-hass`
+   - this recomputes only Tier 1 tactical LightGBM from fresh P5MIN/dispatch data
    - stitches that fresh 5-minute Tier 1 curve onto the cached PD-direct 30-minute tail
    - republishes:
      - `sensor.ai_p5min_price_forecast(_low/_high)`
@@ -144,8 +145,8 @@ payload templates.
    - selected source remains Amber
    - AI arrays are rendered and logged
    - no inverter behavior changes
-6. Enable `ai-energy-tactical-publish.timer` after verifying one manual
-   `forecast.py publish-tactical --publish-hass` run against live HA state.
+6. Deploy the updated `ai-energy-p5min.service`, then run one manual service invocation or
+   one manual `forecast.py publish-tactical --publish-hass` check against live HA state.
 7. Re-add an AI selector option only after the canonical control entities have
    been observed live with PD-direct content and all status checks pass.
 8. Switch DH first, if desired, because it changes the strategic plan but not
