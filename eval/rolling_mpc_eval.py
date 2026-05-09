@@ -726,6 +726,10 @@ class ForecastProviders:
         self._pd_direct_cache: dict[pd.Timestamp, pd.Series] = {}
         self._amber_cache: dict[pd.Timestamp, pd.Series] = {}
         self._strategic_solve_cache: dict[tuple[str, pd.Timestamp, float, float], StrategicSolveSummary | None] = {}
+        # Phase α-prime Step 5: counts strategic 72h LP infeasibilities when the
+        # inventory-normalisation terminal-SoC equality constraint is active.
+        # Logged at end-of-run so the user can stop and debug if many infeasibles.
+        self._strategic_constrained_infeasible_count: int = 0
         self._last_curve_repaired: dict[str, bool] = {}
 
     def curve_was_repaired(self, source: str) -> bool:
@@ -1020,9 +1024,28 @@ class ForecastProviders:
             self._strategic_solve_cache[cache_key] = None
             return None
 
-        strategic = solve_lp_dispatch(curve, soc_init_kwh)
+        # Phase α-prime Step 5 (eval-fidelity, 2026-05-09 reviewer call): when the
+        # `--strategic-72h-terminal-soc-{kwh,pct}` flag is set, the 72h strategic LP
+        # is constrained to end at exactly the configured SoC. The +14h handoff
+        # target is then extracted from the constrained trajectory.
+        terminal_kwh = getattr(
+            self.args, "strategic_72h_terminal_soc_kwh_resolved", None,
+        )
+        if terminal_kwh is not None:
+            strategic = solve_lp_dispatch(
+                curve, soc_init_kwh,
+                min_terminal_soc_kwh=float(terminal_kwh),
+                max_terminal_soc_kwh=float(terminal_kwh),
+            )
+        else:
+            strategic = solve_lp_dispatch(curve, soc_init_kwh)
+
         soc_path = strategic.get("soc_trajectory_kwh")
         if soc_path is None or len(soc_path) < HORIZON_5M_STEPS:
+            # Track infeasibility/short solves separately when the constraint is
+            # active so we can stop and debug if many runs hit it.
+            if terminal_kwh is not None and not strategic.get("success", True):
+                self._strategic_constrained_infeasible_count += 1
             self._strategic_solve_cache[cache_key] = None
             return None
 
@@ -2152,7 +2175,7 @@ def _simulate_single_source(
         f"({len(timestamps):,} steps)",
         flush=True,
     )
-    return simulate_stepwise(
+    result = simulate_stepwise(
         timestamps=timestamps,
         actual_prices=actual_prices,
         providers=providers,
@@ -2170,6 +2193,18 @@ def _simulate_single_source(
         dynamic_bridge_terminal_scale=args_dict["dynamic_bridge_terminal_scale"],
         dynamic_bridge_terminal_scope=args_dict["dynamic_bridge_terminal_scope"],
     )
+    # Phase α-prime Step 5: surface infeasibility count if the strategic
+    # terminal-SoC equality constraint was active.
+    n_infeasible = getattr(providers, "_strategic_constrained_infeasible_count", 0)
+    if n_infeasible > 0:
+        print(
+            f"  [{worker_label}] WARNING: {n_infeasible} strategic 72h LP solves "
+            f"hit infeasibility under the terminal-SoC equality constraint for "
+            f"source '{source_contract.name}'. Investigate before interpreting "
+            f"economics.",
+            flush=True,
+        )
+    return result
 
 
 def simulate_stepwise_parallel(
@@ -2436,6 +2471,31 @@ def main():
             "How to enforce the derived 14h strategic SoC target: exact terminal target or "
             "minimum terminal floor. 'band' sets a minimum q50 target with optional dynamic "
             "upward headroom derived from the upper strategic quantile."
+        ),
+    )
+    parser.add_argument(
+        "--strategic-72h-terminal-soc-kwh",
+        type=float,
+        default=None,
+        help=(
+            "Phase α-prime Step 5 (eval-fidelity, 2026-05-09 reviewer call). When set, "
+            "the 72h strategic LP solve is constrained to end at exactly this SoC (kWh). "
+            "The +14h handoff target is then extracted from the constrained trajectory. "
+            "Purpose: inventory-normalised forecast comparison — every candidate ends "
+            "at the same SoC, so dispatch differences come from forecast quality alone. "
+            "This is NOT a production-fidelity model; production has a windowed-max "
+            "constraint on the final 24h, not an endpoint equality. Default off (preserves "
+            "existing eval reproducibility). Mutually exclusive with --strategic-72h-terminal-soc-pct."
+        ),
+    )
+    parser.add_argument(
+        "--strategic-72h-terminal-soc-pct",
+        type=float,
+        default=None,
+        help=(
+            "Same as --strategic-72h-terminal-soc-kwh but as a percentage of capacity. "
+            "Recommended starting value: 50 (neutral; doesn't bias toward charge-up or "
+            "discharge-down candidates). Mutually exclusive with the kwh form."
         ),
     )
     parser.add_argument(
@@ -2750,6 +2810,34 @@ def main():
     ):
         parser.error("Dynamic bridge options require --strategic-soc-handoff")
 
+    # Phase α-prime Step 5 inventory-normalisation: resolve the optional 72h strategic
+    # terminal-SoC equality target. Mutually exclusive between the kWh and pct forms.
+    if (args.strategic_72h_terminal_soc_kwh is not None
+            and args.strategic_72h_terminal_soc_pct is not None):
+        parser.error(
+            "Use only one of --strategic-72h-terminal-soc-kwh or "
+            "--strategic-72h-terminal-soc-pct"
+        )
+    args.strategic_72h_terminal_soc_kwh_resolved = None
+    if args.strategic_72h_terminal_soc_kwh is not None:
+        if not (0.0 <= args.strategic_72h_terminal_soc_kwh <= CAPACITY_KWH):
+            parser.error(
+                f"--strategic-72h-terminal-soc-kwh must be in [0, {CAPACITY_KWH}], "
+                f"got {args.strategic_72h_terminal_soc_kwh}"
+            )
+        args.strategic_72h_terminal_soc_kwh_resolved = float(
+            args.strategic_72h_terminal_soc_kwh
+        )
+    elif args.strategic_72h_terminal_soc_pct is not None:
+        if not (0.0 <= args.strategic_72h_terminal_soc_pct <= 100.0):
+            parser.error(
+                f"--strategic-72h-terminal-soc-pct must be in [0, 100], "
+                f"got {args.strategic_72h_terminal_soc_pct}"
+            )
+        args.strategic_72h_terminal_soc_kwh_resolved = float(
+            args.strategic_72h_terminal_soc_pct / 100.0 * CAPACITY_KWH
+        )
+
     tft_requiring_sources = {"model_a_hybrid", "pd_direct_tft_tail"}
     if any(
         contract.tactical_source in tft_requiring_sources
@@ -2783,6 +2871,16 @@ def main():
     print(f"  Terminal energy value: {args.terminal_energy_value_mwh:.3f} $/MWh")
     print(f"  Dual terminal scale: {args.dual_terminal_scale:.3f}")
     print(f"  Strategic SoC handoff: {args.strategic_soc_handoff} ({args.strategic_target_mode})")
+    if args.strategic_72h_terminal_soc_kwh_resolved is not None:
+        pct = args.strategic_72h_terminal_soc_kwh_resolved / CAPACITY_KWH * 100.0
+        print(
+            f"  72h strategic terminal-SoC equality: "
+            f"{args.strategic_72h_terminal_soc_kwh_resolved:.2f} kWh ({pct:.1f}% of capacity)"
+        )
+        print(
+            "  *** Inventory-normalised forecast comparison; NOT a production "
+            "profit estimate. ***"
+        )
     print(
         f"  Dynamic bridge: qhi=q{int(args.dynamic_bridge_upper_quantile * 100):02d}, "
         f"target_scale={args.dynamic_bridge_target_scale:.3f}, "
