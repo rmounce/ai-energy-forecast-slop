@@ -736,8 +736,9 @@ Immediate next actions for the next implementer:
    - `forecast.py publish-tactical --publish-hass` recomputes only Tier 1 tactical LightGBM,
      loads the cached PD-direct 30-minute tail from the last full strategic refresh, and
      republishes the p5min triplet plus canonical MPC/DH shadow entities.
-   - `systemd/ai-energy-tactical-publish.timer` is scheduled at `:04, :09, ..., :59`, after
-     the P5MIN ingest timer at `:02, :07, ..., :57`.
+   - This is chained inside `systemd/ai-energy-p5min.service`: fetch P5MIN first, then publish
+     the refreshed tactical forecast immediately if ingest succeeds. The existing P5MIN timer
+     remains scheduled at `:02, :07, ..., :57`.
    - This keeps the near-term 5-minute curve fresh without rerunning PD-direct/TFT/load every
      5 minutes.
 

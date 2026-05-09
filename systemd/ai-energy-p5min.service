@@ -4,4 +4,5 @@ Description=Ingest latest AEMO P5MIN forecast into InfluxDB
 [Service]
 Type=oneshot
 WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
-ExecStart=/bin/bash -c 'source .venv/bin/activate && python ingest/ingest-p5min.py --fetch'
+EnvironmentFile=/home/saltspork/src/ai-energy-forecast-slop/.env
+ExecStart=/bin/bash -c 'source .venv/bin/activate && python ingest/ingest-p5min.py --fetch && nice -n 19 ./forecast.py publish-tactical --publish-hass'
