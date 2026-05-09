@@ -63,6 +63,39 @@ baseline, not Amber APF at 5-min resolution).
 
 ## Battery Dispatch
 
+### DH/MPC SoC corridor contract
+
+Production currently uses two EMHASS layers:
+
+- DH: 72h / 30-minute optimisation, producing the longer SoC plan.
+- MPC: 14h / 5-minute optimisation, inheriting a single `soc_final` target from the
+  DH plan.
+
+The architecture issue is that the MPC can locally reinterpret the DH plan. For example,
+the DH plan may imply pure self-consumption over the next several hours, while the
+shorter 5-minute MPC still chooses a small amount of grid charging because its scalar
+`soc_final`, terminal value, current price, or ahead-of-plan bias makes that locally
+attractive.
+
+A cleaner long-term contract would be:
+
+- DH owns battery inventory posture: desired SoC trajectory, reserve, and whether the
+  period is `self_consumption`, `preserve_inventory`, `export_opportunity`, or
+  `negative_price_absorb`.
+- MPC owns execution detail inside that posture: exact 5-minute charge/discharge/export/
+  curtailment decisions.
+- Instead of a single inherited `soc_final`, DH would pass an SoC corridor to MPC:
+  `min_soc_path`, `max_soc_path`, and optionally a preferred path.
+- MPC could optimise freely inside the corridor, but grid charging/export aggression
+  would require an explicit posture or short-horizon override.
+
+This is deferred because upstream EMHASS currently works to a scalar `soc_final`, not a
+time-varying corridor. A true corridor would likely require EMHASS changes, a wrapper
+that repeatedly converts corridor policy into scalar `soc_final` targets, or a separate
+controller layer. Near-term production work should therefore keep the scalar interface
+and make its policy explicit: remove hidden biases, publish/record why `soc_final` was
+chosen, and gate local MPC opportunism through simple scalar/posture rules where possible.
+
 ### Spike-aware discharge (EMHASS-side, near-term)
 
 Current problem: q50 forecast mean-reverts quickly after spike onset because PREDISPATCH
