@@ -701,8 +701,8 @@ Current committed state:
   - DH: `amber_lgbm_extrapolated`
 - This is deliberate. Visual shadow comparison and controllable source routing are different
   risk surfaces; do not re-add an AI selector option until a specific source is promoted.
-- None of the latest HA package changes have been deployed into the user's live Home Assistant
-  instance yet.
+- HA package changes were synced and HA restarted by the user on 2026-05-09; legacy
+  production behavior still appeared to work after a manual predict/publish job.
 
 Important production constraint:
 
@@ -710,6 +710,9 @@ Important production constraint:
   Internal repo logic and the new canonical HA entities should use positive export value.
 - Use UTC timestamps at publisher/template boundaries where practical. Convert to local time only
   for local tariff windows such as SAPN free export allowance or charge-weight ramps.
+- Continue evolving toward UTC consistency: new caches/logs/published forecast timestamps should
+  be UTC by default; keep Brisbane/Adelaide conversions only for NEM fixed-AEST parsing, tariff
+  windows, user-facing HA local windows, or trained model feature contracts.
 
 Immediate next actions for the next implementer:
 
@@ -729,18 +732,29 @@ Immediate next actions for the next implementer:
      the diagnostic sensors against legacy Amber/APF.
    - Keep Amber as the production fallback and yardstick.
 
-3. **Re-evaluate TFT load with live actuals before any promotion.**
+3. **Enable cheap 5-minute tactical refresh.**
+   - `forecast.py publish-tactical --publish-hass` recomputes only Tier 1 tactical LightGBM,
+     loads the cached PD-direct 30-minute tail from the last full strategic refresh, and
+     republishes the p5min triplet plus canonical MPC/DH shadow entities.
+   - `systemd/ai-energy-tactical-publish.timer` is scheduled at `:04, :09, ..., :59`, after
+     the P5MIN ingest timer at `:02, :07, ..., :57`.
+   - This keeps the near-term 5-minute curve fresh without rerunning PD-direct/TFT/load every
+     5 minutes.
+
+4. **Re-evaluate TFT load with live actuals before any promotion.**
    - Live matched-log comparison over the last 14 days shows TFT load is on average
      `105 W` below LightGBM and below it on `83.1%` of rows.
    - Offline validation comparison favours TFT by MAE: `234 W` overall vs LightGBM
      `298 W`.
-   - LightGBM remains production load forecast until live backfilled accuracy confirms
-     whether TFT's lower forecast is genuinely better under current operation.
+   - User preference is conservative: stay with LGBM because over-estimating load is safer
+     operationally than under-preparing.
+   - LightGBM remains production load forecast unless live backfilled accuracy and operational
+     behavior make a stronger case for TFT.
    - Future `tft_load` logs now write to `tft_load_forecast_log.csv` and are included in
      `forecast.py backfill-actuals`; historical rows remain mixed into
      `tft_price_forecast_log.csv` without actuals.
 
-4. **Document HA deployment steps after the canonical source decision.**
+5. **Document HA deployment steps after the canonical source decision.**
    - Update `docs/production_forecast_switch_plan.md`.
    - Include exact entities, selectors, fallback behavior, and recommended flip order.
    - Keep rollback as a one-action selector change.

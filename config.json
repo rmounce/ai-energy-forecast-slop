@@ -284,6 +284,7 @@
         "load_p75_importance_file": "load_p75_importance.json",
         "tariff_file": "tariff_profile.json",
         "prediction_output_file": "predictions.json",
+        "canonical_tier2_cache_file": "canonical_tier2_price_cache.parquet",
         "price_forecast_log_file": "price_forecast_log.csv",
         "tft_price_forecast_log_file": "tft_price_forecast_log.csv",
         "pd_direct_forecast_log_file": "pd_direct_forecast_log.csv",

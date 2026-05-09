@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh tactical AI forecast publication every 5 minutes
+
+[Timer]
+# P5MIN ingest runs at :02/:07/...; publish at :04/:09/... to allow ingest lag.
+OnCalendar=*:04,09,14,19,24,29,34,39,44,49,54,59:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

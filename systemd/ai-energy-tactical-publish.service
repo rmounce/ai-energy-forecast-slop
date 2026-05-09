@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh Tier 1 tactical forecasts and canonical AI shadow sensors
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
+EnvironmentFile=/home/saltspork/src/ai-energy-forecast-slop/.env
+ExecStart=/bin/bash -c 'source .venv/bin/activate && nice -n 19 ./forecast.py publish-tactical --publish-hass'

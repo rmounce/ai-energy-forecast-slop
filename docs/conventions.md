@@ -23,6 +23,16 @@ Existing exceptions are intentional when they match model training contracts:
 - Tariff lookup uses the configured site timezone, currently
   `Australia/Adelaide`.
 
+Timezone migration rule:
+
+- New storage, cache, log, and Home Assistant forecast timestamps should be UTC unless a
+  provider or model contract explicitly requires otherwise.
+- Keep NEM fixed-AEST parsing isolated at ingest/API boundaries, then convert to UTC.
+- Do not add new Adelaide/Brisbane conversions for convenience. Add them only for tariff
+  schedules, user-visible HA local windows, or existing trained feature contracts.
+- When modifying an existing local-time feature path, document whether changing it would
+  invalidate a trained model before changing the timezone.
+
 ## Price Units
 
 - Internal wholesale forecasts are either clearly named `$ / kWh`
