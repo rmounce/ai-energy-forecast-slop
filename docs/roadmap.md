@@ -729,12 +729,16 @@ Immediate next actions for the next implementer:
      the diagnostic sensors against legacy Amber/APF.
    - Keep Amber as the production fallback and yardstick.
 
-3. **Do not promote TFT load.**
+3. **Re-evaluate TFT load with live actuals before any promotion.**
    - Live matched-log comparison over the last 14 days shows TFT load is on average
      `105 W` below LightGBM and below it on `83.1%` of rows.
-   - LightGBM remains production load forecast.
-   - Future `tft_load` logs now write to `tft_load_forecast_log.csv`; historical rows remain
-     mixed into `tft_price_forecast_log.csv`.
+   - Offline validation comparison favours TFT by MAE: `234 W` overall vs LightGBM
+     `298 W`.
+   - LightGBM remains production load forecast until live backfilled accuracy confirms
+     whether TFT's lower forecast is genuinely better under current operation.
+   - Future `tft_load` logs now write to `tft_load_forecast_log.csv` and are included in
+     `forecast.py backfill-actuals`; historical rows remain mixed into
+     `tft_price_forecast_log.csv` without actuals.
 
 4. **Document HA deployment steps after the canonical source decision.**
    - Update `docs/production_forecast_switch_plan.md`.
