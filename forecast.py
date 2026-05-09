@@ -3108,6 +3108,7 @@ def backfill_actuals():
     logging.info("--- Running in BACKFILL-ACTUALS mode for all models ---")
     _backfill_single_log('price')
     _backfill_single_log('load')
+    _backfill_single_log('tft_load')
 
 def update_adjusters():
     """

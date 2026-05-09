@@ -38,9 +38,11 @@ weather + time — cleaner architecture. Target is positive-and-bounded so no lo
 
 ## Live Shadow Read (2026-05-09)
 
-The TFT load shadow is still not a promotion candidate. A live-log comparison over the
-last 14 days, matching forecast runs and target timestamps between the production
-LightGBM load forecast and the TFT load shadow, shows the TFT is systematically lower:
+The TFT load shadow is consistently lower than the production LightGBM forecast, but the
+available offline accuracy check says that lower forecast is probably not merely a bug.
+
+A live-log shape comparison over the last 14 days, matching forecast runs and target
+timestamps between LightGBM and the TFT load shadow, shows the TFT is systematically lower:
 
 | Horizon bucket | Mean TFT − LightGBM |
 |---|---:|
@@ -54,10 +56,28 @@ Matched sample: `95,615` rows across `664` runs, from roughly
 `83.1%` of matched rows.
 
 This confirms the user's live observation that the TFT shadow sits below the current
-LightGBM forecast. It does not by itself prove LightGBM is more accurate, because the
-live logs are not a full realised-outcome backtest. Operationally, however, it is enough
-to keep LightGBM as the production load forecast and treat TFT load as a shadow-only
-research branch.
+LightGBM forecast. It does not by itself prove either model is more accurate.
+
+The existing offline comparison script, `eval/compare_load_forecast.py`, compares TFT
+Run 005 against LightGBM rows in the same validation calendar window
+(`2026-01-13` to `2026-04-13`). On that check, TFT is materially better by MAE:
+
+| Horizon bucket | TFT q50 MAE | LightGBM MAE | TFT improvement |
+|---|---:|---:|---:|
+| 0-24h | 235.3 W | 270.6 W | 35.3 W |
+| 24-48h | 234.4 W | 310.5 W | 76.1 W |
+| 48-72h | 232.4 W | 312.4 W | 80.0 W |
+| Overall | 234.0 W | 297.8 W | 63.8 W |
+
+TFT q10/q90 coverage was `0.758`, below the nominal `0.80`, so its uncertainty bands
+still need calibration. This is also not yet a live shadow backtest because historical
+`tft_load` log rows were not backfilled with actuals. As of 2026-05-09, future
+`tft_load_forecast_log.csv` rows are included in `forecast.py backfill-actuals`, so a
+proper live accuracy comparison can accumulate from here.
+
+Operational read: do not promote TFT load blindly, but do not abandon it. The next load
+decision should be based on live backfilled accuracy over a few weeks, plus a sanity check
+that the lower load forecast does not make EMHASS under-prepare in edge cases.
 
 Repeatable diagnostic:
 
@@ -66,9 +86,9 @@ nice -n 19 ./.venv/bin/python eval/analyze_live_load_shadow_gap.py --days 14
 ```
 
 Future logging note: `forecast.py` now writes future `tft_load` rows to
-`tft_load_forecast_log.csv`. Historical `tft_load` rows before this change are mixed into
-`tft_price_forecast_log.csv`; the diagnostic falls back to that file when the dedicated
-log does not exist.
+`tft_load_forecast_log.csv`, and `forecast.py backfill-actuals` now backfills that log.
+Historical `tft_load` rows before this change are mixed into `tft_price_forecast_log.csv`
+and have no actuals.
 
 ---
 
