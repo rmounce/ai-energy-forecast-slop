@@ -204,3 +204,31 @@ def test_publish_haeo_forecast_sensor_payload(monkeypatch):
     assert payload["attributes"]["forecast"] == items
     assert payload["attributes"]["unit_of_measurement"] == "$/kWh"
     assert payload["attributes"]["forecast_convention"] == "haeo_positive_import_export"
+
+
+def test_canonical_tier2_cache_round_trip(monkeypatch, tmp_path, tier2_dfs):
+    cfg = {
+        **fc.CONFIG,
+        "paths": {
+            **fc.CONFIG["paths"],
+            "canonical_tier2_cache_file": str(tmp_path / "tier2_cache.parquet"),
+        },
+    }
+    monkeypatch.setattr(fc, "CONFIG", cfg)
+
+    fc._save_canonical_tier2_cache(
+        {"pd_direct_price": tier2_dfs["p50"]},
+        tier2_price_key="pd_direct_price",
+        tier2_label="PD-direct",
+    )
+    loaded, key, label = fc._load_canonical_tier2_cache(max_age_minutes=60)
+
+    assert key == "cached_tier2_price"
+    assert label == "cached PD-direct"
+    assert loaded is not None
+    pd.testing.assert_frame_equal(
+        loaded[key],
+        tier2_dfs["p50"][["wholesale_price"]],
+        check_freq=False,
+        check_names=False,
+    )

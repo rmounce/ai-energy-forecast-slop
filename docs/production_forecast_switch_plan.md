@@ -83,6 +83,33 @@ Implementation status as of 2026-05-09:
   expose side-by-side first values and 1h/24h means for both sources without
   calling EMHASS. State = currently selected source.
 
+## Publication Cadence
+
+The AI forecast stack now has two publish layers:
+
+1. **Full strategic refresh** — `systemd/ai-energy-predict.timer`
+   - runs `forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates`
+   - scheduled at `:01` and `:31`
+   - refreshes APF/LGBM, PD-direct, TFT shadows, load, covariates, and the cached
+     30-minute Tier 2 curve used by the cheap publisher
+
+2. **Cheap tactical refresh** — `systemd/ai-energy-tactical-publish.timer`
+   - runs `forecast.py publish-tactical --publish-hass`
+   - scheduled at `:04, :09, ..., :59`, after the P5MIN ingest timer at
+     `:02, :07, ..., :57`
+   - recomputes only Tier 1 tactical LightGBM from fresh P5MIN/dispatch data
+   - stitches that fresh 5-minute Tier 1 curve onto the cached PD-direct 30-minute tail
+   - republishes:
+     - `sensor.ai_p5min_price_forecast(_low/_high)`
+     - `sensor.ai_mpc_import_price_forecast`
+     - `sensor.ai_mpc_export_price_forecast`
+     - `sensor.ai_dh_import_price_forecast`
+     - `sensor.ai_dh_export_price_forecast`
+
+If the cached Tier 2 curve is missing or older than the configured cache-age limit, the
+cheap publisher still refreshes the Tier 1 per-model sensors but does not overwrite the
+canonical MPC/DH shadow entities.
+
 ## Switching Model
 
 When promoting an AI source to controllable shadow/prod, re-add explicit Home
@@ -117,13 +144,15 @@ payload templates.
    - selected source remains Amber
    - AI arrays are rendered and logged
    - no inverter behavior changes
-6. Re-add an AI selector option only after the canonical control entities have
+6. Enable `ai-energy-tactical-publish.timer` after verifying one manual
+   `forecast.py publish-tactical --publish-hass` run against live HA state.
+7. Re-add an AI selector option only after the canonical control entities have
    been observed live with PD-direct content and all status checks pass.
-7. Switch DH first, if desired, because it changes the strategic plan but not
+8. Switch DH first, if desired, because it changes the strategic plan but not
    the immediate 5-minute action as directly as MPC.
-8. Switch MPC only after source freshness, sign, length, and unit checks are
+9. Switch MPC only after source freshness, sign, length, and unit checks are
    visible and stable.
-9. Keep one-action rollback by setting the selectors back to the legacy source.
+10. Keep one-action rollback by setting the selectors back to the legacy source.
 
 ## Acceptance Checks
 

@@ -2345,6 +2345,98 @@ def _publish_haeo_forecast_sensor(entity_id, items, label, *, interval_minutes):
     logging.info(f"Published {entity_id} (state={state}, {len(items)} forecast points).")
 
 
+def _canonical_tier2_cache_path():
+    return Path(CONFIG['paths'].get(
+        'canonical_tier2_cache_file',
+        'canonical_tier2_price_cache.parquet',
+    ))
+
+
+def _normalise_wholesale_price_frame(df):
+    out = ensure_utc_index(df.copy())
+    if 'wholesale_price' not in out.columns:
+        out = out.rename(columns={out.columns[0]: 'wholesale_price'})
+    return out[['wholesale_price']].copy()
+
+
+def _save_canonical_tier2_cache(tier2_results, *, tier2_price_key, tier2_label):
+    """Persist the current 30-min Tier 2 curve for cheap 5-min Tier 1 refreshes."""
+    if not tier2_results or tier2_price_key not in tier2_results:
+        logging.warning("Tier 2 cache not written: %s missing.", tier2_price_key)
+        return
+
+    frame = _normalise_wholesale_price_frame(tier2_results[tier2_price_key])
+    if frame.empty:
+        logging.warning("Tier 2 cache not written: empty %s frame.", tier2_label)
+        return
+
+    created_at = datetime.now(pytz.UTC).isoformat()
+    out = frame.reset_index().rename(columns={frame.index.name or 'index': 'timestamp'})
+    if 'timestamp' not in out.columns:
+        out = out.rename(columns={out.columns[0]: 'timestamp'})
+    out['source'] = tier2_label
+    out['created_at'] = created_at
+
+    path = _canonical_tier2_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(path, index=False)
+    logging.info(
+        "Saved canonical Tier 2 cache %s (%s, %d rows, created_at=%s).",
+        path,
+        tier2_label,
+        len(out),
+        created_at,
+    )
+
+
+def _load_canonical_tier2_cache(max_age_minutes=180):
+    """Load cached 30-min Tier 2 curve for the cheap tactical publisher."""
+    path = _canonical_tier2_cache_path()
+    if not path.exists():
+        logging.warning("Canonical Tier 2 cache missing: %s", path)
+        return None, None, None
+
+    cache = pd.read_parquet(path)
+    required = {'timestamp', 'wholesale_price', 'source', 'created_at'}
+    if not required.issubset(cache.columns):
+        logging.warning("Canonical Tier 2 cache has unexpected schema: %s", path)
+        return None, None, None
+
+    created_at = pd.to_datetime(cache['created_at'].iloc[0], utc=True, errors='coerce')
+    if pd.isna(created_at):
+        logging.warning("Canonical Tier 2 cache has invalid created_at: %s", path)
+        return None, None, None
+    age_minutes = (pd.Timestamp.now(tz='UTC') - created_at).total_seconds() / 60.0
+    if age_minutes > max_age_minutes:
+        logging.warning(
+            "Canonical Tier 2 cache stale: %.1f minutes old (limit %.1f).",
+            age_minutes,
+            max_age_minutes,
+        )
+        return None, None, None
+
+    frame = cache[['timestamp', 'wholesale_price']].copy()
+    frame['timestamp'] = pd.to_datetime(frame['timestamp'], utc=True, errors='coerce')
+    frame = frame.dropna(subset=['timestamp']).set_index('timestamp').sort_index()
+    source = str(cache['source'].iloc[0])
+    key = 'cached_tier2_price'
+    label = f"cached {source}"
+    return {key: frame}, key, label
+
+
+def _publish_tactical_price_forecasts(tactical_results):
+    """Publish Tier 1 per-model triplet sensors without running the full forecast stack."""
+    for key in ('p5min_price', 'p5min_price_q05', 'p5min_price_q95'):
+        if key not in tactical_results or tactical_results[key] is None:
+            logging.warning("Tier 1 publish skipped for missing key: %s", key)
+            continue
+        publish_df = tactical_results[key].copy()
+        if 'wholesale_price' not in publish_df.columns:
+            publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
+        apply_tariffs_to_forecast(publish_df)
+        publish_forecast_to_hass(key, publish_df)
+
+
 def _publish_canonical_ai_price_forecasts(
     tactical_results,
     tier2_results,
@@ -2594,6 +2686,16 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             logging.error(f"FATAL ERROR in PD-direct execution: {e}", exc_info=True)
             pd_direct_results = {}
 
+        if pd_direct_results and 'pd_direct_price' in pd_direct_results:
+            try:
+                _save_canonical_tier2_cache(
+                    pd_direct_results,
+                    tier2_price_key='pd_direct_price',
+                    tier2_label='PD-direct',
+                )
+            except Exception as e:
+                logging.error(f"FATAL ERROR saving canonical Tier 2 cache: {e}", exc_info=True)
+
         if publish_hass:
             try:
                 if pd_direct_results and 'pd_direct_price' in pd_direct_results:
@@ -2725,6 +2827,48 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             log_forecast_data(model_name, model_version, result_data['type'], primary_pred_df_for_log, original_covariates_for_log)
 
     logging.info("--- Prediction Orchestrator finished ---")
+
+
+def run_tactical_publish(publish_hass, max_tier2_cache_age_minutes):
+    """Cheap 5-minute publisher: recompute Tier 1, reuse cached 30-min PD-direct tail."""
+    logging.info("--- Tactical publisher started ---")
+    tactical_results = _execute_tactical_prediction()
+    if not tactical_results or 'p5min_price' not in tactical_results:
+        logging.error("Tactical publisher aborted: Tier 1 tactical forecast unavailable.")
+        return
+
+    if publish_hass:
+        _publish_tactical_price_forecasts(tactical_results)
+
+    tier2_results, tier2_price_key, tier2_label = _load_canonical_tier2_cache(
+        max_age_minutes=max_tier2_cache_age_minutes,
+    )
+    if tier2_results is None:
+        logging.warning(
+            "Tactical publisher did not refresh canonical AI MPC/DH sensors: "
+            "fresh Tier 2 cache unavailable."
+        )
+    elif publish_hass:
+        _publish_canonical_ai_price_forecasts(
+            tactical_results,
+            tier2_results,
+            tier2_price_key=tier2_price_key,
+            tier2_label=tier2_label,
+        )
+
+    try:
+        empty_covariates = pd.DataFrame(index=tactical_results['p5min_price'].index)
+        log_forecast_data(
+            'p5min_tactical',
+            'N/A',
+            'lgbm_tactical_5min_refresh',
+            tactical_results['p5min_price'].copy(),
+            empty_covariates,
+        )
+    except Exception as e:
+        logging.error(f"FATAL ERROR in tactical publisher log: {e}", exc_info=True)
+
+    logging.info("--- Tactical publisher finished ---")
 
 
 def apply_tariffs_to_forecast(pred_df):
@@ -3288,6 +3432,7 @@ def main():
     parser.add_argument('mode', choices=[
         'train-price', 'train-load',
         'predict-price', 'predict-load', 'predict-all',
+        'publish-tactical',
         'update-tariffs', 'backfill-actuals', 'update-adjusters'
     ], help="The mode to run the script in.")
     
@@ -3295,6 +3440,8 @@ def main():
     parser.add_argument('--publish-hass', action='store_true', help="Publish FINAL forecasts to Home Assistant entities.")
     parser.add_argument('--dynamic-handoff', action='store_true', help="For 'predict-price' mode, use Amber's advanced forecast to seed the model.")
     parser.add_argument('--debug-tft', action='store_true', help="Print TFT encoder/decoder inputs and output side-by-side (for diagnosing underestimation).")
+    parser.add_argument('--max-tier2-cache-age-minutes', type=float, default=180.0,
+                        help="Maximum age for cached Tier 2 curve used by publish-tactical.")
     parser.add_argument('--config', default='config.json', help="Path to the configuration file.")
     args = parser.parse_args()
 
@@ -3318,6 +3465,11 @@ def main():
                 use_dynamic_handoff=args.dynamic_handoff,
                 publish_covariates=args.publish_covariates
             )
+    elif args.mode == 'publish-tactical':
+        run_tactical_publish(
+            publish_hass=args.publish_hass,
+            max_tier2_cache_age_minutes=args.max_tier2_cache_age_minutes,
+        )
     
     elif args.mode.startswith('train-'):
         model_name = args.mode.split('-')[1]

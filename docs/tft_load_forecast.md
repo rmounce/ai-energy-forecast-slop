@@ -75,9 +75,11 @@ still need calibration. This is also not yet a live shadow backtest because hist
 `tft_load_forecast_log.csv` rows are included in `forecast.py backfill-actuals`, so a
 proper live accuracy comparison can accumulate from here.
 
-Operational read: do not promote TFT load blindly, but do not abandon it. The next load
-decision should be based on live backfilled accuracy over a few weeks, plus a sanity check
-that the lower load forecast does not make EMHASS under-prepare in edge cases.
+Operational read: do not promote TFT load blindly, but do not abandon it. The user prefers
+the conservative production posture of leaving LightGBM active because over-estimating load is
+safer than under-preparing. The next load decision should be based on live backfilled accuracy
+over a few weeks, plus a sanity check that the lower load forecast does not make EMHASS
+under-prepare in edge cases.
 
 Repeatable diagnostic:
 
