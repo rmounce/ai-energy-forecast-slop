@@ -2345,13 +2345,20 @@ def _publish_haeo_forecast_sensor(entity_id, items, label, *, interval_minutes):
     logging.info(f"Published {entity_id} (state={state}, {len(items)} forecast points).")
 
 
-def _publish_combined_price_forecasts(tactical_results, tft_results):
-    """Publish HAEO-style Tier 1 + TFT bundle entities for EMHASS consumption.
+def _publish_canonical_ai_price_forecasts(
+    tactical_results,
+    tier2_results,
+    *,
+    tier2_price_key,
+    tier2_label,
+):
+    """Publish HAEO-style Tier 1 + Tier 2 bundle entities for EMHASS consumption.
 
-    Builds the canonical AI shadow source for EMHASS (`ai_mpc_*` for the 14h MPC
-    payload, `ai_dh_*` for the 72h DH payload). Tier 1 LightGBM q50 covers the first
-    60 minutes at 5-minute cadence; TFT q50 covers the remaining horizon at 30-minute
-    cadence (re-expanded to 5-minute for the MPC variant).
+    Builds the canonical AI shadow source for EMHASS (`ai_mpc_*` for the 14h
+    MPC payload, `ai_dh_*` for the 72h DH payload). Tier 1 LightGBM q50 covers
+    the first 60 minutes at 5-minute cadence; the selected 30-minute Tier 2 q50
+    source covers the remaining horizon and is re-expanded to 5-minute cadence
+    for the MPC variant.
 
     The Amber-shaped legacy `ai_combined_*_price_forecast` family was removed
     2026-05-08 (only one ref remained in the user's dashboard, replaced by the new
@@ -2360,11 +2367,15 @@ def _publish_combined_price_forecasts(tactical_results, tft_results):
     set to `ai_shadow`.
     """
     t1_p50  = tactical_results.get('p5min_price')
-    t2_p50  = tft_results.get('tft_price')
+    t2_p50  = tier2_results.get(tier2_price_key)
 
     if t1_p50 is None or t2_p50 is None:
-        logging.warning("AI shadow bundle skipped: Tier 1 or TFT q50 missing.")
+        logging.warning(
+            "AI shadow bundle skipped: Tier 1 or %s q50 missing.",
+            tier2_label,
+        )
         return
+    logging.info("Publishing canonical AI price forecasts using Tier 2 source: %s", tier2_label)
 
     # Tier 2: only steps after Tier 1's 60-minute window (avoids overlap on the MPC
     # 14h composite curve).
@@ -2574,27 +2585,33 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         except Exception as e:
             logging.error(f"FATAL ERROR in TFT Price shadow execution: {e}", exc_info=True)
 
-        if publish_hass:
-            try:
-                _publish_combined_price_forecasts(
-                    tactical_results if 'p5min_tactical' in all_results else {},
-                    all_results.get('tft_price', {}).get('forecasts', {}),
-                )
-            except Exception as e:
-                logging.error(f"FATAL ERROR in combined forecast publish: {e}", exc_info=True)
-
-        # PD-direct shadow forecast (Phase α-prime Step 2). Built and published
-        # in its own try/except so a failure here cannot affect the existing TFT
-        # publish path. Kept local to this scope (not added to all_results) because
-        # the JSON-save loop below expects each entry to be a registered model in
-        # CONFIG; PD-direct is HA-publish-only for now. RFC:
-        # docs/pd_direct_publish_rfc.md.
+        # PD-direct shadow forecast. Built in its own try/except so a failure
+        # here cannot affect the existing TFT publish/log path.
         try:
             pd_direct_results = _execute_pd_direct_prediction(
                 historical_df, adjusted_covariates_for_prediction)
         except Exception as e:
             logging.error(f"FATAL ERROR in PD-direct execution: {e}", exc_info=True)
             pd_direct_results = {}
+
+        if publish_hass:
+            try:
+                if pd_direct_results and 'pd_direct_price' in pd_direct_results:
+                    tier2_results = pd_direct_results
+                    tier2_price_key = 'pd_direct_price'
+                    tier2_label = 'PD-direct'
+                else:
+                    tier2_results = all_results.get('tft_price', {}).get('forecasts', {})
+                    tier2_price_key = 'tft_price'
+                    tier2_label = 'TFT fallback'
+                _publish_canonical_ai_price_forecasts(
+                    tactical_results if 'p5min_tactical' in all_results else {},
+                    tier2_results,
+                    tier2_price_key=tier2_price_key,
+                    tier2_label=tier2_label,
+                )
+            except Exception as e:
+                logging.error(f"FATAL ERROR in canonical AI forecast publish: {e}", exc_info=True)
 
         if publish_hass and pd_direct_results:
             try:
