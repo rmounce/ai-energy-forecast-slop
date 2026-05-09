@@ -1188,6 +1188,7 @@ def simulate_stepwise(
     dynamic_bridge_target_scale: float = 0.0,
     dynamic_bridge_terminal_scale: float = 0.0,
     dynamic_bridge_terminal_scope: str = "all",
+    tactical_terminal_soc_override_kwh: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     source_names = [contract.name for contract in source_contracts]
     state = {src: float(soc_init) for src in source_names}
@@ -1316,6 +1317,7 @@ def simulate_stepwise(
             extra_terminal_energy_value_per_kwh = 0.0
             min_terminal_soc_kwh = None
             max_terminal_soc_kwh = None
+            tactical_terminal_soc_override_applied = False
             inventory_discipline_applied = False
             inventory_discipline_cycle_cost_adder_per_kwh = 0.0
             grid_exchange_reduction_applied = False
@@ -1401,6 +1403,18 @@ def simulate_stepwise(
                         raise ValueError(
                             f"Unsupported dynamic_bridge_terminal_scope: {dynamic_bridge_terminal_scope}"
                         )
+            if tactical_terminal_soc_override_kwh is not None:
+                terminal_override = float(np.clip(
+                    tactical_terminal_soc_override_kwh,
+                    0.0,
+                    CAPACITY_KWH,
+                ))
+                min_terminal_soc_kwh = terminal_override
+                max_terminal_soc_kwh = terminal_override
+                extra_terminal_energy_floor_kwh = None
+                extra_terminal_energy_cap_kwh = None
+                extra_terminal_energy_value_per_kwh = 0.0
+                tactical_terminal_soc_override_applied = True
             forecast_general_price_mwh = None
             forecast_feed_in_price_mwh = None
             forecast_net_load_kw = None
@@ -1676,6 +1690,8 @@ def simulate_stepwise(
                 "extra_terminal_energy_kwh": float(solve.get("extra_terminal_energy_kwh", 0.0)),
                 "min_terminal_soc_kwh": min_terminal_soc_kwh,
                 "max_terminal_soc_kwh": max_terminal_soc_kwh,
+                "tactical_terminal_soc_override_kwh": tactical_terminal_soc_override_kwh,
+                "tactical_terminal_soc_override_applied": tactical_terminal_soc_override_applied,
                 "tier1_quantile_blend": providers.args.tier1_quantile_blend,
                 "tier2_quantile_blend": providers.args.tier2_quantile_blend,
                 "buy_curve_quantile_blend": providers.args.buy_curve_quantile_blend,
@@ -1820,6 +1836,11 @@ def simulate_stepwise(
             "dynamic_bridge_target_scale": dynamic_bridge_target_scale,
             "dynamic_bridge_terminal_scale": dynamic_bridge_terminal_scale,
             "dynamic_bridge_terminal_scope": dynamic_bridge_terminal_scope,
+            "tactical_terminal_soc_override_kwh": (
+                tactical_terminal_soc_override_kwh
+                if tactical_terminal_soc_override_kwh is not None
+                else np.nan
+            ),
             "mean_dynamic_target_uplift_kwh": mean_dynamic_target_uplift_kwh,
             "max_dynamic_target_uplift_kwh": max_dynamic_target_uplift_kwh,
             "mean_dynamic_terminal_adder_per_kwh": mean_dynamic_terminal_adder_per_kwh,
@@ -2192,6 +2213,7 @@ def _simulate_single_source(
         dynamic_bridge_target_scale=args_dict["dynamic_bridge_target_scale"],
         dynamic_bridge_terminal_scale=args_dict["dynamic_bridge_terminal_scale"],
         dynamic_bridge_terminal_scope=args_dict["dynamic_bridge_terminal_scope"],
+        tactical_terminal_soc_override_kwh=args_dict["tactical_terminal_soc_kwh_resolved"],
     )
     # Phase α-prime Step 5: surface infeasibility count if the strategic
     # terminal-SoC equality constraint was active.
@@ -2236,6 +2258,7 @@ def simulate_stepwise_parallel(
             dynamic_bridge_target_scale=args_dict["dynamic_bridge_target_scale"],
             dynamic_bridge_terminal_scale=args_dict["dynamic_bridge_terminal_scale"],
             dynamic_bridge_terminal_scope=args_dict["dynamic_bridge_terminal_scope"],
+            tactical_terminal_soc_override_kwh=args_dict["tactical_terminal_soc_kwh_resolved"],
         )
 
     raw_frames: list[pd.DataFrame] = []
@@ -2496,6 +2519,27 @@ def main():
             "Same as --strategic-72h-terminal-soc-kwh but as a percentage of capacity. "
             "Recommended starting value: 50 (neutral; doesn't bias toward charge-up or "
             "discharge-down candidates). Mutually exclusive with the kwh form."
+        ),
+    )
+    parser.add_argument(
+        "--tactical-14h-terminal-soc-kwh",
+        type=float,
+        default=None,
+        help=(
+            "Eval-only diagnostic. When set, overrides the tactical 14h LP terminal "
+            "SoC with an exact equality at this kWh value for every source and every "
+            "step. This bypasses source-specific strategic handoff targets as the "
+            "terminal constraint, though they are still recorded when "
+            "--strategic-soc-handoff is enabled. This is NOT production-fidelity."
+        ),
+    )
+    parser.add_argument(
+        "--tactical-14h-terminal-soc-pct",
+        type=float,
+        default=None,
+        help=(
+            "Same as --tactical-14h-terminal-soc-kwh but as a percentage of capacity. "
+            "Mutually exclusive with the kWh form."
         ),
     )
     parser.add_argument(
@@ -2838,6 +2882,32 @@ def main():
             args.strategic_72h_terminal_soc_pct / 100.0 * CAPACITY_KWH
         )
 
+    if (args.tactical_14h_terminal_soc_kwh is not None
+            and args.tactical_14h_terminal_soc_pct is not None):
+        parser.error(
+            "Use only one of --tactical-14h-terminal-soc-kwh or "
+            "--tactical-14h-terminal-soc-pct"
+        )
+    args.tactical_terminal_soc_kwh_resolved = None
+    if args.tactical_14h_terminal_soc_kwh is not None:
+        if not (0.0 <= args.tactical_14h_terminal_soc_kwh <= CAPACITY_KWH):
+            parser.error(
+                f"--tactical-14h-terminal-soc-kwh must be in [0, {CAPACITY_KWH}], "
+                f"got {args.tactical_14h_terminal_soc_kwh}"
+            )
+        args.tactical_terminal_soc_kwh_resolved = float(
+            args.tactical_14h_terminal_soc_kwh
+        )
+    elif args.tactical_14h_terminal_soc_pct is not None:
+        if not (0.0 <= args.tactical_14h_terminal_soc_pct <= 100.0):
+            parser.error(
+                f"--tactical-14h-terminal-soc-pct must be in [0, 100], "
+                f"got {args.tactical_14h_terminal_soc_pct}"
+            )
+        args.tactical_terminal_soc_kwh_resolved = float(
+            args.tactical_14h_terminal_soc_pct / 100.0 * CAPACITY_KWH
+        )
+
     tft_requiring_sources = {"model_a_hybrid", "pd_direct_tft_tail"}
     if any(
         contract.tactical_source in tft_requiring_sources
@@ -2879,6 +2949,16 @@ def main():
         )
         print(
             "  *** Inventory-normalised forecast comparison; NOT a production "
+            "profit estimate. ***"
+        )
+    if args.tactical_terminal_soc_kwh_resolved is not None:
+        pct = args.tactical_terminal_soc_kwh_resolved / CAPACITY_KWH * 100.0
+        print(
+            f"  14h tactical terminal-SoC equality: "
+            f"{args.tactical_terminal_soc_kwh_resolved:.2f} kWh ({pct:.1f}% of capacity)"
+        )
+        print(
+            "  *** Tactical inventory-normalised diagnostic; NOT a production "
             "profit estimate. ***"
         )
     print(
