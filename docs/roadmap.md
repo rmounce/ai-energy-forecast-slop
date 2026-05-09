@@ -1,6 +1,6 @@
 # Pipeline Roadmap
 
-**Last updated: 2026-05-05**
+**Last updated: 2026-05-09**
 
 Full architecture: `ARCHITECTURE.md`. Model design rationale: `docs/tft_price_forecast.md`.
 Data sources: `docs/data_sources.md`. Load TFT: `docs/tft_load_forecast.md`.
@@ -671,13 +671,21 @@ Current committed state:
   - `sensor.ai_mpc_export_price_forecast`
   - `sensor.ai_dh_import_price_forecast`
   - `sensor.ai_dh_export_price_forecast`
+- Those canonical entities still use the older Tier 1 + TFT bundle. They are observable
+  but not currently selectable for control.
+- PD-direct, with the trained PD7Day q50 debiaser, publishes as chart/comparison triplets:
+  - `sensor.ai_pd_direct_price_forecast`
+  - `sensor.ai_pd_direct_price_forecast_low`
+  - `sensor.ai_pd_direct_price_forecast_high`
+- `sensor.ai_spot_price_forecast` is the graph-friendly stitched wholesale source:
+  Tier 1 5-minute forecast followed by the PD-direct 30-minute tail.
 - These canonical entities use:
   - `forecast` attribute points shaped as `{datetime, native_value}`
   - UTC ISO timestamps
   - `$ / kWh`
   - positive import cost
   - positive export revenue, with negative values only when exporting costs money
-- Existing Amber-shaped compatibility sensors still exist:
+- Existing AI Amber-shaped compatibility sensors are retired:
   - `sensor.ai_combined_general_price_forecast`
   - `sensor.ai_combined_feed_in_price_forecast`
 - `hass/package-emhass.yaml` declares source selectors:
@@ -686,10 +694,12 @@ Current committed state:
 - `hass/package-emhass.yaml` declares AI forecast health/status sensors:
   - `sensor.ai_mpc_price_forecast_status`
   - `sensor.ai_dh_price_forecast_status`
-- The DH EMHASS payload is already wired behind `input_select.emhass_dh_price_source`.
-  Default remains `amber_lgbm_extrapolated`; selecting `ai_shadow` uses the canonical AI DH
-  import/export forecasts when both have the full 144-point horizon.
-- MPC is **not yet wired**. It still uses the existing Amber 5-minute forecast path.
+- The DH and MPC EMHASS payloads contain guarded `ai_shadow` template branches, but the
+  selectors currently expose only legacy production options:
+  - MPC: `amber`
+  - DH: `amber_lgbm_extrapolated`
+- This is deliberate. Visual shadow comparison and controllable source routing are different
+  risk surfaces; do not re-add an AI selector option until a specific source is promoted.
 - None of the latest HA package changes have been deployed into the user's live Home Assistant
   instance yet.
 
@@ -707,36 +717,24 @@ Immediate next actions for the next implementer:
    - Restart HA or reload enough YAML domains to create the new `input_select` helpers and
      template sensors.
    - Verify the new AI status sensors are `ready`.
-   - Keep both selectors on their production defaults initially.
+   - Keep both selectors on their production defaults. They are currently legacy-only.
 
-2. **Wire MPC behind `input_select.emhass_mpc_price_source`.**
-   - Default must remain `amber`.
-   - `ai_shadow` should use:
-     - `sensor.ai_mpc_import_price_forecast`
-     - `sensor.ai_mpc_export_price_forecast`
-   - Require full 168-point 5-minute horizon before using AI; otherwise fall back to Amber.
-   - Preserve existing DNSP free-export adjustment and battery charge-weight ramp.
-   - Do not reintroduce Amber's negative feed-in convention inside the AI branch.
-   - After wiring, test by YAML parse plus live HA template rendering before any production flip.
+2. **Decide the next controllable AI source.**
+   - Current evidence favours PD-direct over TFT as the 72h/30m Amber-independent candidate,
+     especially after the PD7Day q50 debiaser removed the visible cap plateau.
+   - The canonical `ai_mpc_*` / `ai_dh_*` import/export sensors still publish the old TFT-tail
+     bundle. Before any selector promotion, either retarget those canonical sensors to
+     Tier 1 + PD-direct or add a clearly named PD-direct canonical family.
+   - Keep Amber as the production fallback and yardstick.
 
-3. **Add a graph-friendly spot-price forecast entity for ApexCharts.**
-   - The user has HA ApexCharts comparing spot price between forecast sources.
-   - The existing canonical import/export entities are tariff-adjusted and are not the right
-     source for a pure spot-price graph.
-   - Add a new canonical entity, likely:
-     - `sensor.ai_spot_price_forecast`
-   - Shape should match HAEO-style forecast points:
-     - `forecast: [{datetime, native_value}, ...]`
-     - `native_value` should be wholesale/spot price in `$ / kWh`, not tariff-adjusted
-     - UTC ISO timestamps
-   - It should combine the current best stack:
-     - Tier 1 tactical 5-minute spot/wholesale forecast for the first 60 minutes
-     - Tier 2 TFT 30-minute spot/wholesale forecast after that
-   - For charting, a 5-minute publication cadence over the MPC horizon plus expanded 30-minute
-     Tier 2 points is acceptable. If chart size becomes a problem, also publish a separate
-     30-minute/72-hour spot entity.
+3. **Do not promote TFT load.**
+   - Live matched-log comparison over the last 14 days shows TFT load is on average
+     `105 W` below LightGBM and below it on `83.1%` of rows.
+   - LightGBM remains production load forecast.
+   - Future `tft_load` logs now write to `tft_load_forecast_log.csv`; historical rows remain
+     mixed into `tft_price_forecast_log.csv`.
 
-4. **Document HA deployment steps after MPC and spot entities are added.**
+4. **Document HA deployment steps after the canonical source decision.**
    - Update `docs/production_forecast_switch_plan.md`.
    - Include exact entities, selectors, fallback behavior, and recommended flip order.
    - Keep rollback as a one-action selector change.
@@ -812,7 +810,7 @@ and constraint events. The pipeline corrects this explicitly via the Phase 1a OO
 | 2 | Tactical LightGBM Run 001 + P5MIN backfill | ✅ Done — q50 MAE 21.1 vs 30.7 baseline |
 | 3 | Dispatch simulator baseline | ✅ Done — LightGBM +5.9% regret reduction vs P5MIN |
 | 4 | Conformal calibration (Tier 1) | ✅ Done — spike q95 0.750→0.821 |
-| 5 (partial) | Production routing, combined shadow sensors | ✅ Done — live in HA |
+| 5 (partial) | Production routing, canonical shadow sensors | ✅ Done — visual shadow live in repo; control selectors legacy-only |
 | **6** | **Holistic dispatch simulation** | **Complete** — oracle/amber_apf_lgbm/p5min/TFT/hybrid all evaluated |
 | **8** | **Test framework** | **Complete** (42 tests passing) — Layer 2 financial gate passing ✅ |
 | 9 | LightGBM strategic model (30-min/72-hour) | **Complete** — TFT wins on spikes; LightGBM wins on normal. Archived as exploration. |

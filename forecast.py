@@ -699,7 +699,10 @@ def log_forecast_data(model_name, model_version, prediction_type, final_pred_df,
     of the existing file to prevent misalignment.
     """
     # Determine the base name for finding the log file (e.g., 'price' from 'price_p30')
-    if model_name.startswith('tft_'):
+    if model_name.startswith('tft_load'):
+        log_file_path = Path(CONFIG['paths'].get(
+            'tft_load_forecast_log_file', 'tft_load_forecast_log.csv'))
+    elif model_name.startswith('tft_'):
         log_file_path = Path(CONFIG['paths'].get('tft_price_forecast_log_file', 'tft_forecast_log.csv'))
     elif model_name.startswith('pd_direct'):
         log_file_path = Path(CONFIG['paths'].get(

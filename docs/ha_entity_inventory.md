@@ -112,22 +112,30 @@ Published by `systemd/ai-energy-forecast.{service,timer}` (every 5 min) and
 | `sensor.ai_tft_price_forecast` | **Shadow** — TFT Run 011b q50 ($/kWh); published but not currently fed to EMHASS | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_tft_price_forecast_high` | TFT Run 011b q70 | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_tft_price_forecast_low` | TFT Run 011b q30 | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_pd_direct_price_forecast` | **Current Amber-independent 72h candidate** — Tier 1 / debiased PREDISPATCH / debiased PD7Day q50 wholesale price ($/kWh) | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_pd_direct_price_forecast_high` | PD-direct q70-style band / high comparison surface | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_pd_direct_price_forecast_low` | PD-direct q30-style band / low comparison surface | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_spot_price_forecast` | Graph-friendly stitched spot source: Tier 1 5-min wholesale forecast, then PD-direct 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
 
-**Amber-shaped compatibility sensors** (for legacy EMHASS template compatibility):
+**Retired Amber-shaped AI compatibility sensors:**
 
-| Entity | Description | Items | Attribute format |
-|---|---|---|---|
-| `sensor.ai_combined_general_price_forecast` | Hybrid AI forecast in amber2mqtt `Forecasts` format | 870 | `Forecasts` (capital F); items have `advanced_price_predicted/high/low`, `per_kwh`, `start_time`, `end_time` |
-| `sensor.ai_combined_feed_in_price_forecast` | Same, feed-in (negative values) | 870 | `Forecasts` |
+`sensor.ai_combined_general_price_forecast` and
+`sensor.ai_combined_feed_in_price_forecast` were removed from `forecast.py` on
+2026-05-08. New AI-facing production/shadow surfaces should use canonical positive
+import/export entities or per-model chart triplets, not Amber's feed-in sign convention.
 
 **Canonical HAEO-style sensors** (new, for source-selector switch):
 
 | Entity | Description | Items | Resolution | Horizon | Attribute format |
 |---|---|---|---|---|---|
-| `sensor.ai_mpc_import_price_forecast` | Hybrid MPC import price (positive $/kWh) | 168 | 5-min | 14h | `forecast` (lowercase); items have `datetime` (UTC), `native_value` |
-| `sensor.ai_mpc_export_price_forecast` | MPC export revenue (positive = revenue; negative when export costs money at negative spot) | 168 | 5-min | 14h | `forecast` |
-| `sensor.ai_dh_import_price_forecast` | TFT DH import price (positive $/kWh) | 144 | 30-min | 72h | `forecast` |
-| `sensor.ai_dh_export_price_forecast` | TFT DH export revenue (positive = revenue) | 144 | 30-min | 72h | `forecast` |
+| `sensor.ai_mpc_import_price_forecast` | Canonical AI MPC import price (positive $/kWh); currently Tier 1 + TFT tail publisher | 168 | 5-min | 14h | `forecast` (lowercase); items have `datetime` (UTC), `native_value` |
+| `sensor.ai_mpc_export_price_forecast` | Canonical AI MPC export revenue; currently Tier 1 + TFT tail publisher | 168 | 5-min | 14h | `forecast` |
+| `sensor.ai_dh_import_price_forecast` | Canonical AI DH import price; currently TFT tail publisher | 144 | 30-min | 72h | `forecast` |
+| `sensor.ai_dh_export_price_forecast` | Canonical AI DH export revenue; currently TFT tail publisher | 144 | 30-min | 72h | `forecast` |
+
+Current HA package source selectors deliberately expose only legacy production options.
+These canonical sensors are observable and used by status/diagnostic templates, but are
+not selectable for control until a deliberate promotion step reintroduces an AI option.
 
 ### Load forecasts
 
@@ -158,8 +166,8 @@ Derived sensors computed by HA template engine. Recalculate on state change.
 |---|---|---|
 | `sensor.amber_effective_general_price` | Two-knob blended import price — blends `advanced_price_predicted/high/low` toward buy weight, then takes max of blended vs `per_kwh`. Used as spot reference for automations. | `sensor.amber_5min_current_general_price`, `sensor.amber_5min_forecasts_general_price`, `input_number.emhass_weight_buy_forecast` |
 | `sensor.amber_effective_feed_in_price` | Two-knob blended export price — same blend logic, then applies SAPN free-export tier (+$0.01/kWh in 10am–4pm window while allowance > 0) | `sensor.amber_5min_current_feed_in_price`, `sensor.amber_5min_forecasts_feed_in_price`, `input_number.emhass_weight_sell_forecast`, `input_number.sapn_free_exports` |
-| `sensor.emhass_selected_mpc_price_source` | Active MPC source name (`amber` / `ai_shadow`) + entity references | `input_select.emhass_mpc_price_source` |
-| `sensor.emhass_selected_dh_price_source` | Active DH source name | `input_select.emhass_dh_price_source` |
+| `sensor.emhass_selected_mpc_price_source` | Active MPC source name; currently legacy-only selector plus AI entity references for diagnostics | `input_select.emhass_mpc_price_source` |
+| `sensor.emhass_selected_dh_price_source` | Active DH source name; currently legacy-only selector plus AI entity references for diagnostics | `input_select.emhass_dh_price_source` |
 | `sensor.ai_mpc_price_forecast_status` | `ready` / `not_ready` + import/export counts and first values for MPC canonical sensors | `sensor.ai_mpc_import/export_price_forecast` |
 | `sensor.ai_dh_price_forecast_status` | Same for DH canonical sensors | `sensor.ai_dh_import/export_price_forecast` |
 
@@ -194,8 +202,8 @@ the `forecasts` attribute.
 
 | Entity | Options | Default | Purpose |
 |---|---|---|---|
-| `input_select.emhass_mpc_price_source` | `amber`, `ai_shadow` | `amber` | Switch MPC REST payload between Amber 5-min extended forecast and AI canonical sensors |
-| `input_select.emhass_dh_price_source` | `amber_lgbm_extrapolated`, `ai_shadow` | `amber_lgbm_extrapolated` | Switch DH REST payload between `sensor.ai_price_forecast` (APF/LightGBM 72h) and TFT AI canonical sensors |
+| `input_select.emhass_mpc_price_source` | `amber` | `amber` | Legacy-only production selector; AI option intentionally removed until promotion |
+| `input_select.emhass_dh_price_source` | `amber_lgbm_extrapolated` | `amber_lgbm_extrapolated` | Legacy-only production selector; AI option intentionally removed until promotion |
 
 ### Tuning knobs
 
@@ -259,6 +267,6 @@ the `forecasts` attribute.
 
 ## Notes
 
-**Feed-in sign convention:** amber2mqtt, Amber Express, and `sensor.ai_combined_feed_in_price_forecast` all use **negative values for export revenue** (Amber convention). The new canonical HAEO sensors (`sensor.ai_dh_export_price_forecast`, `sensor.ai_mpc_export_price_forecast`) use **positive values for export revenue** — a negative value means the export costs money (e.g. during negative spot price periods).
+**Feed-in sign convention:** amber2mqtt and Amber Express use **negative values for export revenue** (Amber convention). The canonical HAEO sensors (`sensor.ai_dh_export_price_forecast`, `sensor.ai_mpc_export_price_forecast`) use **positive values for export revenue** — a negative value means the export costs money (e.g. during negative spot price periods). The old AI Amber-shaped compatibility sensors have been retired.
 
 **amber2mqtt vs Amber Express coexistence:** Both are currently running and querying the Amber API simultaneously. amber2mqtt is the active production source; Amber Express entities are not consumed by any code or automation in this repo. See `docs/ideas.md` for migration notes.

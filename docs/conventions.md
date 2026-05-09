@@ -77,6 +77,6 @@ at the Home Assistant compatibility boundary:
 - `tariff_utils.export_value_to_amber_feed_in_price()`
 - `tariff_utils.amber_feed_in_price_to_export_value()`
 
-The AI combined publisher intentionally emits Amber-compatible feed-in forecast
-items because the current EMHASS templates consume Amber-shaped objects. Treat
-that as a boundary adapter, not as the internal convention.
+The old AI combined Amber-compatible publisher has been retired. Treat any
+remaining Amber-shaped feed-in handling as a provider boundary adapter, not as
+the internal convention.
