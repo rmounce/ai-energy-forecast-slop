@@ -55,11 +55,12 @@ Implementation status as of 2026-05-09:
 
 - `forecast.py --publish-hass` now publishes these four canonical AI price
   sensors. The old Amber-shaped `sensor.ai_combined_*` AI sensors are retired.
-- MPC canonical sensors currently use the old hybrid price stack: Tier 1
-  tactical LightGBM for the first 60 minutes, then TFT Tier 2 expanded to
-  5-minute cadence, truncated to the 14-hour MPC horizon.
-- DH canonical sensors currently use the TFT Tier 2 30-minute / 72-hour price
-  forecast.
+- MPC canonical sensors now use the current Amber-independent shadow stack:
+  Tier 1 tactical LightGBM for the first 60 minutes, then PD-direct expanded to
+  5-minute cadence, truncated to the 14-hour MPC horizon. If PD-direct fails to
+  build, the publisher falls back to the older TFT Tier 2 bundle.
+- DH canonical sensors now use the PD-direct 30-minute / 72-hour price forecast,
+  with the same TFT fallback on PD-direct failure.
 - PD-direct, now with the trained PD7Day q50 debiaser, publishes as per-model
   chart/comparison triplets:
   - `sensor.ai_pd_direct_price_forecast`
@@ -116,16 +117,13 @@ payload templates.
    - selected source remains Amber
    - AI arrays are rendered and logged
    - no inverter behavior changes
-6. Decide which AI source should feed the canonical control entities. Current
-   evidence points to PD-direct for 72h/30m over TFT, but `ai_mpc_*` and
-   `ai_dh_*` still publish the old TFT-tail bundle.
-7. Re-add an AI selector option only after the canonical control entities point
-   at the intended source and all status checks pass.
-8. Switch DH first, if desired, because it changes the strategic plan but not
+6. Re-add an AI selector option only after the canonical control entities have
+   been observed live with PD-direct content and all status checks pass.
+7. Switch DH first, if desired, because it changes the strategic plan but not
    the immediate 5-minute action as directly as MPC.
-9. Switch MPC only after source freshness, sign, length, and unit checks are
+8. Switch MPC only after source freshness, sign, length, and unit checks are
    visible and stable.
-10. Keep one-action rollback by setting the selectors back to the legacy source.
+9. Keep one-action rollback by setting the selectors back to the legacy source.
 
 ## Acceptance Checks
 

@@ -671,8 +671,9 @@ Current committed state:
   - `sensor.ai_mpc_export_price_forecast`
   - `sensor.ai_dh_import_price_forecast`
   - `sensor.ai_dh_export_price_forecast`
-- Those canonical entities still use the older Tier 1 + TFT bundle. They are observable
-  but not currently selectable for control.
+- Those canonical entities now publish the current Amber-independent shadow stack:
+  Tier 1 tactical LightGBM plus PD-direct, with the older TFT Tier 2 bundle as fallback
+  if PD-direct fails to build. They are observable but not currently selectable for control.
 - PD-direct, with the trained PD7Day q50 debiaser, publishes as chart/comparison triplets:
   - `sensor.ai_pd_direct_price_forecast`
   - `sensor.ai_pd_direct_price_forecast_low`
@@ -719,12 +720,13 @@ Immediate next actions for the next implementer:
    - Verify the new AI status sensors are `ready`.
    - Keep both selectors on their production defaults. They are currently legacy-only.
 
-2. **Decide the next controllable AI source.**
+2. **Observe the retargeted canonical AI source.**
    - Current evidence favours PD-direct over TFT as the 72h/30m Amber-independent candidate,
      especially after the PD7Day q50 debiaser removed the visible cap plateau.
-   - The canonical `ai_mpc_*` / `ai_dh_*` import/export sensors still publish the old TFT-tail
-     bundle. Before any selector promotion, either retarget those canonical sensors to
-     Tier 1 + PD-direct or add a clearly named PD-direct canonical family.
+   - The canonical `ai_mpc_*` / `ai_dh_*` import/export sensors now publish Tier 1 +
+     PD-direct, falling back to TFT if PD-direct fails.
+   - Before any selector promotion, verify live HA state length/sign/unit/freshness and compare
+     the diagnostic sensors against legacy Amber/APF.
    - Keep Amber as the production fallback and yardstick.
 
 3. **Do not promote TFT load.**

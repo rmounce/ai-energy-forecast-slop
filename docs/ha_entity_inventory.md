@@ -128,10 +128,10 @@ import/export entities or per-model chart triplets, not Amber's feed-in sign con
 
 | Entity | Description | Items | Resolution | Horizon | Attribute format |
 |---|---|---|---|---|---|
-| `sensor.ai_mpc_import_price_forecast` | Canonical AI MPC import price (positive $/kWh); currently Tier 1 + TFT tail publisher | 168 | 5-min | 14h | `forecast` (lowercase); items have `datetime` (UTC), `native_value` |
-| `sensor.ai_mpc_export_price_forecast` | Canonical AI MPC export revenue; currently Tier 1 + TFT tail publisher | 168 | 5-min | 14h | `forecast` |
-| `sensor.ai_dh_import_price_forecast` | Canonical AI DH import price; currently TFT tail publisher | 144 | 30-min | 72h | `forecast` |
-| `sensor.ai_dh_export_price_forecast` | Canonical AI DH export revenue; currently TFT tail publisher | 144 | 30-min | 72h | `forecast` |
+| `sensor.ai_mpc_import_price_forecast` | Canonical AI MPC import price (positive $/kWh); Tier 1 + PD-direct tail, TFT fallback on PD-direct failure | 168 | 5-min | 14h | `forecast` (lowercase); items have `datetime` (UTC), `native_value` |
+| `sensor.ai_mpc_export_price_forecast` | Canonical AI MPC export revenue; Tier 1 + PD-direct tail, TFT fallback on PD-direct failure | 168 | 5-min | 14h | `forecast` |
+| `sensor.ai_dh_import_price_forecast` | Canonical AI DH import price; PD-direct tail, TFT fallback on PD-direct failure | 144 | 30-min | 72h | `forecast` |
+| `sensor.ai_dh_export_price_forecast` | Canonical AI DH export revenue; PD-direct tail, TFT fallback on PD-direct failure | 144 | 30-min | 72h | `forecast` |
 
 Current HA package source selectors deliberately expose only legacy production options.
 These canonical sensors are observable and used by status/diagnostic templates, but are
