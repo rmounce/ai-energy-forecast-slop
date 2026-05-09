@@ -17,29 +17,32 @@ The existing forecast sources are:
 - DH: 30-minute Amber/APF-derived price forecast with the existing
   LightGBM-extrapolated day-ahead path.
 
-The AI combined publisher currently emits Amber-shaped compatibility sensors:
-
-- `sensor.ai_combined_general_price_forecast`
-- `sensor.ai_combined_feed_in_price_forecast`
-
-Those are useful for EMHASS compatibility but retain Amber's confusing feed-in
-sign convention at the boundary.
+The old AI combined Amber-shaped compatibility sensors were removed on
+2026-05-08. They were useful as a transitional EMHASS adapter, but they retained
+Amber's confusing negative feed-in convention and duplicated the clearer
+HAEO-style import/export surfaces.
 
 ## Target Source Set
 
-Keep both forecast representations:
+Keep two forecast representations, with different risk surfaces:
 
-1. Legacy / compatibility sensors
-   - Amber-shaped `Forecasts[]`
-   - feed-in earning encoded as negative
-   - used for compatibility with current templates
+1. Per-model chart/comparison sensors
+   - `forecasts` attribute with model-native fields such as `wholesale_price`
+   - useful for ApexCharts and side-by-side model review
+   - examples: incumbent APF/LGBM, TFT, PD-direct, stitched spot forecast
 
-2. Canonical HAEO-style sensors
+2. Canonical HAEO-style import/export sensors
    - `forecast` attribute with `{datetime, native_value}` points
    - import price positive cost
    - export price positive revenue
    - UTC ISO timestamps
-   - suitable for HAEO/HAFO-style consumers and less error-prone templates
+   - suitable for a future deliberate EMHASS source switch
+
+Legacy Amber provider sensors still exist as inputs/rollback:
+
+   - Amber-shaped `Forecasts[]`
+   - feed-in earning encoded as negative
+   - used by the current production EMHASS templates
 
 Suggested canonical entities:
 
@@ -48,36 +51,41 @@ Suggested canonical entities:
 - `sensor.ai_dh_import_price_forecast`
 - `sensor.ai_dh_export_price_forecast`
 
-Implementation status:
+Implementation status as of 2026-05-09:
 
 - `forecast.py --publish-hass` now publishes these four canonical AI price
-  sensors alongside the existing Amber-shaped combined forecast sensors.
-- MPC canonical sensors use the current best-known hybrid price stack:
-  Tier 1 tactical LightGBM for the first 60 minutes, then TFT Tier 2 expanded
-  to 5-minute cadence, truncated to the 14-hour MPC horizon.
-- DH canonical sensors use the TFT Tier 2 30-minute / 72-hour price forecast.
+  sensors. The old Amber-shaped `sensor.ai_combined_*` AI sensors are retired.
+- MPC canonical sensors currently use the old hybrid price stack: Tier 1
+  tactical LightGBM for the first 60 minutes, then TFT Tier 2 expanded to
+  5-minute cadence, truncated to the 14-hour MPC horizon.
+- DH canonical sensors currently use the TFT Tier 2 30-minute / 72-hour price
+  forecast.
+- PD-direct, now with the trained PD7Day q50 debiaser, publishes as per-model
+  chart/comparison triplets:
+  - `sensor.ai_pd_direct_price_forecast`
+  - `sensor.ai_pd_direct_price_forecast_low`
+  - `sensor.ai_pd_direct_price_forecast_high`
+- `sensor.ai_spot_price_forecast` is a graph-friendly stitched wholesale source:
+  Tier 1 5-minute spot/wholesale forecast followed by the PD-direct 30-minute
+  tail.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
-- `hass/package-emhass.yaml` now declares source selectors, read-only status
-  sensors, and diagnostic sensors for both MPC and DH price sources. Selectors
-  default to existing production sources and do not change EMHASS behavior until
-  explicitly switched.
-- The day-ahead EMHASS payload is wired to
-  `input_select.emhass_dh_price_source`. Defaults to Amber/APF-derived
-  LightGBM-extrapolated source; `ai_shadow` available as explicit opt-in when
-  AI DH sensors have the full 144-point horizon.
-- The MPC EMHASS payload is wired to `input_select.emhass_mpc_price_source`.
-  Defaults to Amber 5-min extended source; `ai_shadow` available when AI MPC
-  sensors have the full 168-point horizon. Current-interval price always stays
-  on the confirmed Amber sensor regardless of selector.
+- `hass/package-emhass.yaml` declares source selectors, read-only status
+  sensors, and diagnostic sensors for both MPC and DH price sources.
+- The selectors currently expose only production legacy options:
+  - MPC: `amber`
+  - DH: `amber_lgbm_extrapolated`
+- Guarded `ai_shadow` template branches exist, but the `ai_shadow` option was
+  removed from the selectors to avoid accidental control routing before a
+  deliberate promotion decision.
 - `sensor.emhass_mpc_price_diagnostic` and `sensor.emhass_dh_price_diagnostic`
   expose side-by-side first values and 1h/24h means for both sources without
   calling EMHASS. State = currently selected source.
 
 ## Switching Model
 
-Add explicit Home Assistant selectors rather than editing templates for each
-trial:
+When promoting an AI source to controllable shadow/prod, re-add explicit Home
+Assistant selector options rather than editing templates for each trial:
 
 - `input_select.emhass_mpc_price_source`
   - `amber`
@@ -86,33 +94,38 @@ trial:
   - `amber_lgbm_extrapolated`
   - `ai_shadow`
 
-The EMHASS request templates should read from adapter template sensors or
-macros whose only job is to select the active source and normalize it into the
-price arrays EMHASS expects.
+The EMHASS request templates should read from adapter template sensors or macros
+whose only job is to select the active source and normalize it into the price
+arrays EMHASS expects.
 
 Do not embed source-specific sign or timestamp conventions in the main MPC/DH
 payload templates.
 
 ## Rollout Sequence
 
-1. Publish canonical AI forecast sensors alongside the existing Amber-shaped AI
-   combined sensors. **Done in `forecast.py`; verify against live HA state.**
+1. Publish canonical AI forecast sensors. **Done in `forecast.py`; verify against
+   live HA state.**
 2. Add source selectors and AI forecast health/status sensors. **Done in
-   `hass/package-emhass.yaml`; sync to HA and verify after template reload.**
+   `hass/package-emhass.yaml`; selectors are currently legacy-only by design.**
 3. Add read-only diagnostic template sensors. **Done: `sensor.emhass_mpc_price_diagnostic`
    and `sensor.emhass_dh_price_diagnostic` expose side-by-side first values and hourly/daily
    means for both sources.**
-4. Add adapter logic to the EMHASS REST payload templates. **Done: both DH and MPC payloads
-   read from their respective source selectors.**
-5. Run shadow mode:
+4. Add adapter logic to the EMHASS REST payload templates. **Done, but the AI
+   branch is unreachable until an AI option is deliberately re-added.**
+5. Run visual shadow mode:
    - selected source remains Amber
    - AI arrays are rendered and logged
    - no inverter behavior changes
-6. Switch DH first, if desired, because it changes the strategic plan but not
+6. Decide which AI source should feed the canonical control entities. Current
+   evidence points to PD-direct for 72h/30m over TFT, but `ai_mpc_*` and
+   `ai_dh_*` still publish the old TFT-tail bundle.
+7. Re-add an AI selector option only after the canonical control entities point
+   at the intended source and all status checks pass.
+8. Switch DH first, if desired, because it changes the strategic plan but not
    the immediate 5-minute action as directly as MPC.
-7. Switch MPC only after source freshness, sign, length, and unit checks are
+9. Switch MPC only after source freshness, sign, length, and unit checks are
    visible and stable.
-8. Keep one-action rollback by setting the selectors back to the legacy source.
+10. Keep one-action rollback by setting the selectors back to the legacy source.
 
 ## Acceptance Checks
 

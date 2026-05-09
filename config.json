@@ -289,6 +289,7 @@
         "pd_direct_forecast_log_file": "pd_direct_forecast_log.csv",
         "p5min_forecast_log_file": "p5min_forecast_log.csv",
         "load_forecast_log_file": "load_forecast_log.csv",
+        "tft_load_forecast_log_file": "tft_load_forecast_log.csv",
         "tft_price_model": "models/tft_price/checkpoint_active.pt",
         "tft_price_scalers": "models/tft_price/scalers_active.pkl",
         "tft_load_model": "models/tft_load/checkpoint_best.pt",

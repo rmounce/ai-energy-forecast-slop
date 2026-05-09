@@ -179,19 +179,19 @@ template:
       unit_of_measurement: "$/kWh"
       device_class: monetary
       availability: >
-        {{ not is_state('sensor.ai_price_forecast', 'unavailable') }}
+        {{ not is_state('sensor.ai_pd_direct_price_forecast', 'unavailable') }}
       state: >
         {%- set p5min = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
         {%- if p5min | count > 0 %}
           {{ p5min[0].aemo_price_sa1 | round(4) }}
         {%- else %}
-          {%- set fc = state_attr('sensor.ai_price_forecast', 'forecasts') | default([], true) %}
+          {%- set fc = state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) %}
           {{ fc[0].wholesale_price | round(4) if fc | count > 0 else 'unknown' }}
         {%- endif %}
       attributes:
         forecasts: >
           {%- set p5min = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
-          {%- set p30min = state_attr('sensor.ai_price_forecast', 'forecasts') | default([], true) %}
+          {%- set p30min = state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) %}
           {%- set ns = namespace(result=[]) %}
           {%- for item in p5min %}
             {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': item.aemo_price_sa1}] %}

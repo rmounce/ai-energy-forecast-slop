@@ -36,6 +36,42 @@ weather + time — cleaner architecture. Target is positive-and-bounded so no lo
 
 ---
 
+## Live Shadow Read (2026-05-09)
+
+The TFT load shadow is still not a promotion candidate. A live-log comparison over the
+last 14 days, matching forecast runs and target timestamps between the production
+LightGBM load forecast and the TFT load shadow, shows the TFT is systematically lower:
+
+| Horizon bucket | Mean TFT − LightGBM |
+|---|---:|
+| 0-24h | -79.7 W |
+| 24-48h | -104.3 W |
+| 48-72h | -131.6 W |
+| Overall | -105.2 W |
+
+Matched sample: `95,615` rows across `664` runs, from roughly
+`2026-04-25T09:00:00Z` to `2026-05-09T08:30:00Z`. TFT was below LightGBM on
+`83.1%` of matched rows.
+
+This confirms the user's live observation that the TFT shadow sits below the current
+LightGBM forecast. It does not by itself prove LightGBM is more accurate, because the
+live logs are not a full realised-outcome backtest. Operationally, however, it is enough
+to keep LightGBM as the production load forecast and treat TFT load as a shadow-only
+research branch.
+
+Repeatable diagnostic:
+
+```bash
+nice -n 19 ./.venv/bin/python eval/analyze_live_load_shadow_gap.py --days 14
+```
+
+Future logging note: `forecast.py` now writes future `tft_load` rows to
+`tft_load_forecast_log.csv`. Historical `tft_load` rows before this change are mixed into
+`tft_price_forecast_log.csv`; the diagnostic falls back to that file when the dedicated
+log does not exist.
+
+---
+
 ## Known Issue: Overnight 48h Morning Ramp Inversion
 
 **Symptom (observed live 2026-04-17):** Step 72 (6:30am day+2) = 265W q50, which is lower

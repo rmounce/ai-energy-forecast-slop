@@ -185,7 +185,9 @@ until Tier 2 conformal calibration is complete. Deferred pending Phase 6+8 gate.
 
 Implemented as Tier 1 tactical LightGBM. `ingest/ingest-p5min.py` ingests to
 `rp_5m.aemo_p5min_forecast`. Inference: `_execute_tactical_prediction()` in `forecast.py`.
-Publishes `sensor.ai_p5min_price_forecast` and contributes to `sensor.ai_combined_*_price_forecast`.
+Publishes `sensor.ai_p5min_price_forecast`, contributes to canonical MPC import/export
+shadow sensors, and now feeds the graph-friendly `sensor.ai_spot_price_forecast` before the
+30-minute PD-direct tail.
 
 ### Ensemble / model averaging
 

@@ -150,7 +150,7 @@ Decoder: Solcast PV forecast + BOM weather forecast + calendar (72h).
 - If a fresh MPC plan arrives between boundaries and changes the requested action, the battery
   controller can update immediately; otherwise it keeps following the most recent plan
 
-### 5-min/30-min scheduling inaccuracy in combined shadow sensor
+### 5-min/30-min scheduling inaccuracy in retired combined shadow sensor
 
 The MPC calculates per-period energy as:
 ```jinja2
@@ -160,7 +160,7 @@ This assumes every `Forecasts` item is 5-min. The original combined AI shadow se
 Tier 1 items at genuine 5-minute cadence, then published Tier 2 as 30-minute items, which
 would have caused the MPC to underweight Tier 2 periods by 6x.
 
-**Status:** fixed on `2026-04-24` in [forecast.py](../forecast.py). The combined publisher now
-expands each 30-minute Tier 2 step into six identical 5-minute forecast items before tariff
-application and Home Assistant publication. No MPC YAML changes are required for the shadow
-sensor path.
+**Status:** fixed on `2026-04-24` and later superseded. The old Amber-shaped AI combined
+sensors were retired on `2026-05-08`; the canonical MPC import/export publisher still expands
+30-minute Tier 2 steps into six identical 5-minute points before tariff application and Home
+Assistant publication.
