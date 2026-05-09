@@ -407,6 +407,137 @@ list was premature. Build the diagnostic first.
 - Treating the eyeball pathology as definitive evidence without measuring its
   dispatch correlation.
 
+##### Step 5b result and close-out (2026-05-09)
+
+5b ran exactly as specified. Same Step 4 tightatten config across all three
+sources; only the strategic-tail source differs.
+
+| Window | pd_direct $/d | tft_tail $/d | pd_direct SoC | tft_tail SoC |
+|---|---:|---:|---:|---:|
+| Shoulder3 | 1.461 | 1.461 | 31.29 | 31.29 |
+| WB 2-day | 6.599 | 6.599 | 17.15 | 17.15 |
+| WB 7-day | 2.086 | 2.092 | 27.41 | 27.41 |
+| WA 7-day | -0.903 | -0.884 | **3.24** | **3.98** |
+
+Reading: dispatch behaviour essentially identical on every window. WA7 SoC moved
+3.24 → 3.98 kWh — real but tiny. Per the reviewer's pre-stated rule (*"WA7 SoC
+remaining around 4 kWh means visual smoothness is not solving the actual
+failure"*), the falsification probe returned a null result.
+
+**Reviewer-amended interpretation** (preserves precision): WA7 SoC is *source-
+insensitive under the current unconstrained eval objective* across the tested
+forecast-source variants. This does not preclude forecast source mattering for
+WA7 under a different LP objective.
+
+5c (cap-materialisation analysis) reclassified: from "dispatch architecture gate"
+to "PD7Day-tail model feasibility diagnostic." Stays parked until needed for the
+cosmetic debiaser work below.
+
+##### Phase α-prime evaluation contract: three-gate framing (2026-05-09)
+
+The reviewer's structural reframe, retained here as the project's evaluation
+contract:
+
+The project keeps looping because three separate concepts have been treated as
+one optimization:
+
+1. **Forecast truth / visual plausibility** — does the published curve look like
+   a real price series, or is it an artefact?
+2. **Economic dispatch performance under the eval LP** — `netload_tariffed`
+   $/day, the gate that's been running since Phase 6.
+3. **Production safety policy** — terminal inventory, reserve, the high-SoC
+   bias that production enforces via the offset feedback loop.
+
+A change can improve one and fail another (PD-direct bands improve dispatch but
+look ugly in the tail; TFT tail looks better but doesn't change dispatch; WA7
+PnL improves while final SoC fails). The fix is not one more model. The fix is
+to explicitly preserve all three gates:
+
+- shape/forecast diagnostics (`eval/forecast_shape_diagnostic.py`, Step 5a)
+- `netload_tariffed` economics (existing rolling MPC eval)
+- production safety / terminal inventory policy (the eval-fidelity stream below)
+
+**No candidate is production-ready unless it passes all three, or unless the
+failure is explicitly scoped as "shadow-only."**
+
+##### Phase α-prime Step 6 — Inventory-normalised forecast comparison (active 2026-05-09)
+
+User goal (verbatim, 2026-05-09): close the WA7 SoC recurring concern by removing
+inventory as a comparison variable. Specific suggestion: mandated final SoC at a
+neutral value (e.g. 50%) so all candidates end at the same SoC and dispatch
+differences come from forecast quality alone.
+
+This is **not** a production-fidelity model. The actual production policy is a
+windowed-max constraint on the final 24h of the 72h horizon (~98% peak),
+adaptively driven by an offset feedback loop. Modelling that faithfully needs
+mixed-integer / disjunctive LP or a soft approximation, both meaningfully more
+complex than this stream's scope. Documented as future work below.
+
+What's implemented (commit `<this commit>`):
+
+- `--strategic-72h-terminal-soc-kwh` and `--strategic-72h-terminal-soc-pct` CLI
+  flags. Mutually exclusive. Default off (preserves Step 4/5 reproducibility).
+- When set, the 72h strategic LP is constrained with hard equality `min_terminal_soc =
+  max_terminal_soc = configured_value`. The +14h handoff target gets extracted
+  from the constrained trajectory as before.
+- Reporting guardrail: every run with the constraint active prints
+  *"Inventory-normalised forecast comparison; NOT a production profit estimate."*
+- Infeasibility surveillance: subprocess workers count and warn on strategic LP
+  infeasibilities that occur under the constraint, so we can stop and debug
+  before interpreting economics.
+
+Sequencing (per reviewer):
+
+1. Implement flag, smoke-test on tiny window. *Done.*
+2. Run four-window matrix at 50% (Amber + PD-direct tightatten). *In progress;
+   tmux session `invnorm50`. Launcher
+   `eval/results/run_inventory_normalised_eval_50pct_20260509.sh`.*
+3. Sanity-check feasibility + repair counts. *Pending matrix completion.*
+4. If sane, sensitivities at 75% and 95% to confirm rankings don't flip with
+   choice. *Pending.*
+5. Optionally re-run 5b's `pd_direct_tft_tail` under the constraint to test
+   whether tail shape becomes dispatch-relevant once inventory is normalised.
+   *Pending sanity-check.*
+
+Future work (parked, not blocking inventory-normalised comparison):
+
+- Modelling the actual production policy (windowed-max ≈ 98% on final 24h) with
+  the appropriate LP machinery (MILP / soft penalty / outer feedback simulation).
+  The reviewer's call: park, don't block the inventory-normalised comparison.
+
+##### Phase α-prime Step 7 — Cosmetic improvement (queued after Step 6)
+
+User direction (2026-05-09): training a PD7Day-specific debiaser is in scope,
+provided it's architecturally sound and improves with time as PD7Day data
+accumulates. Eval-fidelity (Step 6) first.
+
+Reviewer-mandated sub-sequencing for Step 7:
+
+1. **Cap-materialisation analysis first** (was 5c): for cap-flagged PD7Day rows
+   in history, what fraction become actual `>$150` / `>$300` / `>$500`, by
+   horizon / hour / cap-run-length / run age? Tells us whether a debiaser or a
+   classifier/router is the right model class.
+2. **Deterministic baselines** before training:
+   - Hard cap (current behaviour)
+   - Soft / log cap (logarithmic compression toward $300 instead of hard cut)
+   - Cap-fired seasonal blend (HoD-mean replacement when `prob_spike` low)
+   - Simple rolling/median smoothing
+3. **Train PD7Day debiaser** only if it beats those baselines on held-out data.
+   - Mirror `train/train_pd_debiaser.py` but on (PD7Day → actual_RRP) pairs
+   - Time-based train/holdout split (train pre-cutoff, validate post-cutoff)
+   - Cap-only-row diagnostics (does the debiaser produce sensible variation
+     where the cap fires?)
+   - Shape diagnostics as first-class metrics, not only MAE
+4. **Publish/eval as a tail-quality improvement**, not as evidence for dispatch
+   architecture, until it passes dispatch gates too.
+
+Rejected for cosmetic Step 7:
+
+- Option (iii) "use TFT q50 as the published tail directly" — 5b says TFT tail
+  isn't a meaningful dispatch lever, and TFT is on a sunset path
+  (`docs/roadmap.md` TFT shadow sunset). Creates dependency ambiguity for little
+  benefit.
+
 #### Phase β — Residual learner (only if α-prime fails to close the gap)
 
 If Phase α shows that ML on top of PREDISPATCH adds real dispatch value, retrain a small
