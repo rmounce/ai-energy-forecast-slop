@@ -460,7 +460,7 @@ to explicitly preserve all three gates:
 **No candidate is production-ready unless it passes all three, or unless the
 failure is explicitly scoped as "shadow-only."**
 
-##### Phase α-prime Step 6 — Inventory-normalised forecast comparison (active 2026-05-09)
+##### Phase α-prime Step 6 — Inventory-normalised forecast comparison (completed 2026-05-09)
 
 User goal (verbatim, 2026-05-09): close the WA7 SoC recurring concern by removing
 inventory as a comparison variable. Specific suggestion: mandated final SoC at a
@@ -473,7 +473,7 @@ adaptively driven by an offset feedback loop. Modelling that faithfully needs
 mixed-integer / disjunctive LP or a soft approximation, both meaningfully more
 complex than this stream's scope. Documented as future work below.
 
-What's implemented (commit `d58551c`):
+What's implemented:
 
 - `--strategic-72h-terminal-soc-kwh` and `--strategic-72h-terminal-soc-pct` CLI
   flags. Mutually exclusive. Default off (preserves Step 4/5 reproducibility).
@@ -485,8 +485,13 @@ What's implemented (commit `d58551c`):
 - Infeasibility surveillance: subprocess workers count and warn on strategic LP
   infeasibilities that occur under the constraint, so we can stop and debug
   before interpreting economics.
+- `--tactical-14h-terminal-soc-kwh` and `--tactical-14h-terminal-soc-pct` CLI
+  flags (commit `f1d3b94`). These are eval-only diagnostics that override the
+  tactical 14h LP terminal constraint directly. They are the cleaner tool for
+  source-to-source forecast comparison when the question is "what happens if the
+  14h inventory boundary is held equal?"
 
-50% matrix result (completed 2026-05-09, launcher
+72h strategic endpoint 50% matrix result (completed 2026-05-09, launcher
 `eval/results/run_inventory_normalised_eval_50pct_20260509.sh`):
 
 | Window | Amber $/day | PD-direct $/day | PD-direct delta | Amber final SoC | PD-direct final SoC |
@@ -517,20 +522,34 @@ comparison. The earlier plan to run 75% / 95% strategic-endpoint sensitivities i
 paused until the tactical-boundary issue is fixed; otherwise those runs would
 only test sensitivity of the 72h endpoint, not equalised 14h rolling inventory.
 
-Revised next Step 6 action:
+14h tactical endpoint 50% matrix result (completed 2026-05-09, launchers
+`eval/results/run_tactical_inventory_normalised_50pct_20260509.sh`; raw output
+confirmed `min_terminal_soc_kwh = max_terminal_soc_kwh = 20.0` on every row):
 
-1. Add an explicit tactical 14h terminal-SoC override for diagnostic runs, with
-   clear naming that distinguishes it from the existing 72h strategic endpoint
-   constraint. *Implemented as `--tactical-14h-terminal-soc-{kwh,pct}`.*
-2. Smoke-test the tactical override on a tiny window with `nice`. *Done: raw
-   output confirmed `min_terminal_soc_kwh = max_terminal_soc_kwh = 20.0` for
-   both Amber and PD-direct under `--tactical-14h-terminal-soc-pct 50`.*
-3. Re-run the four-window Amber-vs-PD-direct matrix at a neutral tactical
-   terminal equality. This is the first run that should be interpreted as the
-   inventory-normalised tactical comparison the 72h endpoint run failed to
-   provide.
-4. Only after that run is sane, run 75% / 95% sensitivities and optional `pd_direct_tft_tail`
-   inventory-normalised checks.
+| Window | Amber $/day | PD-direct $/day | PD-direct delta | Amber final SoC | PD-direct final SoC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `shoulder3` | `1.050` | `1.462` | `+0.412/day` | `36.55 kWh` | `33.58 kWh` |
+| `wb2` | `6.995` | `6.899` | `-0.096/day` | `10.09 kWh` | `13.67 kWh` |
+| `wb7` | `1.789` | `1.949` | `+0.160/day` | `27.25 kWh` | `27.41 kWh` |
+| `wa7` | `-0.845` | `-0.679` | `+0.167/day` | `4.83 kWh` | `2.42 kWh` |
+
+Feasibility sanity: all four windows exited cleanly (`exitcode=0`), with full
+coverage and no missing/invalid curves. The plain warning grep matched column
+headers containing `skipped_invalid_curve`, not actual warnings.
+
+Final Step 6 reading:
+
+- The corrected tactical-boundary comparison is **mixed but still constructive**
+  for PD-direct: it wins `shoulder3`, `wb7`, and `wa7`, but loses the flagship
+  short `wb2` slice by about `$0.10/day`.
+- The strong all-window win from the 72h endpoint run was partly an artifact of
+  not actually equalising the tactical boundary.
+- The corrected result does **not** justify another broad MPC-eval loop. It is
+  sufficient to keep PD-direct as the shadow candidate and continue toward
+  production switchability / observability.
+- If Step 6 is revisited, the next sensitivity should be a tactical endpoint
+  sensitivity (`75%`, `95%`) or a `pd_direct_tft_tail` check under the tactical
+  endpoint flag, not more 72h endpoint sensitivity.
 
 Future work (parked, not blocking inventory-normalised comparison):
 
