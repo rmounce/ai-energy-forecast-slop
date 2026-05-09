@@ -473,7 +473,7 @@ adaptively driven by an offset feedback loop. Modelling that faithfully needs
 mixed-integer / disjunctive LP or a soft approximation, both meaningfully more
 complex than this stream's scope. Documented as future work below.
 
-What's implemented (commit `<this commit>`):
+What's implemented (commit `d58551c`):
 
 - `--strategic-72h-terminal-soc-kwh` and `--strategic-72h-terminal-soc-pct` CLI
   flags. Mutually exclusive. Default off (preserves Step 4/5 reproducibility).
@@ -486,18 +486,51 @@ What's implemented (commit `<this commit>`):
   infeasibilities that occur under the constraint, so we can stop and debug
   before interpreting economics.
 
-Sequencing (per reviewer):
+50% matrix result (completed 2026-05-09, launcher
+`eval/results/run_inventory_normalised_eval_50pct_20260509.sh`):
 
-1. Implement flag, smoke-test on tiny window. *Done.*
-2. Run four-window matrix at 50% (Amber + PD-direct tightatten). *In progress;
-   tmux session `invnorm50`. Launcher
-   `eval/results/run_inventory_normalised_eval_50pct_20260509.sh`.*
-3. Sanity-check feasibility + repair counts. *Pending matrix completion.*
-4. If sane, sensitivities at 75% and 95% to confirm rankings don't flip with
-   choice. *Pending.*
-5. Optionally re-run 5b's `pd_direct_tft_tail` under the constraint to test
-   whether tail shape becomes dispatch-relevant once inventory is normalised.
-   *Pending sanity-check.*
+| Window | Amber $/day | PD-direct $/day | PD-direct delta | Amber final SoC | PD-direct final SoC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `shoulder3` | `1.445` | `1.461` | `+0.016/day` | `33.46 kWh` | `31.29 kWh` |
+| `wb2` | `6.454` | `6.599` | `+0.145/day` | `10.99 kWh` | `17.15 kWh` |
+| `wb7` | `1.620` | `2.086` | `+0.466/day` | `27.25 kWh` | `27.41 kWh` |
+| `wa7` | `-1.132` | `-0.903` | `+0.229/day` | `15.34 kWh` | `3.24 kWh` |
+
+Feasibility sanity: the run exited cleanly (`exitcode=0`) and no infeasibility
+or repair warnings were found in the run log.
+
+Interpretation update: the 50% run is economically favourable to PD-direct on
+all four windows, including WA7, but it **does not actually remove realised
+inventory as a comparison variable**. The flag constrains the 72h strategic LP
+endpoint; the tactical 14h dispatch LP still receives the extracted +14h target
+from that constrained trajectory. In WA7 those extracted 14h targets remain
+very different by source:
+
+- Amber: mean extracted 14h target `25.39 kWh`, final extracted target `40.0 kWh`,
+  realised final SoC `15.34 kWh`.
+- PD-direct: mean extracted 14h target `17.68 kWh`, final extracted target `0.0 kWh`,
+  realised final SoC `3.24 kWh`.
+
+So the result is useful evidence that the Step 4/5 economics are not simply an
+Amber-only artifact, but it is **not** a clean inventory-normalised tactical
+comparison. The earlier plan to run 75% / 95% strategic-endpoint sensitivities is
+paused until the tactical-boundary issue is fixed; otherwise those runs would
+only test sensitivity of the 72h endpoint, not equalised 14h rolling inventory.
+
+Revised next Step 6 action:
+
+1. Add an explicit tactical 14h terminal-SoC override for diagnostic runs, with
+   clear naming that distinguishes it from the existing 72h strategic endpoint
+   constraint. *Implemented as `--tactical-14h-terminal-soc-{kwh,pct}`.*
+2. Smoke-test the tactical override on a tiny window with `nice`. *Done: raw
+   output confirmed `min_terminal_soc_kwh = max_terminal_soc_kwh = 20.0` for
+   both Amber and PD-direct under `--tactical-14h-terminal-soc-pct 50`.*
+3. Re-run the four-window Amber-vs-PD-direct matrix at a neutral tactical
+   terminal equality. This is the first run that should be interpreted as the
+   inventory-normalised tactical comparison the 72h endpoint run failed to
+   provide.
+4. Only after that run is sane, run 75% / 95% sensitivities and optional `pd_direct_tft_tail`
+   inventory-normalised checks.
 
 Future work (parked, not blocking inventory-normalised comparison):
 
