@@ -565,8 +565,9 @@ rest_command:
         {%- set future_target_time = quantized_now + timedelta(hours=14) %}
         {%- set planned_soc_future = get_planned_soc(future_target_time, complete_soc_forecasts, actual_soc_now) | float %}
         {%- set planned_soc_now = get_planned_soc(quantized_now, complete_soc_forecasts, actual_soc_now) | float %}
-        {# 0.5% bias to avoid PV curtailment, grid discharge when we're ahead of plan #}
-        {%- set deviation = (actual_soc_now - planned_soc_now) + 0.5 %}
+        {# Disable historical +0.5% ahead-of-plan bias while investigating MPC/DH hierarchy. #}
+        {%- set ahead_of_plan_bias_pct = 0.0 %}
+        {%- set deviation = (actual_soc_now - planned_soc_now) + ahead_of_plan_bias_pct %}
         {%- set positive_deviation_only = [deviation, 0] | max %}
         {%- set final_soc_percent = planned_soc_future + positive_deviation_only %}
         "soc_final": {{ ([([final_soc_percent, 100.0] | min), 0.0] | max / 100) | round(4) }},
