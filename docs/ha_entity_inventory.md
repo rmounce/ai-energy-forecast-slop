@@ -14,6 +14,12 @@ Forecast lists use attribute `Forecasts` (capital F). Each item has fields:
 `advanced_price_predicted`, `advanced_price_high`, `duration`, `spike_status`,
 `descriptor`, `estimate`, `renewables`, `nem_date`, `type`
 
+`spot_per_kwh` is Amber-scaled. For direct raw AEMO wholesale comparison, divide
+it by the pipeline's `amber_api_scaling_factor` from `tariff_profile.json`
+(`1.1` on 2026-05-11). The repo's internal Amber spot loader already does this
+normalisation when `apply_loss_factor=True`; Lovelace charts need to do the same
+explicitly if they plot Amber `spot_per_kwh` beside raw AEMO entities.
+
 Sign convention: feed-in prices are **negative** (Amber convention: cost of exporting = negative).
 
 ### Current interval sensors
