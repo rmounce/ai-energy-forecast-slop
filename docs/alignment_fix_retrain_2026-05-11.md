@@ -265,3 +265,25 @@ The `.canonical_20260511` snapshots are gitignored alongside the live
 artefacts; they live locally on the host. The aligned variants remain
 in their sibling directories (`models/*_aligned30/`) as additional
 on-disk references.
+
+## Reproducibility note
+
+Only the tracked artefacts in `models/pd7day_debiaser/` and
+`models/pd_residual/` are reproduced by git. The PREDISPATCH debiaser,
+OOF parquet files, aligned sibling directories, and rollback snapshots
+live under ignored paths (`models/` and `data/parquet/`) and are therefore
+local host state unless they are deliberately force-added or regenerated.
+
+For the live machine, the promotion was verified by matching canonical
+and aligned hashes for the ignored PREDISPATCH artefacts:
+
+- `models/pd_debiaser/lgbm_final.pkl` matches
+  `models/pd_debiaser_aligned30/lgbm_final.pkl`
+- `data/parquet/debiased_pd_rrp_oof.parquet` matches
+  `data/parquet/debiased_pd_rrp_oof_aligned30.parquet`
+
+This is operationally fine for the current deployment workflow, but a fresh
+clone will not reconstruct the promoted PREDISPATCH debiaser from git alone.
+If this stack becomes production-selected rather than shadow-published, add
+a small artefact manifest or formal model registry entry so rollback and
+deployment do not depend on unstated local files.

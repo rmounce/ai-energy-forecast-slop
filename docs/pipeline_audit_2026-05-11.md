@@ -104,15 +104,15 @@ ingest (interval-end) with CQ aggregation defaults (interval-start). But it
 is the root cause of every "30-min misalignment" symptom seen in this
 session.
 
-### E. Pre-existing bugs flagged for follow-up (not fixed in this audit)
+### E. Pre-existing bugs flagged for follow-up
 
-1. **Spike-classifier dtype error** (forecast.py `_apply_pd_debiaser` ~L1537):
-   `Cannot compare dtypes int64 and datetime64[us, UTC]` on every
-   live run. The classifier silently falls back to `prob_spike=0.0`
-   (maximum debiasing), so output is still sensible, but the adaptive
-   per-step compression based on spike probability isn't actually firing.
-   Probably caused by `historical_df` arriving with a non-DatetimeIndex
-   in some code path. Worth a dedicated fix.
+1. **Spike-classifier fallback**: fixed 2026-05-11 (`6614776`). The
+   original warning text pointed at a dtype/timestamp comparison, but the
+   root cause was a column-name mismatch on the PD-direct path:
+   `historical_df` arrived with `aemo_price_sa1` rather than `rrp`, leaving
+   the classifier with an empty/default-index history and causing the
+   silent `prob_spike=0.0` fallback. `_apply_pd_debiaser` now accepts both
+   column names.
 2. **TFT shadow publish timestamps**: same likely interval-end vs
    interval-start mismatch on publish as PD-direct had. Deferred because
    TFT is on a sunset clock (review 2026-06-05).
@@ -139,16 +139,14 @@ session.
 
 In priority order:
 
-1. **Spike-classifier dtype fix** (~30 min) — see E.1. Easy win once the
-   exact failure point is traced.
-2. **TFT shadow publish-layer shift** if it stays alive past the
+1. **TFT shadow publish-layer shift** if it stays alive past the
    2026-06-05 sunset — mirror the PD-direct fix.
-3. **Dataset rebuild + side-by-side eval** for the C alignment issue.
+2. **Dataset rebuild + side-by-side eval** for the C alignment issue.
    This is the substantive piece. Build a clearly named interval-start
    dataset variant (without mutating raw parquet), run a small
    pd_direct strategic eval to size the effect, then decide whether to
    rebuild and retrain the TFT/debiaser/residual-band stack.
-4. **Eval framework alignment audit** — confirm whether
+3. **Eval framework alignment audit** — confirm whether
    `rolling_mpc_eval.py`'s actuals-vs-forecast joins are affected by
    the same asymmetry. If yes, all historical eval results have a
    known direction of bias.
