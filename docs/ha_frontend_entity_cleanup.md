@@ -49,6 +49,14 @@ For day-to-day use, keep one primary raw-wholesale comparison chart:
 - optional legacy incumbent yardstick:
   `sensor.ai_price_forecast`
 
+Important convention detail: Amber `Forecasts[].spot_per_kwh` is not directly
+the same unit as the direct raw AEMO entities. Live comparison on 2026-05-11
+showed Amber `spot_per_kwh / sensor.ai_aemo_price_forecast.wholesale_price`
+at about `1.10` on the PREDISPATCH leg. For a raw-wholesale chart, divide the
+Amber `spot_per_kwh` series by the current `amber_api_scaling_factor` (`1.1` at
+the time of writing). Otherwise the Amber line will appear about 10% higher than
+the direct AEMO line even when the underlying source prices agree.
+
 Hide or move to a diagnostics-only view:
 
 - TFT triplet:
