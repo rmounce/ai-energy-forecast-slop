@@ -68,7 +68,9 @@ Implementation status as of 2026-05-09:
   - `sensor.ai_pd_direct_price_forecast_high`
 - `sensor.ai_spot_price_forecast` is a graph-friendly stitched wholesale source:
   Tier 1 5-minute spot/wholesale forecast followed by the PD-direct 30-minute
-  tail.
+  tail. It is the preferred frontend chart entity for the current-best
+  Amber-independent raw wholesale comparison, separate from the canonical
+  import/export control entities.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
 - `hass/package-emhass.yaml` declares source selectors, read-only status
@@ -154,6 +156,26 @@ payload templates.
 9. Switch MPC only after source freshness, sign, length, and unit checks are
    visible and stable.
 10. Keep one-action rollback by setting the selectors back to the legacy source.
+
+## Frontend Cleanup
+
+The production Lovelace dashboard is frontend-managed under Home Assistant
+`.storage`, not source-controlled here. Use the repo package and docs as the
+reference, but make dashboard edits through HA.
+
+Recommended immediate cleanup:
+
+- Keep one primary raw-wholesale comparison chart using:
+  - `sensor.amber_billing_interval_forecasts_general_price`
+  - `sensor.ai_spot_price_forecast`
+  - optionally `sensor.ai_price_forecast` as the APF/LGBM incumbent yardstick
+- Move TFT and PD-direct triplets to a diagnostics-only view, or hide them once
+  the new stitched spot chart has been visually checked.
+- Do not graph the canonical import/export control entities as raw spot prices;
+  they are tariff-adjusted HAEO-style control inputs.
+
+Details of the current production dashboard references are in
+`docs/ha_frontend_entity_cleanup.md`.
 
 ## Acceptance Checks
 

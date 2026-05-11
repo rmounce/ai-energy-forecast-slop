@@ -117,6 +117,12 @@ Published by `systemd/ai-energy-forecast.{service,timer}` (every 5 min) and
 | `sensor.ai_pd_direct_price_forecast_low` | PD-direct q30-style band / low comparison surface | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_spot_price_forecast` | Graph-friendly stitched spot source: Tier 1 5-min wholesale forecast, then PD-direct 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
 
+`sensor.ai_spot_price_forecast` is the preferred frontend/ApexCharts surface for
+the current-best Amber-independent raw wholesale comparison. The underlying
+5-minute Tier 1 publisher now emits `wholesale_price`; the HA template keeps a
+temporary fallback for the older `aemo_price_sa1` field. See
+`docs/ha_frontend_entity_cleanup.md` for the production dashboard references.
+
 **Retired Amber-shaped AI compatibility sensors:**
 
 `sensor.ai_combined_general_price_forecast` and
