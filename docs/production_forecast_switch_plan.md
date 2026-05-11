@@ -71,6 +71,10 @@ Implementation status as of 2026-05-09:
   tail. It is the preferred frontend chart entity for the current-best
   Amber-independent raw wholesale comparison, separate from the canonical
   import/export control entities.
+- `sensor.ai_aemo_price_forecast` is the raw upstream stitched AEMO yardstick:
+  P5MIN for the first 60 minutes, then raw PREDISPATCH, then raw PD7Day where
+  available. It is model-free and should be compared against
+  `sensor.ai_spot_price_forecast` when judging model/correction value.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
 - `hass/package-emhass.yaml` declares source selectors, read-only status
@@ -167,6 +171,7 @@ Recommended immediate cleanup:
 
 - Keep one primary raw-wholesale comparison chart using:
   - `sensor.amber_billing_interval_forecasts_general_price`
+  - `sensor.ai_aemo_price_forecast`
   - `sensor.ai_spot_price_forecast`
   - optionally `sensor.ai_price_forecast` as the APF/LGBM incumbent yardstick
 - Move TFT and PD-direct triplets to a diagnostics-only view, or hide them once

@@ -13,11 +13,15 @@ Production dashboard file:
 
 - `/opt/dockerfiles/hass/config/.storage/lovelace.dashboard_battery`
 
-Relevant chart groups:
+Relevant chart groups after the 2026-05-11 frontend cleanup:
 
 - Around line 1019: `Spot Price Comparison`
   - Amber billing interval spot:
     `sensor.amber_billing_interval_forecasts_general_price`
+  - Raw upstream AEMO stitched:
+    `sensor.ai_aemo_price_forecast`
+  - Current-best AI stitched spot:
+    `sensor.ai_spot_price_forecast`
   - APF/LGBM triplet:
     `sensor.ai_price_forecast_low`
     `sensor.ai_price_forecast`
@@ -27,28 +31,10 @@ Relevant chart groups:
     `sensor.ai_pd_direct_price_forecast`
     `sensor.ai_pd_direct_price_forecast_high`
 
-- Around line 2703: `Predict Comparison Temp`
-  - Amber billing interval spot:
+- Around line 1336: `Amber Price Detail`
+  - Amber import/export fields from:
     `sensor.amber_billing_interval_forecasts_general_price`
-  - APF/LGBM low/high:
-    `sensor.ai_price_forecast_low`
-    `sensor.ai_price_forecast_high`
-  - stitched current-best AI spot:
-    `sensor.ai_spot_price_forecast`
-  - TFT triplet:
-    `sensor.ai_tft_price_forecast_low`
-    `sensor.ai_tft_price_forecast`
-    `sensor.ai_tft_price_forecast_high`
-
-- Around line 2846: `Battery, Price & Cost Forecast`
-  - AEMO decoder/debug:
-    `sensor.ai_aemo_price_forecast`
-  - Amber billing interval spot:
-    `sensor.amber_billing_interval_forecasts_general_price`
-  - APF/LGBM:
-    `sensor.ai_price_forecast`
-  - TFT:
-    `sensor.ai_tft_price_forecast`
+    `sensor.amber_billing_interval_forecasts_feed_in_price`
 
 ## Recommended Frontend Shape
 
@@ -56,6 +42,8 @@ For day-to-day use, keep one primary raw-wholesale comparison chart:
 
 - Amber observed/forecast spot yardstick:
   `sensor.amber_billing_interval_forecasts_general_price`
+- direct raw upstream AEMO stitched yardstick:
+  `sensor.ai_aemo_price_forecast`
 - current-best Amber-independent AI spot:
   `sensor.ai_spot_price_forecast`
 - optional legacy incumbent yardstick:
@@ -67,14 +55,13 @@ Hide or move to a diagnostics-only view:
   `sensor.ai_tft_price_forecast(_low/_high)`
 - PD-direct triplet:
   `sensor.ai_pd_direct_price_forecast(_low/_high)`
-- AEMO decoder/debug:
-  `sensor.ai_aemo_price_forecast`
-
 Reasoning:
 
 - `sensor.ai_spot_price_forecast` is now the graph-friendly stitched source:
   fresh 5-minute Tier 1 wholesale forecast followed by the 30-minute PD-direct
   tail.
+- `sensor.ai_aemo_price_forecast` is the matching model-free stitched upstream
+  AEMO surface: raw P5MIN, raw PREDISPATCH, then raw PD7Day where available.
 - The canonical EMHASS/control surfaces are separate:
   `sensor.ai_mpc_import_price_forecast`, `sensor.ai_mpc_export_price_forecast`,
   `sensor.ai_dh_import_price_forecast`, and
@@ -93,6 +80,6 @@ reads the current `sensor.ai_p5min_price_forecast` schema:
 The fallback is only for compatibility with older published state. The live
 publisher now emits `wholesale_price`.
 
-After syncing the package to production and restarting/reloading HA templates,
-the existing `Predict Comparison Temp` chart should continue to work with the
-new schema.
+The same entity now also has a direct publisher fallback in `forecast.py` via the
+raw stitched AEMO path, so graph comparison does not depend on HA template
+stitching for that upstream yardstick.

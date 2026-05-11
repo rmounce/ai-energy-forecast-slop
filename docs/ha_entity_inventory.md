@@ -105,7 +105,7 @@ Published by `systemd/ai-energy-forecast.{service,timer}` (every 5 min) and
 | `sensor.ai_price_forecast` | **Production incumbent** — APF/LightGBM p50 general import price ($/kWh); Amber APF seeded, LightGBM-extrapolated beyond the ~36h APF horizon | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_price_forecast_high` | APF/LightGBM p70 | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_price_forecast_low` | APF/LightGBM p30 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_aemo_price_forecast` | **Debug only** — merged PREDISPATCH/PD7Day decoder input in $/kWh; not a model output, published for visualisation alongside TFT forecasts | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_aemo_price_forecast` | Raw upstream AEMO stitched forecast — P5MIN for the first 60 min, then raw PREDISPATCH, then raw PD7Day where available. Model-free yardstick for graph comparison. | mixed | 5-min then 30-min | ~72h | `forecasts` |
 | `sensor.ai_p5min_price_forecast` | Tactical LightGBM p50 ($/kWh) | 12 | 5-min | 60 min | `forecasts` |
 | `sensor.ai_p5min_price_forecast_high` | Tactical LightGBM p95 | 12 | 5-min | 60 min | `forecasts` |
 | `sensor.ai_p5min_price_forecast_low` | Tactical LightGBM p05 | 12 | 5-min | 60 min | `forecasts` |
@@ -122,6 +122,11 @@ the current-best Amber-independent raw wholesale comparison. The underlying
 5-minute Tier 1 publisher now emits `wholesale_price`; the HA template keeps a
 temporary fallback for the older `aemo_price_sa1` field. See
 `docs/ha_frontend_entity_cleanup.md` for the production dashboard references.
+
+`sensor.ai_aemo_price_forecast` is intentionally the raw upstream comparison
+surface, not an intermediate model/debug tensor. Its forecast rows include
+`source_layer` (`p5min`, `predispatch`, or `pd7day`) so the frontend can show
+where each segment came from.
 
 **Retired Amber-shaped AI compatibility sensors:**
 
