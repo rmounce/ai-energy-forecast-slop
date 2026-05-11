@@ -183,18 +183,28 @@ template:
       state: >
         {%- set p5min = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
         {%- if p5min | count > 0 %}
-          {{ p5min[0].aemo_price_sa1 | round(4) }}
+          {{ (p5min[0].wholesale_price | default(p5min[0].aemo_price_sa1, true)) | round(4) }}
         {%- else %}
           {%- set fc = state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) %}
           {{ fc[0].wholesale_price | round(4) if fc | count > 0 else 'unknown' }}
         {%- endif %}
       attributes:
+        recommended_use: graph_only_raw_wholesale_comparison
+        unit_convention: positive_wholesale_price_per_kwh
+        timestamp_convention: utc_iso8601
+        source_5min_entity: sensor.ai_p5min_price_forecast
+        source_30min_entity: sensor.ai_pd_direct_price_forecast
+        p5min_count: >
+          {{ state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) | count }}
+        p30min_count: >
+          {{ state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) | count }}
         forecasts: >
           {%- set p5min = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
           {%- set p30min = state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) %}
           {%- set ns = namespace(result=[]) %}
           {%- for item in p5min %}
-            {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': item.aemo_price_sa1}] %}
+            {%- set price = item.wholesale_price | default(item.aemo_price_sa1, true) %}
+            {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': price}] %}
           {%- endfor %}
           {%- set cutoff = (p5min | last).timestamp if p5min | count > 0 else '' %}
           {%- for item in p30min %}
