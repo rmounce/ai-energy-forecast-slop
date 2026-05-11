@@ -1548,6 +1548,14 @@ def _apply_pd_debiaser(fut_df, start_t, historical_df=None):
         start_t = _as_utc_timestamp(start_t)
         run_time = start_t - pd.Timedelta(minutes=30)
 
+        # Defensive: callers may pass historical_df with a default RangeIndex
+        # (after a `.reset_index()` somewhere upstream). The spike classifier
+        # path below indexes by timestamp, so normalise here. Without this,
+        # the spike-classifier silently falls back to prob_spike=0.0 every
+        # run (pre-existing bug flagged in docs/pipeline_audit_2026-05-11.md).
+        if historical_df is not None and not historical_df.empty:
+            historical_df = ensure_utc_index(historical_df)
+
         # ── Spike classifier: compute prob_spike for debiaser feature ─────────
         prob_spike = 0.0  # fallback: treat as non-spike, apply full debiasing
         clf_path = Path(__file__).resolve().parent / "models" / "spike_classifier" / "lgbm_spike_clf.pkl"
@@ -1558,7 +1566,18 @@ def _apply_pd_debiaser(fut_df, start_t, historical_df=None):
                 clf_model    = clf_bundle["model"]
                 clf_features = clf_bundle["features"]
 
-                rrp_col  = "rrp" if "rrp" in historical_df.columns else None
+                # The TFT path passes `historical_df` with column `rrp`; the
+                # PD-direct path passes the unrenamed `aemo_price_sa1` from
+                # `get_historical_data`. Without this dual lookup, hist_rrp
+                # silently becomes an empty Series with a default int64
+                # RangeIndex, and the subsequent timestamp comparison raises
+                # `Cannot compare dtypes int64 and datetime64[us, UTC]` —
+                # the spike classifier then falls back to prob_spike=0.0
+                # every PD-direct run (pre-existing bug, fixed 2026-05-11).
+                rrp_col = next(
+                    (c for c in ("rrp", "aemo_price_sa1") if c in historical_df.columns),
+                    None,
+                )
                 hist_rrp = historical_df[rrp_col].sort_index() if rrp_col else pd.Series(dtype=float)
 
                 def _get_lag(rt, offset):
