@@ -66,11 +66,11 @@ Implementation status as of 2026-05-09:
   - `sensor.ai_pd_direct_price_forecast`
   - `sensor.ai_pd_direct_price_forecast_low`
   - `sensor.ai_pd_direct_price_forecast_high`
-- `sensor.ai_spot_price_forecast` is a graph-friendly stitched wholesale source:
-  Tier 1 5-minute spot/wholesale forecast followed by the PD-direct 30-minute
-  tail. It is the preferred frontend chart entity for the current-best
-  Amber-independent raw wholesale comparison, separate from the canonical
-  import/export control entities.
+- `sensor.ai_spot_price_forecast(_low/_high)` is a graph-friendly stitched
+  wholesale triplet: Tier 1 5-minute spot/wholesale forecast followed by the
+  PD-direct 30-minute tail. It is the preferred frontend chart family for the
+  current-best Amber-independent raw wholesale comparison, separate from the
+  canonical import/export control entities.
 - `sensor.ai_aemo_price_forecast` is the raw upstream stitched AEMO yardstick:
   P5MIN for the first 60 minutes, then raw PREDISPATCH, then raw PD7Day where
   available. It is model-free and should be compared against

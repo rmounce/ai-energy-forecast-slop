@@ -678,8 +678,9 @@ Current committed state:
   - `sensor.ai_pd_direct_price_forecast`
   - `sensor.ai_pd_direct_price_forecast_low`
   - `sensor.ai_pd_direct_price_forecast_high`
-- `sensor.ai_spot_price_forecast` is the graph-friendly stitched wholesale source:
-  Tier 1 5-minute forecast followed by the PD-direct 30-minute tail.
+- `sensor.ai_spot_price_forecast(_low/_high)` is the graph-friendly stitched
+  wholesale triplet: Tier 1 5-minute forecast followed by the PD-direct
+  30-minute tail.
 - These canonical entities use:
   - `forecast` attribute points shaped as `{datetime, native_value}`
   - UTC ISO timestamps
