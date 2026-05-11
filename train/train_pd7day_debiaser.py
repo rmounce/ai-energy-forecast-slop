@@ -84,12 +84,31 @@ def _add_cap_run_features(df: pd.DataFrame, cap_threshold: float = 300.0) -> pd.
     return df
 
 
-def build_features(pd7day: pd.DataFrame, actuals: pd.DataFrame, dry_run: bool = False) -> pd.DataFrame:
+def build_features(pd7day: pd.DataFrame, actuals: pd.DataFrame,
+                   dry_run: bool = False,
+                   actuals_shift_min: int = 0) -> pd.DataFrame:
+    """Build (PD7Day → actual_RRP) training pairs.
+
+    `actuals_shift_min` controls the forecast↔target alignment. AEMO source
+    files write `interval_dt` as interval-end, but `actuals_sa1.parquet.time`
+    inherits its interval-start labelling from Influx's CQ-aggregated
+    `rp_30m.aemo_dispatch_sa1_30m` (see
+    `docs/timestamp_convention_audit_2026-05-11.md`). With the default
+    `actuals_shift_min=0`, this merge pairs each PD7Day forecast row with the
+    actual for the *adjacent* half-hour — the previously-trained debiaser
+    has therefore learned a 30-min-shifted relationship.
+
+    Setting `actuals_shift_min=30` shifts the actuals' interval_dt forward
+    by 30 min so it represents interval-end (matching forecasts), giving the
+    correctly-aligned training pair.
+    """
     pd7 = pd7day.rename(columns={"rrp": "pd7_rrp"}).copy()
     pd7["interval_dt"] = pd.to_datetime(pd7["interval_dt"], utc=True)
     pd7["run_time"] = pd.to_datetime(pd7["run_time"], utc=True)
     actuals = actuals[["time", "rrp"]].rename(columns={"rrp": TARGET}).copy()
     actuals["interval_dt"] = pd.to_datetime(actuals["time"], utc=True)
+    if actuals_shift_min:
+        actuals["interval_dt"] = actuals["interval_dt"] + pd.Timedelta(minutes=int(actuals_shift_min))
 
     df = pd7.merge(actuals[["interval_dt", TARGET]], on="interval_dt", how="inner")
     df = df.dropna(subset=["pd7_rrp", TARGET]).copy()
@@ -246,9 +265,26 @@ def main() -> None:
     parser.add_argument("--k-folds", type=int, default=4)
     parser.add_argument("--n-estimators", type=int, default=600)
     parser.add_argument("--n-jobs", type=int, default=4)
+    parser.add_argument(
+        "--actuals-shift-min",
+        type=int,
+        default=0,
+        help=(
+            "Shift actuals.interval_dt by this many minutes before merging with "
+            "PD7Day forecasts. The audit (docs/pipeline_audit_2026-05-11.md) shows "
+            "the canonical actuals_sa1.parquet.time is interval-start while PD7Day "
+            "interval_dt is interval-end. Setting this to 30 corrects the alignment. "
+            "Default 0 preserves the existing canonical model's training "
+            "convention. When non-zero, outputs are written to "
+            "`models/pd7day_debiaser_aligned{N}/` to preserve the canonical artefact."
+        ),
+    )
     args = parser.parse_args()
 
     print("=== PD7Day Debiaser Training ===")
+    if args.actuals_shift_min:
+        print(f"  Alignment fix: shifting actuals by +{args.actuals_shift_min} min "
+              f"before merge → variant model.")
     pd7_path = PARQUET_DIR / "aemo_pd7day_sa1.parquet"
     actuals_path = PARQUET_DIR / "actuals_sa1.parquet"
     if not pd7_path.exists() or not actuals_path.exists():
@@ -257,7 +293,8 @@ def main() -> None:
 
     pd7day = pd.read_parquet(pd7_path)
     actuals = pd.read_parquet(actuals_path)
-    df = build_features(pd7day, actuals, dry_run=args.dry_run)
+    df = build_features(pd7day, actuals, dry_run=args.dry_run,
+                        actuals_shift_min=args.actuals_shift_min)
     print(
         f"Feature matrix: {len(df):,} rows, {df['run_time'].nunique():,} runs, "
         f"{df['interval_dt'].min()} -> {df['interval_dt'].max()}"
@@ -285,12 +322,22 @@ def main() -> None:
         print("\n[dry-run] Outputs not saved.")
         return
 
-    print("\nSaving outputs...")
-    oof_path = PARQUET_DIR / "debiased_pd7day_oof.parquet"
-    df[["interval_dt", "run_time", "oof_debiased_rrp"]].to_parquet(oof_path, index=False)
-    print(f"  OOF series: {oof_path}")
+    # When the alignment fix is active, write outputs to a sibling directory
+    # so the canonical (unfixed) artefact is preserved for side-by-side
+    # comparison.
+    if args.actuals_shift_min:
+        out_models_dir = ROOT / "models" / f"pd7day_debiaser_aligned{args.actuals_shift_min}"
+        out_oof_path = PARQUET_DIR / f"debiased_pd7day_oof_aligned{args.actuals_shift_min}.parquet"
+    else:
+        out_models_dir = MODELS_DIR
+        out_oof_path = PARQUET_DIR / "debiased_pd7day_oof.parquet"
+    out_models_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = MODELS_DIR / "lgbm_final.pkl"
+    print("\nSaving outputs...")
+    df[["interval_dt", "run_time", "oof_debiased_rrp"]].to_parquet(out_oof_path, index=False)
+    print(f"  OOF series: {out_oof_path}")
+
+    model_path = out_models_dir / "lgbm_final.pkl"
     with model_path.open("wb") as f:
         pickle.dump(final_model, f, protocol=pickle.HIGHEST_PROTOCOL)
     print(f"  Final model: {model_path}")
@@ -302,9 +349,10 @@ def main() -> None:
         "runs": int(df["run_time"].nunique()),
         "interval_start": str(df["interval_dt"].min()),
         "interval_end": str(df["interval_dt"].max()),
+        "actuals_shift_min": int(args.actuals_shift_min),
         "metrics": metrics,
     }
-    metrics_path = MODELS_DIR / "metrics.json"
+    metrics_path = out_models_dir / "metrics.json"
     metrics_path.write_text(json.dumps(payload, indent=2))
     print(f"  Metrics: {metrics_path}")
 
