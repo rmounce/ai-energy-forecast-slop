@@ -1019,19 +1019,47 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
 
 
 def _get_influx_pd_prices(client, start_time, end_time):
-    """Get TFT decoder price covariates from InfluxDB, matching training structure.
+    """Get TFT/PD-direct decoder price covariates from InfluxDB.
 
     Returns DataFrame with columns pd_rrp, vic1_pd_rrp, nsw1_pd_rrp (all $/MWh),
     indexed by UTC datetime, or empty DataFrame on failure.
+
+    Selects one explicit PREDISPATCH run (the latest by run_time tag). Do not use
+    `last(rrp) GROUP BY time(30m)` here: Influx write order is not forecast-run
+    order, so `last()` can pull rows from arbitrary mixed run_times, mostly from
+    a stale earlier run with higher forecasts. Mirrors the fix in
+    `_execute_raw_aemo_stitched_price_forecast` (commit b815928, 2026-05-11). The
+    visible symptom of the old bug is PD-direct publishing values noticeably
+    higher than current raw PREDISPATCH for the same target timestamps.
     """
+    # Find the latest run_time across the relevant time window.
+    try:
+        tag_result = client.query(
+            'SHOW TAG VALUES FROM "rp_30m"."aemo_predispatch_forecast" '
+            'WITH KEY = "run_time"'
+        )
+        run_times = sorted(
+            _as_utc_timestamp(p["value"])
+            for p in tag_result.get_points()
+            if p.get("value")
+        )
+    except Exception as e:
+        logging.warning(f"Failed to list PREDISPATCH run_time tags: {e}")
+        return pd.DataFrame()
+
+    if not run_times:
+        return pd.DataFrame()
+    latest_run_time = run_times[-1]
+    run_time_str = latest_run_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+
     start_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_str   = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     try:
         pd_frames = {}
         for region, col in [('SA1', 'pd_rrp'), ('VIC1', 'vic1_pd_rrp'), ('NSW1', 'nsw1_pd_rrp')]:
-            q = (f"SELECT last(rrp) AS rrp FROM \"rp_30m\".\"aemo_predispatch_forecast\" "
-                 f"WHERE region='{region}' AND time >= '{start_str}' AND time <= '{end_str}' "
-                 f"GROUP BY time(30m) fill(null)")
+            q = (f"SELECT rrp FROM \"rp_30m\".\"aemo_predispatch_forecast\" "
+                 f"WHERE region='{region}' AND run_time='{run_time_str}' "
+                 f"AND time >= '{start_str}' AND time <= '{end_str}'")
             r = client.query(q)
             if r and list(r.get_points()):
                 df = pd.DataFrame(r.get_points())
@@ -1041,6 +1069,10 @@ def _get_influx_pd_prices(client, start_time, end_time):
 
         if not pd_frames:
             return pd.DataFrame()
+        logging.info(
+            f"PREDISPATCH selected run_time={run_time_str} "
+            f"(regions: {list(pd_frames)})"
+        )
         return pd.DataFrame(pd_frames)
     except Exception as e:
         logging.warning(f"Failed to get InfluxDB PD prices: {e}")
