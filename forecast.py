@@ -1300,12 +1300,13 @@ def _execute_tactical_prediction():
     now_utc = datetime.now(pytz.UTC)
     t_4h = (now_utc - timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%SZ')
     t_now = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+    t_p5_end = (now_utc + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     client = InfluxDBClient(**CONFIG['influxdb'])
     try:
         p5min_res = client.query(
             f'SELECT rrp FROM "rp_5m"."aemo_p5min_forecast"'
-            f' WHERE region=\'SA1\' AND time >= \'{t_4h}\' AND time <= \'{t_now}\''
+            f' WHERE region=\'SA1\' AND time >= \'{t_4h}\' AND time <= \'{t_p5_end}\''
             f' GROUP BY run_time'
         )
         act_res = client.query(
@@ -1852,13 +1853,6 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         
         res[q_name] = df_q
 
-    # Publish the merged PREDISPATCH/PD7Day prices as a separate HA entity so they
-    # can be visualised alongside the TFT quantile forecasts for debugging.
-    res['aemo_price_forecast'] = pd.DataFrame(
-        {'wholesale_price': _dec_price_raw.values / 1000.0},
-        index=fut.index,
-    )
-
     if _DEBUG_TFT:
         _print_tft_debug(
             enc_rrp_raw=_enc_rrp_raw,
@@ -2042,6 +2036,115 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
     except Exception as e:
         logging.error(f"PD-direct prediction failed: {e}", exc_info=True)
         return {}
+
+
+def _execute_raw_aemo_stitched_price_forecast(future_covariates_df=None):
+    """
+    Build a model-free upstream AEMO price curve for chart comparison.
+
+    The output is raw wholesale RRP in $/kWh:
+      - latest P5MIN run for the first 12 x 5-minute steps
+      - raw PREDISPATCH for later 30-minute steps where available
+      - raw PD7Day for remaining later 30-minute steps where available
+    """
+    logging.info("--- Building raw stitched AEMO upstream price forecast ---")
+
+    now_utc = datetime.now(pytz.UTC)
+    start_t = now_utc.replace(
+        minute=30 if now_utc.minute >= 30 else 0,
+        second=0,
+        microsecond=0,
+    )
+    if future_covariates_df is not None:
+        dec_index = future_covariates_df[future_covariates_df.index >= start_t].head(144).index
+    else:
+        dec_index = pd.date_range(start=start_t, periods=144, freq='30min', tz='UTC')
+    if len(dec_index) == 0:
+        logging.warning("Raw AEMO stitched forecast skipped: empty decoder window.")
+        return {}
+
+    records = {}
+    p5_end = None
+    p5_count = 0
+    pd_count = 0
+    pd7_count = 0
+
+    client = InfluxDBClient(**CONFIG['influxdb'])
+    try:
+        t_4h = (now_utc - timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        t_p5_end = (now_utc + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        p5min_res = client.query(
+            f'SELECT rrp FROM "rp_5m"."aemo_p5min_forecast"'
+            f' WHERE region=\'SA1\' AND time >= \'{t_4h}\' AND time <= \'{t_p5_end}\''
+            f' GROUP BY run_time'
+        )
+
+        p5min_runs = {}
+        for key in p5min_res.keys():
+            run_time_str = key[1].get('run_time') if len(key) > 1 else None
+            if not run_time_str:
+                continue
+            rows = sorted(list(p5min_res[key]), key=lambda r: r['time'])
+            if len(rows) < 12:
+                continue
+            rt = pd.Timestamp(run_time_str, tz='UTC')
+            p5min_runs[rt] = [float(r['rrp']) for r in rows[:12]]
+
+        if p5min_runs:
+            latest_run_time = max(p5min_runs.keys())
+            intervals = pd.date_range(start=latest_run_time, periods=12, freq='5min', tz='UTC')
+            for ts, rrp_mwh in zip(intervals, p5min_runs[latest_run_time]):
+                records[ts] = (float(rrp_mwh) / 1000.0, 'p5min')
+            p5_end = intervals[-1]
+            p5_count = len(intervals)
+        else:
+            logging.warning("Raw AEMO stitched forecast: no usable P5MIN run found.")
+
+        influx_pd_prices = _get_influx_pd_prices(client, dec_index.min(), dec_index.max())
+        pd7_df, pd7_run_time = _get_influx_latest_pd7day_prices(
+            client,
+            start_t - pd.Timedelta(minutes=30),
+            dec_index,
+        )
+    finally:
+        client.close()
+
+    cutoff = p5_end if p5_end is not None else pd.Timestamp("1900-01-01", tz="UTC")
+
+    if not influx_pd_prices.empty and 'pd_rrp' in influx_pd_prices.columns:
+        for ts, rrp_mwh in influx_pd_prices['pd_rrp'].dropna().items():
+            ts = _as_utc_timestamp(ts)
+            if ts > cutoff:
+                records[ts] = (float(rrp_mwh) / 1000.0, 'predispatch')
+                pd_count += 1
+
+    if not pd7_df.empty and 'pd7_rrp' in pd7_df.columns:
+        for ts, rrp_mwh in pd7_df['pd7_rrp'].dropna().items():
+            ts = _as_utc_timestamp(ts)
+            if ts > cutoff and ts not in records:
+                records[ts] = (float(rrp_mwh) / 1000.0, 'pd7day')
+                pd7_count += 1
+
+    if not records:
+        logging.warning("Raw AEMO stitched forecast skipped: no upstream price rows.")
+        return {}
+
+    rows = [
+        {'timestamp': ts, 'wholesale_price': price, 'source_layer': layer}
+        for ts, (price, layer) in sorted(records.items())
+    ]
+    df = pd.DataFrame(rows).set_index('timestamp')
+    df = ensure_utc_index(df)
+
+    logging.info(
+        "Raw AEMO stitched forecast: %d rows (P5MIN=%d, PREDISPATCH=%d, PD7Day=%d%s).",
+        len(df),
+        p5_count,
+        pd_count,
+        pd7_count,
+        f", PD7Day run={pd7_run_time.isoformat()}" if pd7_run_time is not None else "",
+    )
+    return {'aemo_price_forecast': df}
 
 
 def _time_sin_cos_local(timestamps):
@@ -2697,6 +2800,13 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             logging.error(f"FATAL ERROR in PD-direct execution: {e}", exc_info=True)
             pd_direct_results = {}
 
+        try:
+            raw_aemo_results = _execute_raw_aemo_stitched_price_forecast(
+                adjusted_covariates_for_prediction)
+        except Exception as e:
+            logging.error(f"FATAL ERROR in raw AEMO stitched execution: {e}", exc_info=True)
+            raw_aemo_results = {}
+
         if pd_direct_results and 'pd_direct_price' in pd_direct_results:
             try:
                 _save_canonical_tier2_cache(
@@ -2731,6 +2841,15 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 _publish_pd_direct_price_forecasts(pd_direct_results)
             except Exception as e:
                 logging.error(f"FATAL ERROR in PD-direct publish: {e}", exc_info=True)
+
+        if publish_hass and raw_aemo_results and 'aemo_price_forecast' in raw_aemo_results:
+            try:
+                publish_forecast_to_hass(
+                    'aemo_price_forecast',
+                    raw_aemo_results['aemo_price_forecast'].copy(),
+                )
+            except Exception as e:
+                logging.error(f"FATAL ERROR in raw AEMO stitched publish: {e}", exc_info=True)
 
         # Always log PD-direct q50 forecasts (independent of publish_hass) so the
         # shadow-and-compare analysis can compute forecast quality + what-if dispatch
@@ -2866,6 +2985,17 @@ def run_tactical_publish(publish_hass, max_tier2_cache_age_minutes):
             tier2_price_key=tier2_price_key,
             tier2_label=tier2_label,
         )
+
+    if publish_hass:
+        try:
+            raw_aemo_results = _execute_raw_aemo_stitched_price_forecast()
+            if raw_aemo_results and 'aemo_price_forecast' in raw_aemo_results:
+                publish_forecast_to_hass(
+                    'aemo_price_forecast',
+                    raw_aemo_results['aemo_price_forecast'].copy(),
+                )
+        except Exception as e:
+            logging.error(f"FATAL ERROR in raw AEMO stitched tactical publish: {e}", exc_info=True)
 
     try:
         empty_covariates = pd.DataFrame(index=tactical_results['p5min_price'].index)
