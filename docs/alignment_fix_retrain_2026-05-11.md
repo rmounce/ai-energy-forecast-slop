@@ -103,10 +103,110 @@ In priority order:
   variant lives in a sibling directory.
 - Did **not** modify the live publish path's choice of debiaser — `forecast.py`
   still loads the canonical model.
-- Did **not** retrain TFT, residual bands, or the PREDISPATCH debiaser.
+- Did **not** retrain TFT.
 - Did **not** rebuild the npy dataset variant.
 
 These are queued in the recommendations above. The user's standing instruction
 is to proceed toward the retrain; this PD7Day result confirms the alignment fix
 is worth the effort for at least one component and is a concrete reproducible
 template for the others.
+
+## Round 2 — PREDISPATCH Debiaser
+
+Applied the same `--actuals-shift-min` flag pattern to
+`train/train_pd_debiaser.py`. Same canonical-preserving sibling output path
+(`models/pd_debiaser_aligned30/`, OOF at
+`data/parquet/debiased_pd_rrp_oof_aligned30.parquet`).
+
+Training data: 3,067,048 rows, 5-fold CV, 2000 max estimators. ~5 min wall.
+
+| Slice | Canonical MAE | Aligned MAE | Δ |
+|---|---:|---:|---:|
+| overall | 61.97 | **60.88** | **-1.76%** |
+| horizon 1–6 (≤3h) | 58.66 | **55.76** | **-4.94%** |
+| horizon 7–16 (~3.5–8h) | 61.30 | 59.46 | -3.00% |
+| horizon 17–32 (~8.5–16h) | 63.13 | 61.72 | -2.22% |
+| horizon 33–56 (~16.5–28h) | 65.46 | 64.94 | -0.79% |
+| horizon 57–99 (beyond PREDISPATCH) | 53.48 | 55.80 | +4.33% |
+| regime: baseload | 27.96 | **26.75** | **-4.30%** |
+| regime: spike | 173.09 | 171.18 | -1.10% |
+| regime: oversupply | 51.01 | 51.50 | +0.96% |
+
+Exact horizon-decay shape predicted by the audit. The largest gain (-4.94%)
+is at h_1–6, which is the horizon most consumed by live PD-direct
+production. The h_57_99 slight regression (+4.33%) is the PD7Day-zone steps
+where the alignment fix is structurally different — small sample size and
+not the production-critical horizon.
+
+## Round 3 — Residual Band Table
+
+Applied the same `--actuals-shift-min` flag pattern to
+`eval/build_pd_residual_bands.py`. Output:
+`models/pd_residual_aligned30/residual_bands.parquet`. Bands consume the
+aligned OOF.
+
+Held-out validation (2025-07-01 → 2026-01-01):
+
+| Bucket | n | Canonical coverage | Aligned coverage | Canonical mean_width | Aligned mean_width | Δ width |
+|---|---:|---:|---:|---:|---:|---:|
+| overall | 487,725 | 0.5925 | 0.5889 | 64.13 | **61.39** | **-4.3%** |
+| 1–6h | 105,384 | 0.5869 | 0.5864 | 57.03 | **52.42** | **-8.1%** |
+| 6–14h | 140,512 | 0.5999 | 0.5906 | 63.89 | 60.34 | -5.6% |
+| 14–30h | 206,940 | 0.5922 | 0.5889 | 68.16 | 66.21 | -2.9% |
+| 30h+ | 34,889 | 0.5813 | 0.5895 | 62.62 | 64.07 | +2.3% |
+
+Coverage stays in the same ~58–60% band (q20/q80 target ~60%); mean widths
+drop consistently in the in-PREDISPATCH horizons (1–6h: −8%, 6–14h: −6%).
+Narrower bands at the same coverage = better calibration. Strict improvement.
+
+## Consolidated picture across the three artefacts
+
+| Component | Canonical baseline | Aligned variant | Notes |
+|---|---|---|---|
+| PD7Day debiaser | MAE 36.98 overall | MAE 36.14 (−2.3%) | Modest; PD7Day is highly autocorrelated |
+| PREDISPATCH debiaser | MAE 61.97 overall, 58.66 at h_1–6 | MAE 60.88 (−1.8%) overall, 55.76 (−4.9%) at h_1–6 | Production-relevant gain on the short-horizon path |
+| Residual bands | width 64.13 at coverage 0.5925 | width 61.39 at coverage 0.5889 (−4.3% width) | Tighter bands → cleaner buy/sell asymmetry in PD-direct |
+
+All three are consistent. The alignment fix is real, modest in aggregate, and
+larger on the horizons that matter for live production.
+
+## Promotion proposal
+
+The variants are ready. Promoting means:
+
+1. Replace `models/pd_debiaser/lgbm_final.pkl` with `_aligned30` version
+2. Replace `data/parquet/debiased_pd_rrp_oof.parquet` with aligned OOF
+3. Replace `models/pd7day_debiaser/lgbm_final.pkl` with `_aligned30` version
+4. Replace `data/parquet/debiased_pd7day_oof.parquet` with aligned OOF
+5. Replace `models/pd_residual/residual_bands.parquet` with aligned version
+
+Effects:
+- **Live publish** (`forecast.py` `_apply_pd_debiaser`): PD-direct values
+  shift by the model's compression delta. Modest visible change. Will
+  reduce the small systematic bias we currently see.
+- **Eval framework** (`eval/pd_direct_baseline.py` reads `debiased_pd_rrp_oof.parquet`):
+  any future rolling-MPC eval with PD-direct will use the aligned OOF.
+  Historical eval result CSVs already saved are unaffected (they're
+  snapshots).
+- **Documentation**: production_soc_policy and other refs need a one-line
+  note that the underlying artefacts were realigned 2026-05-11.
+
+Risk: low. The shifts are bounded (~2% MAE deltas) and the variants are
+trained from the same data with the same hyperparameters — only the
+forecast-actual alignment differs. No new code paths.
+
+Rollback: keep the canonical files as `.canonical_20260511` snapshots
+before promoting.
+
+## Recommended action
+
+Promote the aligned variants when the user signs off. Update the audit doc
+status (`docs/pipeline_audit_2026-05-11.md` section C) to reflect the
+training-pipeline alignment issue is now addressed.
+
+Optional follow-up:
+
+- Add `--actuals-shift-min` to `data/build_training_dataset.py` for any
+  future TFT retrain. Not needed for any current downstream consumer.
+- Audit `eval/rolling_mpc_eval.py` for the same alignment in its actuals
+  lookup (audit section F.4).

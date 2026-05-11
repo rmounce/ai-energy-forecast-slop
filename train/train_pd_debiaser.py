@@ -86,15 +86,33 @@ def time_features(timestamps: pd.DatetimeIndex) -> pd.DataFrame:
 
 
 def build_features(pd_df: pd.DataFrame, actuals: pd.DataFrame,
-                   dry_run: bool = False) -> pd.DataFrame:
+                   dry_run: bool = False,
+                   actuals_shift_min: int = 0) -> pd.DataFrame:
     """
     Join PREDISPATCH forecasts with actual settlement prices and compute features.
 
     Returns a DataFrame with columns FEATURES + [TARGET, 'interval_dt', 'run_time'].
     Rows where no actual price exists for the target interval are dropped.
+
+    `actuals_shift_min` controls the forecast↔target alignment. PREDISPATCH
+    `interval_dt` is interval-end (AEMO source convention) but
+    `actuals_sa1.parquet.time` is interval-start (inherited from Influx's
+    CQ-aggregated `rp_30m.aemo_dispatch_sa1_30m` which uses Influx's default
+    GROUP-BY-start bucketing — see `docs/timestamp_convention_audit_2026-05-11.md`).
+    Default `actuals_shift_min=0` joins each forecast row with the actual for
+    the *adjacent* half-hour (the canonical training convention, ship-stable).
+    Setting it to 30 shifts the actuals' time forward so it represents
+    interval-end aligned to the forecast — gives the correctly-aligned
+    training pair. See `docs/alignment_fix_retrain_2026-05-11.md` for the
+    PD7Day side-by-side that motivates this flag.
     """
     print("  Joining PREDISPATCH forecasts with actuals...")
-    # Actuals indexed by time (UTC)
+    # Actuals indexed by time (UTC) — optionally shifted to convert interval-start
+    # CQ-bucket labels to interval-end for forecast alignment.
+    actuals = actuals.copy()
+    if actuals_shift_min:
+        actuals = actuals.assign(time=pd.to_datetime(actuals["time"], utc=True)
+                                       + pd.Timedelta(minutes=int(actuals_shift_min)))
     act = actuals.set_index("time")[["rrp"]].rename(columns={"rrp": TARGET})
 
     # Rename PREDISPATCH columns up front (avoids column-name conflicts with actuals)
@@ -423,11 +441,24 @@ def main():
                         help=f"LightGBM n_estimators (default: {N_ESTIMATORS})")
     parser.add_argument("--no-plots",     action="store_true",
                         help="Skip matplotlib plots")
+    parser.add_argument(
+        "--actuals-shift-min", type=int, default=0,
+        help=(
+            "Shift actuals.time by this many minutes before merging with PREDISPATCH "
+            "forecasts (default 0, preserves canonical training convention). Set to 30 "
+            "to correct the interval-end-vs-interval-start mis-alignment documented in "
+            "docs/pipeline_audit_2026-05-11.md. When non-zero, outputs go to "
+            "`models/pd_debiaser_aligned{N}/` to preserve the canonical artefact."
+        ),
+    )
     args = parser.parse_args()
 
     print("=== PREDISPATCH Debiaser Training ===")
     if args.dry_run:
         print("  [dry-run mode — first 20k rows only]")
+    if args.actuals_shift_min:
+        print(f"  Alignment fix: shifting actuals by +{args.actuals_shift_min} min "
+              f"before merge → variant model.")
 
     # ── Load data
     print("\nLoading parquet files...")
@@ -452,7 +483,8 @@ def main():
 
     # ── Build feature matrix
     print("\nBuilding feature matrix...")
-    df = build_features(pd_df, actuals, dry_run=args.dry_run)
+    df = build_features(pd_df, actuals, dry_run=args.dry_run,
+                        actuals_shift_min=args.actuals_shift_min)
 
     print(f"\nFeature matrix: {len(df):,} rows, {len(FEATURES)} features + target")
     print(f"  interval_dt: {df.interval_dt.min().date()} → {df.interval_dt.max().date()}")
@@ -485,22 +517,31 @@ def main():
 
     # ── Save outputs
     if not args.dry_run:
+        # When the alignment fix is active, write to a sibling directory so the
+        # canonical artefact is preserved for side-by-side comparison.
+        if args.actuals_shift_min:
+            out_models_dir = ROOT / "models" / f"pd_debiaser_aligned{args.actuals_shift_min}"
+            out_oof_path = PARQUET_DIR / f"debiased_pd_rrp_oof_aligned{args.actuals_shift_min}.parquet"
+        else:
+            out_models_dir = MODELS_DIR
+            out_oof_path = PARQUET_DIR / "debiased_pd_rrp_oof.parquet"
+        out_models_dir.mkdir(parents=True, exist_ok=True)
+
         print("\nSaving outputs...")
 
         # OOF debiased series — what the TFT decoder reads
         oof_out = df[["interval_dt", "run_time", "oof_debiased_rrp"]].copy()
-        oof_out_path = PARQUET_DIR / "debiased_pd_rrp_oof.parquet"
-        oof_out.to_parquet(oof_out_path, index=False)
-        print(f"  OOF series:   {oof_out_path} ({len(oof_out):,} rows)")
+        oof_out.to_parquet(out_oof_path, index=False)
+        print(f"  OOF series:   {out_oof_path} ({len(oof_out):,} rows)")
 
         # Final model
-        model_path = MODELS_DIR / "lgbm_final.pkl"
+        model_path = out_models_dir / "lgbm_final.pkl"
         with open(model_path, "wb") as f:
             pickle.dump(final_model, f, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"  Final model:  {model_path}")
 
         # Metrics
-        metrics_path = MODELS_DIR / "metrics.json"
+        metrics_path = out_models_dir / "metrics.json"
         with open(metrics_path, "w") as f:
             json.dump(metrics, f, indent=2)
         print(f"  Metrics:      {metrics_path}")
@@ -508,8 +549,8 @@ def main():
         # Plots
         if not args.no_plots:
             print("  Generating plots...")
-            plot_residuals_by_horizon(df, MODELS_DIR / "residuals_by_horizon.png")
-            plot_residuals_by_regime( df, MODELS_DIR / "residuals_by_regime.png")
+            plot_residuals_by_horizon(df, out_models_dir / "residuals_by_horizon.png")
+            plot_residuals_by_regime( df, out_models_dir / "residuals_by_regime.png")
     else:
         print("\n[dry-run] Outputs not saved. Remove --dry-run to write files.")
 

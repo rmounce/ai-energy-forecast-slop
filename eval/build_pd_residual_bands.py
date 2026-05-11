@@ -32,7 +32,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = REPO_ROOT / "eval" / "results"
 
 
-def _load_residual_frame(debiased_path: Path, actuals_path: Path) -> pd.DataFrame:
+def _load_residual_frame(debiased_path: Path, actuals_path: Path,
+                         actuals_shift_min: int = 0) -> pd.DataFrame:
+    """Join OOF debiased PD with actuals to compute residuals.
+
+    `actuals_shift_min` corrects the interval-end (forecast) vs interval-start
+    (actuals, CQ-aggregated) mismatch documented in
+    `docs/timestamp_convention_audit_2026-05-11.md`. Default 0 preserves the
+    canonical band table's join convention. Set to 30 to align actuals to the
+    forecast's interval-end convention — this is required when building bands
+    from the aligned OOF parquet (output of `train_pd_debiaser.py
+    --actuals-shift-min=30`), otherwise the residuals would be measured against
+    the wrong half-hour.
+    """
     deb = pd.read_parquet(debiased_path)
     actuals = pd.read_parquet(actuals_path)[["time", "rrp"]].rename(
         columns={"time": "interval_dt", "rrp": "actual_rrp"}
@@ -40,6 +52,8 @@ def _load_residual_frame(debiased_path: Path, actuals_path: Path) -> pd.DataFram
     deb["run_time"] = pd.to_datetime(deb["run_time"], utc=True)
     deb["interval_dt"] = pd.to_datetime(deb["interval_dt"], utc=True)
     actuals["interval_dt"] = pd.to_datetime(actuals["interval_dt"], utc=True)
+    if actuals_shift_min:
+        actuals["interval_dt"] = actuals["interval_dt"] + pd.Timedelta(minutes=int(actuals_shift_min))
     df = deb.merge(actuals, on="interval_dt", how="inner")
     df = df.dropna(subset=["oof_debiased_rrp", "actual_rrp"])
     df["horizon_hours"] = (
@@ -212,13 +226,24 @@ def main() -> None:
     parser.add_argument("--residual-cap", type=float, default=RESIDUAL_BAND_CAP_DEFAULT)
     parser.add_argument("--min-samples", type=int, default=RESIDUAL_BAND_MIN_SAMPLES_DEFAULT)
     parser.add_argument("--min-daytype-samples", type=int, default=50)
+    parser.add_argument(
+        "--actuals-shift-min", type=int, default=0,
+        help=(
+            "Shift actuals.interval_dt by this many minutes before merging with the "
+            "debiased OOF parquet. Default 0 preserves canonical join convention. "
+            "Set to 30 when consuming an aligned OOF (output of "
+            "`train_pd_debiaser.py --actuals-shift-min=30`) so the residual is "
+            "measured against the correctly-aligned half-hour."
+        ),
+    )
     args = parser.parse_args()
 
     train_end = pd.Timestamp(args.train_end).tz_convert("UTC")
     validation_start = pd.Timestamp(args.validation_start).tz_convert("UTC")
     validation_end = pd.Timestamp(args.validation_end).tz_convert("UTC")
 
-    residual_df = _load_residual_frame(args.debiased_path, args.actuals_path)
+    residual_df = _load_residual_frame(args.debiased_path, args.actuals_path,
+                                       actuals_shift_min=args.actuals_shift_min)
     bands = build_residual_bands(
         residual_df,
         train_end=train_end,
