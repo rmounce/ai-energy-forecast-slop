@@ -74,7 +74,12 @@ Implementation status as of 2026-05-09:
 - `sensor.ai_aemo_price_forecast` is the raw upstream stitched AEMO yardstick:
   P5MIN for the first 60 minutes, then raw PREDISPATCH, then raw PD7Day where
   available. It is model-free and should be compared against
-  `sensor.ai_spot_price_forecast` when judging model/correction value.
+  `sensor.ai_spot_price_forecast` when judging model/correction value. Its
+  PREDISPATCH leg must come from one explicit latest run tag; using `last(rrp)`
+  across all PREDISPATCH runs is not equivalent because Influx write order can
+  surface stale runs. Near-term values may still differ from Amber billing
+  forecasts because this entity keeps P5MIN for the full first 60 minutes,
+  while Amber can switch to 30-minute billing intervals sooner.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
 - `hass/package-emhass.yaml` declares source selectors, read-only status

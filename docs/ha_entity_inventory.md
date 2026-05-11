@@ -126,7 +126,12 @@ temporary fallback for the older `aemo_price_sa1` field. See
 `sensor.ai_aemo_price_forecast` is intentionally the raw upstream comparison
 surface, not an intermediate model/debug tensor. Its forecast rows include
 `source_layer` (`p5min`, `predispatch`, or `pd7day`) so the frontend can show
-where each segment came from.
+where each segment came from. The PREDISPATCH segment is selected from one
+explicit latest `run_time`; do not use `last(rrp)` across all run tags for this
+entity, because Influx write order can otherwise make a stale run look current.
+The P5MIN segment deliberately covers the first 60 minutes, so it can differ
+from Amber billing forecasts that switch to 30-minute intervals at the next
+billing boundary.
 
 **Retired Amber-shaped AI compatibility sensors:**
 
