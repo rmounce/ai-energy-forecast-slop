@@ -131,7 +131,10 @@ explicit latest `run_time`; do not use `last(rrp)` across all run tags for this
 entity, because Influx write order can otherwise make a stale run look current.
 The P5MIN segment deliberately covers the first 60 minutes, so it can differ
 from Amber billing forecasts that switch to 30-minute intervals at the next
-billing boundary.
+billing boundary. AEMO source timestamps are interval-ending; this HA-facing
+comparison entity republishes them as interval starts (`P5MIN - 5 min`,
+`PREDISPATCH/PD7Day - 30 min`) so ApexCharts lines up with Amber start-time
+forecast rows and local HA display.
 
 **Retired Amber-shaped AI compatibility sensors:**
 

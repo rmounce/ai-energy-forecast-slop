@@ -79,7 +79,10 @@ Implementation status as of 2026-05-09:
   across all PREDISPATCH runs is not equivalent because Influx write order can
   surface stale runs. Near-term values may still differ from Amber billing
   forecasts because this entity keeps P5MIN for the full first 60 minutes,
-  while Amber can switch to 30-minute billing intervals sooner.
+  while Amber can switch to 30-minute billing intervals sooner. For HA chart
+  comparison the AEMO interval-ending timestamps are converted to interval starts
+  (`P5MIN - 5 min`, `PREDISPATCH/PD7Day - 30 min`); this is not an
+  Adelaide-vs-NEM timezone conversion.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
 - `hass/package-emhass.yaml` declares source selectors, read-only status
