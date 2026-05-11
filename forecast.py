@@ -68,6 +68,14 @@ _DEBUG_TFT = False
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
 # --------------------------------------------------------------------------- #
 
+def _as_utc_timestamp(value):
+    """Return a timezone-aware pandas Timestamp in UTC."""
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
 def add_time_features(df):
     """
     Adds custom boolean features `is_daylight_saving_time` and `is_public_holiday`
@@ -1470,6 +1478,9 @@ def _apply_pd_debiaser(fut_df, start_t, historical_df=None):
         if df.empty:
             return fut_df
 
+        df = ensure_utc_index(df)
+        fut_df = ensure_utc_index(fut_df)
+        start_t = _as_utc_timestamp(start_t)
         run_time = start_t - pd.Timedelta(minutes=30)
 
         # ── Spike classifier: compute prob_spike for debiaser feature ─────────
