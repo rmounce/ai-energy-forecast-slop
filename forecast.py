@@ -1129,21 +1129,50 @@ def _get_influx_sdo_demand(client, start_time, end_time):
 
     Returns DataFrame with columns sd_demand, sd_net_interchange (both in MW),
     indexed by UTC datetime, or empty DataFrame on failure.
+
+    Selects one explicit SDO `run_time` (the latest) rather than `last(field)
+    GROUP BY time(30m)`. SDO writes are run_time-tagged (each ingest is a fresh
+    7-day outlook); Influx write order is not run order, so `last()` per 30-min
+    bin can pull rows from arbitrary mixed run_times — same bug shape as
+    `_get_influx_pd_prices` (commit f8bd8ea) and `_execute_raw_aemo_stitched_price_forecast`
+    PREDISPATCH (commit b815928). Affects the TFT inference path that uses SDO
+    as a decoder covariate.
     """
+    # Find the latest SDO run_time.
+    try:
+        tag_result = client.query(
+            'SHOW TAG VALUES FROM "rp_30m"."aemo_sevendayoutlook" '
+            'WITH KEY = "run_time"'
+        )
+        run_times = sorted(
+            _as_utc_timestamp(p["value"])
+            for p in tag_result.get_points()
+            if p.get("value")
+        )
+    except Exception as e:
+        logging.warning(f"Failed to list SDO run_time tags: {e}")
+        return pd.DataFrame()
+
+    if not run_times:
+        return pd.DataFrame()
+    latest_run_time = run_times[-1]
+    run_time_str = latest_run_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+
     start_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_str   = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     try:
-        q = (f"SELECT last(scheduled_demand) AS sd_demand, "
-             f"last(net_interchange) AS sd_net_interchange "
+        q = (f"SELECT scheduled_demand AS sd_demand, "
+             f"net_interchange AS sd_net_interchange "
              f"FROM \"rp_30m\".\"aemo_sevendayoutlook\" "
-             f"WHERE region='SA1' AND time >= '{start_str}' AND time <= '{end_str}' "
-             f"GROUP BY time(30m) fill(null)")
+             f"WHERE region='SA1' AND run_time='{run_time_str}' "
+             f"AND time >= '{start_str}' AND time <= '{end_str}'")
         r = client.query(q)
         if not r or not list(r.get_points()):
             return pd.DataFrame()
         df = pd.DataFrame(r.get_points())
         df['time'] = pd.to_datetime(df['time'], utc=True)
         df.set_index('time', inplace=True)
+        logging.info(f"SDO selected run_time={run_time_str} ({len(df)} rows)")
         return df[['sd_demand', 'sd_net_interchange']].fillna(0.0)
     except Exception as e:
         logging.warning(f"Failed to get InfluxDB SDO demand: {e}")
