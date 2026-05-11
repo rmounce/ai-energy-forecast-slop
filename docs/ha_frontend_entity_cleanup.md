@@ -44,8 +44,10 @@ For day-to-day use, keep one primary raw-wholesale comparison chart:
   `sensor.amber_billing_interval_forecasts_general_price`
 - direct raw upstream AEMO stitched yardstick:
   `sensor.ai_aemo_price_forecast`
-- current-best Amber-independent AI spot:
+- current-best Amber-independent AI spot triplet:
+  `sensor.ai_spot_price_forecast_low`
   `sensor.ai_spot_price_forecast`
+  `sensor.ai_spot_price_forecast_high`
 - optional legacy incumbent yardstick:
   `sensor.ai_price_forecast`
 
@@ -65,9 +67,9 @@ Hide or move to a diagnostics-only view:
   `sensor.ai_pd_direct_price_forecast(_low/_high)`
 Reasoning:
 
-- `sensor.ai_spot_price_forecast` is now the graph-friendly stitched source:
-  fresh 5-minute Tier 1 wholesale forecast followed by the 30-minute PD-direct
-  tail.
+- `sensor.ai_spot_price_forecast(_low/_high)` is now the graph-friendly stitched
+  triplet: fresh 5-minute Tier 1 wholesale forecast followed by the 30-minute
+  PD-direct tail.
 - `sensor.ai_aemo_price_forecast` is the matching model-free stitched upstream
   AEMO surface: raw P5MIN, raw PREDISPATCH, then raw PD7Day where available.
 - The canonical EMHASS/control surfaces are separate:

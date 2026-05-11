@@ -118,15 +118,18 @@ Published by `systemd/ai-energy-forecast.{service,timer}` (every 5 min) and
 | `sensor.ai_tft_price_forecast` | **Shadow** — TFT Run 011b q50 ($/kWh); published but not currently fed to EMHASS | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_tft_price_forecast_high` | TFT Run 011b q70 | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_tft_price_forecast_low` | TFT Run 011b q30 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_pd_direct_price_forecast` | **Current Amber-independent 72h candidate** — Tier 1 / debiased PREDISPATCH / debiased PD7Day q50 wholesale price ($/kWh) | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_pd_direct_price_forecast` | **Current Amber-independent Tier 2 source** — debiased PREDISPATCH / debiased PD7Day q50 wholesale price ($/kWh), without Tier 1 stitching | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_pd_direct_price_forecast_high` | PD-direct q70-style band / high comparison surface | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_pd_direct_price_forecast_low` | PD-direct q30-style band / low comparison surface | 144 | 30-min | 72h | `forecasts` |
+| `sensor.ai_spot_price_forecast_low` | Graph-friendly stitched low source: Tier 1 p05 5-min wholesale forecast, then PD-direct low 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
 | `sensor.ai_spot_price_forecast` | Graph-friendly stitched spot source: Tier 1 5-min wholesale forecast, then PD-direct 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
+| `sensor.ai_spot_price_forecast_high` | Graph-friendly stitched high source: Tier 1 p95 5-min wholesale forecast, then PD-direct high 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
 
-`sensor.ai_spot_price_forecast` is the preferred frontend/ApexCharts surface for
-the current-best Amber-independent raw wholesale comparison. The underlying
-5-minute Tier 1 publisher now emits `wholesale_price`; the HA template keeps a
-temporary fallback for the older `aemo_price_sa1` field. See
+`sensor.ai_spot_price_forecast(_low/_high)` is the preferred
+frontend/ApexCharts surface for the current-best Amber-independent raw wholesale
+comparison. The underlying 5-minute Tier 1 publisher now emits
+`wholesale_price`; the HA template keeps a temporary fallback for the older
+`aemo_price_sa1` field. See
 `docs/ha_frontend_entity_cleanup.md` for the production dashboard references.
 
 `sensor.ai_aemo_price_forecast` is intentionally the raw upstream comparison
