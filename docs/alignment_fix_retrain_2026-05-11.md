@@ -210,3 +210,58 @@ Optional follow-up:
   future TFT retrain. Not needed for any current downstream consumer.
 - Audit `eval/rolling_mpc_eval.py` for the same alignment in its actuals
   lookup (audit section F.4).
+
+## Promotion executed (2026-05-11 22:46 ACST)
+
+User signed off. The following swaps were applied:
+
+| Canonical path | Replaced with | Snapshot (rollback) |
+|---|---|---|
+| `models/pd_debiaser/lgbm_final.pkl` | `models/pd_debiaser_aligned30/lgbm_final.pkl` | `.canonical_20260511` |
+| `models/pd_debiaser/metrics.json` | aligned variant | `.canonical_20260511` |
+| `data/parquet/debiased_pd_rrp_oof.parquet` | aligned variant | `.canonical_20260511` |
+| `models/pd7day_debiaser/lgbm_final.pkl` | aligned variant | `.canonical_20260511` |
+| `models/pd7day_debiaser/metrics.json` | aligned variant | `.canonical_20260511` |
+| `data/parquet/debiased_pd7day_oof.parquet` | aligned variant | `.canonical_20260511` |
+| `models/pd_residual/residual_bands.parquet` | aligned variant | `.canonical_20260511` |
+
+What changed in live behaviour:
+
+- `forecast.py predict-price --publish-hass`: PD-direct values shift to
+  reflect the corrected forecast/actuals training alignment. PD-direct
+  q50 now consistently sits ~0–16% below raw PREDISPATCH (the
+  debiaser's expected bias-correction direction). Pre-promotion the
+  spread was -19% to +7%; post-promotion is tighter.
+- `eval/pd_direct_baseline.py`: any future PD-direct rolling-MPC eval
+  will consume the aligned OOF parquet via the standard load path. No
+  code changes were required.
+- Live publish verified post-promotion: `sensor.ai_pd_direct_price_forecast`
+  reports timestamps and values consistent with the raw stitched
+  `sensor.ai_aemo_price_forecast`, with the expected modest debiaser
+  compression and no 30-min offsets.
+
+What was NOT changed:
+
+- The APF+LGBM-extrapolated production EMHASS path is untouched.
+- `input_select.emhass_*_price_source` options unchanged (still
+  `amber` / `amber_lgbm_extrapolated` only).
+- TFT shadow artefacts (on 2026-06-05 sunset) untouched.
+- `data/build_training_dataset.py` not retrained — no current
+  downstream consumer.
+
+Rollback procedure if regression observed:
+
+```bash
+for f in models/pd_debiaser/lgbm_final.pkl models/pd_debiaser/metrics.json \
+         models/pd7day_debiaser/lgbm_final.pkl models/pd7day_debiaser/metrics.json \
+         models/pd_residual/residual_bands.parquet \
+         data/parquet/debiased_pd_rrp_oof.parquet \
+         data/parquet/debiased_pd7day_oof.parquet; do
+  cp -v "${f}.canonical_20260511" "$f"
+done
+```
+
+The `.canonical_20260511` snapshots are gitignored alongside the live
+artefacts; they live locally on the host. The aligned variants remain
+in their sibling directories (`models/*_aligned30/`) as additional
+on-disk references.
