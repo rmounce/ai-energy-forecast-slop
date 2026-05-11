@@ -2088,15 +2088,18 @@ def _execute_raw_aemo_stitched_price_forecast(future_covariates_df=None):
             if len(rows) < 12:
                 continue
             rt = pd.Timestamp(run_time_str, tz='UTC')
-            p5min_runs[rt] = [float(r['rrp']) for r in rows[:12]]
+            p5min_runs[rt] = rows[:12]
 
         if p5min_runs:
             latest_run_time = max(p5min_runs.keys())
-            intervals = pd.date_range(start=latest_run_time, periods=12, freq='5min', tz='UTC')
-            for ts, rrp_mwh in zip(intervals, p5min_runs[latest_run_time]):
-                records[ts] = (float(rrp_mwh) / 1000.0, 'p5min')
-            p5_end = intervals[-1]
-            p5_count = len(intervals)
+            latest_rows = p5min_runs[latest_run_time]
+            for row in latest_rows:
+                # AEMO interval timestamps are interval-ending; HA chart/forecast
+                # surfaces use interval starts.
+                ts = _as_utc_timestamp(row["time"]) - pd.Timedelta(minutes=5)
+                records[ts] = (float(row["rrp"]) / 1000.0, 'p5min')
+            p5_end = max(records)
+            p5_count = len(latest_rows)
         else:
             logging.warning("Raw AEMO stitched forecast: no usable P5MIN run found.")
 
@@ -2153,14 +2156,14 @@ def _execute_raw_aemo_stitched_price_forecast(future_covariates_df=None):
 
     if not influx_pd_prices.empty and 'pd_rrp' in influx_pd_prices.columns:
         for ts, rrp_mwh in influx_pd_prices['pd_rrp'].dropna().items():
-            ts = _as_utc_timestamp(ts)
+            ts = _as_utc_timestamp(ts) - pd.Timedelta(minutes=30)
             if ts > cutoff:
                 records[ts] = (float(rrp_mwh) / 1000.0, 'predispatch')
                 pd_count += 1
 
     if not pd7_df.empty and 'pd7_rrp' in pd7_df.columns:
         for ts, rrp_mwh in pd7_df['pd7_rrp'].dropna().items():
-            ts = _as_utc_timestamp(ts)
+            ts = _as_utc_timestamp(ts) - pd.Timedelta(minutes=30)
             if ts > cutoff and ts not in records:
                 records[ts] = (float(rrp_mwh) / 1000.0, 'pd7day')
                 pd7_count += 1
