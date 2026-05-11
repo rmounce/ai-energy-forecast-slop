@@ -558,10 +558,13 @@ def _get_aemo_short_term_forecast():
     required_cols = ['SETTLEMENTDATE', 'REGIONID', 'TOTALDEMAND', 'NETINTERCHANGE']
     df = df[df['REGIONID'].isin(CONFIG['aemo_forecast']['regions'])]
     nem_tz = pytz.timezone('Etc/GMT-10')
+    # The 30MIN visualisations API labels rows by interval end in NEM time.
+    # Convert to interval starts before joining with the rest of the UTC-indexed
+    # future-covariate frame. Inferring duration from row diffs is fragile for
+    # the first row and previously shifted it by only 5 minutes.
     df['timestamp_end'] = pd.to_datetime(df['SETTLEMENTDATE']).dt.tz_localize(nem_tz)
     df = df.sort_values(['REGIONID', 'timestamp_end']).reset_index(drop=True)
-    df['duration'] = df.groupby('REGIONID')['timestamp_end'].diff().fillna(pd.Timedelta(minutes=5))
-    df['timestamp'] = (df['timestamp_end'] - df['duration']).dt.tz_convert('UTC')
+    df['timestamp'] = (df['timestamp_end'] - pd.Timedelta(minutes=30)).dt.tz_convert('UTC')
     df.set_index('timestamp', inplace=True)
     pivot_df = df.pivot_table(index='timestamp', columns='REGIONID', values=['TOTALDEMAND', 'NETINTERCHANGE'])
     pivot_df.columns = ['_'.join(col).strip() for col in pivot_df.columns.values]
