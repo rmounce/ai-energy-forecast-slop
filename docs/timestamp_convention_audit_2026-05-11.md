@@ -101,6 +101,30 @@ Interpretation:
   horizons being a categorical spike-indicator rather than a literal price
   prediction, so the timestamp alignment matters less.
 
+### P5MIN ±5 min sub-check (Tier 1 publish convention)
+
+The ±30 min sweep alone doesn't expose 5-min offsets that would matter for
+Tier 1 LGBM tactical publishing. Ran a focused P5MIN-vs-5min-actuals test at
+±5 min shifts:
+
+| Horizon | shift=-5min MAE | shift=+0 MAE | shift=+5min MAE |
+|---|---:|---:|---:|
+| 5 min | **33.19** | 38.17 | 42.35 |
+| 10 min | **39.59** | 40.83 | 45.23 |
+| 30 min | **55.67** | 57.10 | 59.50 |
+
+`shift=-5min` wins at every horizon, confirming `aemo_p5min_sa1.parquet.interval_dt`
+is also interval-end and `actuals_sa1_5m.parquet.time` is interval-start.
+
+**Tier 1 LGBM HA publish is already correct by construction**: the publish
+path builds `intervals = pd.date_range(start=latest_run_time, periods=12,
+freq='5min')` which makes `intervals[0] = latest_run_time` — the interval-
+start of the first forecast 5-min slot, since AEMO produces forecasts
+starting AT the run time itself. No explicit `-5 min` shift is applied
+because the code bypasses P5MIN's interval-end `interval_dt` field entirely
+in favour of `run_time + step × 5min`. Published timestamps are therefore
+interval-start. No fix needed for `sensor.ai_p5min_price_forecast*`.
+
 ## Do Not Silently Patch Yet
 
 Do not immediately shift all PREDISPATCH/PD7Day internals in production code. The current TFT/PD-direct/strategic models and rolling evals were trained and scored under the existing convention. A blind shift would change model inputs, labels, and cached artifacts together in a way that could invalidate recent results without a clean comparison.
