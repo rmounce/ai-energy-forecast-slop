@@ -56,6 +56,51 @@ Result, MAE in $/MWh:
 
 The `interval_dt - 30 min` comparison is consistently better, especially at short horizons. That is evidence that AEMO forecast rows are interval-ending while `actuals_sa1.parquet` rows may be interval-start labelled.
 
+## Diagnostic Confirmation (2026-05-11 late)
+
+Ran `eval/timestamp_alignment_diagnostic.py` over full available history
+(2024-01-01 onward). For each AEMO-derived forecast row, compared the
+forecast against `actuals_sa1.parquet.rrp` at three timestamp shifts of
+the forecast row's `interval_dt`. Result is unambiguous:
+
+Winning-shift share (sample-weighted, % of strata) per source × horizon:
+
+| source | horizon | -30 min | +0 | +30 min |
+|---|---|---:|---:|---:|
+| predispatch | h<=30m | **99.4** | 0.6 | 0.0 |
+| predispatch | h=30m–6h | **98.8** | 0.9 | 0.3 |
+| predispatch | h=6–14h | **93.9** | 2.1 | 4.0 |
+| predispatch | h=14–28h | **88.0** | 0.6 | 11.4 |
+| predispatch | h=28–72h | **86.9** | 5.1 | 8.0 |
+| p5min | h<=30m | **98.8** | 1.1 | 0.1 |
+| p5min | h=30m–6h | **95.2** | 4.1 | 0.7 |
+| pd7day | h<=30m | **93.7** | 5.1 | 1.3 |
+| pd7day | h=30m–6h | **90.8** | 4.2 | 5.0 |
+| pd7day | h=6–14h | **82.8** | 17.2 | 0.0 |
+| pd7day | h=14–28h | **71.4** | 4.7 | 23.9 |
+| pd7day | h=28–72h | **65.8** | 25.7 | 8.5 |
+| pd7day | h=72h–7d | 31.5 | 25.0 | **43.5** |
+
+Sample-weighted MAE per source × shift ($/MWh):
+
+| source | -30 min | +0 | +30 min |
+|---|---:|---:|---:|
+| p5min | **52.06** | 59.46 | 71.59 |
+| predispatch | **115.02** | 120.87 | 128.44 |
+| pd7day | **544.52** | 548.37 | 545.48 |
+
+Interpretation:
+
+- `interval_dt` is **interval-end** for PREDISPATCH, P5MIN, and PD7Day.
+- `actuals_sa1.parquet.time` is **interval-start**.
+- HA chart surfaces and any analysis that compares forecasts against actuals
+  should apply a `-interval` shift on the forecast `interval_dt` to convert
+  interval-end → interval-start.
+- PD7Day at horizons beyond 28h becomes noisy enough that `+30 min` even
+  beats `-30 min` in some strata; this is consistent with PD7Day at long
+  horizons being a categorical spike-indicator rather than a literal price
+  prediction, so the timestamp alignment matters less.
+
 ## Do Not Silently Patch Yet
 
 Do not immediately shift all PREDISPATCH/PD7Day internals in production code. The current TFT/PD-direct/strategic models and rolling evals were trained and scored under the existing convention. A blind shift would change model inputs, labels, and cached artifacts together in a way that could invalidate recent results without a clean comparison.

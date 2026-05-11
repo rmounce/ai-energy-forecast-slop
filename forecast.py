@@ -2742,6 +2742,16 @@ def _publish_pd_direct_price_forecasts(pd_direct_results):
         if 'wholesale_price' not in publish_df.columns:
             publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'},
                               inplace=True)
+        # 2026-05-11 (`eval/timestamp_alignment_diagnostic.py` confirmation):
+        # PREDISPATCH / PD7Day source rows are interval-ending; HA chart surfaces
+        # want interval-start. Shift the published index by -30 min so the
+        # stitched `sensor.ai_spot_price_forecast` (which reads timestamps
+        # verbatim) shows values at the correct interval-start position. This
+        # mirrors the raw-AEMO publish fix in commit b39eace. Internal training
+        # data, CSV log, and rolling-eval framework remain on the original
+        # interval-end convention — that is a separate dataset rebuild question
+        # (see `docs/timestamp_convention_audit_2026-05-11.md`).
+        publish_df.index = publish_df.index - pd.Timedelta(minutes=30)
         apply_tariffs_to_forecast(publish_df)
         publish_forecast_to_hass(key, publish_df)
 
