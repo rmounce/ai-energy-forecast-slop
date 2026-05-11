@@ -2100,7 +2100,47 @@ def _execute_raw_aemo_stitched_price_forecast(future_covariates_df=None):
         else:
             logging.warning("Raw AEMO stitched forecast: no usable P5MIN run found.")
 
-        influx_pd_prices = _get_influx_pd_prices(client, dec_index.min(), dec_index.max())
+        # Select one explicit PREDISPATCH run. Do not use `last(rrp)` across all
+        # run_time tags here: Influx write order can make stale runs look latest.
+        pd_run_times = []
+        try:
+            tag_result = client.query(
+                'SHOW TAG VALUES FROM "rp_30m"."aemo_predispatch_forecast" '
+                'WITH KEY = "run_time"'
+            )
+            pd_run_times = sorted(
+                _as_utc_timestamp(p["value"])
+                for p in tag_result.get_points()
+                if p.get("value")
+            )
+        except Exception as e:
+            logging.warning("Raw AEMO stitched forecast: failed to list PREDISPATCH runs: %s", e)
+
+        if pd_run_times:
+            latest_pd_run_time = pd_run_times[-1]
+            start_str = dec_index.min().strftime('%Y-%m-%dT%H:%M:%SZ')
+            end_str = dec_index.max().strftime('%Y-%m-%dT%H:%M:%SZ')
+            pd_result = client.query(
+                f'SELECT rrp FROM "rp_30m"."aemo_predispatch_forecast" '
+                f"WHERE region='SA1' AND run_time='{latest_pd_run_time.strftime('%Y-%m-%dT%H:%M:%SZ')}' "
+                f"AND time >= '{start_str}' AND time <= '{end_str}'"
+            )
+            pd_rows = list(pd_result.get_points()) if pd_result else []
+            if pd_rows:
+                influx_pd_prices = pd.DataFrame(pd_rows)
+                influx_pd_prices['time'] = pd.to_datetime(influx_pd_prices['time'], utc=True)
+                influx_pd_prices = (
+                    influx_pd_prices
+                    .set_index('time')
+                    .sort_index()
+                    .rename(columns={'rrp': 'pd_rrp'})
+                )
+            else:
+                influx_pd_prices = pd.DataFrame()
+        else:
+            latest_pd_run_time = None
+            influx_pd_prices = pd.DataFrame()
+
         pd7_df, pd7_run_time = _get_influx_latest_pd7day_prices(
             client,
             start_t - pd.Timedelta(minutes=30),
@@ -2136,13 +2176,20 @@ def _execute_raw_aemo_stitched_price_forecast(future_covariates_df=None):
     df = pd.DataFrame(rows).set_index('timestamp')
     df = ensure_utc_index(df)
 
+    run_info = (
+        ", PREDISPATCH run="
+        f"{latest_pd_run_time.isoformat() if latest_pd_run_time is not None else 'none'}"
+    )
+    if pd7_run_time is not None:
+        run_info += f", PD7Day run={pd7_run_time.isoformat()}"
+
     logging.info(
         "Raw AEMO stitched forecast: %d rows (P5MIN=%d, PREDISPATCH=%d, PD7Day=%d%s).",
         len(df),
         p5_count,
         pd_count,
         pd7_count,
-        f", PD7Day run={pd7_run_time.isoformat()}" if pd7_run_time is not None else "",
+        run_info,
     )
     return {'aemo_price_forecast': df}
 
