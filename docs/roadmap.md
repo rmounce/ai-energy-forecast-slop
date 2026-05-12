@@ -694,6 +694,9 @@ Current committed state:
 - `hass/package-emhass.yaml` declares source selectors:
   - `input_select.emhass_mpc_price_source`
   - `input_select.emhass_dh_price_source`
+- The selected-source diagnostic sensors now expose requested source, effective source,
+  fallback reason, AI readiness, and AI Tier 2 provenance, so a future guarded
+  `ai_shadow` selector cannot appear active when the payload fell back to legacy prices.
 - `hass/package-emhass.yaml` declares AI forecast health/status sensors:
   - `sensor.ai_mpc_price_forecast_status`
   - `sensor.ai_dh_price_forecast_status`

@@ -194,8 +194,8 @@ Derived sensors computed by HA template engine. Recalculate on state change.
 |---|---|---|
 | `sensor.amber_effective_general_price` | Two-knob blended import price — blends `advanced_price_predicted/high/low` toward buy weight, then takes max of blended vs `per_kwh`. Used as spot reference for automations. | `sensor.amber_5min_current_general_price`, `sensor.amber_5min_forecasts_general_price`, `input_number.emhass_weight_buy_forecast` |
 | `sensor.amber_effective_feed_in_price` | Two-knob blended export price — same blend logic, then applies SAPN free-export tier (+$0.01/kWh in 10am–4pm window while allowance > 0) | `sensor.amber_5min_current_feed_in_price`, `sensor.amber_5min_forecasts_feed_in_price`, `input_number.emhass_weight_sell_forecast`, `input_number.sapn_free_exports` |
-| `sensor.emhass_selected_mpc_price_source` | Active MPC source name; currently legacy-only selector plus AI entity references for diagnostics | `input_select.emhass_mpc_price_source` |
-| `sensor.emhass_selected_dh_price_source` | Active DH source name; currently legacy-only selector plus AI entity references for diagnostics | `input_select.emhass_dh_price_source` |
+| `sensor.emhass_selected_mpc_price_source` | Requested MPC selector plus effective source, fallback reason, AI status, Tier 2 source, and AI entity references | `input_select.emhass_mpc_price_source`, `sensor.ai_mpc_price_forecast_status` |
+| `sensor.emhass_selected_dh_price_source` | Requested DH selector plus effective source, fallback reason, AI status, Tier 2 source, and AI entity references | `input_select.emhass_dh_price_source`, `sensor.ai_dh_price_forecast_status` |
 | `sensor.ai_mpc_price_forecast_status` | `ready` / `not_ready` + import/export counts, first/last timestamps, freshness, horizon, alignment, and Tier 2 source guards for MPC canonical sensors | `sensor.ai_mpc_import/export_price_forecast` |
 | `sensor.ai_dh_price_forecast_status` | Same for DH canonical sensors | `sensor.ai_dh_import/export_price_forecast` |
 

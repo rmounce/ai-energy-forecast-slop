@@ -99,6 +99,11 @@ Implementation status as of 2026-05-09:
 - `sensor.emhass_mpc_price_diagnostic` and `sensor.emhass_dh_price_diagnostic`
   expose side-by-side first values and 1h/24h means for both sources without
   calling EMHASS. State = currently selected source.
+- `sensor.emhass_selected_mpc_price_source` and
+  `sensor.emhass_selected_dh_price_source` expose requested vs effective source,
+  fallback reason, AI readiness state, and AI Tier 2 provenance. This is the
+  operator-facing check for whether a future `ai_shadow` selection actually routed
+  to AI prices or was guarded back to legacy prices.
 - `sensor.ai_mpc_price_forecast_status` and
   `sensor.ai_dh_price_forecast_status` now gate on count, import/export first
   timestamp alignment, first timestamp freshness, remaining horizon, and Tier 2
