@@ -96,6 +96,11 @@ Implementation status as of 2026-05-09:
 - `sensor.emhass_mpc_price_diagnostic` and `sensor.emhass_dh_price_diagnostic`
   expose side-by-side first values and 1h/24h means for both sources without
   calling EMHASS. State = currently selected source.
+- `sensor.ai_mpc_price_forecast_status` and
+  `sensor.ai_dh_price_forecast_status` now gate on count, import/export first
+  timestamp alignment, first timestamp freshness, and remaining horizon. The
+  EMHASS REST payload templates require these sensors to be `ready` before an
+  `ai_shadow` selector value can route prices into EMHASS.
 
 ## Publication Cadence
 
@@ -162,7 +167,12 @@ payload templates.
 6. Deploy the updated `ai-energy-p5min.service`, then run one manual service invocation or
    one manual `forecast.py publish-tactical --publish-hass` check against live HA state.
 7. Re-add an AI selector option only after the canonical control entities have
-   been observed live with PD-direct content and all status checks pass.
+   been observed live with PD-direct content and all status checks pass:
+   - `sensor.ai_dh_price_forecast_status == ready`
+   - `sensor.ai_mpc_price_forecast_status == ready`
+   - `freshness_guard == true`
+   - `horizon_guard == true`
+   - `alignment_guard == true`
 8. Switch DH first, if desired, because it changes the strategic plan but not
    the immediate 5-minute action as directly as MPC.
 9. Switch MPC only after source freshness, sign, length, and unit checks are
@@ -196,6 +206,13 @@ Before enabling AI as a live source:
 
 - Forecast arrays cover the full EMHASS horizon.
 - All timestamps are timezone-aware UTC at the publisher boundary.
+- AI import/export forecast arrays have matching first timestamps.
+- AI first timestamps are not stale:
+  - MPC: first point no more than 10 minutes ahead of `utcnow()`.
+  - DH: first point no more than 35 minutes ahead of `utcnow()`.
+- AI horizons still cover the optimisation window:
+  - MPC: at least 13.5 hours remaining.
+  - DH: at least 70 hours remaining.
 - Import/export prices are in `$ / kWh`.
 - Export price is positive revenue, except when exporting costs money.
 - The current interval is present or intentionally filled.
