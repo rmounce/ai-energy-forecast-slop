@@ -774,6 +774,11 @@ Immediate next actions for the next implementer:
    - Future `tft_load` logs now write to `tft_load_forecast_log.csv` and are included in
      `forecast.py backfill-actuals`; historical rows remain mixed into
      `tft_price_forecast_log.csv` without actuals.
+   - **Dispatch counterfactual harness landed 2026-05-12** (`eval/rolling_mpc_eval.py`
+     `--load-forecast-source`). Plan and 12h smoke results in
+     `docs/load_source_dispatch_eval_plan_2026-05-12.md`. Smoke proved harness mechanics
+     work; the dispatch verdict (TFT load helps/hurts vs LGBM) remains open pending the
+     proper-window run scheduled for 2026-05-13.
 
 5. **Document HA deployment steps after the canonical source decision.**
    - Update `docs/production_forecast_switch_plan.md`.
