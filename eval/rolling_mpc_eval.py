@@ -88,6 +88,8 @@ from eval.pd_direct_baseline import (  # noqa: E402
 PARQUET_DIR = ROOT / "data" / "parquet"
 RESULTS_DIR = ROOT / "eval" / "results"
 PRICE_FORECAST_LOG = ROOT / "price_forecast_log.csv"
+LOAD_FORECAST_LOG = ROOT / "load_forecast_log.csv"
+TFT_LOAD_FORECAST_LOG = ROOT / "tft_load_forecast_log.csv"
 OOF_FILE = PARQUET_DIR / "debiased_pd_rrp_oof.parquet"
 
 ACTUALS_5M_FILE = PARQUET_DIR / "actuals_sa1_5m.parquet"
@@ -486,6 +488,71 @@ def _load_amber_log_30m() -> tuple[dict[pd.Timestamp, pd.Series], list[pd.Timest
     return grouped, creation_sorted, creation_ns
 
 
+# Load-forecast source registry. Each non-`actual` source maps to (log_path, model_name)
+# pairs. The harness reads these CSVs in `ForecastProviders.__init__` when the user has
+# requested a non-fidelity load source. Sources that production only recently started
+# logging will have empty history until backfill catches up; the harness flags
+# `load_forecast_unavailable=True` at affected MPC steps rather than silently falling
+# back to actuals.
+LOAD_FORECAST_SOURCES: dict[str, tuple[Path, str] | None] = {
+    "actual": None,
+    "lgbm_load_log": (LOAD_FORECAST_LOG, "load"),
+    "tft_load_log": (TFT_LOAD_FORECAST_LOG, "tft_load"),
+    "lgbm_load_p65_log": (LOAD_FORECAST_LOG, "load_p65"),
+    "lgbm_load_p75_log": (LOAD_FORECAST_LOG, "load_p75"),
+    "tft_load_q10_log": (TFT_LOAD_FORECAST_LOG, "tft_load_q10"),
+    "tft_load_q90_log": (TFT_LOAD_FORECAST_LOG, "tft_load_q90"),
+}
+
+
+def _load_load_forecast_log_30m(
+    path: Path, model_name: str
+) -> tuple[dict[pd.Timestamp, pd.Series], list[pd.Timestamp], np.ndarray]:
+    """Load logged 30-min load forecasts keyed by forecast_creation_time.
+
+    Values are watts indexed by 30-min `forecast_target_time` UTC stamps, ready to be
+    expanded to 5-min via ffill at MPC time. Same shape as `_load_amber_log_30m`.
+    """
+    if not path.exists():
+        return {}, [], np.array([], dtype=np.int64)
+
+    df = pd.read_csv(
+        path,
+        usecols=["forecast_creation_time", "forecast_target_time", "model_name", "prediction"],
+        dtype_backend="pyarrow",
+    )
+    df = df[df["model_name"].astype(str) == model_name].copy()
+    if df.empty:
+        return {}, [], np.array([], dtype=np.int64)
+
+    df["forecast_creation_time"] = pd.to_datetime(
+        df["forecast_creation_time"], utc=True, format="mixed"
+    )
+    df["forecast_target_time"] = pd.to_datetime(
+        df["forecast_target_time"], utc=True, format="mixed"
+    )
+    df["forecast_target_time"] = df["forecast_target_time"].dt.floor("30min")
+    df["prediction"] = pd.to_numeric(df["prediction"], errors="coerce")
+    df = df.dropna(subset=["prediction"])
+    df = df.sort_values(["forecast_creation_time", "forecast_target_time"])
+    df = df.drop_duplicates(
+        subset=["forecast_creation_time", "forecast_target_time"],
+        keep="last",
+    )
+
+    grouped: dict[pd.Timestamp, pd.Series] = {}
+    for creation_time, grp in df.groupby("forecast_creation_time"):
+        grp = grp.sort_values("forecast_target_time")
+        grouped[creation_time] = pd.Series(
+            grp["prediction"].values.astype(np.float64),
+            index=grp["forecast_target_time"],
+        )
+
+    creation_sorted = sorted(grouped.keys())
+    creation_ns = np.array([ts.value for ts in creation_sorted], dtype=np.int64)
+    return grouped, creation_sorted, creation_ns
+
+
 @dataclass
 class TFTContext:
     model: TFTPriceModel
@@ -700,6 +767,35 @@ class ForecastProviders:
 
         self.amber_runs, self.amber_creation_sorted, self.amber_creation_ns = _load_amber_log_30m()
 
+        # Load-forecast source registry lookup. `actual` keeps the legacy fidelity mode
+        # where realised load is fed back as forecast; non-`actual` sources read a CSV
+        # log and the harness swaps the load curve at each MPC step.
+        load_source = getattr(args, "load_forecast_source", "actual")
+        self.load_forecast_source: str = load_source
+        self.load_forecast_runs: dict[pd.Timestamp, pd.Series] = {}
+        self.load_forecast_creation_sorted: list[pd.Timestamp] = []
+        self.load_forecast_creation_ns: np.ndarray = np.array([], dtype=np.int64)
+        if load_source != "actual":
+            spec = LOAD_FORECAST_SOURCES.get(load_source)
+            if spec is None:
+                raise ValueError(
+                    f"Unknown load_forecast_source '{load_source}'; "
+                    f"valid: {sorted(LOAD_FORECAST_SOURCES.keys())}"
+                )
+            log_path, model_name = spec
+            (
+                self.load_forecast_runs,
+                self.load_forecast_creation_sorted,
+                self.load_forecast_creation_ns,
+            ) = _load_load_forecast_log_30m(log_path, model_name)
+            if not self.load_forecast_runs:
+                print(
+                    f"warning: --load-forecast-source={load_source} but no rows for "
+                    f"model_name='{model_name}' in {log_path}. Every MPC step will be "
+                    "flagged load_forecast_unavailable=True.",
+                    file=sys.stderr,
+                )
+
         self.tft_ctx = None
         if args.tft_checkpoint and args.tft_scalers:
             self.tft_ctx = _load_tft_context(Path(args.tft_checkpoint), Path(args.tft_scalers))
@@ -738,6 +834,34 @@ class ForecastProviders:
 
     def curve_was_repaired(self, source: str) -> bool:
         return self._last_curve_repaired.get(source, False)
+
+    def lookup_load_forecast_kw_5m(
+        self, ts: pd.Timestamp, curve_idx: pd.DatetimeIndex
+    ) -> tuple[np.ndarray | None, pd.Timestamp | None]:
+        """Return the logged 30-min load forecast expanded to the 5-min `curve_idx`.
+
+        Picks the latest `forecast_creation_time <= ts` from the configured load log,
+        then ffills 30-min target values forward into 5-min slots so a 14:00 stamp
+        covers 14:00..14:25 (matching `_expand_actual_30m_power_to_5m`). Returns
+        `(None, None)` when no usable forecast exists at this step.
+        """
+        if self.load_forecast_source == "actual":
+            return None, None
+        if not self.load_forecast_creation_ns.size:
+            return None, None
+        ns = pd.Timestamp(ts).value
+        idx_pos = int(np.searchsorted(self.load_forecast_creation_ns, ns, side="right")) - 1
+        if idx_pos < 0:
+            return None, None
+        creation_time = self.load_forecast_creation_sorted[idx_pos]
+        series_w = self.load_forecast_runs[creation_time]
+        if series_w.empty:
+            return None, None
+        union_idx = curve_idx.union(series_w.index)
+        expanded = series_w.reindex(union_idx).sort_index().ffill().reindex(curve_idx)
+        if expanded.isna().any():
+            return None, None
+        return expanded.to_numpy(dtype=np.float64) / 1000.0, creation_time
 
     def _finalize_curve(self, source: str, values: np.ndarray, current_actual: float,
                         expected_steps: int = HORIZON_5M_STEPS) -> np.ndarray | None:
@@ -1424,6 +1548,8 @@ def simulate_stepwise(
             forecast_net_load_kw = None
             forecast_load_kw = None
             forecast_pv_kw = None
+            load_forecast_creation_time = None
+            load_forecast_unavailable = False
             sell_urgency_applied = False
             forecast_feed_in_mean_next_1h_mwh = float("nan")
             forecast_feed_in_mean_next_4h_mwh = float("nan")
@@ -1492,9 +1618,29 @@ def simulate_stepwise(
                     maybe_pv_kw = (
                         providers.pv_kw_5m.reindex(curve_idx).ffill().bfill().to_numpy(dtype=np.float64, copy=True)
                     )
+                    # Counterfactual swap: replace the actuals-derived load curve with a
+                    # logged forecast when --load-forecast-source != actual. PV continues
+                    # from actuals so load is the isolated variable. If no usable forecast
+                    # exists at this step, mark the row and fall back to actuals so the
+                    # MPC step still runs but the row can be excluded from comparison.
+                    if providers.load_forecast_source != "actual":
+                        swapped_load_kw, load_forecast_creation_time = (
+                            providers.lookup_load_forecast_kw_5m(ts, curve_idx)
+                        )
+                        if swapped_load_kw is None:
+                            load_forecast_unavailable = True
+                        elif np.isfinite(swapped_load_kw).all():
+                            maybe_load_kw = swapped_load_kw
+                        else:
+                            load_forecast_unavailable = True
                     if np.isfinite(maybe_load_kw).all() and np.isfinite(maybe_pv_kw).all():
                         forecast_load_kw = maybe_load_kw
                         forecast_pv_kw = maybe_pv_kw
+                        if (
+                            providers.load_forecast_source != "actual"
+                            and not load_forecast_unavailable
+                        ):
+                            forecast_net_load_kw = forecast_load_kw - forecast_pv_kw
                 inventory_discipline_applied = _should_apply_inventory_discipline(
                     source=src,
                     allowed_sources=providers.args.inventory_discipline_sources,
@@ -1648,6 +1794,18 @@ def simulate_stepwise(
                 "actual_net_load_kw": actual_net_load_step_kw,
                 "actual_load_kw": actual_load_step_kw,
                 "actual_pv_kw": actual_pv_step_kw,
+                "load_forecast_source": providers.load_forecast_source,
+                "load_forecast_creation_time": load_forecast_creation_time,
+                "load_forecast_unavailable": load_forecast_unavailable,
+                "forecast_load_step0_kw": (
+                    float(forecast_load_kw[0]) if forecast_load_kw is not None else float("nan")
+                ),
+                "forecast_load_mean_next_1h_kw": (
+                    float(np.mean(forecast_load_kw[:12])) if forecast_load_kw is not None else float("nan")
+                ),
+                "forecast_load_mean_next_4h_kw": (
+                    float(np.mean(forecast_load_kw[:48])) if forecast_load_kw is not None else float("nan")
+                ),
                 "forecast_step0_mwh": float(curve[0]),
                 "forecast_mean_next_1h_mwh": forecast_mean_next_1h_mwh,
                 "forecast_mean_next_4h_mwh": forecast_mean_next_4h_mwh,
@@ -1765,6 +1923,7 @@ def simulate_stepwise(
         max_dynamic_terminal_adder_per_kwh = float(src_df["dynamic_terminal_adder_per_kwh"].max()) if not src_df.empty else 0.0
         mean_strategic_target_gap_kwh = float(src_df["strategic_target_gap_kwh"].mean()) if not src_df.empty else 0.0
         max_strategic_target_gap_kwh = float(src_df["strategic_target_gap_kwh"].max()) if not src_df.empty else 0.0
+        load_forecast_stats = _summarise_load_forecast_under_prep(src_df)
         mean_strategic_shadow_gap_per_kwh = float(src_df["strategic_shadow_gap_per_kwh"].mean()) if not src_df.empty else 0.0
         max_strategic_shadow_gap_per_kwh = float(src_df["strategic_shadow_gap_per_kwh"].max()) if not src_df.empty else 0.0
         positive_target_uplift_steps = int((src_df["dynamic_target_uplift_kwh"] > 0).sum()) if not src_df.empty else 0
@@ -1880,9 +2039,92 @@ def simulate_stepwise(
             "skipped_missing_curve": skipped_missing_curve[src],
             "skipped_invalid_curve": skipped_invalid_curve[src],
             "repaired_invalid_curve": repaired_invalid_curve[src],
+            **load_forecast_stats,
         })
 
     return pd.DataFrame(raw_rows), pd.DataFrame(summary)
+
+
+# Adelaide-local target-time buckets matching `eval/compare_live_load_accuracy.py`
+# so under-prep distributions in the harness summary line up with the live accuracy
+# audit that Codex added.
+_ADELAIDE_LOAD_BUCKETS = ("overnight", "morning", "solar", "evening", "late")
+
+
+def _adelaide_load_bucket(target_utc: pd.Series) -> pd.Series:
+    local_hour = target_utc.dt.tz_convert(LOCAL_TZ).dt.hour
+    return pd.cut(
+        local_hour,
+        bins=[-1, 5, 11, 16, 20, 24],
+        labels=list(_ADELAIDE_LOAD_BUCKETS),
+        right=True,
+    ).astype(str)
+
+
+def _summarise_load_forecast_under_prep(src_df: pd.DataFrame) -> dict[str, float | int | str]:
+    """Bucketed under-prep stats for the load-forecast counterfactual.
+
+    Under-prep at a step = forecast_load_step0_kw < actual_load_kw (per-step magnitude
+    is actual - forecast in kW). Rows where the forecast was unavailable are excluded
+    from the comparison but counted under load_forecast_unavailable_steps so the user
+    can judge coverage.
+    """
+    stats: dict[str, float | int | str] = {
+        "load_forecast_source": (
+            str(src_df["load_forecast_source"].iloc[0])
+            if not src_df.empty and "load_forecast_source" in src_df.columns
+            else "actual"
+        ),
+        "load_forecast_unavailable_steps": 0,
+        "load_under_prep_total_steps": 0,
+        "load_under_prep_mean_kw": float("nan"),
+        "load_under_prep_p90_kw": float("nan"),
+    }
+    for bucket in _ADELAIDE_LOAD_BUCKETS:
+        stats[f"load_under_prep_steps_{bucket}"] = 0
+        stats[f"load_under_prep_mean_kw_{bucket}"] = float("nan")
+
+    if src_df.empty or "forecast_load_step0_kw" not in src_df.columns:
+        return stats
+
+    src_df = src_df.copy()
+    stats["load_forecast_unavailable_steps"] = int(
+        src_df.get("load_forecast_unavailable", pd.Series(False, index=src_df.index))
+        .fillna(False)
+        .astype(bool)
+        .sum()
+    )
+
+    eligible = src_df[
+        src_df["forecast_load_step0_kw"].notna()
+        & src_df["actual_load_kw"].notna()
+        & ~src_df.get("load_forecast_unavailable", pd.Series(False, index=src_df.index))
+        .fillna(False)
+        .astype(bool)
+    ].copy()
+    if eligible.empty:
+        return stats
+
+    eligible["under_prep_kw"] = (
+        eligible["actual_load_kw"] - eligible["forecast_load_step0_kw"]
+    )
+    under = eligible[eligible["under_prep_kw"] > 0.0].copy()
+    stats["load_under_prep_total_steps"] = int(len(under))
+    if not under.empty:
+        stats["load_under_prep_mean_kw"] = float(under["under_prep_kw"].mean())
+        stats["load_under_prep_p90_kw"] = float(under["under_prep_kw"].quantile(0.90))
+
+    eligible["bucket"] = _adelaide_load_bucket(eligible["time"])
+    under["bucket"] = _adelaide_load_bucket(under["time"])
+    for bucket in _ADELAIDE_LOAD_BUCKETS:
+        bucket_under = under[under["bucket"] == bucket]
+        stats[f"load_under_prep_steps_{bucket}"] = int(len(bucket_under))
+        if not bucket_under.empty:
+            stats[f"load_under_prep_mean_kw_{bucket}"] = float(
+                bucket_under["under_prep_kw"].mean()
+            )
+
+    return stats
 
 
 def build_daily_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
@@ -2428,6 +2670,20 @@ def main():
             "'netload_tariffed' adds actual load/PV plus separate import/feed-in economics."
         ),
     )
+    parser.add_argument(
+        "--load-forecast-source",
+        choices=list(LOAD_FORECAST_SOURCES.keys()),
+        default="actual",
+        help=(
+            "Load curve fed into the dispatch optimiser in netload_tariffed mode. "
+            "'actual' (default) preserves the legacy fidelity mode where realised load is "
+            "fed back as the forecast. Other choices replace the load curve at each MPC "
+            "step with a logged 30-min forecast (ffilled to 5-min). PV/price/control "
+            "assumptions are unchanged so load is the isolated variable. Sources that "
+            "production only recently started logging may have no history and will mark "
+            "every step load_forecast_unavailable=True until backfill catches up."
+        ),
+    )
     parser.add_argument("--soc-init-kwh", type=float, default=SOC_INIT_KWH)
     parser.add_argument(
         "--tier1-quantile-blend",
@@ -2832,6 +3088,8 @@ def main():
         parser.error("--inventory-discipline-cycle-cost-mwh must be >= 0")
     if args.inventory_discipline_sources and args.economic_mode != "netload_tariffed":
         parser.error("--inventory-discipline-sources currently requires --economic-mode netload_tariffed")
+    if args.load_forecast_source != "actual" and args.economic_mode != "netload_tariffed":
+        parser.error("--load-forecast-source != actual requires --economic-mode netload_tariffed")
     if args.grid_exchange_reduction_cycle_cost_mwh < 0.0:
         parser.error("--grid-exchange-reduction-cycle-cost-mwh must be >= 0")
     if args.grid_exchange_reduction_flow_cost_mwh < 0.0:
