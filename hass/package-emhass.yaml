@@ -123,7 +123,10 @@ template:
         {%- set fresh = first != none and first <= utcnow() + timedelta(minutes=10) %}
         {%- set horizon_ok = last != none and last >= utcnow() + timedelta(hours=13, minutes=30) %}
         {%- set aligned = first != none and export_first != none and first == export_first %}
-        {%- if import_forecast | count >= 168 and export_forecast | count >= 168 and fresh and horizon_ok and aligned %}
+        {%- set import_source = state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default('', true) %}
+        {%- set export_source = state_attr('sensor.ai_mpc_export_price_forecast', 'tier2_source') | default('', true) %}
+        {%- set source_ok = import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] %}
+        {%- if import_forecast | count >= 168 and export_forecast | count >= 168 and fresh and horizon_ok and aligned and source_ok %}
           ready
         {%- else %}
           not_ready
@@ -135,6 +138,10 @@ template:
           {{ state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) | count }}
         export_count: >
           {{ state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) | count }}
+        tier2_source_import: >
+          {{ state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default(none, true) }}
+        tier2_source_export: >
+          {{ state_attr('sensor.ai_mpc_export_price_forecast', 'tier2_source') | default(none, true) }}
         import_first_value: >
           {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
           {{ forecast[0].native_value if forecast | count > 0 else none }}
@@ -172,6 +179,10 @@ template:
           {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
           {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
           {{ first != none and export_first != none and first == export_first }}
+        source_guard: >
+          {%- set import_source = state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default('', true) %}
+          {%- set export_source = state_attr('sensor.ai_mpc_export_price_forecast', 'tier2_source') | default('', true) %}
+          {{ import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] }}
         convention: haeo_positive_import_export
         timestamp_convention: utc_iso8601
 
@@ -185,7 +196,10 @@ template:
         {%- set fresh = first != none and first <= utcnow() + timedelta(minutes=35) %}
         {%- set horizon_ok = last != none and last >= utcnow() + timedelta(hours=70) %}
         {%- set aligned = first != none and export_first != none and first == export_first %}
-        {%- if import_forecast | count >= 144 and export_forecast | count >= 144 and fresh and horizon_ok and aligned %}
+        {%- set import_source = state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default('', true) %}
+        {%- set export_source = state_attr('sensor.ai_dh_export_price_forecast', 'tier2_source') | default('', true) %}
+        {%- set source_ok = import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] %}
+        {%- if import_forecast | count >= 144 and export_forecast | count >= 144 and fresh and horizon_ok and aligned and source_ok %}
           ready
         {%- else %}
           not_ready
@@ -197,6 +211,10 @@ template:
           {{ state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) | count }}
         export_count: >
           {{ state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) | count }}
+        tier2_source_import: >
+          {{ state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default(none, true) }}
+        tier2_source_export: >
+          {{ state_attr('sensor.ai_dh_export_price_forecast', 'tier2_source') | default(none, true) }}
         import_first_value: >
           {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
           {{ forecast[0].native_value if forecast | count > 0 else none }}
@@ -234,6 +252,10 @@ template:
           {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
           {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
           {{ first != none and export_first != none and first == export_first }}
+        source_guard: >
+          {%- set import_source = state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default('', true) %}
+          {%- set export_source = state_attr('sensor.ai_dh_export_price_forecast', 'tier2_source') | default('', true) %}
+          {{ import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] }}
         convention: haeo_positive_import_export
         timestamp_convention: utc_iso8601
 

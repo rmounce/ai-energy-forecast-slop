@@ -2570,23 +2570,33 @@ def _build_haeo_price_forecast_items(
     return import_items, export_items
 
 
-def _publish_haeo_forecast_sensor(entity_id, items, label, *, interval_minutes):
+def _publish_haeo_forecast_sensor(
+    entity_id,
+    items,
+    label,
+    *,
+    interval_minutes,
+    extra_attributes=None,
+):
     state = round(float(items[0]["native_value"]), 6) if items else 0.0
     now_iso = datetime.now(pytz.UTC).isoformat()
+    attributes = {
+        "forecast": items,
+        "last_updated": now_iso,
+        "friendly_name": label,
+        "icon": "mdi:chart-line",
+        "unit_of_measurement": "$/kWh",
+        "device_class": "monetary",
+        "forecast_interval_minutes": int(interval_minutes),
+        "forecast_count": len(items),
+        "forecast_convention": "haeo_positive_import_export",
+        "timestamp_convention": "UTC ISO-8601",
+    }
+    if extra_attributes:
+        attributes.update(extra_attributes)
     payload = {
         "state": state,
-        "attributes": {
-            "forecast": items,
-            "last_updated": now_iso,
-            "friendly_name": label,
-            "icon": "mdi:chart-line",
-            "unit_of_measurement": "$/kWh",
-            "device_class": "monetary",
-            "forecast_interval_minutes": int(interval_minutes),
-            "forecast_count": len(items),
-            "forecast_convention": "haeo_positive_import_export",
-            "timestamp_convention": "UTC ISO-8601",
-        },
+        "attributes": attributes,
     }
     call_ha_api("POST", f"states/{entity_id}", payload=payload)
     logging.info(f"Published {entity_id} (state={state}, {len(items)} forecast points).")
@@ -2715,6 +2725,12 @@ def _publish_canonical_ai_price_forecasts(
         )
         return
     logging.info("Publishing canonical AI price forecasts using Tier 2 source: %s", tier2_label)
+    source_attributes = {
+        "forecast_source": "ai_shadow",
+        "tier1_source": "p5min_tactical_lgbm",
+        "tier2_source": tier2_label,
+        "control_ready_tier2_source": tier2_label in {"PD-direct", "cached PD-direct"},
+    }
 
     # Tier 2: only steps after Tier 1's 60-minute window (avoids overlap on the MPC
     # 14h composite curve).
@@ -2759,7 +2775,13 @@ def _publish_canonical_ai_price_forecasts(
             30,
         ),
     ]:
-        _publish_haeo_forecast_sensor(entity_id, items, label, interval_minutes=interval_minutes)
+        _publish_haeo_forecast_sensor(
+            entity_id,
+            items,
+            label,
+            interval_minutes=interval_minutes,
+            extra_attributes=source_attributes,
+        )
 
 
 def _publish_pd_direct_price_forecasts(pd_direct_results):
