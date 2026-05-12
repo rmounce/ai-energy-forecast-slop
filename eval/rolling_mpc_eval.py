@@ -2259,12 +2259,17 @@ def build_coverage_summary(
     summary_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     expected_steps = int(len(pd.date_range(start=start, end=end - pd.Timedelta(minutes=5), freq="5min", tz="UTC")))
-    actual_steps = raw_df.groupby("source").size().reindex(sources, fill_value=0)
+    if raw_df.empty or "source" not in raw_df.columns:
+        actual_steps_values = np.zeros(len(sources), dtype=int)
+    else:
+        actual_steps_values = (
+            raw_df.groupby("source").size().reindex(sources, fill_value=0).values.astype(int)
+        )
     coverage = pd.DataFrame(
         {
             "source": sources,
             "expected_steps": expected_steps,
-            "executed_steps": actual_steps.values.astype(int),
+            "executed_steps": actual_steps_values,
         }
     )
     coverage["missing_steps"] = coverage["expected_steps"] - coverage["executed_steps"]
