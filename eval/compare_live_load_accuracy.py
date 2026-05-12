@@ -138,9 +138,10 @@ def analyze(args: argparse.Namespace) -> tuple[dict, pd.DataFrame]:
     )
     tft = _read_rows(
         args.tft_load_log,
-        "tft_load",
+        args.tft_model_name,
         cutoff=cutoff,
         chunksize=args.chunksize,
+        output_prefix="tft_load",
     )
 
     merged = lgbm.merge(tft, on=["run_slot", "target"], how="inner")
@@ -151,6 +152,7 @@ def analyze(args: argparse.Namespace) -> tuple[dict, pd.DataFrame]:
             "load_log": str(args.load_log),
             "tft_load_log": str(args.tft_load_log),
             "lgbm_model_name": args.lgbm_model_name,
+            "tft_model_name": args.tft_model_name,
             "error": "no matched rows with realised actuals",
         }
         return result, merged
@@ -169,6 +171,7 @@ def analyze(args: argparse.Namespace) -> tuple[dict, pd.DataFrame]:
         "load_log": str(args.load_log),
         "tft_load_log": str(args.tft_load_log),
         "lgbm_model_name": args.lgbm_model_name,
+        "tft_model_name": args.tft_model_name,
         "matched_rows": int(len(merged)),
         "matched_runs": int(merged["run_slot"].nunique()),
         "run_start_utc": merged["run_slot"].min().isoformat() if not merged.empty else None,
@@ -198,6 +201,14 @@ def main() -> None:
         help=(
             "Model name to read from load_forecast_log.csv. Existing history usually "
             "has 'load'; future logs also include 'load_p65' and 'load_p75'."
+        ),
+    )
+    parser.add_argument(
+        "--tft-model-name",
+        default="tft_load",
+        help=(
+            "Model name to read from tft_load_forecast_log.csv. Existing history usually "
+            "has 'tft_load'; future logs also include 'tft_load_q10' and 'tft_load_q90'."
         ),
     )
     parser.add_argument("--load-log", type=Path, default=ROOT / "load_forecast_log.csv")

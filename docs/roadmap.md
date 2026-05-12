@@ -759,10 +759,14 @@ Immediate next actions for the next implementer:
      matched rows `2026-05-09T08:40Z -> 2026-05-11T14:00Z`) also favours TFT q50 by MAE:
      `146 W` vs LGBM q50 `211 W`. TFT under-forecasts more often (`27.0%` vs `12.0%`),
      while LGBM has a large conservative positive bias (`+142 W`).
+   - Offline bias-matched shape check: blending TFT q50 toward q90 by `beta=0.060`
+     (roughly q52.4) matches the validation-calendar LightGBM q50 signed bias (`+11.3 W`)
+     while keeping much lower MAE (`239 W` vs `298 W`). This suggests TFT's advantage is
+     at least partly shape quality, not only lower/conservative bias.
    - Production caveat: EMHASS uses `sensor.ai_load_forecast_high` (`load_p65`), not the
      q50 `load` rows scored above. From 2026-05-12 onward, future prediction runs log
-     `load`, `load_p65`, and `load_p75` so the exact production load surface can be scored
-     after actual backfill.
+     `load`, `load_p65`, `load_p75`, `tft_load`, `tft_load_q10`, and `tft_load_q90` so the
+     exact production load surface can be scored after actual backfill.
    - User preference is conservative: stay with LGBM because over-estimating load is safer
      operationally than under-preparing.
    - LightGBM remains production load forecast unless live backfilled accuracy and operational

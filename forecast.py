@@ -3111,7 +3111,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     # 5. LOG forecast surfaces used for diagnostics/backfill.
     for model_name, result_data in all_results.items():
         primary_key = CONFIG['models'][model_name].get('primary_model_key')
-        if model_name == 'load':
+        if model_name in {'load', 'tft_load'}:
             keys_to_log = [
                 key for key in result_data['forecasts'].keys()
                 if key in CONFIG['models'][model_name].get('quantile_models', {})
@@ -3129,7 +3129,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             except (FileNotFoundError, KeyError): pass
 
             pred_df_for_log = result_data['forecasts'][forecast_key].copy()
-            log_model_name = forecast_key if model_name == 'load' else model_name
+            log_model_name = forecast_key if model_name in {'load', 'tft_load'} else model_name
             log_forecast_data(
                 log_model_name,
                 model_version,
