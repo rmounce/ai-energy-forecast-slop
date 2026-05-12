@@ -56,6 +56,19 @@ def mae_by_bucket(preds_W, actuals_W, mask):
     return results
 
 
+def bias_by_bucket(preds_W, actuals_W, mask):
+    """Mean signed error, prediction - actual, in Watts."""
+    results = {}
+    for name, lo, hi in zip(BUCKET_NAMES, BUCKET_EDGES, BUCKET_EDGES[1:]):
+        m = mask[:, lo:hi]
+        err = preds_W[:, lo:hi] - actuals_W[:, lo:hi]
+        valid = err[m]
+        results[name] = float(valid.mean()) if len(valid) > 0 else float("nan")
+    err_all = preds_W - actuals_W
+    results["overall"] = float(err_all[mask].mean())
+    return results
+
+
 def coverage_by_bucket(lo_W, hi_W, actuals_W, mask):
     """Fraction of valid actual steps that fall within [q10, q90]."""
     results = {}
@@ -65,6 +78,27 @@ def coverage_by_bucket(lo_W, hi_W, actuals_W, mask):
         results[name] = float(inside[:, lo:hi][m].mean()) if m.any() else float("nan")
     results["overall"] = float(inside[mask].mean())
     return results
+
+
+def tft_bias_matched_curve(q50_W, q90_W, actuals_W, mask, target_bias_W):
+    """Blend/extrapolate TFT q50->q90 to match a target aggregate signed bias."""
+    q50_bias = bias_by_bucket(q50_W, actuals_W, mask)["overall"]
+    q90_bias = bias_by_bucket(q90_W, actuals_W, mask)["overall"]
+    denom = q90_bias - q50_bias
+    if not np.isfinite(target_bias_W) or abs(denom) < 1e-9:
+        beta = float("nan")
+        matched = q50_W.copy()
+    else:
+        beta = float((target_bias_W - q50_bias) / denom)
+        matched = q50_W + beta * (q90_W - q50_W)
+    return matched.clip(min=0.0), {
+        "target_bias_w": float(target_bias_W),
+        "q50_bias_w": float(q50_bias),
+        "q90_bias_w": float(q90_bias),
+        "q50_to_q90_blend_beta": beta,
+        "approx_quantile": float(0.50 + 0.40 * beta) if np.isfinite(beta) else float("nan"),
+        "requires_extrapolation": bool(np.isfinite(beta) and (beta < 0.0 or beta > 1.0)),
+    }
 
 
 # ── TFT evaluation ────────────────────────────────────────────────────────────
@@ -133,6 +167,7 @@ def evaluate_tft():
     q90_W = preds_W[:, :, 2]
 
     mae   = mae_by_bucket(q50_W, y_raw_v, y_mask_v)
+    bias  = bias_by_bucket(q50_W, y_raw_v, y_mask_v)
     cov   = coverage_by_bucket(q10_W, q90_W, y_raw_v, y_mask_v)
 
     print(f"  q50 MAE — 0-24h: {mae['0-24h']:.1f}W  24-48h: {mae['24-48h']:.1f}W  "
@@ -140,14 +175,24 @@ def evaluate_tft():
     print(f"  q10/q90 coverage — 0-24h: {cov['0-24h']:.3f}  24-48h: {cov['24-48h']:.3f}  "
           f"48-72h: {cov['48-72h']:.3f}  overall: {cov['overall']:.3f}")
 
-    return {
+    summary = {
         "n_samples": int(len(val_idx)),
         "val_start": str(pd.Timestamp(run_times_v.min()).isoformat()),
         "val_end":   str(pd.Timestamp(run_times_v.max()).isoformat()),
         "checkpoint": str(CHECKPOINT),
         "q50_mae":  mae,
+        "q50_bias": bias,
+        "q90_mae": mae_by_bucket(q90_W, y_raw_v, y_mask_v),
+        "q90_bias": bias_by_bucket(q90_W, y_raw_v, y_mask_v),
         "q10_q90_coverage": cov,
     }
+    arrays = {
+        "q50_W": q50_W,
+        "q90_W": q90_W,
+        "actuals_W": y_raw_v,
+        "mask": y_mask_v,
+    }
+    return summary, arrays
 
 
 # ── LightGBM evaluation ───────────────────────────────────────────────────────
@@ -193,7 +238,8 @@ def evaluate_lgbm(val_start: pd.Timestamp, val_end: pd.Timestamp):
     print(f"  Unique forecast runs: {n_runs:,}")
 
     # MAE by bucket
-    df["mae"] = (df["prediction"] - df["actual"]).abs()
+    df["error"] = df["prediction"] - df["actual"]
+    df["mae"] = df["error"].abs()
     df["bucket"] = pd.cut(
         df["step"],
         bins=BUCKET_EDGES + [999],
@@ -212,6 +258,14 @@ def evaluate_lgbm(val_start: pd.Timestamp, val_end: pd.Timestamp):
     mae_dict = {row: float(mae_rows.loc[row, "mae_W"]) for row in BUCKET_NAMES if row in mae_rows.index}
     mae_dict["overall"] = overall_mae
 
+    bias_rows = (
+        df[df["bucket"].isin(BUCKET_NAMES)]
+        .groupby("bucket", observed=True)["error"]
+        .mean()
+    )
+    bias_dict = {row: float(bias_rows.loc[row]) for row in BUCKET_NAMES if row in bias_rows.index}
+    bias_dict["overall"] = float(df[df["bucket"].isin(BUCKET_NAMES)]["error"].mean())
+
     print(f"  q50 MAE — 0-24h: {mae_dict.get('0-24h', float('nan')):.1f}W  "
           f"24-48h: {mae_dict.get('24-48h', float('nan')):.1f}W  "
           f"48-72h: {mae_dict.get('48-72h', float('nan')):.1f}W  "
@@ -225,6 +279,7 @@ def evaluate_lgbm(val_start: pd.Timestamp, val_end: pd.Timestamp):
         "val_end":   val_end.isoformat(),
         "source": str(LOG_FILE.name),
         "q50_mae": mae_dict,
+        "q50_bias": bias_dict,
         "q10_q90_coverage": None,
     }
 
@@ -237,12 +292,34 @@ def main():
     print("=" * 60)
     print()
 
-    tft = evaluate_tft()
+    tft, tft_arrays = evaluate_tft()
     print()
 
     val_start = pd.Timestamp(tft["val_start"], tz="UTC")
     val_end   = pd.Timestamp(tft["val_end"],   tz="UTC") + pd.Timedelta(hours=72)
     lgbm = evaluate_lgbm(val_start, val_end)
+    bias_matched = None
+    if lgbm:
+        matched_curve, meta = tft_bias_matched_curve(
+            tft_arrays["q50_W"],
+            tft_arrays["q90_W"],
+            tft_arrays["actuals_W"],
+            tft_arrays["mask"],
+            lgbm["q50_bias"]["overall"],
+        )
+        bias_matched = {
+            **meta,
+            "mae": mae_by_bucket(
+                matched_curve,
+                tft_arrays["actuals_W"],
+                tft_arrays["mask"],
+            ),
+            "bias": bias_by_bucket(
+                matched_curve,
+                tft_arrays["actuals_W"],
+                tft_arrays["mask"],
+            ),
+        }
     print()
 
     # Summary table
@@ -260,6 +337,19 @@ def main():
     for b in BUCKET_NAMES + ["overall"]:
         c = tft["q10_q90_coverage"].get(b, float("nan"))
         print(f"  {b:<12}  {c:.3f}")
+    if bias_matched:
+        print()
+        print("Bias-matched TFT curve (q50→q90 blend to match LightGBM signed bias):")
+        print(
+            f"  beta={bias_matched['q50_to_q90_blend_beta']:.3f}, "
+            f"approx q{bias_matched['approx_quantile'] * 100:.1f}, "
+            f"extrapolated={bias_matched['requires_extrapolation']}"
+        )
+        print(
+            f"  target bias={bias_matched['target_bias_w']:.1f}W, "
+            f"actual bias={bias_matched['bias']['overall']:.1f}W, "
+            f"MAE={bias_matched['mae']['overall']:.1f}W"
+        )
 
     # Save
     RESULTS.mkdir(exist_ok=True)
@@ -267,6 +357,7 @@ def main():
         "generated": pd.Timestamp.now(tz="UTC").isoformat(),
         "tft":  tft,
         "lgbm": lgbm,
+        "tft_bias_matched_to_lgbm": bias_matched,
     }
     out_path = RESULTS / "load_forecast_comparison.json"
     with open(out_path, "w") as f:

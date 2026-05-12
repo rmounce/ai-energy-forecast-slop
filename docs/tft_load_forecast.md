@@ -75,6 +75,23 @@ still need calibration. This is also not yet a live shadow backtest because hist
 `tft_load_forecast_log.csv` rows are included in `forecast.py backfill-actuals`, so a
 proper live accuracy comparison can accumulate from here.
 
+The same offline script now also tests whether TFT keeps its advantage when it is made
+similarly conservative to LightGBM. On the validation-calendar comparison, LightGBM q50's
+aggregate signed bias is only `+11.3 W`; TFT q50 is `-13.8 W`, while TFT q90 is `+400.8 W`.
+Blending TFT q50 toward q90 by `beta=0.060` (roughly q52.4) matches the LightGBM signed
+bias and still has materially lower MAE:
+
+| Forecast | Bias | Overall MAE |
+|---|---:|---:|
+| LightGBM q50 | +11.3 W | 297.8 W |
+| TFT q50 | -13.8 W | 234.0 W |
+| TFT bias-matched approx q52.4 | +11.3 W | 239.2 W |
+
+This supports the interpretation that TFT's validation advantage is not merely because it is
+less conservative; after matching aggregate bias, TFT still has better shape. The live
+production-surface version of this test still needs future logs for `load_p65` and
+`tft_load_q90`.
+
 Operational read: do not promote TFT load blindly, but do not abandon it. The user prefers
 the conservative production posture of leaving LightGBM active because over-estimating load is
 safer than under-preparing. The next load decision should be based on live backfilled accuracy
@@ -126,11 +143,12 @@ nice -n 19 ./.venv/bin/python eval/compare_live_load_accuracy.py --days 21
 nice -n 19 ./.venv/bin/python eval/compare_live_load_accuracy.py --days 21 --lgbm-model-name load_p65
 ```
 
-Logging note: `forecast.py` writes future `tft_load` rows to
-`tft_load_forecast_log.csv`, and `forecast.py backfill-actuals` backfills that log.
-Historical `tft_load` rows before this change are mixed into `tft_price_forecast_log.csv`
-and have no actuals. Future `load_p65` / `load_p75` rows need at least one predict cycle
-and a later backfill before `--lgbm-model-name load_p65` is informative.
+Logging note: `forecast.py` writes future `tft_load`, `tft_load_q10`, and
+`tft_load_q90` rows to `tft_load_forecast_log.csv`, and `forecast.py backfill-actuals`
+backfills that log. Historical `tft_load` rows before this change are mixed into
+`tft_price_forecast_log.csv` and have no actuals. Future `load_p65` / `load_p75` and
+`tft_load_q90` rows need at least one predict cycle and a later backfill before exact
+production-surface comparisons are informative.
 
 ---
 
