@@ -412,8 +412,12 @@ def _load_net_load_5m_from_30m(actuals_30m: pd.DataFrame) -> pd.Series:
 def _tariffed_price_frame_from_wholesale_mwh(wholesale_prices_mwh: pd.Series) -> pd.DataFrame:
     frame = pd.DataFrame(index=wholesale_prices_mwh.index.copy())
     frame["wholesale_price"] = wholesale_prices_mwh.astype(np.float64) / 1000.0
+    # Floor in UTC before converting to local, otherwise pandas raises on DST fall-back
+    # (e.g. 2026-04-05 02:00 Adelaide which exists twice in UTC). UTC and Adelaide both
+    # align on the 30-min grid (Adelaide offset is +9:30 standard / +10:30 DST), so the
+    # UTC-floor result maps to the same local 30-min slot without ambiguity.
     local_time = pd.Series(
-        frame.index.tz_convert(LOCAL_TZ).floor("30min").time.astype(str),
+        frame.index.floor("30min").tz_convert(LOCAL_TZ).time.astype(str),
         index=frame.index,
         dtype="string",
     )
