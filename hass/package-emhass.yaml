@@ -103,6 +103,25 @@ template:
       state: "{{ states('input_select.emhass_mpc_price_source') }}"
       attributes:
         production_default: amber
+        requested_source: "{{ states('input_select.emhass_mpc_price_source') }}"
+        effective_source: >
+          {%- set requested = states('input_select.emhass_mpc_price_source') %}
+          {%- if requested == 'ai_shadow' and is_state('sensor.ai_mpc_price_forecast_status', 'ready') %}
+            {{- 'ai_shadow' -}}
+          {%- else %}
+            {{- 'amber' -}}
+          {%- endif %}
+        fallback_reason: >
+          {%- set requested = states('input_select.emhass_mpc_price_source') %}
+          {%- if requested == 'ai_shadow' and not is_state('sensor.ai_mpc_price_forecast_status', 'ready') %}
+            {{- 'ai_shadow_not_ready' -}}
+          {%- elif requested != 'ai_shadow' %}
+            {{- 'legacy_source_selected' -}}
+          {%- else %}
+            {{- 'none' -}}
+          {%- endif %}
+        ai_status: "{{ states('sensor.ai_mpc_price_forecast_status') }}"
+        ai_tier2_source: "{{ state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default(none, true) }}"
         ai_import_entity: sensor.ai_mpc_import_price_forecast
         ai_export_entity: sensor.ai_mpc_export_price_forecast
 
@@ -110,6 +129,25 @@ template:
       state: "{{ states('input_select.emhass_dh_price_source') }}"
       attributes:
         production_default: amber_lgbm_extrapolated
+        requested_source: "{{ states('input_select.emhass_dh_price_source') }}"
+        effective_source: >
+          {%- set requested = states('input_select.emhass_dh_price_source') %}
+          {%- if requested == 'ai_shadow' and is_state('sensor.ai_dh_price_forecast_status', 'ready') %}
+            {{- 'ai_shadow' -}}
+          {%- else %}
+            {{- 'amber_lgbm_extrapolated' -}}
+          {%- endif %}
+        fallback_reason: >
+          {%- set requested = states('input_select.emhass_dh_price_source') %}
+          {%- if requested == 'ai_shadow' and not is_state('sensor.ai_dh_price_forecast_status', 'ready') %}
+            {{- 'ai_shadow_not_ready' -}}
+          {%- elif requested != 'ai_shadow' %}
+            {{- 'legacy_source_selected' -}}
+          {%- else %}
+            {{- 'none' -}}
+          {%- endif %}
+        ai_status: "{{ states('sensor.ai_dh_price_forecast_status') }}"
+        ai_tier2_source: "{{ state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default(none, true) }}"
         ai_import_entity: sensor.ai_dh_import_price_forecast
         ai_export_entity: sensor.ai_dh_export_price_forecast
 
