@@ -672,8 +672,9 @@ Current committed state:
   - `sensor.ai_dh_import_price_forecast`
   - `sensor.ai_dh_export_price_forecast`
 - Those canonical entities now publish the current Amber-independent shadow stack:
-  Tier 1 tactical LightGBM plus PD-direct, with the older TFT Tier 2 bundle as fallback
-  if PD-direct fails to build. They are observable but not currently selectable for control.
+  Tier 1 tactical LightGBM plus PD-direct. The older TFT Tier 2 bundle may still publish
+  as a shadow fallback if PD-direct fails to build, but fallback publishes are marked by
+  `tier2_source` and rejected by the HA readiness source guard.
 - PD-direct, with the trained PD7Day q50 debiaser, publishes as chart/comparison triplets:
   - `sensor.ai_pd_direct_price_forecast`
   - `sensor.ai_pd_direct_price_forecast_low`
@@ -696,6 +697,9 @@ Current committed state:
 - `hass/package-emhass.yaml` declares AI forecast health/status sensors:
   - `sensor.ai_mpc_price_forecast_status`
   - `sensor.ai_dh_price_forecast_status`
+- Those status sensors require count, freshness, horizon, timestamp alignment, and matching
+  import/export Tier 2 source provenance (`PD-direct` or `cached PD-direct`). `TFT
+  fallback` / `cached TFT fallback` is observable but not control-ready.
 - The DH and MPC EMHASS payloads contain guarded `ai_shadow` template branches, but the
   selectors currently expose only legacy production options:
   - MPC: `amber`

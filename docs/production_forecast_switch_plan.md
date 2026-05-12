@@ -57,10 +57,13 @@ Implementation status as of 2026-05-09:
   sensors. The old Amber-shaped `sensor.ai_combined_*` AI sensors are retired.
 - MPC canonical sensors now use the current Amber-independent shadow stack:
   Tier 1 tactical LightGBM for the first 60 minutes, then PD-direct expanded to
-  5-minute cadence, truncated to the 14-hour MPC horizon. If PD-direct fails to
-  build, the publisher falls back to the older TFT Tier 2 bundle.
+  5-minute cadence, truncated to the 14-hour MPC horizon.
 - DH canonical sensors now use the PD-direct 30-minute / 72-hour price forecast,
-  with the same TFT fallback on PD-direct failure.
+  using the same Tier 2 source provenance as MPC.
+- If PD-direct fails to build, the publisher may still emit the older TFT Tier 2
+  fallback for shadow visibility. That fallback is explicitly marked with
+  `tier2_source: TFT fallback` and is not considered control-ready by the HA
+  status sensors.
 - PD-direct, now with the trained PD7Day q50 debiaser, publishes as per-model
   chart/comparison triplets:
   - `sensor.ai_pd_direct_price_forecast`
@@ -98,9 +101,12 @@ Implementation status as of 2026-05-09:
   calling EMHASS. State = currently selected source.
 - `sensor.ai_mpc_price_forecast_status` and
   `sensor.ai_dh_price_forecast_status` now gate on count, import/export first
-  timestamp alignment, first timestamp freshness, and remaining horizon. The
-  EMHASS REST payload templates require these sensors to be `ready` before an
-  `ai_shadow` selector value can route prices into EMHASS.
+  timestamp alignment, first timestamp freshness, remaining horizon, and Tier 2
+  source provenance. The source guard requires import/export to report the same
+  Tier 2 source, and that source must be `PD-direct` or `cached PD-direct`; it
+  rejects `TFT fallback` / `cached TFT fallback`. The EMHASS REST payload templates
+  require these sensors to be `ready` before an `ai_shadow` selector value can
+  route prices into EMHASS.
 
 ## Publication Cadence
 

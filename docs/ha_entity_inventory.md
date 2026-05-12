@@ -156,10 +156,10 @@ import/export entities or per-model chart triplets, not Amber's feed-in sign con
 
 | Entity | Description | Items | Resolution | Horizon | Attribute format |
 |---|---|---|---|---|---|
-| `sensor.ai_mpc_import_price_forecast` | Canonical AI MPC import price (positive $/kWh); Tier 1 + PD-direct tail, TFT fallback on PD-direct failure | 168 | 5-min | 14h | `forecast` (lowercase); items have `datetime` (UTC), `native_value` |
-| `sensor.ai_mpc_export_price_forecast` | Canonical AI MPC export revenue; Tier 1 + PD-direct tail, TFT fallback on PD-direct failure | 168 | 5-min | 14h | `forecast` |
-| `sensor.ai_dh_import_price_forecast` | Canonical AI DH import price; PD-direct tail, TFT fallback on PD-direct failure | 144 | 30-min | 72h | `forecast` |
-| `sensor.ai_dh_export_price_forecast` | Canonical AI DH export revenue; PD-direct tail, TFT fallback on PD-direct failure | 144 | 30-min | 72h | `forecast` |
+| `sensor.ai_mpc_import_price_forecast` | Canonical AI MPC import price (positive $/kWh); Tier 1 + PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 168 | 5-min | 14h | `forecast` (lowercase); items have `datetime` (UTC), `native_value`; source attrs include `tier2_source` |
+| `sensor.ai_mpc_export_price_forecast` | Canonical AI MPC export revenue; Tier 1 + PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 168 | 5-min | 14h | `forecast`; source attrs include `tier2_source` |
+| `sensor.ai_dh_import_price_forecast` | Canonical AI DH import price; PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 144 | 30-min | 72h | `forecast`; source attrs include `tier2_source` |
+| `sensor.ai_dh_export_price_forecast` | Canonical AI DH export revenue; PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 144 | 30-min | 72h | `forecast`; source attrs include `tier2_source` |
 
 Current HA package source selectors deliberately expose only legacy production options.
 These canonical sensors are observable and used by status/diagnostic templates, but are
@@ -196,7 +196,7 @@ Derived sensors computed by HA template engine. Recalculate on state change.
 | `sensor.amber_effective_feed_in_price` | Two-knob blended export price — same blend logic, then applies SAPN free-export tier (+$0.01/kWh in 10am–4pm window while allowance > 0) | `sensor.amber_5min_current_feed_in_price`, `sensor.amber_5min_forecasts_feed_in_price`, `input_number.emhass_weight_sell_forecast`, `input_number.sapn_free_exports` |
 | `sensor.emhass_selected_mpc_price_source` | Active MPC source name; currently legacy-only selector plus AI entity references for diagnostics | `input_select.emhass_mpc_price_source` |
 | `sensor.emhass_selected_dh_price_source` | Active DH source name; currently legacy-only selector plus AI entity references for diagnostics | `input_select.emhass_dh_price_source` |
-| `sensor.ai_mpc_price_forecast_status` | `ready` / `not_ready` + import/export counts, first/last timestamps, freshness, horizon, and alignment guards for MPC canonical sensors | `sensor.ai_mpc_import/export_price_forecast` |
+| `sensor.ai_mpc_price_forecast_status` | `ready` / `not_ready` + import/export counts, first/last timestamps, freshness, horizon, alignment, and Tier 2 source guards for MPC canonical sensors | `sensor.ai_mpc_import/export_price_forecast` |
 | `sensor.ai_dh_price_forecast_status` | Same for DH canonical sensors | `sensor.ai_dh_import/export_price_forecast` |
 
 ---
