@@ -36,7 +36,7 @@ weather + time — cleaner architecture. Target is positive-and-bounded so no lo
 
 ---
 
-## Live Shadow Read (2026-05-09)
+## Live Shadow Read (updated 2026-05-12)
 
 The TFT load shadow is consistently lower than the production LightGBM forecast, but the
 available offline accuracy check says that lower forecast is probably not merely a bug.
@@ -87,10 +87,50 @@ Repeatable diagnostic:
 nice -n 19 ./.venv/bin/python eval/analyze_live_load_shadow_gap.py --days 14
 ```
 
-Future logging note: `forecast.py` now writes future `tft_load` rows to
-`tft_load_forecast_log.csv`, and `forecast.py backfill-actuals` now backfills that log.
+The first live actual-backed comparison is now available via
+`eval/compare_live_load_accuracy.py`. It only scores matched LGBM/TFT run-target rows where
+both logs have realised `actual` load.
+
+Result from the available matched window (`2026-05-09T08:40Z` ->
+`2026-05-11T14:00Z`, 5,945 rows / 107 runs):
+
+| Metric | LightGBM q50 | TFT q50 |
+|---|---:|---:|
+| Overall MAE | 211.0 W | 146.0 W |
+| Bias (`prediction - actual`) | +142.5 W | +34.8 W |
+| Under-forecast fraction | 12.0% | 27.0% |
+
+By horizon bucket:
+
+| Horizon bucket | LightGBM q50 MAE | TFT q50 MAE | TFT improvement |
+|---|---:|---:|---:|
+| 0-24h | 189.1 W | 135.0 W | 54.1 W |
+| 24-48h | 255.5 W | 166.5 W | 89.0 W |
+| 48-72h | 304.7 W | 233.4 W | 71.3 W |
+
+This is the most favourable live evidence for TFT load so far: it is materially closer to
+actual load than the LGBM q50 on the available matched rows. The conservative caveat still
+matters: TFT under-forecasts more often, while LGBM q50 has a large positive bias.
+
+Production caveat: the HA EMHASS day-ahead template currently consumes
+`sensor.ai_load_forecast_high`, which maps to the LGBM `load_p65` model, not the q50
+`load` rows scored above. Until 2026-05-12, only the primary q50 load curve was logged.
+Future prediction runs now log all LGBM load quantile surfaces (`load`, `load_p65`,
+`load_p75`) to `load_forecast_log.csv`, so the exact production load surface can be scored
+once new rows have actuals backfilled.
+
+Repeatable actual-backed diagnostics:
+
+```bash
+nice -n 19 ./.venv/bin/python eval/compare_live_load_accuracy.py --days 21
+nice -n 19 ./.venv/bin/python eval/compare_live_load_accuracy.py --days 21 --lgbm-model-name load_p65
+```
+
+Logging note: `forecast.py` writes future `tft_load` rows to
+`tft_load_forecast_log.csv`, and `forecast.py backfill-actuals` backfills that log.
 Historical `tft_load` rows before this change are mixed into `tft_price_forecast_log.csv`
-and have no actuals.
+and have no actuals. Future `load_p65` / `load_p75` rows need at least one predict cycle
+and a later backfill before `--lgbm-model-name load_p65` is informative.
 
 ---
 

@@ -755,6 +755,14 @@ Immediate next actions for the next implementer:
      `105 W` below LightGBM and below it on `83.1%` of rows.
    - Offline validation comparison favours TFT by MAE: `234 W` overall vs LightGBM
      `298 W`.
+   - First live actual-backed comparison (`eval/compare_live_load_accuracy.py`, available
+     matched rows `2026-05-09T08:40Z -> 2026-05-11T14:00Z`) also favours TFT q50 by MAE:
+     `146 W` vs LGBM q50 `211 W`. TFT under-forecasts more often (`27.0%` vs `12.0%`),
+     while LGBM has a large conservative positive bias (`+142 W`).
+   - Production caveat: EMHASS uses `sensor.ai_load_forecast_high` (`load_p65`), not the
+     q50 `load` rows scored above. From 2026-05-12 onward, future prediction runs log
+     `load`, `load_p65`, and `load_p75` so the exact production load surface can be scored
+     after actual backfill.
    - User preference is conservative: stay with LGBM because over-estimating load is safer
      operationally than under-preparing.
    - LightGBM remains production load forecast unless live backfilled accuracy and operational
