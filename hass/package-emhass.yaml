@@ -117,7 +117,13 @@ template:
       state: >
         {%- set import_forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
         {%- set export_forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-        {%- if import_forecast | count >= 168 and export_forecast | count >= 168 %}
+        {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
+        {%- set last = as_datetime(import_forecast[167].datetime) if import_forecast | count >= 168 else none %}
+        {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
+        {%- set fresh = first != none and first <= utcnow() + timedelta(minutes=10) %}
+        {%- set horizon_ok = last != none and last >= utcnow() + timedelta(hours=13, minutes=30) %}
+        {%- set aligned = first != none and export_first != none and first == export_first %}
+        {%- if import_forecast | count >= 168 and export_forecast | count >= 168 and fresh and horizon_ok and aligned %}
           ready
         {%- else %}
           not_ready
@@ -141,6 +147,31 @@ template:
         export_first_datetime: >
           {%- set forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
           {{ forecast[0].datetime if forecast | count > 0 else none }}
+        import_last_datetime: >
+          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[167].datetime if forecast | count >= 168 else none }}
+        first_offset_minutes: >
+          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
+          {{ ((first - utcnow()).total_seconds() / 60) | round(1) if first != none else none }}
+        horizon_remaining_hours: >
+          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set last = as_datetime(forecast[167].datetime) if forecast | count >= 168 else none %}
+          {{ ((last - utcnow()).total_seconds() / 3600) | round(2) if last != none else none }}
+        freshness_guard: >
+          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
+          {{ first != none and first <= utcnow() + timedelta(minutes=10) }}
+        horizon_guard: >
+          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set last = as_datetime(forecast[167].datetime) if forecast | count >= 168 else none %}
+          {{ last != none and last >= utcnow() + timedelta(hours=13, minutes=30) }}
+        alignment_guard: >
+          {%- set import_forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set export_forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
+          {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
+          {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
+          {{ first != none and export_first != none and first == export_first }}
         convention: haeo_positive_import_export
         timestamp_convention: utc_iso8601
 
@@ -148,7 +179,13 @@ template:
       state: >
         {%- set import_forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
         {%- set export_forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-        {%- if import_forecast | count >= 144 and export_forecast | count >= 144 %}
+        {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
+        {%- set last = as_datetime(import_forecast[143].datetime) if import_forecast | count >= 144 else none %}
+        {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
+        {%- set fresh = first != none and first <= utcnow() + timedelta(minutes=35) %}
+        {%- set horizon_ok = last != none and last >= utcnow() + timedelta(hours=70) %}
+        {%- set aligned = first != none and export_first != none and first == export_first %}
+        {%- if import_forecast | count >= 144 and export_forecast | count >= 144 and fresh and horizon_ok and aligned %}
           ready
         {%- else %}
           not_ready
@@ -172,6 +209,31 @@ template:
         export_first_datetime: >
           {%- set forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
           {{ forecast[0].datetime if forecast | count > 0 else none }}
+        import_last_datetime: >
+          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {{ forecast[143].datetime if forecast | count >= 144 else none }}
+        first_offset_minutes: >
+          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
+          {{ ((first - utcnow()).total_seconds() / 60) | round(1) if first != none else none }}
+        horizon_remaining_hours: >
+          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set last = as_datetime(forecast[143].datetime) if forecast | count >= 144 else none %}
+          {{ ((last - utcnow()).total_seconds() / 3600) | round(2) if last != none else none }}
+        freshness_guard: >
+          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
+          {{ first != none and first <= utcnow() + timedelta(minutes=35) }}
+        horizon_guard: >
+          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set last = as_datetime(forecast[143].datetime) if forecast | count >= 144 else none %}
+          {{ last != none and last >= utcnow() + timedelta(hours=70) }}
+        alignment_guard: >
+          {%- set import_forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
+          {%- set export_forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
+          {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
+          {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
+          {{ first != none and export_first != none and first == export_first }}
         convention: haeo_positive_import_export
         timestamp_convention: utc_iso8601
 
@@ -456,7 +518,7 @@ rest_command:
 
         {%- set ai_load_forecasts = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
         {%- set ai_prod_forecasts = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-        {%- set use_ai_dh_prices = is_state('input_select.emhass_dh_price_source', 'ai_shadow') and ai_load_forecasts | count >= 144 and ai_prod_forecasts | count >= 144 %}
+        {%- set use_ai_dh_prices = is_state('input_select.emhass_dh_price_source', 'ai_shadow') and is_state('sensor.ai_dh_price_forecast_status', 'ready') and ai_load_forecasts | count >= 144 and ai_prod_forecasts | count >= 144 %}
 
         {%- if use_ai_dh_prices %}
           {#- Canonical AI source: positive import cost, positive export revenue, UTC timestamps. #}
@@ -793,7 +855,7 @@ rest_command:
 
         {%- set ai_mpc_import_forecasts = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
         {%- set ai_mpc_export_forecasts = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-        {%- set use_ai_mpc_prices = is_state('input_select.emhass_mpc_price_source', 'ai_shadow') and ai_mpc_import_forecasts | count >= 168 and ai_mpc_export_forecasts | count >= 168 %}
+        {%- set use_ai_mpc_prices = is_state('input_select.emhass_mpc_price_source', 'ai_shadow') and is_state('sensor.ai_mpc_price_forecast_status', 'ready') and ai_mpc_import_forecasts | count >= 168 and ai_mpc_export_forecasts | count >= 168 %}
 
         {#- Loop for BUY price forecast #}
         {%- if use_ai_mpc_prices %}
