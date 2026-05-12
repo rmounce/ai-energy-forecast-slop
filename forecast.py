@@ -3108,18 +3108,35 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 publish_forecast_to_hass(key, publish_df)
 
     
-    # 5. LOG all forecasts (This part is unchanged)
+    # 5. LOG forecast surfaces used for diagnostics/backfill.
     for model_name, result_data in all_results.items():
         primary_key = CONFIG['models'][model_name].get('primary_model_key')
-        if primary_key and primary_key in result_data['forecasts']:
+        if model_name == 'load':
+            keys_to_log = [
+                key for key in result_data['forecasts'].keys()
+                if key in CONFIG['models'][model_name].get('quantile_models', {})
+            ]
+        elif primary_key and primary_key in result_data['forecasts']:
+            keys_to_log = [primary_key]
+        else:
+            keys_to_log = []
+
+        for forecast_key in keys_to_log:
             model_version = "N/A"
             try:
-                mod_time = os.path.getmtime(CONFIG['paths'][f'{primary_key}_model_file'])
+                mod_time = os.path.getmtime(CONFIG['paths'][f'{forecast_key}_model_file'])
                 model_version = datetime.fromtimestamp(mod_time, tz=pytz.UTC).isoformat()
             except (FileNotFoundError, KeyError): pass
-            
-            primary_pred_df_for_log = result_data['forecasts'][primary_key].copy()
-            log_forecast_data(model_name, model_version, result_data['type'], primary_pred_df_for_log, original_covariates_for_log)
+
+            pred_df_for_log = result_data['forecasts'][forecast_key].copy()
+            log_model_name = forecast_key if model_name == 'load' else model_name
+            log_forecast_data(
+                log_model_name,
+                model_version,
+                result_data['type'],
+                pred_df_for_log,
+                original_covariates_for_log,
+            )
 
     logging.info("--- Prediction Orchestrator finished ---")
 
