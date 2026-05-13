@@ -53,9 +53,13 @@ The full critique is in `docs/tft_price_forecast.md` under "Structural Critique
 
 ### What we are keeping
 
-- **Run 011b TFT shadow** stays published as `sensor.ai_tft_price_forecast` while the
-  baseline work proceeds. It remains the best-known TFT asset, but it is no longer the
-  expected production endpoint.
+- **Run 011b TFT shadow**: model checkpoint, `_execute_tft_prediction()`, and
+  `tft_price_forecast_log.csv` retained as legacy/reference (still consumed by the
+  eval/MPC harness as the `model_a_hybrid` source). Live inference was **disabled in
+  `predict-all` on 2026-05-13** and the HA shadow entities
+  `sensor.ai_tft_price_forecast(_low/_high)` were removed — the shadow was burning
+  ~10-30s of CPU per cycle for no consumer (readiness hardening already gated it out
+  of being a control source).
 - **APF/LightGBM incumbent** stays as the production price source for EMHASS/dispatch.
 - **Tier 1 tactical LightGBM** (0–60 min, 5-min) stays — it is the only place where
   short-horizon market state is being captured well, and it is a usable component of the
@@ -226,8 +230,10 @@ it has the cleanest implementation in the existing LP path.
   retirement happens, and that work is reserved for the user.
 
 **Killed/deferred (per reviewer):** broad q05/q95 widening without horizon buckets; any
-TFT retrain before PD-direct is exhausted; immediate retirement of
-`sensor.ai_tft_price_forecast` before Step 2 lands.
+TFT retrain before PD-direct is exhausted. *(2026-05-13 update: TFT price inference
+disabled in `predict-all` and `sensor.ai_tft_price_forecast(_low/_high)` removed from
+HA. The earlier "immediate retirement before Step 2 lands" caution no longer applies
+— PD-direct is now the canonical Tier 2 in production.)*
 
 ##### Step 4 result and 2026-05-08 adversarial review
 
