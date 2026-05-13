@@ -3194,6 +3194,127 @@ def run_tactical_publish(publish_hass, max_tier2_cache_age_minutes):
     logging.info("--- Tactical publisher finished ---")
 
 
+def run_pd_direct_publish(publish_hass):
+    """Refresh Tier 2 (PD-direct) after a fresh PREDISPATCH ingest.
+
+    Recomputes Tier 1 (LGBM tactical) and Tier 2 (PD-direct) from current Influx
+    data, updates the canonical Tier 2 cache, and republishes:
+      - the per-model PD-direct triplet (`sensor.ai_pd_direct_price_forecast*`),
+      - the canonical AI MPC/DH bundle (`sensor.ai_mpc_*`, `sensor.ai_dh_*`),
+      - the raw AEMO stitched curve (`sensor.ai_aemo_price_forecast`),
+      - the PD-direct q50 forecast log (for shadow-and-compare).
+
+    Skips the expensive TFT/load/strategic LGBM/Solcast/weather/Amber paths that
+    `predict-all` runs. Intended to be chained after each PREDISPATCH ingest
+    (`ai-energy-predispatch.timer` at `:12,:42`) so the Tier 2 view is at most
+    2-3 min behind AEMO instead of up to ~49 min in the old `:01,:31` predict-all
+    cadence.
+    """
+    logging.info("--- PD-direct publisher started ---")
+
+    # PD-direct only needs the 144-step decoder index; full covariate columns are
+    # not required because the wholesale curve is built from Influx PREDISPATCH +
+    # PD7Day data and tariff columns default to 0.0 when absent.
+    now_utc = datetime.now(pytz.UTC)
+    minute = 30 if now_utc.minute >= 30 else 0
+    forecast_start_time = now_utc.replace(minute=minute, second=0, microsecond=0)
+    decoder_index = pd.date_range(
+        start=forecast_start_time, periods=144, freq='30min', tz='UTC',
+    )
+    # PD-direct only references the index for slicing and the columns it joins
+    # from Influx (pd_rrp, pd7_rrp, etc). A placeholder column avoids the
+    # `pd.DataFrame.empty` short-circuit, which returns True when a frame has
+    # rows but zero columns.
+    future_covariates_df = pd.DataFrame({'_decoder_marker': 1.0}, index=decoder_index)
+
+    client = InfluxDBClient(**CONFIG['influxdb'])
+    try:
+        history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
+        history_end = forecast_start_time - timedelta(minutes=30)
+        historical_df = get_historical_data(client, history_start, history_end)
+    finally:
+        client.close()
+    if historical_df.empty:
+        logging.error("PD-direct publisher aborted: historical_df empty.")
+        return
+
+    tactical_results = {}
+    try:
+        tactical_results = _execute_tactical_prediction()
+    except Exception as e:
+        logging.error(f"FATAL ERROR in Tier 1 tactical execution: {e}", exc_info=True)
+
+    pd_direct_results = {}
+    try:
+        pd_direct_results = _execute_pd_direct_prediction(
+            historical_df, future_covariates_df,
+        )
+    except Exception as e:
+        logging.error(f"FATAL ERROR in PD-direct execution: {e}", exc_info=True)
+
+    if not pd_direct_results or 'pd_direct_price' not in pd_direct_results:
+        logging.error("PD-direct publisher aborted: no usable PD-direct forecast.")
+        return
+
+    try:
+        _save_canonical_tier2_cache(
+            pd_direct_results,
+            tier2_price_key='pd_direct_price',
+            tier2_label='PD-direct',
+        )
+    except Exception as e:
+        logging.error(f"FATAL ERROR saving canonical Tier 2 cache: {e}", exc_info=True)
+
+    if not publish_hass:
+        logging.info("--- PD-direct publisher finished (cache updated, no HA publish) ---")
+        return
+
+    try:
+        _publish_pd_direct_price_forecasts(pd_direct_results)
+    except Exception as e:
+        logging.error(f"FATAL ERROR in PD-direct triplet publish: {e}", exc_info=True)
+
+    # Canonical bundle needs fresh Tier 1 alongside the new Tier 2; if tactical
+    # failed, `_publish_canonical_ai_price_forecasts` logs a warning and no-ops,
+    # leaving the per-model triplet (above) and the cache update as the only
+    # visible effects.
+    try:
+        _publish_canonical_ai_price_forecasts(
+            tactical_results,
+            pd_direct_results,
+            tier2_price_key='pd_direct_price',
+            tier2_label='PD-direct',
+        )
+    except Exception as e:
+        logging.error(f"FATAL ERROR in canonical AI forecast publish: {e}", exc_info=True)
+
+    try:
+        raw_aemo_results = _execute_raw_aemo_stitched_price_forecast(future_covariates_df)
+        if raw_aemo_results and 'aemo_price_forecast' in raw_aemo_results:
+            publish_forecast_to_hass(
+                'aemo_price_forecast',
+                raw_aemo_results['aemo_price_forecast'].copy(),
+            )
+    except Exception as e:
+        logging.error(f"FATAL ERROR in raw AEMO stitched publish: {e}", exc_info=True)
+
+    try:
+        pdd_log_df = pd_direct_results['pd_direct_price'].copy()
+        if 'wholesale_price' not in pdd_log_df.columns:
+            pdd_log_df.rename(
+                columns={pdd_log_df.columns[0]: 'wholesale_price'}, inplace=True,
+            )
+        apply_tariffs_to_forecast(pdd_log_df)
+        log_forecast_data(
+            'pd_direct_price', 'phase_alpha_prime_step4',
+            'pd_direct', pdd_log_df, future_covariates_df,
+        )
+    except Exception as e:
+        logging.error(f"FATAL ERROR in PD-direct log: {e}", exc_info=True)
+
+    logging.info("--- PD-direct publisher finished ---")
+
+
 def apply_tariffs_to_forecast(pred_df):
     # This function remains unchanged
     logging.info("Applying tariffs to wholesale price forecast with conditional GST...")
@@ -3755,7 +3876,7 @@ def main():
     parser.add_argument('mode', choices=[
         'train-price', 'train-load',
         'predict-price', 'predict-load', 'predict-all',
-        'publish-tactical',
+        'publish-tactical', 'publish-pd-direct',
         'update-tariffs', 'backfill-actuals', 'update-adjusters'
     ], help="The mode to run the script in.")
     
@@ -3793,7 +3914,10 @@ def main():
             publish_hass=args.publish_hass,
             max_tier2_cache_age_minutes=args.max_tier2_cache_age_minutes,
         )
-    
+
+    elif args.mode == 'publish-pd-direct':
+        run_pd_direct_publish(publish_hass=args.publish_hass)
+
     elif args.mode.startswith('train-'):
         model_name = args.mode.split('-')[1]
         train_models(model_name)

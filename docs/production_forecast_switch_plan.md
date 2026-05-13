@@ -115,7 +115,7 @@ Implementation status as of 2026-05-09:
 
 ## Publication Cadence
 
-The AI forecast stack now has two publish layers:
+The AI forecast stack now has three publish layers:
 
 1. **Full strategic refresh** — `systemd/ai-energy-predict.timer`
    - runs `forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates`
@@ -123,13 +123,32 @@ The AI forecast stack now has two publish layers:
    - refreshes APF/LGBM, PD-direct, TFT shadows, load, covariates, and the cached
      30-minute Tier 2 curve used by the cheap publisher
 
-2. **Cheap tactical refresh** — chained inside `systemd/ai-energy-p5min.service`
+2. **PD-direct refresh** — chained inside `systemd/ai-energy-predispatch.service` (added 2026-05-13)
+   - the existing `ai-energy-predispatch.timer` runs at `:12, :42`
+   - the service first runs `python ingest/ingest-predispatch.py --fetch`
+   - if ingest succeeds, it immediately runs
+     `nice -n 19 ./forecast.py publish-pd-direct --publish-hass`
+   - this recomputes Tier 1 tactical + Tier 2 PD-direct from the freshly-ingested
+     PREDISPATCH data, updates the canonical Tier 2 cache, and republishes:
+     - `sensor.ai_pd_direct_price_forecast(_low/_high)` (Tier 2 per-model triplet)
+     - `sensor.ai_mpc_import_price_forecast` / `ai_mpc_export_price_forecast`
+     - `sensor.ai_dh_import_price_forecast`  / `ai_dh_export_price_forecast`
+     - `sensor.ai_aemo_price_forecast` (raw stitched, also driven by the new
+       PREDISPATCH publish)
+   - skips the expensive `predict-all` paths (TFT price, TFT load, LGBM strategic,
+     Solcast, weather, Amber) — wall-clock ≈ 30s.
+   - this closes the staleness gap between Tier 1 (refreshed every 5 min) and Tier 2
+     (previously only at `:01, :31`, so up to ~49 min stale relative to fresh AEMO
+     PREDISPATCH).
+
+3. **Cheap tactical refresh** — chained inside `systemd/ai-energy-p5min.service`
    - the existing `ai-energy-p5min.timer` runs at `:02, :07, ..., :57`
    - the service first runs `python ingest/ingest-p5min.py --fetch`
    - if ingest succeeds, it immediately runs
      `nice -n 19 ./forecast.py publish-tactical --publish-hass`
    - this recomputes only Tier 1 tactical LightGBM from fresh P5MIN/dispatch data
    - stitches that fresh 5-minute Tier 1 curve onto the cached PD-direct 30-minute tail
+     (cache updated by layer 1 or 2 above)
    - republishes:
      - `sensor.ai_p5min_price_forecast(_low/_high)`
      - `sensor.ai_mpc_import_price_forecast`
