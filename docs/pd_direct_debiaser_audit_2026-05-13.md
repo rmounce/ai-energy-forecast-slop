@@ -170,6 +170,16 @@ contribution is a B-equivalent run with `--sources pd_direct` — but that
 source is not currently exercised by the production EMHASS path, so it's
 purely diagnostic.
 
+**2026-05-14 follow-up — bias audit of the actual strategic sources**:
+`docs/price_forecast_bias_audit_2026-05-14.md` audits LGBM (the
+`amber_apf_lgbm` strategic curve) and TFT (the `model_a_hybrid` strategic
+curve) the same way this doc audits PD-direct. LGBM over-forecasts
+overnight by +$14.73/MWh, evening by +$11.97, and 24h+ horizons by +$6.37
+overall — exactly the pattern that drives strategic-LP over-confidence
+and the negative PnL on `amber_apf_lgbm` in Run B v3. So the dispatch
+finding *is* a forecast-bias story, just attributed to LGBM rather than
+PD-direct.
+
 ## Files
 
 - Audit script: `eval/audit_pd_direct_debiaser.py`
