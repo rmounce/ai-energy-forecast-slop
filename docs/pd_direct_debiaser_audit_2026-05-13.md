@@ -117,7 +117,7 @@ more POST-promotion data accumulates may shift the verdict — the POST sample
 is currently 1,929 rows over ~1.5 days, vs the PRE sample of 8,883 rows over
 ~3 days. POST trend may continue improving past 50% helped%.
 
-## Dispatch-side corroboration (2026-05-14, from Run B v3)
+## Dispatch-side observation (2026-05-14, from Run B v3) — NOT directly attributable to PD-direct
 
 The 6-week rolling-MPC eval `loadsrc_B_v3_*` (same `2026-04-01 → 2026-05-12`
 window, `--strategic-soc-handoff --strategic-target-mode exact`,
@@ -126,11 +126,10 @@ for actual-load over 41 days. The negative absolute is **not** load-source
 driven: on the worst day (2026-04-06) `actual` lost −$2.94 and `lgbm` lost
 −$3.23 — a difference of only $0.29.
 
-What is driving the loss is the **strategic 72h LP's price-only optimisation
-choosing high SoC targets in response to debiased PD-direct's inflated future
-spikes**, then the per-step LP racing to hit those targets via expensive grid
-imports while realised spikes either don't materialise or are smaller than
-forecast.
+What is driving the loss is the **strategic 72h LP responding to inflated
+future spikes in the strategic price curve**, choosing high SoC targets,
+then the per-step LP racing to hit those targets via expensive grid imports
+while realised spikes either don't materialise or are smaller than forecast.
 
 | metric | value |
 |---|---:|
@@ -139,27 +138,37 @@ forecast.
 | Daily-PnL × actual_price_max correlation | +0.53 |
 | Negative-PnL days (B_lgbm) | 26 / 42 |
 
-Top loss days have sustained-high strategic targets (24-40 kWh mean); top
-earning days have lower sustained targets (12-23 kWh mean) but still hit 40
-kWh peaks. The strategic LP knows the spikes are *coming* on both kinds of
-day, but on losing days it stays pre-charged through long expensive windows
-between spikes.
+**This pattern is real, but it is NOT directly attributable to PD-direct.**
+`eval/rolling_mpc_eval.py:build_strategic_curve` routes the strategic
+price curve by source contract:
 
-**This is direct dispatch evidence for the debiaser-MAE finding above.**
-PRE-promotion PD-direct over-forecast by +$20.70/MWh — exactly the bias that
-makes the strategic LP over-confident. Even the POST window (PD bias −$5.13)
-isn't enough to flip the dispatch sign: most of the 41-day window is PRE.
+- `amber_apf_lgbm` → Amber + LGBM extrapolated tail (used in Run B)
+- `model_a_hybrid` → TFT (used in Run B)
+- `pd_direct` → PD-direct (NOT used in Run B)
 
-Option (a) — disable the debiaser, pass raw PREDISPATCH — predicts a
-direct dispatch PnL improvement on this same window. A future run with
-`--strategic-price-source=raw_predispatch` (would need to be added to the
-harness) would verify. Wall-clock ~9h on the strategic-handoff path.
+So Run B v3's strategic LP over-confidence comes from **Amber + LGBM** for
+`amber_apf_lgbm` and **TFT** for `model_a_hybrid`. PD-direct's debiaser
+bias documented above doesn't propagate into these source contracts'
+strategic curves.
+
+The shared-cause hypothesis (debiased forecasts → over-confident strategic
+LP → expensive pre-charging → negative PnL) is plausible *generically*
+across forecast sources, but the specific MAE numbers in this audit
+characterise PD-direct only. Whether Amber + LGBM or TFT show the same
++$20/MWh-class bias on the same window is a separate audit that would
+need its own forecast log comparison.
 
 Run C v3 (`--terminal-energy-value-mwh 100`, no strategic 72h LP) avoids the
 problem entirely — flat term-value PnL was +$11.95 for LGBM and +$19.62 for
 actual on the same window. The $12 swing between B and C with identical
 load and price inputs is the cost of the strategic LP's over-confidence
-under the current debiased Tier 2 curve.
+**under whichever Tier 2 price curve the source contract uses**, not
+specifically PD-direct.
+
+The next investigation step that *would* directly probe PD-direct's
+contribution is a B-equivalent run with `--sources pd_direct` — but that
+source is not currently exercised by the production EMHASS path, so it's
+purely diagnostic.
 
 ## Files
 
