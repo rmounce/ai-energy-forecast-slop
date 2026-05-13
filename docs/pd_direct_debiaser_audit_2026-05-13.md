@@ -117,12 +117,58 @@ more POST-promotion data accumulates may shift the verdict — the POST sample
 is currently 1,929 rows over ~1.5 days, vs the PRE sample of 8,883 rows over
 ~3 days. POST trend may continue improving past 50% helped%.
 
+## Dispatch-side corroboration (2026-05-14, from Run B v3)
+
+The 6-week rolling-MPC eval `loadsrc_B_v3_*` (same `2026-04-01 → 2026-05-12`
+window, `--strategic-soc-handoff --strategic-target-mode exact`,
+`amber_apf_lgbm` price source) produced PnL ≈ −$0.18 for LGBM-load and +$7.21
+for actual-load over 41 days. The negative absolute is **not** load-source
+driven: on the worst day (2026-04-06) `actual` lost −$2.94 and `lgbm` lost
+−$3.23 — a difference of only $0.29.
+
+What is driving the loss is the **strategic 72h LP's price-only optimisation
+choosing high SoC targets in response to debiased PD-direct's inflated future
+spikes**, then the per-step LP racing to hit those targets via expensive grid
+imports while realised spikes either don't materialise or are smaller than
+forecast.
+
+| metric | value |
+|---|---:|
+| Days strategic_target_max hits 40 kWh (battery cap) | 29 / 42 (69%) |
+| Daily-PnL × strategic_target_mean correlation | **−0.37** |
+| Daily-PnL × actual_price_max correlation | +0.53 |
+| Negative-PnL days (B_lgbm) | 26 / 42 |
+
+Top loss days have sustained-high strategic targets (24-40 kWh mean); top
+earning days have lower sustained targets (12-23 kWh mean) but still hit 40
+kWh peaks. The strategic LP knows the spikes are *coming* on both kinds of
+day, but on losing days it stays pre-charged through long expensive windows
+between spikes.
+
+**This is direct dispatch evidence for the debiaser-MAE finding above.**
+PRE-promotion PD-direct over-forecast by +$20.70/MWh — exactly the bias that
+makes the strategic LP over-confident. Even the POST window (PD bias −$5.13)
+isn't enough to flip the dispatch sign: most of the 41-day window is PRE.
+
+Option (a) — disable the debiaser, pass raw PREDISPATCH — predicts a
+direct dispatch PnL improvement on this same window. A future run with
+`--strategic-price-source=raw_predispatch` (would need to be added to the
+harness) would verify. Wall-clock ~9h on the strategic-handoff path.
+
+Run C v3 (`--terminal-energy-value-mwh 100`, no strategic 72h LP) avoids the
+problem entirely — flat term-value PnL was +$11.95 for LGBM and +$19.62 for
+actual on the same window. The $12 swing between B and C with identical
+load and price inputs is the cost of the strategic LP's over-confidence
+under the current debiased Tier 2 curve.
+
 ## Files
 
 - Audit script: `eval/audit_pd_direct_debiaser.py`
 - PD-direct log: `pd_direct_forecast_log.csv`
 - Raw PREDISPATCH: `data/parquet/aemo_predispatch_sa1.parquet`
 - Realised RRP (30-min): `data/parquet/actuals_sa1.parquet`
+- Run B v3 raw rows: `eval/results/loadsrc_B_v3_{actual,lgbm_load_log}_raw.parquet`
+- Run C v3 raw rows: `eval/results/loadsrc_C_v3_{actual,lgbm_load_log}_raw.parquet`
 
 ## Cross-references
 
