@@ -235,6 +235,14 @@ disabled in `predict-all` and `sensor.ai_tft_price_forecast(_low/_high)` removed
 HA. The earlier "immediate retirement before Step 2 lands" caution no longer applies
 — PD-direct is now the canonical Tier 2 in production.)*
 
+**2026-05-13 PD-direct debiaser audit:** see
+`docs/pd_direct_debiaser_audit_2026-05-13.md`. Headline: even after the May 11
+alignment-fix promotion, raw PREDISPATCH beats debiased PD-direct overall
+($26.86 vs $29.38 MAE; helped 48.2% of intervals). Debiaser specifically hurts
+overnight (helped 31%) and evening (helped 41%), helps in solar (78%). Not
+acting on it yet — POST-promotion sample is only 1,929 rows and the regime
+may shift as more data accumulates. Documented and parked.
+
 ##### Step 4 result and 2026-05-08 adversarial review
 
 Step 4 sweep (commits `272e176`, `7c741a1`) tested terminal salvage value (4a) and
