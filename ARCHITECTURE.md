@@ -91,9 +91,9 @@ Seven pairs of `.service` + `.timer` units drive the pipeline:
 | Timer | Schedule | What it runs |
 |---|---|---|
 | `ai-energy-pd7day.timer` | 3×/day (07:20, 12:55, 18:05 AEST) | `ingest/ingest-pd7day.py --fetch` |
-| `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch` |
+| `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch && forecast.py publish-pd-direct --publish-hass` — chained so Tier 2 PD-direct refreshes within ~1 min of each AEMO PREDISPATCH publish (added 2026-05-13) |
 | `ai-energy-sevendayoutlook.timer` | Every 30 min (`:01` and `:31`) | `ingest/ingest-sevendayoutlook.py --fetch` |
-| `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch` — SA1/VIC1/NSW1 5-min predispatch → `rp_5m.aemo_p5min_forecast` |
+| `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch && forecast.py publish-tactical --publish-hass` — Tier 1 refresh + Tier 2 cache republish |
 
 All units run as systemd user units (`systemctl --user`), `WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority). Linger is enabled so units run without an active login session.
 
@@ -110,6 +110,8 @@ The core script. All behaviour is driven by subcommands:
 | `train-price` | Weekly | Trains price quantile models on 2 years of 30-min InfluxDB data |
 | `train-load` | Weekly | Trains load quantile models |
 | `predict-all` | Every 30 min | Fetches covariates, runs all models, applies tariffs/GST, saves JSON, publishes to HA |
+| `publish-tactical` | Every 5 min | Cheap Tier 1 LGBM refresh; reuses cached Tier 2 PD-direct; updates stitched/canonical AI sensors |
+| `publish-pd-direct` | Every 30 min (after PREDISPATCH ingest) | Refreshes Tier 2 PD-direct + canonical AI MPC/DH bundle + raw AEMO stitched. Cheap: skips TFT/load/Solcast/weather. Wall-clock ≈ 30s. |
 | `predict-price` | (manual) | Price only |
 | `predict-load` | (manual) | Load only |
 | `update-tariffs` | Daily midnight | Fetches 24h+ Amber tariff data, builds smoothed 48-slot profile |
