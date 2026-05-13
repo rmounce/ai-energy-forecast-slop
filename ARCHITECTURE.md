@@ -30,7 +30,7 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
                          │                              │
                          ▼                              ▼
                   Tactical LightGBM           APF/LightGBM price (incumbent)
-                  (0–60 min q05/50/95)        TFT price (shadow, 0–72h)
+                  (0–60 min q05/50/95)        PD-direct price (canonical Tier 2)
                          │                    TFT load / LightGBM load
                          └──────────┬─────────────────┘
                                     │ ◄── HA future covariates (Solcast,
@@ -43,7 +43,7 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
      *_forecast_log.csv     sensor.ai_p5min_price_forecast  (tactical, 5-min)
                             sensor.ai_price_forecast        (APF/LightGBM p50, incumbent)
                             sensor.ai_price_forecast_low/high
-                            sensor.ai_tft_price_forecast    (TFT shadow)
+                            sensor.ai_pd_direct_price_forecast (canonical Tier 2)
                             sensor.ai_load_forecast
                             sensor.ai_combined_*_price_forecast  (TFT-based, shadow)
                                     │
@@ -92,7 +92,7 @@ Seven pairs of `.service` + `.timer` units drive the pipeline:
 |---|---|---|
 | `ai-energy-pd7day.timer` | 3×/day (07:20, 12:55, 18:05 AEST) | `ingest/ingest-pd7day.py --fetch` |
 | `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch && forecast.py publish-pd-direct --publish-hass` — chained so Tier 2 PD-direct refreshes within ~1 min of each AEMO PREDISPATCH publish (added 2026-05-13) |
-| `ai-energy-sevendayoutlook.timer` | Every 30 min (`:01` and `:31`) | `ingest/ingest-sevendayoutlook.py --fetch` |
+| `ai-energy-sevendayoutlook.timer` | Every 30 min (`:15` and `:45`) | `ingest/ingest-sevendayoutlook.py --fetch` |
 | `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch && forecast.py publish-tactical --publish-hass` — Tier 1 refresh + Tier 2 cache republish |
 
 All units run as systemd user units (`systemctl --user`), `WorkingDirectory=~/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority). Linger is enabled so units run without an active login session.
@@ -130,7 +130,7 @@ The file contains ~28 functions that fall naturally into these logical groups:
 | **HA API** | `call_ha_api`, `get_entity_state` | Generic HA HTTP wrappers |
 | **Data fetching** | `get_amber_spot_price_forecast`, `get_amber_advanced_forecast`, `get_solcast_forecast`, `get_weather_forecast`, `get_aemo_forecast`, `_get_aemo_short_term_forecast`, `_get_aemo_short_term_price_sa1`, `_get_aemo_7_day_outlook_forecast` | Future covariate data from external sources |
 | **Training** | `train_single_model`, `train_models` | Model fitting and serialisation |
-| **Prediction** | `_predict_simple`, `_predict_with_dynamic_handoff`, `_execute_quantile_prediction`, `_execute_single_prediction`, `_execute_tactical_prediction` (Tier 1 LightGBM, 0–60 min), `_execute_tft_prediction` (Tier 2 TFT price), `_execute_tft_load_prediction` (TFT load) | Inference |
+| **Prediction** | `_predict_simple`, `_predict_with_dynamic_handoff`, `_execute_quantile_prediction`, `_execute_single_prediction`, `_execute_tactical_prediction` (Tier 1 LightGBM, 0–60 min), `_execute_pd_direct_prediction` (canonical Tier 2 price), `_execute_tft_load_prediction` (TFT load). `_execute_tft_prediction` still importable but no longer invoked by `predict-all` (disabled 2026-05-13). | Inference |
 | **Tariffs** | `get_amber_api_scaling_factor`, `get_network_loss_factor`, `_get_tariff_data`, `_create_complete_profile`, `_calculate_amber_api_scaling_factor`, `_calculate_forecasted_network_loss_factor`, `update_tariffs`, `apply_tariffs_to_forecast` | Tariff profile construction and application |
 | **Adjusters** | `update_adjusters`, `apply_covariate_adjustments` | Weather covariate bias correction |
 | **Logging** | `log_forecast_data`, `backfill_actuals`, `_backfill_single_log` | Forecast log CSVs |
@@ -283,7 +283,7 @@ InfluxDB, thresholds set by Phase 6). **Both must pass before Phase 5 sub-tasks 
 > been measured through the same gates. Full plan in `docs/roadmap.md` (top section,
 > 2026-05-05 Strategic Pivot); structural critique in `docs/tft_price_forecast.md`.
 
-A TFT price model has been trained and published to HA in shadow mode alongside the APF/LightGBM incumbent. The active production checkpoint is Run 011b (+9.7% vs amber_apf_lgbm baseline); Phase 7 decoder expansion attempts (Run 014, Run 015) failed the holistic eval gate and were not promoted; the 2026-05-05 active15 retrain was also rejected. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
+A TFT price model has been trained and published to HA in shadow mode alongside the APF/LightGBM incumbent. The active production checkpoint is Run 011b (+9.7% vs amber_apf_lgbm baseline); Phase 7 decoder expansion attempts (Run 014, Run 015) failed the holistic eval gate and were not promoted; the 2026-05-05 active15 retrain was also rejected. **TFT price inference was disabled in `predict-all` on 2026-05-13** (strategic pivot — PD-direct is canonical Tier 2, TFT price shadow was redundant and burning CPU). The model checkpoint, log, and `_execute_tft_prediction` function are retained for the eval/MPC harness (`model_a_hybrid` source) and to keep the door open for a future revival. The HA shadow entities `sensor.ai_tft_price_forecast(_low/_high)` were removed in the same change. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
 - Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` + time encodings (6) + `rrp_5m_missing` flag (1)

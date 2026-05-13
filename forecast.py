@@ -2949,12 +2949,13 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         except Exception as e:
             logging.error(f"FATAL ERROR in Tier 1 tactical execution: {e}", exc_info=True)
 
-        try:
-            tft_results = _execute_tft_prediction(historical_df, adjusted_covariates_for_prediction)
-            if tft_results:
-                all_results['tft_price'] = {'forecasts': tft_results, 'type': 'tft_pytorch'}
-        except Exception as e:
-            logging.error(f"FATAL ERROR in TFT Price shadow execution: {e}", exc_info=True)
+        # TFT price inference was disabled 2026-05-13 per the strategic pivot
+        # (docs/roadmap.md §4). PD-direct is the canonical Tier 2; TFT price was
+        # only ever a shadow, never a control source, and the readiness hardening
+        # in 4094ced already gated it out of being promotable. Skipping the
+        # ~10-30s inference per cycle. `_execute_tft_prediction` remains importable
+        # if the strategy reverts. The TFT-fallback branch in the canonical AI
+        # publish below was removed in the same change.
 
         # PD-direct shadow forecast. Built in its own try/except so a failure
         # here cannot affect the existing TFT publish/log path.
@@ -2983,21 +2984,23 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 logging.error(f"FATAL ERROR saving canonical Tier 2 cache: {e}", exc_info=True)
 
         if publish_hass:
+            # TFT-fallback path removed 2026-05-13 alongside the TFT price
+            # inference skip. If PD-direct is unavailable, the canonical AI
+            # bundle is simply not published — `_publish_canonical_ai_price_forecasts`
+            # logs a warning and returns. This is safer than republishing the
+            # readiness-rejected TFT fallback that no consumer could use.
             try:
                 if pd_direct_results and 'pd_direct_price' in pd_direct_results:
-                    tier2_results = pd_direct_results
-                    tier2_price_key = 'pd_direct_price'
-                    tier2_label = 'PD-direct'
+                    _publish_canonical_ai_price_forecasts(
+                        tactical_results if 'p5min_tactical' in all_results else {},
+                        pd_direct_results,
+                        tier2_price_key='pd_direct_price',
+                        tier2_label='PD-direct',
+                    )
                 else:
-                    tier2_results = all_results.get('tft_price', {}).get('forecasts', {})
-                    tier2_price_key = 'tft_price'
-                    tier2_label = 'TFT fallback'
-                _publish_canonical_ai_price_forecasts(
-                    tactical_results if 'p5min_tactical' in all_results else {},
-                    tier2_results,
-                    tier2_price_key=tier2_price_key,
-                    tier2_label=tier2_label,
-                )
+                    logging.warning(
+                        "AI canonical bundle skipped: PD-direct Tier 2 unavailable."
+                    )
             except Exception as e:
                 logging.error(f"FATAL ERROR in canonical AI forecast publish: {e}", exc_info=True)
 
