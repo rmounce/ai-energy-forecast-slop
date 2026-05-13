@@ -125,6 +125,26 @@ def _load_tariff_profile() -> tuple[dict[str, float], dict[str, float], float]:
 
 GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = _load_tariff_profile()
 
+# RESELE-style seasonal split: Nov-Mar has a +$0.1225/kWh evening export
+# credit at 17:00-20:30 Adelaide local. Verified against the 2026-03-01 ZFS
+# monthly snapshot — those 8 30-min slots were the only material difference
+# from the Apr-Oct profile (other differences <$0.001/kWh, daily-update
+# noise). Encoded as a sparse override so the harness doesn't need a
+# separate gitignored tariff file. The active `tariff_profile.json` is
+# treated as the Apr-Oct (winter) baseline; the overrides below are added
+# to the feed-in side for Nov-Mar rows.
+DEFAULT_SUMMER_MONTHS = frozenset({11, 12, 1, 2, 3})
+SUMMER_FEED_IN_OVERRIDES: dict[str, float] = {
+    "17:00:00": 0.1225,
+    "17:30:00": 0.1225,
+    "18:00:00": 0.1225,
+    "18:30:00": 0.1225,
+    "19:00:00": 0.1225,
+    "19:30:00": 0.1225,
+    "20:00:00": 0.1225,
+    "20:30:00": 0.1225,
+}
+
 
 def _format_duration(seconds: float) -> str:
     seconds = max(0, int(round(seconds)))
@@ -416,13 +436,32 @@ def _tariffed_price_frame_from_wholesale_mwh(wholesale_prices_mwh: pd.Series) ->
     # (e.g. 2026-04-05 02:00 Adelaide which exists twice in UTC). UTC and Adelaide both
     # align on the 30-min grid (Adelaide offset is +9:30 standard / +10:30 DST), so the
     # UTC-floor result maps to the same local 30-min slot without ambiguity.
+    local_dt = frame.index.floor("30min").tz_convert(LOCAL_TZ)
     local_time = pd.Series(
-        frame.index.floor("30min").tz_convert(LOCAL_TZ).time.astype(str),
-        index=frame.index,
-        dtype="string",
+        local_dt.time.astype(str), index=frame.index, dtype="string",
     )
     general_tariff = local_time.map(GENERAL_TARIFF_MAP).fillna(0.0).astype(np.float64)
     feed_in_tariff = local_time.map(FEED_IN_TARIFF_MAP).fillna(0.0).astype(np.float64)
+
+    # Seasonal overlay: for Nov-Mar Adelaide-local rows, add the RESELE
+    # evening export credit (17:00-20:30 → +$0.1225/kWh) on top of the winter
+    # feed-in tariff. Rows outside summer months are unchanged, so windows
+    # entirely in Apr-Oct produce results identical to the legacy harness.
+    if SUMMER_FEED_IN_OVERRIDES:
+        is_summer = pd.Series(
+            np.isin(local_dt.month, list(DEFAULT_SUMMER_MONTHS)),
+            index=frame.index,
+        )
+        if is_summer.any():
+            summer_override = local_time.map(SUMMER_FEED_IN_OVERRIDES).fillna(0.0).astype(np.float64)
+            feed_in_tariff = pd.Series(
+                np.where(
+                    is_summer.to_numpy() & (summer_override.to_numpy() != 0.0),
+                    summer_override.to_numpy(),
+                    feed_in_tariff.to_numpy(),
+                ),
+                index=frame.index, dtype=np.float64,
+            )
 
     general_price_ex_gst = frame["wholesale_price"] * NETWORK_LOSS_FACTOR + general_tariff
     feed_in_price_ex_gst = frame["wholesale_price"] * NETWORK_LOSS_FACTOR + feed_in_tariff
