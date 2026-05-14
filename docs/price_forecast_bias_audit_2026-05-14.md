@@ -155,9 +155,114 @@ d) **Park it** — the load-source verdict is robust; the strategic-LP-bias
    action required because production uses Amber+LGBM and the same bias is
    presumably in real EMHASS-driven dispatch already.
 
+## Cross-Seasonal Dispatch Comparison (2026-05-14 follow-up)
+
+A separate dispatch run on a pure-summer window (Jan 1-15 2026, RESELE
+evening credit active 17:00-20:30 Adelaide local) confirms the LGBM-bias
+mechanism is real but **strongly modulated by the tariff regime**.
+
+Harness change to support this: `eval/rolling_mpc_eval.py` now applies a
+seasonal feed-in tariff override for Nov-Mar Adelaide-local rows (adds
++$0.1225/kWh at the 17:00-20:30 slots). Windows entirely in Apr-Oct are
+unchanged from the legacy single-tariff behaviour. Encoded as a sparse
+inline override in `SUMMER_FEED_IN_OVERRIDES` because the production
+`tariff_profile.json` is gitignored.
+
+### Summer vs winter, same source contract, same flags
+
+`amber_apf_lgbm`, `--strategic-soc-handoff --strategic-target-mode exact`,
+`--economic-mode netload_tariffed`:
+
+| window | n days | load | total PnL | $/day | SoC end (kWh) |
+|---|---:|---|---:|---:|---:|
+| **Summer** (Jan 1-15 2026) | 14 | actual | $171.93 | **$12.28** | 7.25 |
+| Summer | 14 | lgbm_load_log | $168.48 | **$12.04** | 7.10 |
+| Winter (Run B v3, Apr 1 - May 12) | 41 | actual | $7.21 | $0.18 | 12.98 |
+| Winter (Run B v3) | 41 | lgbm_load_log | −$0.18 | −$0.004 | 17.92 |
+
+### Three findings from the seasonal contrast
+
+1. **Per-day PnL is ~70× higher in summer** for the same forecast/source
+   stack. $12.28/day vs $0.18/day actual-load baseline. The RESELE evening
+   credit ($0.1225/kWh × 8 30-min slots) is the dominant economic factor
+   in battery dispatch value.
+
+2. **The LGBM load-forecast bias problem nearly vanishes in summer.**
+   - Winter: actual − LGBM gap is $0.180/day. Since the baseline LGBM PnL
+     is roughly zero, this gap eliminates the entire daily PnL. Load
+     forecast quality is the difference between "barely break-even" and
+     "money-losing".
+   - Summer: actual − LGBM gap is $0.246/day. Similar absolute size, but
+     only ~2% of the $12.28/day baseline. The LP still over-charges based
+     on biased forecasts, but the evening credit makes the discharge
+     profitable enough that the mistake doesn't materially matter.
+
+3. **SoC trajectories diverge.** Summer ends near-drained (~7 kWh of 40)
+   because the LP discharges into the evening credit window. Winter ends
+   much higher (13-18 kWh) because there's no credit to discharge into,
+   so the LP hoards inventory chasing forecasted spikes that the tariff
+   structure can't fully monetise.
+
+### Reconciliation with the bias audit above
+
+The LGBM bias profile (overnight +$14.73, evening +$11.97, late +$13.96,
+24h+ horizon +$6.37) is the same in both seasons — the audit's data spans
+Apr 1 - May 13 2026, all winter, but there's no reason to expect the bias
+shape to be wildly different in summer. So the LP sees the same biased
+forecast in both seasons. The dispatch-side cost of acting on that bias
+flips sign based on the tariff regime:
+
+- **Winter**: biased forecast → over-charge → expensive grid imports →
+  thin discharge revenue → net loss. Forecast quality investment has the
+  biggest leverage here because margins are tight.
+- **Summer**: biased forecast → over-charge → expensive grid imports →
+  generous discharge revenue from the evening credit → net profit despite
+  the bias. Forecast quality investment has small leverage because the
+  margin absorbs the mistake.
+
+### Annualised order-of-magnitude
+
+Naive seasonal extrapolation from these two windows:
+
+- 152 summer days × $12.28/day ≈ $1867
+- 213 winter days × $0.18/day ≈ $38
+- **~$1900/year** of battery dispatch value at the amber_apf_lgbm
+  strategic source, perfect-load-info ceiling
+
+With LGBM-load (production-equivalent):
+
+- 152 summer days × $12.04/day ≈ $1830
+- 213 winter days × $0/day (winter LGBM was very slightly negative)
+- **~$1830/year**
+
+The forecast-quality leverage is ~$70/year out of ~$1900 (≈ 4%). Modest
+compared to other priorities, and concentrated in winter where margins
+are thin. Production currently uses LGBM, so the realised dispatch value
+is roughly the $1830/year figure (with caveats below).
+
+### Caveats on the annualised figure
+
+- Backtested dispatch differs from realised production dispatch because
+  EMHASS uses a different LP formulation than this harness, and HA can
+  override its decisions. Treat $1830/year as a ceiling on what the
+  current forecast stack can deliver, not what it actually does.
+- The two-week summer window is short. Day-to-day variance is wide
+  ($/day std easily $5+).
+- Run B v3's strategic-soc-handoff exact path is one specific terminal
+  treatment. Run C v3 with a flat $100/MWh terminal value produced
+  +$11.95 over the same winter window (vs B v3's −$0.18) — that's
+  another ~$0.30/day swing from the terminal-value choice alone, larger
+  than the load-forecast-bias signal.
+- The 2026 prices in the audit window are not necessarily representative
+  of future regimes. AEMO market dynamics shift; the credit-vs-wholesale
+  trade-off in the next summer season may move.
+
 ## Files
 
 - Audit script: `eval/audit_price_forecast.py`
 - LGBM log: `price_forecast_log.csv`
 - TFT log: `tft_price_forecast_log.csv`
 - Realised RRP: `data/parquet/actuals_sa1.parquet`
+- Summer dispatch run outputs: `eval/results/loadsrc_summer_2wk_*`
+- Winter (Run B v3) dispatch run outputs: `eval/results/loadsrc_B_v3_*`
+- Driver script: `eval/results/run_loadsrc_summer.sh`
