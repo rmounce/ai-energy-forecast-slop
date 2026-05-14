@@ -1030,6 +1030,19 @@ class ForecastProviders:
         if pos == 0:
             return None
         run_time = self.p5_run_times_sorted[pos - 1]
+        # Staleness guard added 2026-05-14: `aemo_p5min_sa1.parquet` is built by
+        # `ingest/backfill_p5min_nemseer.py` which intentionally stops at the
+        # "last complete month before live collection from 2026-04-12" — i.e.,
+        # 2026-03-31. Live p5min after that date is in InfluxDB only, not the
+        # parquet. Without this check, `searchsorted` silently picks the very
+        # last (Mar 31) run for every post-March ts, and `reindex(idx[:12])`
+        # produces all-NaN that `_finalize_curve` then ffills with
+        # `current_actual` — making `model_a_hybrid` first-hour forecasts
+        # degenerate to a flat curve. By returning None when the run is more
+        # than an hour stale, `_build_model_a_curve` cleanly returns None and
+        # the step is counted under `skipped_missing_curve`.
+        if (ts - run_time) > pd.Timedelta(hours=1):
+            return None
         cache_key = (run_time, float(quantile))
         if cache_key in self._tier1_cache:
             return self._tier1_cache[cache_key]
