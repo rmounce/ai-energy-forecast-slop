@@ -145,6 +145,24 @@ SUMMER_FEED_IN_OVERRIDES: dict[str, float] = {
     "20:30:00": 0.1225,
 }
 
+# LGBM price-forecast bias correction by Adelaide-local time-of-day bucket.
+# Values are signed bias in $/MWh (pred - actual) measured by
+# `docs/price_forecast_bias_audit_2026-05-14.md` over 2026-04-01 -> 2026-05-13,
+# n=254,589. The corrected forecast = raw - bias[bucket], which centres each
+# bucket's mean error at zero. Applied to `amber_expanded` (the
+# `amber_apf_lgbm` strategic curve) when `--lgbm-bias-calibration` is set.
+#
+# Caveat: this is in-sample for the Apr-May 2026 window. Out-of-sample
+# performance may differ; a proper cross-validated calibration table would
+# split train/test by month. For now this is a directional probe.
+LGBM_BIAS_CALIBRATION_MWH: dict[str, float] = {
+    "overnight": +14.73,
+    "morning":   -6.10,
+    "solar":     -13.80,
+    "evening":   +11.97,
+    "late":      +13.96,
+}
+
 
 def _format_duration(seconds: float) -> str:
     seconds = max(0, int(round(seconds)))
@@ -1128,6 +1146,22 @@ class ForecastProviders:
             block = pd.date_range(start=t30, periods=6, freq="5min", tz="UTC")
             expanded.loc[block] = float(val)
         expanded = expanded.ffill()
+        # LGBM bias calibration (eval-only, opt-in). Subtracts the
+        # per-Adelaide-bucket bias measured in the audit so each bucket's
+        # forecast mean error centres at zero. Applied here so the strategic
+        # LP sees calibrated curves; the per-creation cache keeps it cheap.
+        if getattr(self.args, "lgbm_bias_calibration", False):
+            local_hour = np.asarray(expanded.index.tz_convert(LOCAL_TZ).hour)
+            bucket = pd.Series(
+                pd.cut(
+                    local_hour,
+                    bins=[-1, 5, 11, 16, 20, 24],
+                    labels=list(LGBM_BIAS_CALIBRATION_MWH.keys()),
+                    right=True,
+                )
+            ).astype(str)
+            bias = bucket.map(LGBM_BIAS_CALIBRATION_MWH).fillna(0.0).to_numpy(dtype=float)
+            expanded = expanded - bias
         self._amber_cache[creation] = expanded
         return expanded
 
@@ -2743,6 +2777,16 @@ def main():
             "assumptions are unchanged so load is the isolated variable. Sources that "
             "production only recently started logging may have no history and will mark "
             "every step load_forecast_unavailable=True until backfill catches up."
+        ),
+    )
+    parser.add_argument(
+        "--lgbm-bias-calibration",
+        action="store_true",
+        help=(
+            "Apply hour-bucket bias calibration to the amber_apf_lgbm strategic price curve "
+            "before LP consumption. Subtracts LGBM_BIAS_CALIBRATION_MWH per Adelaide-local "
+            "bucket (overnight/morning/solar/evening/late) derived from the 2026-05-14 "
+            "price-forecast bias audit. Off by default — turn on for sensitivity runs."
         ),
     )
     parser.add_argument("--soc-init-kwh", type=float, default=SOC_INIT_KWH)
