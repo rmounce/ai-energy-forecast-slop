@@ -5,6 +5,15 @@ triggers:
     trigger: time_pattern
 actions:
   - variables:
+      # Dead-band (watts): power values within ±deadband_w of zero are snapped
+      # to 0 below, so EMHASS rounding noise (e.g. a 2.68 W planned export at
+      # the bottom of self-consume optimisation) doesn't trigger active grid
+      # discharge / charge branches in the choose: cascade below. Set this
+      # roughly to the Sigenergy inverter's controllable resolution — below
+      # that, a "real" dispatch command isn't physically actionable anyway.
+      # Applies to: p_batt, p_grid, p_pv, p_load, p_hybrid_inverter,
+      # p_pv_curtailment. Does NOT apply to soc or any kWh/kW limits.
+      deadband_w: 10
       p_load_timestamp: >
         {%- set ns = namespace(value='unknown') %} {%- for item in
         state_attr('sensor.mpc_p_load_forecast', 'forecasts') %}
@@ -19,28 +28,28 @@ actions:
           {%- if as_datetime(item.date) <= utcnow() %}
             {% set ns.value = item.mpc_p_batt_forecast %}
           {%- endif %}
-        {%- endfor %} {{ ns.value | float('unknown') }}
+        {%- endfor %} {%- set raw = ns.value | float('unknown') %}{{ 0.0 if (raw is number and (raw | abs) < deadband_w) else raw }}
       p_grid: >
         {%- set ns = namespace(value=states('sensor.mpc_p_grid_forecast')) %}
         {%- for item in state_attr('sensor.mpc_p_grid_forecast', 'forecasts') %}
           {%- if as_datetime(item.date) <= utcnow() %}
             {% set ns.value = item.mpc_p_grid_forecast %}
           {%- endif %}
-        {%- endfor %} {{ ns.value | float('unknown') }}
+        {%- endfor %} {%- set raw = ns.value | float('unknown') %}{{ 0.0 if (raw is number and (raw | abs) < deadband_w) else raw }}
       p_load: >
         {%- set ns = namespace(value=states('sensor.mpc_p_load_forecast')) %}
         {%- for item in state_attr('sensor.mpc_p_load_forecast', 'forecasts') %}
           {%- if as_datetime(item.date) <= utcnow() %}
             {% set ns.value = item.mpc_p_load_forecast %}
           {%- endif %}
-        {%- endfor %} {{ ns.value | float('unknown') }}
+        {%- endfor %} {%- set raw = ns.value | float('unknown') %}{{ 0.0 if (raw is number and (raw | abs) < deadband_w) else raw }}
       p_pv: >
         {%- set ns = namespace(value=states('sensor.mpc_p_pv_forecast')) %} {%-
         for item in state_attr('sensor.mpc_p_pv_forecast', 'forecasts') %}
           {%- if as_datetime(item.date) <= utcnow() %}
             {% set ns.value = item.mpc_p_pv_forecast %}
           {%- endif %}
-        {%- endfor %} {{ ns.value | float('unknown') }}
+        {%- endfor %} {%- set raw = ns.value | float('unknown') %}{{ 0.0 if (raw is number and (raw | abs) < deadband_w) else raw }}
       p_hybrid_inverter: >
         {%- set ns = namespace(value=states('sensor.mpc_p_hybrid_inverter')) %}
         {%- for item in state_attr('sensor.mpc_p_hybrid_inverter', 'forecasts')
@@ -48,7 +57,7 @@ actions:
           {%- if as_datetime(item.date) <= utcnow() %}
             {% set ns.value = item.mpc_p_hybrid_inverter %}
           {%- endif %}
-        {%- endfor %} {{ ns.value | float('unknown') }}
+        {%- endfor %} {%- set raw = ns.value | float('unknown') %}{{ 0.0 if (raw is number and (raw | abs) < deadband_w) else raw }}
       p_pv_curtailment: >
         {%- set ns = namespace(value=states('sensor.mpc_p_pv_curtailment')) %}
         {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts')
@@ -56,7 +65,7 @@ actions:
           {%- if as_datetime(item.date) <= utcnow() %}
             {% set ns.value = item.mpc_p_pv_curtailment %}
           {%- endif %}
-        {%- endfor %} {{ ns.value | float('unknown') }}
+        {%- endfor %} {%- set raw = ns.value | float('unknown') %}{{ 0.0 if (raw is number and (raw | abs) < deadband_w) else raw }}
       soc: >
         {{ states('sensor.sigen_plant_battery_state_of_charge_derived') |
         float('unknown') }}
