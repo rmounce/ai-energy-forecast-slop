@@ -84,7 +84,7 @@ Seven pairs of `.service` + `.timer` units plus one event-driven daemon drive th
 | Unit | Schedule | What it runs |
 |---|---|---|
 | `ai-energy-listener.service` | Event-driven (Amber APF state change in HA; 30-min idle heartbeat) | `forecast.py predict-price --dynamic-handoff --publish-hass` — added 2026-05-27, see [docs/event_driven_predict_price_plan.md](docs/event_driven_predict_price_plan.md) |
-| `ai-energy-predict.timer` | Hourly (`:01`) | `forecast.py predict-load --publish-hass --publish-covariates` — price path moved to the listener; cadence dropped from twice-hourly to hourly 2026-05-27 |
+| `ai-energy-predict.timer` | Every 30 min (`:01` and `:31`) | `forecast.py predict-load --publish-hass --publish-covariates` — price path moved to the listener 2026-05-27; cadence aligned with the 30-min InfluxDB CQ granularity |
 | `ai-energy-train.timer` | Monday 12:00 | `forecast.py train-load && forecast.py train-price` |
 | `ai-energy-update-tariffs.timer` | Daily 00:00 | `forecast.py update-tariffs && smooth_tariffs.py && forecast.py backfill-actuals && forecast.py update-adjusters` |
 
