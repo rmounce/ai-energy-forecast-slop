@@ -1,0 +1,65 @@
+# EMHASS day-ahead optimisation trigger.
+#
+# Refined 2026-05-27 to align with the event-driven predict-price refresh:
+# - Adds the canonical AI price forecast as a trigger. ai-energy-listener.service
+#   subscribes to Amber APF state changes and runs predict-price, which
+#   publishes the LGBM-extrapolated `sensor.ai_price_forecast` ~7-8s later
+#   (forecast.py startup + data fetch + LGBM inference + publish; the
+#   shadow stack runs afterwards and doesn't block this sensor). So the
+#   DH plan re-runs once per Amber refresh cycle (~every 5 min) instead
+#   of only when the 30-min load forecast updates.
+# - DH needs the LGBM extrapolation — its 72h horizon extends past Amber's
+#   raw 16.5h advanced forecast. The ~7-8s post-Amber latency is intrinsic
+#   to that (running LGBM-extrapolation costs time), not slack in the
+#   pipeline.
+# - Uses `sensor.ai_price_forecast` as the single primary signal rather
+#   than the related _low/_high entities. predict-price writes it 10th of
+#   14 in the publish sequence; everything DH/EMHASS reads downstream has
+#   already been written by then.
+# - Keeps the AI load forecast trigger (still cadenced every 30 min via
+#   ai-energy-predict.timer at :01,:31).
+# - 1-second action-level delay is defensive: protects against future
+#   publish-order changes that might place a downstream entity after
+#   ai_price_forecast.
+# - SoC snapshot logic unchanged — captures current SoC at automation fire
+#   time, which is what EMHASS DH needs as its starting state.
+# - mode: queued / max: 2 retained so a price update arriving while a
+#   prior DH run is in flight isn't dropped.
+#
+# Companion automation (MPC): the existing "EMHASS MPC optim on 5min price
+# update" is intentionally NOT modified. MPC's 14h horizon is fully covered
+# by Amber's raw 16.5h APF, so MPC triggers directly on Amber 5-min entities
+# and keeps the listener off its critical path.
+
+alias: EMHASS dayahead optim on AI forecast update
+description: ""
+triggers:
+  # AI load forecast — fires every 30 min after predict-load completes.
+  - trigger: state
+    entity_id:
+      - sensor.ai_load_forecast
+    id: load_update
+  # AI price forecast (canonical, q50) — fires ~7-8s after each Amber APF
+  # update, once ai-energy-listener.service has run predict-price and
+  # republished the LGBM-extrapolated curve. Written only by predict-price.
+  - trigger: state
+    entity_id:
+      - sensor.ai_price_forecast
+    id: price_update
+conditions: []
+actions:
+  - delay: "00:00:01"   # let the rest of the forecast group settle
+  - target:
+      entity_id: input_number.emhass_dayahead_soc_init
+    data:
+      value: "{{ states('sensor.sigen_plant_battery_state_of_charge') | float(0) }}"
+    action: input_number.set_value
+  - action: rest_command.emhass_dayahead_optim
+    metadata: {}
+    data: {}
+  - action: rest_command.emhass_publish_data_dh
+    metadata: {}
+    data: {}
+    enabled: true
+mode: queued
+max: 2
