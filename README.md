@@ -86,9 +86,13 @@ python3 forecast.py train-load
 ```
 
 #### 3. Run Predictions
-Generate forecasts and publish them to Home Assistant. Run on a recurring schedule — the included systemd timer fires every 30 minutes.
+Generate forecasts and publish them to Home Assistant. In production this is split:
+the **price** path runs event-driven on Amber APF state changes via
+`ai-energy-listener.service` (with a 30-min idle heartbeat as fallback), and the **load**
+path runs every 30 min on `ai-energy-predict.timer`.
+
 ```bash
-# Run all models (price + load) and publish to HA
+# Run all models (price + load) and publish to HA (manual / one-shot)
 python3 forecast.py predict-all --publish-hass --dynamic-handoff
 
 # Price only or load only (manual/testing)
@@ -160,8 +164,11 @@ Older infrastructure work that remains relevant regardless of which forecast win
 -   **Holistic dispatch simulation (Phase 6):** the eval framework (`rolling_mpc_eval.py`,
     Window A/B tariffed gates, Amber yardstick) is what grades all of the above.
 -   **Test framework (Phase 8):** regression tests against canned fixtures.
--   **Event-driven service (Phase 7):** replace systemd timers with a persistent process
-    using HA WebSocket subscriptions.
+-   **Event-driven service (Phase 7):** ~~replace systemd timers with a persistent process
+    using HA WebSocket subscriptions.~~ **Initial scope landed 2026-05-27** as
+    `ai-energy-listener.service`, which drives `predict-price` on Amber APF state changes;
+    see [docs/event_driven_predict_price_plan.md](docs/event_driven_predict_price_plan.md).
+    Remaining work would be event-driving more of the pipeline if a use-case emerges.
 
 ## Acknowledgements
 The initial version of the core `forecast.py` script was generated with assistance from Google's Gemini.

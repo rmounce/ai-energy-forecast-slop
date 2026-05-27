@@ -1,9 +1,14 @@
 # Pipeline Roadmap
 
-**Last updated: 2026-05-09**
+**Last updated: 2026-05-27**
 
 Full architecture: `ARCHITECTURE.md`. Model design rationale: `docs/tft_price_forecast.md`.
 Data sources: `docs/data_sources.md`. Load TFT: `docs/tft_load_forecast.md`.
+
+**2026-05-27**: `predict-price` is now event-driven on Amber APF state changes via
+`ai-energy-listener.service` (replaces the price path of `ai-energy-predict.timer`,
+which is now load-only). 30-minute idle heartbeat is the defensive fallback. Design
+plan: `docs/event_driven_predict_price_plan.md`.
 
 ---
 

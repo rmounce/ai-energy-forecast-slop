@@ -12,3 +12,4 @@ joblib
 matplotlib
 holidays
 requests-cache
+websockets
