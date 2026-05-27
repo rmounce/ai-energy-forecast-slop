@@ -5,15 +5,23 @@ Ingest AEMO PD7Day price forecasts into InfluxDB.
 Modes:
   --backfill DIR   Process all PD7Day ZIP files in DIR (e.g. scratch/pd7day_backfill/)
   --fetch          Download the latest PD7Day ZIP from NEMweb and ingest it
+  --mmsdm ZIP      Backfill from an AEMO MMSDM monthly PD7DAY_PRICESOLUTION archive
+                   (cumulative — one zip contains 2 years of forecast runs)
 
 InfluxDB schema:
   measurement: aemo_pd7day_forecast
   time:   interval_datetime (UTC)
   tags:   region (SA1, VIC1, etc.)
-          run_time (ISO UTC string, from filename)
+          run_time (ISO UTC string)
   fields: rrp ($/MWh)
 
 Idempotent: run_times already present in InfluxDB are skipped.
+
+NEMweb CURRENT zips tag run_time with the file publication time (e.g.
+2026-02-09T21:09:53Z). MMSDM archives tag run_time with the AEMO-published
+RUN_DATETIME field (top-of-half-hour, e.g. 2024-04-23T21:30:00Z). For the
+overlapping window both records coexist with the same `interval_datetime` —
+the data is equivalent, only the run_time tag differs.
 """
 
 import argparse
@@ -118,6 +126,105 @@ def parse_zip(zip_path: Path, run_time_utc: datetime, regions: list[str]) -> lis
     return points
 
 
+def iter_mmsdm_points(zip_path: Path, regions: list[str], existing_run_times: set):
+    """Yield InfluxDB points from an MMSDM PD7DAY_PRICESOLUTION zip.
+
+    One zip contains all forecast runs from the inception of PD7Day through the
+    archive month. Each D row has its own RUN_DATETIME (col 4) and
+    INTERVAL_DATETIME (col 6), so unlike the NEMweb CURRENT format the run_time
+    is parsed per-row rather than from the filename.
+
+    Skips D rows whose run_time is already present in InfluxDB (idempotency).
+    """
+    with zipfile.ZipFile(zip_path) as zf:
+        csv_names = [n for n in zf.namelist() if n.upper().endswith(".CSV")]
+        if not csv_names:
+            raise ValueError(f"No CSV inside {zip_path.name}")
+        with zf.open(sorted(csv_names)[0]) as raw:
+            reader = csv.reader(line.decode("utf-8", errors="ignore") for line in raw)
+            for row in reader:
+                if not row or row[0] != "D":
+                    continue
+                if len(row) < 9:
+                    continue
+                if row[1] != "PD7DAY" or row[2] != "PRICESOLUTION":
+                    continue
+                region = row[7]
+                if regions and region not in regions:
+                    continue
+                run_naive = datetime.strptime(row[4], "%Y/%m/%d %H:%M:%S")
+                run_time_utc = NEM_TZ.localize(run_naive).astimezone(timezone.utc)
+                run_time_iso = run_time_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                if run_time_iso in existing_run_times:
+                    continue
+                interval_naive = datetime.strptime(row[6], "%Y/%m/%d %H:%M:%S")
+                interval_utc = NEM_TZ.localize(interval_naive).astimezone(timezone.utc)
+                try:
+                    rrp = float(row[8])
+                except ValueError:
+                    continue
+                yield {
+                    "measurement": MEASUREMENT,
+                    "time": interval_utc,
+                    "tags": {
+                        "region": region,
+                        "run_time": run_time_iso,
+                    },
+                    "fields": {
+                        "rrp": rrp,
+                    },
+                }
+
+
+def ingest_mmsdm(
+    zip_path: Path,
+    client: InfluxDBClient,
+    existing_run_times: set,
+    regions: list[str],
+    dry_run: bool = False,
+    batch_size: int = 10000,
+) -> tuple[int, int]:
+    """Stream-parse an MMSDM zip and bulk-write to InfluxDB.
+
+    Returns (points_written, new_run_times).
+    """
+    batch: list[dict] = []
+    points_written = 0
+    new_run_times: set = set()
+    last_report = 0
+
+    for pt in iter_mmsdm_points(zip_path, regions, existing_run_times):
+        new_run_times.add(pt["tags"]["run_time"])
+        batch.append(pt)
+        if len(batch) >= batch_size:
+            if not dry_run:
+                client.write_points(
+                    batch,
+                    time_precision="s",
+                    retention_policy=RETENTION_POLICY,
+                    batch_size=batch_size,
+                )
+            points_written += len(batch)
+            batch = []
+            if points_written - last_report >= 100000:
+                print(f"  ... {points_written:>10,} points written, "
+                      f"{len(new_run_times):>5,} run_times so far", flush=True)
+                last_report = points_written
+
+    if batch:
+        if not dry_run:
+            client.write_points(
+                batch,
+                time_precision="s",
+                retention_policy=RETENTION_POLICY,
+                batch_size=batch_size,
+            )
+        points_written += len(batch)
+
+    existing_run_times.update(new_run_times)
+    return points_written, len(new_run_times)
+
+
 class LinkExtractor(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -188,6 +295,9 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--backfill", metavar="DIR", help="Process all ZIPs in DIR")
     mode.add_argument("--fetch", action="store_true", help="Download + ingest latest from NEMweb")
+    mode.add_argument("--mmsdm", metavar="ZIP",
+                      help="Ingest one AEMO MMSDM PD7DAY_PRICESOLUTION monthly zip "
+                           "(cumulative — contains full history)")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
     parser.add_argument(
         "--regions",
@@ -234,6 +344,17 @@ def main():
         n, status = ingest_zip(zip_path, client, existing, regions, dry_run=args.dry_run)
         print(f"{zip_path.name}: {n} points — {status}")
         zip_path.unlink(missing_ok=True)
+
+    elif args.mmsdm:
+        zip_path = Path(args.mmsdm)
+        if not zip_path.exists():
+            print(f"ERROR: {zip_path} not found")
+            sys.exit(1)
+        print(f"\nMMSDM ingest: {zip_path.name} ({zip_path.stat().st_size / 1e6:.1f} MB)")
+        n, n_runs = ingest_mmsdm(zip_path, client, existing, regions,
+                                  dry_run=args.dry_run)
+        print(f"\nDone. {n:,} points written across {n_runs:,} new run_times "
+              f"({'dry-run' if args.dry_run else 'committed'})")
 
 
 if __name__ == "__main__":
