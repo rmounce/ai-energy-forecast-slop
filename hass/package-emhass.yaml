@@ -722,9 +722,27 @@ rest_command:
         "entity_save": true,
         "publish_prefix":"mpc_",
         
-        {#- Modded soc_init: If 100%, report 1.0. Else, subtract 0.20% offset to force charging. #}
+        {#- ---------------------------------------------------------------------------
+            FORCE-CHARGE TOP-BALANCE BIAS
+
+            At very high SoC (e.g. 99.9%) EMHASS would otherwise plan only a tiny
+            charge in the final 5-min interval to reach 100% — but the battery cells
+            need slightly more power than the strict SoC math implies in order to
+            top-balance. The fix: tell EMHASS the current SoC is `force_charge_bias_pct`
+            lower than reality whenever SoC < 100%, which inflates the headroom and
+            gives EMHASS more power budget in those final moments.
+
+            IMPORTANT: this biased value (`effective_soc_pct`) MUST also be used in
+            the lock-in-lead deviation calc further down. Using `actual_soc_now` (raw)
+            there would create a phantom +0.20pp lead the optimiser then tries to
+            maintain — and when DH plans pure self-consumption, the only way for
+            MPC to find that phantom energy is grid imports. Keep these two uses in
+            sync.
+            ---------------------------------------------------------------------------- #}
         {%- set real_soc = states('input_number.battery_soc_5_minute') | float(0) %}
-        "soc_init": {{ (1.0 if real_soc >= 100 else ([0, real_soc - 0.20] | max / 100)) | round(4) }},
+        {%- set force_charge_bias_pct = 0.20 %}
+        {%- set effective_soc_pct = 100.0 if real_soc >= 100 else ([0, real_soc - force_charge_bias_pct] | max) %}
+        "soc_init": {{ (effective_soc_pct / 100) | round(4) }},
 
         {# ========================================================================================= #}
         {#               1. INITIAL VARIABLE SETUP & ASYMMETRICAL FLOATING TARGET                    #}
@@ -777,7 +795,12 @@ rest_command:
         {%- set planned_soc_now = get_planned_soc(quantized_now, complete_soc_forecasts, actual_soc_now) | float %}
         {# Disable historical +0.5% ahead-of-plan bias while investigating MPC/DH hierarchy. #}
         {%- set ahead_of_plan_bias_pct = 0.0 %}
-        {%- set deviation = (actual_soc_now - planned_soc_now) + ahead_of_plan_bias_pct %}
+        {# Deviation uses `effective_soc_pct` (NOT raw `actual_soc_now`) so it stays
+           consistent with the force-charge-biased `soc_init` defined at the top of
+           this payload. If raw SoC were used here, the 0.20pp force-charge offset
+           would surface as a phantom lead and the lock-in target below would chase
+           it via grid imports during pure-self-consume periods. #}
+        {%- set deviation = (effective_soc_pct - planned_soc_now) + ahead_of_plan_bias_pct %}
         {%- set positive_deviation_only = [deviation, 0] | max %}
         {%- set final_soc_percent = planned_soc_future + positive_deviation_only %}
         "soc_final": {{ ([([final_soc_percent, 100.0] | min), 0.0] | max / 100) | round(4) }},
