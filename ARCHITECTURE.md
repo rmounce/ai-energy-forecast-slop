@@ -73,16 +73,18 @@ for f in systemd/ai-energy-*.{service,timer}; do
 done
 systemctl --user daemon-reload
 systemctl --user enable --now ai-energy-*.timer
+systemctl --user enable --now ai-energy-listener.service   # event-driven price refresh
 sudo loginctl enable-linger "$USER"   # keep units running after logout
 ```
 
-Seven pairs of `.service` + `.timer` units drive the pipeline:
+Seven pairs of `.service` + `.timer` units plus one event-driven daemon drive the pipeline:
 
 **Forecast pipeline:**
 
-| Timer | Schedule | What it runs |
+| Unit | Schedule | What it runs |
 |---|---|---|
-| `ai-energy-predict.timer` | Every 30 min (`:01` and `:31`) | `forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates` |
+| `ai-energy-listener.service` | Event-driven (Amber APF state change in HA; 30-min idle heartbeat) | `forecast.py predict-price --dynamic-handoff --publish-hass` — added 2026-05-27, see [docs/event_driven_predict_price_plan.md](docs/event_driven_predict_price_plan.md) |
+| `ai-energy-predict.timer` | Every 30 min (`:01` and `:31`) | `forecast.py predict-load --publish-hass --publish-covariates` — price path moved to the listener |
 | `ai-energy-train.timer` | Monday 12:00 | `forecast.py train-load && forecast.py train-price` |
 | `ai-energy-update-tariffs.timer` | Daily 00:00 | `forecast.py update-tariffs && smooth_tariffs.py && forecast.py backfill-actuals && forecast.py update-adjusters` |
 
@@ -109,7 +111,7 @@ The core script. All behaviour is driven by subcommands:
 |---|---|---|
 | `train-price` | Weekly | Trains price quantile models on 2 years of 30-min InfluxDB data |
 | `train-load` | Weekly | Trains load quantile models |
-| `predict-all` | Every 30 min | Fetches covariates, runs all models, applies tariffs/GST, saves JSON, publishes to HA |
+| `predict-all` | (manual) | Fetches covariates, runs both price+load models, applies tariffs/GST, saves JSON, publishes to HA. Production splits this into event-driven `predict-price` (via `ai-energy-listener.service`) and timer-driven `predict-load`. |
 | `publish-tactical` | Every 5 min | Cheap Tier 1 LGBM refresh; reuses cached Tier 2 PD-direct; updates stitched/canonical AI sensors |
 | `publish-pd-direct` | Every 30 min (after PREDISPATCH ingest) | Refreshes Tier 2 PD-direct + canonical AI MPC/DH bundle + raw AEMO stitched. Cheap: skips TFT/load/Solcast/weather. Wall-clock ≈ 30s. |
 | `predict-price` | (manual) | Price only |
