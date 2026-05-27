@@ -1,9 +1,13 @@
 [Unit]
-Description=Run energy predictions every 30 minutes
+Description=Run load predictions hourly near the top of the hour
 
 [Timer]
-# This syntax means run at minute 01 and 31 of every hour
-OnCalendar=*:01,31:00
+# Hourly at minute 01. Was *:01,31:00 (twice-hourly) when this fired
+# predict-all; load is smooth enough that hourly is sufficient now that
+# price refresh is event-driven via ai-energy-listener.service. The :01
+# offset gives InfluxDB's cq_5m_to_30m a moment to flush the just-closed
+# 30-min bucket before predict-load reads it.
+OnCalendar=*:01:00
 # Ensures the job runs immediately after boot if a scheduled run was missed
 Persistent=true
 
