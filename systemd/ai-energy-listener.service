@@ -2,6 +2,8 @@
 Description=Event-driven predict-price refresh on Amber APF state change
 After=network-online.target
 Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple
@@ -10,8 +12,6 @@ EnvironmentFile=/home/saltspork/src/ai-energy-forecast-slop/.env
 ExecStart=/home/saltspork/src/ai-energy-forecast-slop/.venv/bin/python /home/saltspork/src/ai-energy-forecast-slop/services/ha_listener.py
 Restart=on-failure
 RestartSec=10
-StartLimitBurst=5
-StartLimitIntervalSec=300
 
 [Install]
 WantedBy=default.target
