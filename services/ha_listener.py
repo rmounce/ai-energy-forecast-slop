@@ -176,26 +176,32 @@ class Listener:
             started = time.monotonic()
             log.info("Running: %s", " ".join(PREDICT_PRICE_CMD))
             try:
+                # PYTHONUNBUFFERED=1 so the child's stdout is line-buffered
+                # when piped; without it Python block-buffers and we only
+                # see output at process exit.
+                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
                 proc = await asyncio.create_subprocess_exec(
                     *PREDICT_PRICE_CMD,
                     cwd=str(REPO_ROOT),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
+                    env=env,
                 )
+                stream_task = asyncio.create_task(self._stream_subprocess_output(proc))
                 try:
-                    stdout, _ = await asyncio.wait_for(
-                        proc.communicate(), timeout=SUBPROCESS_TIMEOUT_SECONDS
-                    )
+                    await asyncio.wait_for(proc.wait(), timeout=SUBPROCESS_TIMEOUT_SECONDS)
                 except asyncio.TimeoutError:
                     log.error("predict-price exceeded %ss; killing", SUBPROCESS_TIMEOUT_SECONDS)
                     proc.kill()
-                    await proc.communicate()
+                    await proc.wait()
+                    stream_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await stream_task
                     return
+                # Drain any final lines buffered after process exit.
+                await stream_task
                 elapsed = time.monotonic() - started
                 self.last_run_at = time.monotonic()
-                if stdout:
-                    for line in stdout.decode(errors="replace").rstrip().splitlines():
-                        log.info("[predict-price] %s", line)
                 if proc.returncode == 0:
                     log.info("predict-price succeeded in %.1fs", elapsed)
                     await self._ping_healthcheck()
@@ -203,6 +209,14 @@ class Listener:
                     log.error("predict-price failed rc=%s after %.1fs", proc.returncode, elapsed)
             except Exception:
                 log.exception("predict-price subprocess raised")
+
+    async def _stream_subprocess_output(self, proc) -> None:
+        assert proc.stdout is not None
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                return
+            log.info("[predict-price] %s", line.rstrip(b"\n").decode(errors="replace"))
 
     async def _ping_healthcheck(self) -> None:
         if not self.healthcheck_url:
