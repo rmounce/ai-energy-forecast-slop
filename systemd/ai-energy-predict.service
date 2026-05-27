@@ -1,8 +1,10 @@
 [Unit]
-Description=Run AI energy predictions and publish to Home Assistant
+Description=Run AI load predictions and publish to Home Assistant
+# Price predictions are driven by ai-energy-listener.service (event-driven on
+# Amber APF state change). This timer covers the load-side path only.
 
 [Service]
 Type=oneshot
 WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
 EnvironmentFile=/home/saltspork/src/ai-energy-forecast-slop/.env
-ExecStart=/bin/bash -c 'source .venv/bin/activate && ./forecast.py predict-all --dynamic-handoff --publish-hass --publish-covariates && curl -fsS --retry 3 ${HC_PREDICT_URL}'
+ExecStart=/bin/bash -c 'source .venv/bin/activate && ./forecast.py predict-load --publish-hass --publish-covariates && curl -fsS --retry 3 ${HC_PREDICT_URL}'
