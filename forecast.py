@@ -2826,6 +2826,40 @@ def _publish_pd_direct_price_forecasts(pd_direct_results):
         publish_forecast_to_hass(key, publish_df)
 
 
+LEGACY_LGBM_MODELS = ('price', 'load')
+# The two LGBM quantile models that currently serve production:
+#   `price` → sensor.ai_price_forecast (+ _low, _high)
+#   `load`  → sensor.ai_load_forecast  (+ _high, _p75)
+# These are published immediately after inference in `run_predictions`,
+# *before* the shadow stack (tactical / PD-direct / TFT-load / canonical
+# AI MPC+DH bundle) runs. The shadow stack adds ~30s to wall-clock; this
+# split keeps prod-critical sensors landing in ~1–2s instead.
+
+
+def _publish_lgbm_model_to_hass(base_model_name, result_data):
+    """Publish one model's quantile forecasts to HA.
+
+    Extracted from the original step-4 publish loop in `run_predictions`
+    so the legacy LGBM path (`price`, `load`) can publish immediately
+    after inference, before the shadow stack runs.
+    """
+    model_config = CONFIG['models'][base_model_name]
+    target_col = model_config['target_column']
+    for key, forecast_df in result_data['forecasts'].items():
+        entity_id_check = CONFIG['home_assistant']['publish_entities'].get(key)
+        if not entity_id_check:
+            continue
+        logging.info(f"Processing and publishing '{key}' to '{entity_id_check}'...")
+        publish_df = forecast_df.copy()
+        if 'price' in base_model_name:
+            if 'wholesale_price' not in publish_df.columns:
+                publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
+            apply_tariffs_to_forecast(publish_df)
+        else:
+            publish_df.rename(columns={publish_df.columns[0]: target_col}, inplace=True)
+        publish_forecast_to_hass(key, publish_df)
+
+
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
     """
     WORKER: Executes prediction for a model type (e.g. 'price' or 'load'),
@@ -2938,6 +2972,26 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         )
         if forecasts:
             all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
+
+    # 2a. EARLY PUBLISH — legacy LGBM quantile outputs (prod-critical fast path).
+    # Done here, before the shadow stack (tactical / PD-direct / TFT-load) runs,
+    # so consumers (HA automations / EMHASS) see fresh data in ~1–2s instead of
+    # ~40s. Skipped in the late publish loop (step 4) so we don't double-publish.
+    if publish_hass:
+        legacy_publish_start = time.monotonic()
+        for base_model_name in LEGACY_LGBM_MODELS:
+            if base_model_name not in all_results:
+                continue
+            try:
+                _publish_lgbm_model_to_hass(base_model_name, all_results[base_model_name])
+            except Exception as e:
+                logging.error(f"FATAL ERROR in legacy {base_model_name} publish: {e}", exc_info=True)
+        logging.info(
+            f"Legacy LGBM publish: {time.monotonic() - legacy_publish_start:.1f}s "
+            f"(prod-critical fast path)"
+        )
+
+    shadow_stack_start = time.monotonic()
 
     # 2b. Execute Tier 1/2 parallel models (sandboxed — existing forecasts safe on failure)
     if 'price' in models_to_run:
@@ -3083,34 +3137,20 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         json.dump(final_output_json, f, indent=4)
     logging.info(f"All forecasts saved to {CONFIG['paths']['prediction_output_file']}.")
 
-    # 4. PUBLISH all forecasts to Home Assistant
+    # 4. PUBLISH shadow forecasts to Home Assistant (legacy LGBM models
+    # already went out in step 2a above).
     if publish_hass:
-        logging.info("--- Publishing all generated forecasts to Home Assistant ---")
+        logging.info("--- Publishing shadow forecasts to Home Assistant ---")
         for base_model_name, result_data in all_results.items():
-            # --- FIX STARTS HERE ---
-            model_config = CONFIG['models'][base_model_name]
-            target_col = model_config['target_column'] 
+            if base_model_name in LEGACY_LGBM_MODELS:
+                continue  # already published in the prod-critical fast path (step 2a)
+            _publish_lgbm_model_to_hass(base_model_name, result_data)
+    logging.info(
+        f"Shadow stack (tactical + PD-direct + canonical AI + AEMO + TFT-load): "
+        f"{time.monotonic() - shadow_stack_start:.1f}s"
+    )
 
-            for key, forecast_df in result_data['forecasts'].items():
-                entity_id_check = CONFIG['home_assistant']['publish_entities'].get(key)
-                if not entity_id_check: continue
 
-                logging.info(f"Processing and publishing '{key}' to '{entity_id_check}'...")
-                publish_df = forecast_df.copy()
-                
-                if 'price' in base_model_name:
-                    # Price models are renamed to 'wholesale_price' for the tariff function
-                    if 'wholesale_price' not in publish_df.columns:
-                        publish_df.rename(columns={publish_df.columns[0]: 'wholesale_price'}, inplace=True)
-                    apply_tariffs_to_forecast(publish_df)
-                else:
-                    # All other models (e.g., load) are renamed to their generic target column
-                    publish_df.rename(columns={publish_df.columns[0]: target_col}, inplace=True)
-                # --- FIX ENDS HERE ---
-
-                publish_forecast_to_hass(key, publish_df)
-
-    
     # 5. LOG forecast surfaces used for diagnostics/backfill.
     for model_name, result_data in all_results.items():
         primary_key = CONFIG['models'][model_name].get('primary_model_key')
