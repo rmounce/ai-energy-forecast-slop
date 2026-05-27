@@ -725,19 +725,56 @@ rest_command:
         {#- ---------------------------------------------------------------------------
             FORCE-CHARGE TOP-BALANCE BIAS
 
-            At very high SoC (e.g. 99.9%) EMHASS would otherwise plan only a tiny
-            charge in the final 5-min interval to reach 100% — but the battery cells
-            need slightly more power than the strict SoC math implies in order to
-            top-balance. The fix: tell EMHASS the current SoC is `force_charge_bias_pct`
-            lower than reality whenever SoC < 100%, which inflates the headroom and
-            gives EMHASS more power budget in those final moments.
+            What it does: tells EMHASS the current SoC is `force_charge_bias_pct`
+            lower than reality whenever SoC < 100%. This creates a small synthetic
+            energy deficit (~60 Wh on a 30 kWh battery) that EMHASS must close
+            somewhere in its 14h horizon.
 
-            IMPORTANT: this biased value (`effective_soc_pct`) MUST also be used in
-            the lock-in-lead deviation calc further down. Using `actual_soc_now` (raw)
-            there would create a phantom +0.20pp lead the optimiser then tries to
-            maintain — and when DH plans pure self-consumption, the only way for
-            MPC to find that phantom energy is grid imports. Keep these two uses in
-            sync.
+            Why it's there (two intertwined purposes):
+            1. Top-balance: at very high SoC (e.g. 99.9%) EMHASS would otherwise plan
+               only a tiny charge in the final 5-min interval to reach 100% — but the
+               battery cells need slightly more power than the strict SoC math implies
+               in order to top-balance. The bias inflates the headroom and gives
+               EMHASS more power budget in those final moments.
+            2. Reaching 100% at all: without the bias, EMHASS would happily spread
+               charging across the day (quadratic power cost penalty rewards
+               flattening), then pivot from "charge from PV" to "export to grid" as
+               late-afternoon prices rise — often before the battery reaches 100%.
+               The synthetic deficit keeps the LP on the "charge" side of that corner
+               for longer, so SoC actually tops out at 100% on most sunny days. This
+               needs to work in concert with the "nearly full" handling in
+               `automation-sigenergy-emhass.yaml`; both mitigations have been
+               empirically necessary.
+
+            IMPORTANT — consistent use:
+            `effective_soc_pct` MUST be used in the lock-in-lead deviation calc
+            further down (NOT raw `actual_soc_now`). Otherwise the 0.20pp offset
+            shows up as a phantom +0.20pp lead and the lock-in target chases imports
+            to maintain it. Keep the two uses in sync.
+
+            Known side effect (left as-is — see decision below):
+            When actual SoC sits roughly *on* DH's planned trajectory (deviation ≈ 0),
+            the bias makes the deviation slightly negative, lock-in adds nothing
+            (positive_deviation_only = 0), and `soc_init` for MPC is now
+            `force_charge_bias_pct` below the planned trajectory. With matched load
+            and PV totals (the energy-conservation scaling guarantees that), MPC has
+            to make up that synthetic deficit — typically via ~50 Wh of small grid
+            imports across one or two 5-min slots per cycle (~$0.01-0.02/cycle).
+
+            Trade-off considered 2026-05-27:
+            - Removing the bias would re-introduce the "SoC doesn't reach 100%"
+              failure mode that originally motivated it.
+            - Making the bias SoC-conditional (only apply > 95%) introduces
+              discontinuity concerns and pollutes near-100% plans similarly.
+            - All EMHASS knob alternatives (soc_final lift, weight_battery_charge
+              modulation, lower battery_maximum_state_of_charge, etc.) either don't
+              address the during-day failure mode or break other parts of the
+              dispatch design (panic curve, lock-in lead).
+            - Annualised cost: ~$3-15/year of marginal imports. Acceptable for the
+              top-balance behaviour gained.
+            DECISION: keep the bias as-is. Future readers: do not "fix" the small
+            imports by removing or conditionalising the bias without re-validating
+            the SoC-reaches-100% behaviour on sunny days.
             ---------------------------------------------------------------------------- #}
         {%- set real_soc = states('input_number.battery_soc_5_minute') | float(0) %}
         {%- set force_charge_bias_pct = 0.20 %}
@@ -750,7 +787,10 @@ rest_command:
         {%- set utc_now = utcnow() %}
         {%- set dayahead_forecasts = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') %}
         
-        {#- Note: We keep the raw actual SOC here for accurate deviation calculations #}
+        {#- Raw actual SoC, used as a fallback in get_planned_soc when the DH plan
+            doesn't cover the queried timestamp. NOT used in the deviation calc — see
+            the FORCE-CHARGE TOP-BALANCE BIAS comment above; `effective_soc_pct` is
+            used there to keep `soc_init` and the deviation consistent. #}
         {%- set actual_soc_now = states('input_number.battery_soc_5_minute') | float %}
         
         {%- set quantized_now = utc_now.replace(minute = (utc_now.minute // 5) * 5, second=0, microsecond=0) %}
