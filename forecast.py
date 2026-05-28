@@ -117,6 +117,62 @@ def get_network_loss_factor():
     except (FileNotFoundError, json.JSONDecodeError):
         return 1.05
 
+def _get_historical_pd7day_prices(client, start_time, end_time, region='SA1',
+                                   batch_months=3):
+    """Pull historical PD7Day price forecasts, collapsing multi-run rows per
+    target time down to "latest forecast for T published before T arrived".
+
+    Returns a DataFrame with one column `pd7_rrp` (in $/kWh, divided by 1000 to
+    match the existing `aemo_price_sa1` convention) indexed by target time UTC.
+    NaN for target times before PD7Day product existed (pre-2024-04-23).
+
+    Training-time semantics: each row is the freshest forecast value the system
+    would have had access to *as of T*. This is a small look-ahead approximation
+    relative to the inference-time semantics (where we use the latest forecast
+    available at the prediction run_time R), but since PD7Day publishes every
+    ~8h and the typical training-row look-back to the last published forecast
+    is shorter than that, the two coincide for almost all (R, T) pairs.
+
+    Implementation: SELECT without GROUP BY run_time and batch in time windows
+    (3 months default). GROUP BY run_time on this measurement triggers an
+    InfluxDB code path that loads all tag-grouped series into memory and is
+    pathologically slow — see the note in data/export_parquet.py:query_batched.
+    """
+    t_lo = pd.to_datetime(start_time, utc=True)
+    t_end = pd.to_datetime(end_time, utc=True)
+    frames = []
+    while t_lo < t_end:
+        t_hi = min(t_lo + pd.DateOffset(months=batch_months), t_end)
+        lo_str = t_lo.strftime('%Y-%m-%dT%H:%M:%SZ')
+        hi_str = t_hi.strftime('%Y-%m-%dT%H:%M:%SZ')
+        q = (
+            f'SELECT rrp, "run_time" FROM "rp_30m"."aemo_pd7day_forecast" '
+            f"WHERE region='{region}' AND time >= '{lo_str}' AND time < '{hi_str}'"
+        )
+        try:
+            result = client.query(q)
+            pts = list(result.get_points())
+            if pts:
+                frames.append(pd.DataFrame(pts))
+        except Exception as e:
+            logging.warning(f"PD7Day batch {lo_str}..{hi_str} failed: {e}")
+        t_lo = t_hi
+
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+    df['time'] = pd.to_datetime(df['time'], utc=True)
+    df['run_time'] = pd.to_datetime(df['run_time'], utc=True)
+    # Avoid look-ahead: only keep forecasts published strictly before their target.
+    df = df[df['run_time'] < df['time']]
+    # For each target time, keep the most recently published forecast.
+    df = df.sort_values(['time', 'run_time']).groupby('time').tail(1)
+    df = df.set_index('time')[['rrp']].rename(columns={'rrp': 'pd7_rrp'})
+    df['pd7_rrp'] = df['pd7_rrp'] / 1000.0   # $/MWh → $/kWh, match aemo_price_sa1
+    return df
+
+
 def get_historical_data(client, start_time, end_time):
     # This function is REFINED based on your InfluxDB schema
     logging.info(f"Querying historical data from {start_time.date()} to {end_time.date()}")
@@ -178,6 +234,10 @@ def get_historical_data(client, start_time, end_time):
             df_combined['power_load'].fillna(0) - df_combined['power_dump_load'].fillna(0)
         ).clip(lower=0)
         df_combined.drop(columns=['power_dump_load'], inplace=True)
+
+    pd7_df = _get_historical_pd7day_prices(client, start_time, end_time)
+    if not pd7_df.empty:
+        df_combined = df_combined.join(pd7_df, how='left')
 
     return add_time_features(df_combined)
 
