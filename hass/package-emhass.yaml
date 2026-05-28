@@ -1216,7 +1216,8 @@ script:
   #
   # MPC FORMULA:
   #
-  #   effective_soc_pct = 100 if real_soc >= 100 else max(0, real_soc - 0.20)
+  #   bias_pct          = clamp((real_soc - 90) / (99.99 - 90), 0, 1) * 0.20
+  #   effective_soc_pct = 100 if real_soc >= 100 else max(0, real_soc - bias_pct)
   #   deviation         = effective_soc_pct - planned_soc_at_now    (signed)
   #   positive_only     = max(deviation, 0)
   #   soc_init          = clamp(planned_soc_at_boundary + deviation, 0, 100)
@@ -1238,13 +1239,15 @@ script:
   # actual_soc_now via the lookup default.
   #
   # ---------------------------------------------------------------------------
-  # FORCE-CHARGE TOP-BALANCE BIAS
+  # FORCE-CHARGE TOP-BALANCE BIAS (ramped, 2026-05-29)
   #
-  # `effective_soc_pct` deflates the live SoC by 0.20pp whenever SoC < 100%.
-  # That deflation feeds the deviation calc, and the deviation in turn feeds
-  # both soc_init and soc_final — so the bias propagates through both anchors.
-  # The result is a small synthetic energy deficit (~60 Wh on a 30 kWh battery)
-  # that EMHASS must close somewhere in its 14h horizon.
+  # `effective_soc_pct` deflates the live SoC by a ramped bias that scales
+  # linearly from 0pp at SoC ≤ 90% to 0.20pp at SoC ≥ 99.99% (and is pinned at
+  # the 100% reporting ceiling above 100%). That deflation feeds the deviation
+  # calc, and the deviation in turn feeds both soc_init and soc_final — so the
+  # bias propagates through both anchors. When active near the top of the
+  # window the result is a small synthetic energy deficit (~60 Wh on a 30 kWh
+  # battery) that EMHASS must close somewhere in its 14h horizon.
   #
   # Why it's there (two intertwined purposes):
   # 1. Top-balance: at very high SoC (e.g. 99.9%) EMHASS would otherwise plan
@@ -1261,15 +1264,14 @@ script:
   #    concert with the "nearly full" handling in automation-sigenergy-emhass.yaml;
   #    both mitigations have been empirically necessary.
   #
-  # Known side effect (left as-is): when actual SoC sits roughly *on* DH's
-  # planned trajectory (deviation ≈ 0), the bias makes the deviation slightly
-  # negative, lock-in adds nothing, and soc_init is `force_charge_bias_pct`
-  # below the planned trajectory. With matched load and PV totals (energy
-  # conservation scaling), MPC has to make up the synthetic deficit — typically
-  # via ~50 Wh of small grid imports across one or two 5-min slots per cycle
-  # (~$0.01-0.02/cycle, ~$3-15/year). Trade-off considered 2026-05-27: keep the
-  # bias. Do not "fix" the small imports by removing or conditionalising the
-  # bias without re-validating the SoC-reaches-100% behaviour on sunny days.
+  # Why the ramp (chosen 2026-05-29): the flat 0.20pp always-on bias caused a
+  # persistent small-import side effect during pure-self-consume periods (~50
+  # Wh/cycle) even when SoC sat far from the top-balance window. Confining the
+  # bias to the high-SoC ramp eliminates the side effect at low/mid SoC while
+  # preserving the LP nudge through the charge→export pivot. The 90% lower
+  # endpoint was chosen to ramp in before the typical late-afternoon pivot
+  # point. If the SoC-reaches-100% behaviour regresses on sunny days, the lower
+  # endpoint may need to drop further (e.g. 85%); empirical validation needed.
   # ---------------------------------------------------------------------------
   emhass_mpc:
     alias: EMHASS MPC Optimisation
@@ -1376,8 +1378,13 @@ script:
       - variables:
           real_soc: "{{ actual_soc_now | float(0) }}"
           effective_soc_pct: >-
-            {% set rs = actual_soc_now | float(0) %}
-            {{ 100.0 if rs >= 100 else ([0, rs - 0.20] | max) }}
+            {%- set rs = actual_soc_now | float(0) -%}
+            {%- set ramp_lo = 90.0 -%}
+            {%- set ramp_hi = 99.99 -%}
+            {%- set bias_max = 0.20 -%}
+            {%- set frac = [[(rs - ramp_lo) / (ramp_hi - ramp_lo), 0.0] | max, 1.0] | min -%}
+            {%- set bias = frac * bias_max -%}
+            {{ 100.0 if rs >= 100 else ([0, rs - bias] | max) }}
           # HA's script-variable engine auto-parses native-looking output, so
           # `interpolated` ends up as a dict — access the fields directly rather
           # than re-parsing via from_json (which only accepts strings).

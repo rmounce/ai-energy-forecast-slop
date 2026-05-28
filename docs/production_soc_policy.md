@@ -98,8 +98,9 @@ adjustments at the start and end of its 14h horizon:
 
 ```
 real_soc          = live SoC from sensor.sigen_plant_battery_state_of_charge_derived
-effective_soc_pct = 100 if real_soc >= 100 else max(0, real_soc − force_charge_bias_pct)
-                    # force_charge_bias_pct = 0.20 — see "Force-charge top-balance bias" below
+bias_pct          = clamp((real_soc − 90) / (99.99 − 90), 0, 1) * 0.20
+                    # ramped force-charge bias — see "Force-charge top-balance bias" below
+effective_soc_pct = 100 if real_soc >= 100 else max(0, real_soc − bias_pct)
 deviation         = effective_soc_pct − planned_soc_at_now    (signed)
 positive_only     = max(deviation, 0)
 soc_init          = clamp(planned_soc_at_boundary + deviation, 0, 100%)
@@ -136,11 +137,19 @@ SoC level — the +14h target will be high. The high-SoC bias enters at +72h, no
 
 ## Force-charge top-balance bias
 
-`effective_soc_pct` deflates the live SoC by `force_charge_bias_pct = 0.20pp`
-whenever SoC < 100%. Because `effective_soc_pct` feeds the deviation calc, and
-the deviation in turn feeds both `soc_init` and `soc_final`, the deflation
-propagates through both anchors. The result is a small synthetic energy deficit
-(~60 Wh on a 30 kWh battery) that EMHASS must close somewhere in its 14h horizon.
+`effective_soc_pct` deflates the live SoC by a **ramped** bias that scales
+linearly from 0pp at SoC ≤ 90% to 0.20pp at SoC ≥ 99.99% (and is pinned at the
+100% reporting ceiling above 100%):
+
+```
+bias_pct = clamp((real_soc − 90) / (99.99 − 90), 0, 1) * 0.20
+```
+
+Because `effective_soc_pct` feeds the deviation calc, and the deviation in turn
+feeds both `soc_init` and `soc_final`, the deflation propagates through both
+anchors. When the bias is active near the top of the window, the result is a
+small synthetic energy deficit (~60 Wh on a 30 kWh battery at full bias) that
+EMHASS must close somewhere in its 14h horizon.
 
 **Why it's there** (two intertwined purposes):
 
@@ -156,20 +165,16 @@ propagates through both anchors. The result is a small synthetic energy deficit
    "charge" side of that corner for longer, so SoC actually tops out at 100% on
    most sunny days.
 
-**Known side effect** (left as-is): when actual SoC sits roughly *on* DH's
-planned trajectory (deviation ≈ 0), the bias makes the deviation slightly
-negative, lock-in adds nothing (positive_only = 0), and `soc_init` for MPC is now
-`force_charge_bias_pct` below the planned trajectory. With matched load and PV
-totals (the energy-conservation scaling guarantees that), MPC has to make up the
-synthetic deficit — typically via ~50 Wh of small grid imports across one or two
-5-min slots per cycle (~$0.01-0.02/cycle, ~$3-15/year).
-
-Trade-off considered 2026-05-27: keep the bias as-is. Future readers should not
-"fix" the small imports by removing or conditionalising the bias without
-re-validating the SoC-reaches-100% behaviour on sunny days. A smooth ramp
-between 95% and 99.99% true SoC (rather than always-on) is under consideration
-to eliminate the side-effect during pure-self-consume periods without
-re-introducing the 100%-reach failure mode; not yet committed.
+**Why the ramp** (chosen 2026-05-29): the previous flat 0.20pp always-on bias
+caused a persistent small-import side effect (~50 Wh/cycle, ~$0.01-0.02/cycle,
+~$3-15/year) during pure-self-consume periods, even when SoC sat far from the
+top-balance window. Confining the bias to the high-SoC ramp eliminates that
+side effect at low/mid SoC while preserving the LP nudge through the
+charge→export pivot. The 90% lower endpoint was chosen to ramp in before the
+typical late-afternoon pivot point. If the SoC-reaches-100% behaviour regresses
+on sunny days, the lower endpoint may need to drop further (e.g. 85%);
+empirical validation is needed before relying on the ramp in winter conditions
+or after any change to the EMHASS power-cost penalty.
 
 ## Persistence helpers
 
@@ -204,7 +209,8 @@ What the eval does **not** match:
 - The eval's strategic LP solves the 72h horizon with **no terminal SoC constraint
   at +72h**. Production's DH solves with a soft target ~98% at the end (via the
   offset feedback loop).
-- The eval does not apply the 0.20pp force-charge top-balance bias.
+- The eval does not apply the ramped force-charge top-balance bias (0 → 0.20pp
+  across SoC 90–99.99%).
 - The eval does not apply the DH self-correction chain across consecutive solves
   (each eval step is a clean re-solve from current SoC).
 - The eval does not apply MPC's plan-relative `soc_init` lift; it passes the live
@@ -256,7 +262,7 @@ comparing what *would* have happened under each forecast had it been driving DH.
   reflected in eval either. Each eval step is a clean re-solve; consecutive solves
   do not share state via a persisted anchor. Expected to matter less than the
   +72h gap, but unmeasured.
-- Smoothing the force-charge bias as a ramp between 95% and 99.99% true SoC
-  (rather than always-on) is under consideration to eliminate the small-import
-  side-effect during pure-self-consume periods. Pending design and empirical
-  validation against the "SoC reaches 100% on sunny days" criterion.
+- The force-charge bias ramp (90 → 99.99% true SoC) shipped 2026-05-29. The
+  90% lower endpoint is provisional — needs empirical validation on sunny days
+  through a charge→export pivot window to confirm SoC still reliably reaches
+  100%. If it doesn't, the lower endpoint should drop (e.g. 85%).
