@@ -368,7 +368,7 @@ These files live in HA but are backed up here. They are **not loaded directly fr
 
 | File | Purpose |
 |---|---|
-| `package-emhass.yaml` | HA package: template sensors for price/feed-in blending, `rest_command` to trigger EMHASS day-ahead optimisation with Jinja-built JSON payload |
+| `package-emhass.yaml` | HA package: template sensors for price/feed-in blending, the `script.emhass_dayahead_optim` / `script.emhass_mpc` wrappers that compute soc_init/soc_final and persist them to helper input_numbers, and the underlying `rest_command.emhass_dayahead_optim` / `rest_command.emhass_mpc` that POST a Jinja-built JSON payload to EMHASS |
 | `automation-sigenergy-emhass.yaml` | HA automation: reads EMHASS `mpc_*` output entities every 5 min, evaluates battery control scenarios (grid charge, PV curtail, discharge, standby), calls EMS script |
 | `script-sigenergy-ems.yaml` | HA script: sets SiG Energy EMS parameters (control mode, charge/discharge limits, SoC cutoffs, export limits) by writing to Sigenergy number/select entities |
 
@@ -380,7 +380,10 @@ This is the most complex HA file. It does:
 
 2. **`sensor.amber_effective_feed_in_price`** — same logic for feed-in (export) price.
 
-3. **`rest_command.emhass_dayahead_optim`** — builds a JSON payload via Jinja2 and POSTs to EMHASS MPC endpoint. The payload includes:
+3. **`script.emhass_dayahead_optim` / `script.emhass_mpc`** — wrapper scripts that compute `soc_init_pct` and `soc_final_pct` from the prior DH plan plus the live SoC, persist the chosen soc_init to `input_number.dh_last_soc_init` / `input_number.mpc_last_soc_init`, then fire the corresponding `rest_command` with the values as parameters. **Automations must call these scripts, not the rest_commands directly.** See [docs/production_soc_policy.md](docs/production_soc_policy.md) for the formulas (DH self-correction chain, MPC plan-relative deviation, force-charge top-balance bias).
+
+4. **`rest_command.emhass_dayahead_optim` / `rest_command.emhass_mpc`** — build a JSON payload via Jinja2 and POST to the EMHASS endpoint. The payload includes:
+   - `soc_init` / `soc_final` — passed in as `soc_init_pct` / `soc_final_pct` parameters from the wrapping script.
    - PV forecast: Solcast p10/p50/p90 blended by `input_number.emhass_weight_pv_forecast`, with 65W fixed loss applied
    - Load forecast: from `sensor.ai_load_forecast_high` (p65 model)
    - Price forecast: from `sensor.ai_price_forecast` (p50), blended with p30/p70 by `input_number.emhass_weight_buy_forecast`

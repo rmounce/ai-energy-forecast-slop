@@ -34,27 +34,23 @@
 alias: EMHASS dayahead optim on AI forecast update
 description: ""
 triggers:
-  # AI load forecast — fires every 30 min after predict-load completes.
   - trigger: state
     entity_id:
       - sensor.ai_load_forecast
     id: load_update
-  # AI price forecast (canonical, q50) — fires ~7-8s after each Amber APF
-  # update, once ai-energy-listener.service has run predict-price and
-  # republished the LGBM-extrapolated curve. Written only by predict-price.
   - trigger: state
     entity_id:
       - sensor.ai_price_forecast
     id: price_update
 conditions: []
 actions:
-  - delay: "00:00:01"   # let the rest of the forecast group settle
+  - delay: "00:00:01"
   - target:
       entity_id: input_number.emhass_dayahead_soc_init
     data:
       value: "{{ states('sensor.sigen_plant_battery_state_of_charge') | float(0) }}"
     action: input_number.set_value
-  - action: rest_command.emhass_dayahead_optim
+  - action: script.emhass_dayahead_optim
     metadata: {}
     data: {}
   - action: rest_command.emhass_publish_data_dh

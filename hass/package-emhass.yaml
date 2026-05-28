@@ -17,6 +17,29 @@ input_select:
       - amber_lgbm_extrapolated
     initial: amber_lgbm_extrapolated
 
+input_number:
+  # soc_init values passed to the most recent DH / MPC EMHASS runs. Written by
+  # script.emhass_dayahead_optim and script.emhass_mpc respectively. Used to
+  # correctly anchor the prior plan when interpolating it (because the published
+  # *_soc_batt_forecast entities only contain end-of-interval values — the start
+  # anchor has to come from somewhere). mpc_last_soc_init has no current
+  # consumer; it is published for diagnostics.
+  dh_last_soc_init:
+    name: EMHASS DH Last SoC Init
+    min: 0
+    max: 100
+    step: 0.01
+    unit_of_measurement: "%"
+    icon: mdi:battery-sync
+
+  mpc_last_soc_init:
+    name: EMHASS MPC Last SoC Init
+    min: 0
+    max: 100
+    step: 0.01
+    unit_of_measurement: "%"
+    icon: mdi:battery-sync
+
 template:
   - sensor:
     - name: 'Amber Effective General Price'
@@ -689,16 +712,13 @@ rest_command:
         "prediction_horizon": 144,
         "battery_nominal_energy_capacity": {{ (1000.0*(states('sensor.sigen_plant_rated_energy_capacity')|float(0) * (states('sensor.sigen_plant_battery_state_of_health')|float()/100.0))) | int() }},
         "battery_minimum_state_of_charge": {{ (states('input_number.battery_soc_min_target') | float)/100 }}, 
-        "soc_init": {{ ((states('input_number.battery_soc_30_minute') | float) / 100) | round(4) }},
-        {#- Step 1: Get the current SOC and the stored offset. #}
-        {%- set current_soc = states('input_number.battery_soc_30_minute') | float %}
-        {%- set target_soc_offset = states('input_number.emhass_target_soc_offset') | float(0) %}
-        
-        {#- Step 2: Calculate the target SOC by adding the offset. #}
-        {%- set final_soc_percentage = current_soc + target_soc_offset %}
-
-        {#- Step 3: Clamp the final SOC between min_soc, 100% and set it. #}
-        "soc_final": {{ (([states('input_number.battery_soc_min_target') | float, final_soc_percentage, 100] | sort)[1] / 100) | round(4) }}
+        {#- soc_init / soc_final are computed by the wrapping script
+            (script.emhass_dayahead_optim), which applies DH self-correction using
+            the prior DH plan and persists the chosen soc_init to
+            input_number.dh_last_soc_init. Call this rest_command via that script,
+            not directly. #}
+        "soc_init": {{ (soc_init_pct | float / 100) | round(4) }},
+        "soc_final": {{ (soc_final_pct | float / 100) | round(4) }}
       }
 
   emhass_publish_data_dh:
@@ -722,130 +742,23 @@ rest_command:
         "entity_save": true,
         "publish_prefix":"mpc_",
         
-        {#- ---------------------------------------------------------------------------
-            FORCE-CHARGE TOP-BALANCE BIAS
+        {#- soc_init / soc_final are computed by the wrapping script
+            (script.emhass_mpc), which applies the force-charge bias and lock-in lead
+            using the prior DH plan, then persists the chosen soc_init to
+            input_number.mpc_last_soc_init. Call this rest_command via that script,
+            not directly. #}
+        "soc_init": {{ (soc_init_pct | float / 100) | round(4) }},
+        "soc_final": {{ (soc_final_pct | float / 100) | round(4) }},
 
-            What it does: tells EMHASS the current SoC is `force_charge_bias_pct`
-            lower than reality whenever SoC < 100%. This creates a small synthetic
-            energy deficit (~60 Wh on a 30 kWh battery) that EMHASS must close
-            somewhere in its 14h horizon.
-
-            Why it's there (two intertwined purposes):
-            1. Top-balance: at very high SoC (e.g. 99.9%) EMHASS would otherwise plan
-               only a tiny charge in the final 5-min interval to reach 100% — but the
-               battery cells need slightly more power than the strict SoC math implies
-               in order to top-balance. The bias inflates the headroom and gives
-               EMHASS more power budget in those final moments.
-            2. Reaching 100% at all: without the bias, EMHASS would happily spread
-               charging across the day (quadratic power cost penalty rewards
-               flattening), then pivot from "charge from PV" to "export to grid" as
-               late-afternoon prices rise — often before the battery reaches 100%.
-               The synthetic deficit keeps the LP on the "charge" side of that corner
-               for longer, so SoC actually tops out at 100% on most sunny days. This
-               needs to work in concert with the "nearly full" handling in
-               `automation-sigenergy-emhass.yaml`; both mitigations have been
-               empirically necessary.
-
-            IMPORTANT — consistent use:
-            `effective_soc_pct` MUST be used in the lock-in-lead deviation calc
-            further down (NOT raw `actual_soc_now`). Otherwise the 0.20pp offset
-            shows up as a phantom +0.20pp lead and the lock-in target chases imports
-            to maintain it. Keep the two uses in sync.
-
-            Known side effect (left as-is — see decision below):
-            When actual SoC sits roughly *on* DH's planned trajectory (deviation ≈ 0),
-            the bias makes the deviation slightly negative, lock-in adds nothing
-            (positive_deviation_only = 0), and `soc_init` for MPC is now
-            `force_charge_bias_pct` below the planned trajectory. With matched load
-            and PV totals (the energy-conservation scaling guarantees that), MPC has
-            to make up that synthetic deficit — typically via ~50 Wh of small grid
-            imports across one or two 5-min slots per cycle (~$0.01-0.02/cycle).
-
-            Trade-off considered 2026-05-27:
-            - Removing the bias would re-introduce the "SoC doesn't reach 100%"
-              failure mode that originally motivated it.
-            - Making the bias SoC-conditional (only apply > 95%) introduces
-              discontinuity concerns and pollutes near-100% plans similarly.
-            - All EMHASS knob alternatives (soc_final lift, weight_battery_charge
-              modulation, lower battery_maximum_state_of_charge, etc.) either don't
-              address the during-day failure mode or break other parts of the
-              dispatch design (panic curve, lock-in lead).
-            - Annualised cost: ~$3-15/year of marginal imports. Acceptable for the
-              top-balance behaviour gained.
-            DECISION: keep the bias as-is. Future readers: do not "fix" the small
-            imports by removing or conditionalising the bias without re-validating
-            the SoC-reaches-100% behaviour on sunny days.
-            ---------------------------------------------------------------------------- #}
-        {%- set real_soc = states('input_number.battery_soc_5_minute') | float(0) %}
-        {%- set force_charge_bias_pct = 0.20 %}
-        {%- set effective_soc_pct = 100.0 if real_soc >= 100 else ([0, real_soc - force_charge_bias_pct] | max) %}
-        "soc_init": {{ (effective_soc_pct / 100) | round(4) }},
-
-        {# ========================================================================================= #}
-        {#               1. INITIAL VARIABLE SETUP & ASYMMETRICAL FLOATING TARGET                    #}
-        {# ========================================================================================= #}
+        {#- utc_now is also used downstream by the energy-conservation scaling
+            section and the curtailment override; keep it defined here. #}
         {%- set utc_now = utcnow() %}
-        {%- set dayahead_forecasts = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') %}
-        
-        {#- Raw actual SoC, used as a fallback in get_planned_soc when the DH plan
-            doesn't cover the queried timestamp. NOT used in the deviation calc — see
-            the FORCE-CHARGE TOP-BALANCE BIAS comment above; `effective_soc_pct` is
-            used there to keep `soc_init` and the deviation consistent. #}
-        {%- set actual_soc_now = states('input_number.battery_soc_5_minute') | float %}
-        
-        {%- set quantized_now = utc_now.replace(minute = (utc_now.minute // 5) * 5, second=0, microsecond=0) %}
-        {%- set initial_soc_value = states('input_number.battery_soc_30_minute') | float %}
-        {%- set plan_start_time = as_datetime(dayahead_forecasts[0].date) %}
-        {%- set initial_soc_point = {'date': plan_start_time.isoformat(), 'dh_soc_batt_forecast': initial_soc_value} %}
-        {%- set corrected_forecast_builder = namespace(points=[]) %}
-        {%- for item in dayahead_forecasts %}
-          {%- set value_time = as_datetime(item.date) + timedelta(minutes=30) %}
-          {%- set corrected_point = {'date': value_time.isoformat(), 'dh_soc_batt_forecast': item.dh_soc_batt_forecast} %}
-          {%- set corrected_forecast_builder.points = corrected_forecast_builder.points + [corrected_point] %}
-        {%- endfor %}
-        {%- set complete_soc_forecasts = [initial_soc_point] + corrected_forecast_builder.points %}
-        {%- macro get_planned_soc(target_time, forecasts, fallback_soc) -%}
-          {%- set p = namespace(start=none, end=none, start_time=none, end_time=none) %}
-          {%- for item in forecasts %}
-            {%- set item_time = as_datetime(item.date) %}
-            {%- if item_time <= target_time -%}
-              {%- set p.start = item.dh_soc_batt_forecast | float %}
-              {%- set p.start_time = item_time %}
-            {%- elif p.end == none -%}
-              {%- set p.end = item.dh_soc_batt_forecast | float %}
-              {%- set p.end_time = item_time %}
-            {%- endif %}
-          {%- endfor %}
-          {%- if p.start == none and p.end == none %}{{ fallback_soc }}
-          {%- elif p.start == none %}{{ p.end }}
-          {%- elif p.end == none %}{{ p.start }}
-          {%- else %}
-            {%- set total_seconds = (p.end_time - p.start_time).total_seconds() %}
-            {%- if total_seconds > 0 %}
-              {%- set elapsed_seconds = (target_time - p.start_time).total_seconds() %}
-              {%- set factor = elapsed_seconds / total_seconds %}
-              {{ p.start * (1 - factor) + p.end * factor }}
-            {%- else %}
-              {{ p.start }}
-            {%- endif %}
-          {%- endif %}
-        {%- endmacro -%}
-        {%- set future_target_time = quantized_now + timedelta(hours=14) %}
-        {%- set planned_soc_future = get_planned_soc(future_target_time, complete_soc_forecasts, actual_soc_now) | float %}
-        {%- set planned_soc_now = get_planned_soc(quantized_now, complete_soc_forecasts, actual_soc_now) | float %}
-        {# Disable historical +0.5% ahead-of-plan bias while investigating MPC/DH hierarchy. #}
-        {%- set ahead_of_plan_bias_pct = 0.0 %}
-        {# Deviation uses `effective_soc_pct` (NOT raw `actual_soc_now`) so it stays
-           consistent with the force-charge-biased `soc_init` defined at the top of
-           this payload. If raw SoC were used here, the 0.20pp force-charge offset
-           would surface as a phantom lead and the lock-in target below would chase
-           it via grid imports during pure-self-consume periods. #}
-        {%- set deviation = (effective_soc_pct - planned_soc_now) + ahead_of_plan_bias_pct %}
-        {%- set positive_deviation_only = [deviation, 0] | max %}
-        {%- set final_soc_percent = planned_soc_future + positive_deviation_only %}
-        "soc_final": {{ ([([final_soc_percent, 100.0] | min), 0.0] | max / 100) | round(4) }},
         "battery_nominal_energy_capacity": {{ (1000.0*(states('sensor.sigen_plant_rated_energy_capacity')|float(0) * (states('sensor.sigen_plant_battery_state_of_health')|float()/100.0))) | int() }},
-        "battery_minimum_state_of_charge": {{ ([0, (states('input_number.battery_soc_5_minute') | float) - (states('input_number.battery_soc_min_buffer') | float), (states('input_number.battery_soc_min_target') | float)] | sort)[1]/100 | round(4) }},
+        {#- Use the live derived SoC sensor directly (consistent with the MPC
+            script's treatment of actual SoC). Floor still enforced by the
+            existing max() clamp against battery_soc_min_target. #}
+        {%- set live_soc_for_minsoc = states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) %}
+        "battery_minimum_state_of_charge": {{ ([0, live_soc_for_minsoc - (states('input_number.battery_soc_min_buffer') | float), (states('input_number.battery_soc_min_target') | float)] | sort)[1]/100 | round(4) }},
         {#- "set_nodischarge_to_grid": {{ 'false' if actual_soc_now < (states('input_number.battery_soc_min_export') | float) else 'false' }}, #}
 
         {# ========================================================================================= #}
@@ -1114,7 +1027,7 @@ rest_command:
         
         {# Check curtailment conditions #}
         {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float(0) %}
-        {%- set actual_soc_now = states('input_number.battery_soc_5_minute') | float %}
+        {%- set actual_soc_now = states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) %}
         {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) or (actual_soc_now >= 99.9) %}
         
         {%- if pv_currently_curtailed %}
@@ -1197,3 +1110,294 @@ rest_command:
     content_type: "application/json"
     timeout: 240
     payload: "{{ payload }}"
+
+script:
+  # script.emhass_dayahead_optim
+  #
+  # Wrapper around rest_command.emhass_dayahead_optim that applies DH
+  # self-correction. Computes a deviation-adjusted soc_init/soc_final from the
+  # prior DH plan, writes the chosen soc_init to input_number.dh_last_soc_init
+  # so the next run can correctly anchor the plan, then fires the rest_command
+  # with the values as parameters.
+  #
+  # Call this script from automations instead of calling rest_command directly.
+  #
+  # DH SELF-CORRECTION FORMULA:
+  #
+  #   anchor    = dh_last_soc_init   (the soc_init we passed last DH run)
+  #   deviation = actual_soc_now - interp_planned_now   (SIGNED)
+  #   soc_init  = anchor + deviation
+  #   soc_final = anchor + target_soc_offset + deviation
+  #
+  # interp_planned_now linearly interpolates the prior DH plan at utcnow(),
+  # anchored at (plan_start, dh_last_soc_init) — the published
+  # dh_soc_batt_forecast entity only carries end-of-interval values, so the
+  # start anchor has to come from the persisted helper. The chain is bounded
+  # in practice by EMHASS's own SoC clamping plus MPC's live-SoC re-grounding
+  # on every dispatch cycle, so a stable external truth-anchor isn't required.
+  #
+  # Bootstrap: when dh_last_soc_init is 0 (first run after deploy, or HA
+  # restart with no restored state), fall back to the live derived SoC sensor
+  # for the anchor. With no prior plan, deviation = 0, so soc_init = live_soc
+  # on the first cycle. From the second cycle onward the chain is established.
+  emhass_dayahead_optim:
+    alias: EMHASS Day-Ahead Optimisation
+    sequence:
+      - variables:
+          actual_soc_now: "{{ states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) }}"
+          # Anchor = dh_last_soc_init (chain) with live derived sensor as
+          # cold-start fallback. Treating 0 as "missing" is safe — the battery
+          # is never actually at 0%.
+          anchor_soc: >-
+            {% set last = states('input_number.dh_last_soc_init') | float(0) %}
+            {{ last if last > 0 else (states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0)) }}
+          target_soc_offset: "{{ states('input_number.emhass_target_soc_offset') | float(0) }}"
+          min_target: "{{ states('input_number.battery_soc_min_target') | float }}"
+      - variables:
+          deviation_pct: >-
+            {% set utc_now = utcnow() %}
+            {% set actual = actual_soc_now | float %}
+            {% set anchor = anchor_soc | float %}
+            {% set prior = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') | default([], true) %}
+            {% set dev = namespace(value=0.0) %}
+            {% if prior | count > 0 %}
+              {% set plan_start = as_datetime(prior[0].date) %}
+              {% set plan_end = as_datetime((prior | last).date) + timedelta(minutes=30) %}
+              {% if plan_start <= utc_now <= plan_end %}
+                {% set pts = namespace(list=[{'t': plan_start, 's': anchor}]) %}
+                {% for item in prior %}
+                  {% set t = as_datetime(item.date) + timedelta(minutes=30) %}
+                  {% set pts.list = pts.list + [{'t': t, 's': item.dh_soc_batt_forecast | float}] %}
+                {% endfor %}
+                {% set seg = namespace(a=none, b=none, ta=none, tb=none) %}
+                {% for p in pts.list %}
+                  {% if p.t <= utc_now %}
+                    {% set seg.a = p.s %}{% set seg.ta = p.t %}
+                  {% elif seg.b == none %}
+                    {% set seg.b = p.s %}{% set seg.tb = p.t %}
+                  {% endif %}
+                {% endfor %}
+                {% if seg.a != none and seg.b != none %}
+                  {% set span = (seg.tb - seg.ta).total_seconds() %}
+                  {% if span > 0 %}
+                    {% set frac = (utc_now - seg.ta).total_seconds() / span %}
+                    {% set planned = seg.a * (1 - frac) + seg.b * frac %}
+                  {% else %}
+                    {% set planned = seg.a %}
+                  {% endif %}
+                  {% set dev.value = actual - planned %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+            {{ dev.value | float | round(6) }}
+      - variables:
+          soc_init_pct: >-
+            {{ ([min_target, anchor_soc + (deviation_pct | float), 100] | sort)[1] | round(4) }}
+          soc_final_pct: >-
+            {{ ([min_target, anchor_soc + target_soc_offset + (deviation_pct | float), 100] | sort)[1] | round(4) }}
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.dh_last_soc_init
+        data:
+          value: "{{ soc_init_pct }}"
+      - service: rest_command.emhass_dayahead_optim
+        data:
+          soc_init_pct: "{{ soc_init_pct }}"
+          soc_final_pct: "{{ soc_final_pct }}"
+
+  # script.emhass_mpc
+  #
+  # Wrapper around rest_command.emhass_mpc that applies plan-relative
+  # soc_init/soc_final using the prior DH plan, plus the force-charge top-balance
+  # bias. Writes the chosen soc_init to input_number.mpc_last_soc_init for
+  # diagnostics, then fires the rest_command.
+  #
+  # Call this script from automations instead of calling rest_command directly.
+  #
+  # MPC FORMULA:
+  #
+  #   effective_soc_pct = 100 if real_soc >= 100 else max(0, real_soc - 0.20)
+  #   deviation         = effective_soc_pct - planned_soc_at_now    (signed)
+  #   positive_only     = max(deviation, 0)
+  #   soc_init          = clamp(planned_soc_at_boundary + deviation, 0, 100)
+  #   soc_final         = clamp(planned_soc_at_future + positive_only, 0, 100)
+  #
+  # where:
+  #   - planned_soc_at_boundary: prior DH plan interpolated at quantized_now (the
+  #     5-min planning grid boundary, i.e. start of EMHASS's first interval).
+  #   - planned_soc_at_now: prior DH plan interpolated at utcnow() (no
+  #     quantization), matched to the live SoC timestamp so the deviation signal
+  #     has no 5-min step-jumps.
+  #   - planned_soc_at_future: prior DH plan interpolated at quantized_now + 14h
+  #     (the end of the 168-step horizon).
+  #
+  # The plan is anchored on input_number.dh_last_soc_init (the soc_init actually
+  # passed to the most recent DH run). Fallback to the live derived SoC sensor
+  # when the helper is at its initial 0 value (cold start); when the prior plan
+  # doesn't cover the queried timestamp, the interpolation falls back to
+  # actual_soc_now via the lookup default.
+  #
+  # ---------------------------------------------------------------------------
+  # FORCE-CHARGE TOP-BALANCE BIAS
+  #
+  # `effective_soc_pct` deflates the live SoC by 0.20pp whenever SoC < 100%.
+  # That deflation feeds the deviation calc, and the deviation in turn feeds
+  # both soc_init and soc_final — so the bias propagates through both anchors.
+  # The result is a small synthetic energy deficit (~60 Wh on a 30 kWh battery)
+  # that EMHASS must close somewhere in its 14h horizon.
+  #
+  # Why it's there (two intertwined purposes):
+  # 1. Top-balance: at very high SoC (e.g. 99.9%) EMHASS would otherwise plan
+  #    only a tiny charge in the final 5-min interval to reach 100% — but the
+  #    battery cells need slightly more power than the strict SoC math implies
+  #    in order to top-balance. The bias inflates the headroom and gives EMHASS
+  #    more power budget in those final moments.
+  # 2. Reaching 100% at all: without the bias, EMHASS would happily spread
+  #    charging across the day (quadratic power cost penalty rewards flattening),
+  #    then pivot from "charge from PV" to "export to grid" as late-afternoon
+  #    prices rise — often before the battery reaches 100%. The synthetic deficit
+  #    keeps the LP on the "charge" side of that corner for longer, so SoC
+  #    actually tops out at 100% on most sunny days. This needs to work in
+  #    concert with the "nearly full" handling in automation-sigenergy-emhass.yaml;
+  #    both mitigations have been empirically necessary.
+  #
+  # Known side effect (left as-is): when actual SoC sits roughly *on* DH's
+  # planned trajectory (deviation ≈ 0), the bias makes the deviation slightly
+  # negative, lock-in adds nothing, and soc_init is `force_charge_bias_pct`
+  # below the planned trajectory. With matched load and PV totals (energy
+  # conservation scaling), MPC has to make up the synthetic deficit — typically
+  # via ~50 Wh of small grid imports across one or two 5-min slots per cycle
+  # (~$0.01-0.02/cycle, ~$3-15/year). Trade-off considered 2026-05-27: keep the
+  # bias. Do not "fix" the small imports by removing or conditionalising the
+  # bias without re-validating the SoC-reaches-100% behaviour on sunny days.
+  # ---------------------------------------------------------------------------
+  emhass_mpc:
+    alias: EMHASS MPC Optimisation
+    sequence:
+      - variables:
+          # MPC reads the live derived SoC sensor directly for actual current
+          # SoC. The 5-min snapshot's lag is inconsistent with MPC's 1-min
+          # cadence and the unquantised deviation reference.
+          actual_soc_now: "{{ states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) }}"
+      - variables:
+          # Build the (t, soc) trajectory from the prior DH plan, anchored on
+          # dh_last_soc_init (the soc_init actually passed to the previous DH
+          # run) with the live derived sensor as bootstrap fallback when the
+          # helper is unset. Returns JSON because subsequent variables blocks
+          # need typed access to the three interpolated lookups. Macro-free for
+          # HA template-engine reliability.
+          interpolated: >-
+            {% set utc_now = utcnow() %}
+            {% set quantized = utc_now.replace(minute = (utc_now.minute // 5) * 5, second=0, microsecond=0) %}
+            {% set future_t = quantized + timedelta(hours=14) %}
+            {% set last_init = states('input_number.dh_last_soc_init') | float(0) %}
+            {% set actual = actual_soc_now | float %}
+            {% set prior = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') | default([], true) %}
+            {% set pts = namespace(list=[]) %}
+            {% if prior | count > 0 %}
+              {% set plan_start = as_datetime(prior[0].date) %}
+              {% set prior_anchor = last_init if last_init > 0 else actual %}
+              {% set pts.list = [{'t': plan_start, 's': prior_anchor}] %}
+              {% for item in prior %}
+                {% set t = as_datetime(item.date) + timedelta(minutes=30) %}
+                {% set pts.list = pts.list + [{'t': t, 's': item.dh_soc_batt_forecast | float}] %}
+              {% endfor %}
+            {% endif %}
+            {# ----- inline interpolation at quantized (boundary) ----- #}
+            {% set vb = namespace(value=actual) %}
+            {% set sb = namespace(a=none, b=none, ta=none, tb=none) %}
+            {% for p in pts.list %}
+              {% if p.t <= quantized %}
+                {% set sb.a = p.s %}
+                {% set sb.ta = p.t %}
+              {% elif sb.b == none %}
+                {% set sb.b = p.s %}
+                {% set sb.tb = p.t %}
+              {% endif %}
+            {% endfor %}
+            {% if sb.a != none and sb.b != none %}
+              {% set span = (sb.tb - sb.ta).total_seconds() %}
+              {% if span > 0 %}
+                {% set frac = (quantized - sb.ta).total_seconds() / span %}
+                {% set vb.value = sb.a * (1 - frac) + sb.b * frac %}
+              {% else %}
+                {% set vb.value = sb.a %}
+              {% endif %}
+            {% elif sb.a != none %}{% set vb.value = sb.a %}
+            {% elif sb.b != none %}{% set vb.value = sb.b %}
+            {% endif %}
+            {# ----- inline interpolation at utc_now ----- #}
+            {% set vn = namespace(value=actual) %}
+            {% set sn = namespace(a=none, b=none, ta=none, tb=none) %}
+            {% for p in pts.list %}
+              {% if p.t <= utc_now %}
+                {% set sn.a = p.s %}
+                {% set sn.ta = p.t %}
+              {% elif sn.b == none %}
+                {% set sn.b = p.s %}
+                {% set sn.tb = p.t %}
+              {% endif %}
+            {% endfor %}
+            {% if sn.a != none and sn.b != none %}
+              {% set span = (sn.tb - sn.ta).total_seconds() %}
+              {% if span > 0 %}
+                {% set frac = (utc_now - sn.ta).total_seconds() / span %}
+                {% set vn.value = sn.a * (1 - frac) + sn.b * frac %}
+              {% else %}
+                {% set vn.value = sn.a %}
+              {% endif %}
+            {% elif sn.a != none %}{% set vn.value = sn.a %}
+            {% elif sn.b != none %}{% set vn.value = sn.b %}
+            {% endif %}
+            {# ----- inline interpolation at future_t (end of 168-step horizon) ----- #}
+            {% set vf = namespace(value=actual) %}
+            {% set sf = namespace(a=none, b=none, ta=none, tb=none) %}
+            {% for p in pts.list %}
+              {% if p.t <= future_t %}
+                {% set sf.a = p.s %}
+                {% set sf.ta = p.t %}
+              {% elif sf.b == none %}
+                {% set sf.b = p.s %}
+                {% set sf.tb = p.t %}
+              {% endif %}
+            {% endfor %}
+            {% if sf.a != none and sf.b != none %}
+              {% set span = (sf.tb - sf.ta).total_seconds() %}
+              {% if span > 0 %}
+                {% set frac = (future_t - sf.ta).total_seconds() / span %}
+                {% set vf.value = sf.a * (1 - frac) + sf.b * frac %}
+              {% else %}
+                {% set vf.value = sf.a %}
+              {% endif %}
+            {% elif sf.a != none %}{% set vf.value = sf.a %}
+            {% elif sf.b != none %}{% set vf.value = sf.b %}
+            {% endif %}
+            {{ {'at_boundary': vb.value, 'at_now': vn.value, 'at_future': vf.value} | tojson }}
+      - variables:
+          real_soc: "{{ actual_soc_now | float(0) }}"
+          effective_soc_pct: >-
+            {% set rs = actual_soc_now | float(0) %}
+            {{ 100.0 if rs >= 100 else ([0, rs - 0.20] | max) }}
+          # HA's script-variable engine auto-parses native-looking output, so
+          # `interpolated` ends up as a dict — access the fields directly rather
+          # than re-parsing via from_json (which only accepts strings).
+          planned_at_boundary: "{{ interpolated.at_boundary | float }}"
+          planned_at_now: "{{ interpolated.at_now | float }}"
+          planned_at_future: "{{ interpolated.at_future | float }}"
+      - variables:
+          deviation_pct: "{{ ((effective_soc_pct | float) - (planned_at_now | float)) | round(6) }}"
+          positive_deviation_only: "{{ [((effective_soc_pct | float) - (planned_at_now | float)), 0] | max | round(6) }}"
+      - variables:
+          soc_init_pct: >-
+            {{ ([0, (planned_at_boundary | float) + (deviation_pct | float), 100] | sort)[1] | round(4) }}
+          soc_final_pct: >-
+            {{ ([0, (planned_at_future | float) + (positive_deviation_only | float), 100] | sort)[1] | round(4) }}
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.mpc_last_soc_init
+        data:
+          value: "{{ soc_init_pct }}"
+      - service: rest_command.emhass_mpc
+        data:
+          soc_init_pct: "{{ soc_init_pct }}"
+          soc_final_pct: "{{ soc_final_pct }}"

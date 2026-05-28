@@ -9,8 +9,8 @@ shadow stack and the eval framework only), the daily housekeeping
 (`update-tariffs`, `update-adjusters`, `backfill-actuals`), and weekly
 model training. Those run but are not load-bearing for dispatch *today*.
 
-Pipeline written as it stands 2026-05-27, after the event-driven
-predict-price refresh and staged-publish landed.
+Pipeline written as it stands 2026-05-29, after the EMHASS script-wrapper
+refactor (DH self-correction + persisted soc_init helpers) landed.
 
 ## MPC tier — 14h horizon
 
@@ -26,8 +26,14 @@ needed.
 3. HA automation **"EMHASS MPC optim on 5min price update"** fires on
    either entity changing, or on a time-pattern `:25` fallback between
    price updates so the plan keeps tracking SoC/load drift.
-4. Automation calls `rest_command.emhass_mpc` → EMHASS computes battery
-   plan → `rest_command.emhass_publish_data_mpc` publishes results.
+4. Automation calls `script.emhass_mpc`. The script: interpolates the
+   prior DH plan at three timestamps (5-min boundary / utcnow / +14h),
+   computes deviation against the live derived SoC, derives
+   `soc_init_pct` and `soc_final_pct`, writes the chosen soc_init to
+   `input_number.mpc_last_soc_init` (diagnostic), then fires
+   `rest_command.emhass_mpc` with the values as parameters → EMHASS
+   computes battery plan → `rest_command.emhass_publish_data_mpc`
+   publishes results. See `docs/production_soc_policy.md` for the formula.
 5. Automation triggers
    `automation.battery_ems_control_based_on_emhass_forecasts` → Sigenergy
    script writes battery setpoints.
@@ -78,12 +84,26 @@ prod sensor.
 4. HA automation **"EMHASS dayahead optim on AI forecast update"** fires
    on state change of either `sensor.ai_price_forecast` (~5×/hr) or
    `sensor.ai_load_forecast` (2×/hr).
-5. Snapshots current SoC into `input_number.emhass_dayahead_soc_init`.
-6. Calls `rest_command.emhass_dayahead_optim` → EMHASS computes 72h
-   plan → `rest_command.emhass_publish_data_dh` publishes it.
+5. Calls `script.emhass_dayahead_optim`. The script: interpolates the
+   prior DH plan at `utcnow()` (anchored on `dh_last_soc_init`), computes
+   signed deviation against the live derived SoC, derives
+   `soc_init_pct = anchor + deviation` and
+   `soc_final_pct = anchor + emhass_target_soc_offset + deviation`,
+   writes the chosen soc_init back to `input_number.dh_last_soc_init`
+   (the next run's chain anchor and MPC's plan-anchor reference), then
+   fires `rest_command.emhass_dayahead_optim` with the values as
+   parameters → EMHASS computes 72h plan →
+   `rest_command.emhass_publish_data_dh` publishes it. See
+   `docs/production_soc_policy.md` for the formula.
 
 **Latency from forecast publish → DH plan ready**: a couple of seconds
 inside EMHASS plus the 1s defensive action delay.
+
+**Note:** the automation also still writes
+`input_number.sigen_plant_battery_state_of_charge → input_number.emhass_dayahead_soc_init`
+before calling the script. The write is now a no-op (the script reads the live
+SoC sensor directly and the helper is no longer consumed) but is left in place
+for diagnostic continuity.
 
 ## End-to-end summary
 

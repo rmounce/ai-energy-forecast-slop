@@ -243,15 +243,17 @@ the `forecasts` attribute.
 | `input_number.emhass_weight_battery_discharge` | Battery discharge cost penalty in EMHASS objective | 0.0+ |
 | `input_number.emhass_weight_forecast_probability` | EMHASS stochastic optimisation probability weight | 0–1 |
 | `input_number.emhass_day_ahead_forecast_probability_weight` | DH probability weight | 0–1 |
-| `input_number.emhass_target_soc_offset` | Offset added to EMHASS-derived target SoC | — |
-| `input_number.emhass_dayahead_soc_init` | Initial SoC sent to DH EMHASS solve | % |
+| `input_number.emhass_target_soc_offset` | Offset added to EMHASS-derived target SoC. Externally adjusted by a feedback loop (see `docs/production_soc_policy.md`) | — |
+| `input_number.emhass_dayahead_soc_init` | **Legacy**, written by an older DH automation but no longer consumed by `rest_command.emhass_dayahead_optim` after the script-wrapper refactor. Retained for diagnostics only | % |
+| `input_number.dh_last_soc_init` | soc_init actually passed to the most recent DH run. Written by `script.emhass_dayahead_optim`. Used by both DH (next run's chain anchor) and MPC (prior plan's start anchor for interpolation, because the published `dh_soc_batt_forecast` only carries end-of-interval values) | % |
+| `input_number.mpc_last_soc_init` | soc_init actually passed to the most recent MPC run. Written by `script.emhass_mpc`. Diagnostic only — no current consumer | % |
 
 ### Battery state tracking
 
 | Entity | Description |
 |---|---|
-| `input_number.battery_soc_30_minute` | Battery SoC (%) updated every 30 min (DH initial SoC source) |
-| `input_number.battery_soc_5_minute` | Battery SoC (%) updated every 5 min (MPC initial SoC source) |
+| `input_number.battery_soc_30_minute` | Battery SoC (%) updated every 30 min. **Diagnostic mirror only** since the EMHASS script-wrapper refactor — `script.emhass_dayahead_optim` reads `sensor.sigen_plant_battery_state_of_charge_derived` directly |
+| `input_number.battery_soc_5_minute` | Battery SoC (%) updated every 5 min. **Diagnostic mirror only** since the EMHASS script-wrapper refactor — both `script.emhass_dayahead_optim` and `script.emhass_mpc` read `sensor.sigen_plant_battery_state_of_charge_derived` directly |
 | `input_number.battery_soc_min_buffer` | Minimum SoC buffer (%) |
 | `input_number.battery_soc_min_export` | Minimum SoC before export allowed (%) |
 | `input_number.battery_soc_min_target` | Minimum overnight SoC target (%) |
