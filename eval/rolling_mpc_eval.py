@@ -87,7 +87,11 @@ from eval.pd_direct_baseline import (  # noqa: E402
 )
 PARQUET_DIR = ROOT / "data" / "parquet"
 RESULTS_DIR = ROOT / "eval" / "results"
-PRICE_FORECAST_LOG = ROOT / "price_forecast_log.csv"
+# AI_ENERGY_PRICE_FORECAST_LOG override lets A/B-style experiments point the
+# `amber_apf_lgbm` strategic source at a generated log without modifying prod.
+PRICE_FORECAST_LOG = Path(
+    os.environ.get("AI_ENERGY_PRICE_FORECAST_LOG", ROOT / "price_forecast_log.csv")
+)
 LOAD_FORECAST_LOG = ROOT / "load_forecast_log.csv"
 TFT_LOAD_FORECAST_LOG = ROOT / "tft_load_forecast_log.csv"
 OOF_FILE = PARQUET_DIR / "debiased_pd_rrp_oof.parquet"
