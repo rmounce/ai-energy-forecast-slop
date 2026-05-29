@@ -1,0 +1,48 @@
+# Backup of the "EMHASS - Calculate and Set Target SOC Offset" automation
+# as it existed in HA UI before being squashed into script.emhass_dayahead_optim
+# on 2026-05-30. Kept for reference; not loaded by HA.
+#
+# The squashed-in equivalent lives in hass/package-emhass.yaml under
+# script.emhass_dayahead_optim (look for "+72h OFFSET FEEDBACK LOOP").
+# See docs/production_soc_policy.md § "The +72h offset feedback loop" for
+# the rationale and the formula.
+#
+# Notable original quirks preserved here verbatim:
+# - The commented-out clamp on the last line referenced
+#   input_number.battery_soc_30_minute. That clamp was already inert (inside
+#   a {# #} Jinja block); the migration dropped the reference entirely.
+# - The [-48:] slice takes the last 48 entries of a 144-entry 72h plan (30-min
+#   cadence), i.e. +48h..+72h — the *back* of the horizon, not the next 24h.
+
+alias: EMHASS - Calculate and Set Target SOC Offset
+description: >-
+  Calculates the new SOC offset when a new day-ahead forecast is available and
+  saves it.
+triggers:
+  - entity_id: sensor.dh_soc_batt_forecast
+    trigger: state
+conditions:
+  - condition: template
+    value_template: |-
+      {{ trigger.to_state.state not in ['unavailable', 'unknown', 'none']
+         and trigger.to_state.attributes.battery_scheduled_soc is defined
+         and trigger.to_state.attributes.battery_scheduled_soc is not none }}
+actions:
+  - target:
+      entity_id: input_number.emhass_target_soc_offset
+    data:
+      value: >-
+        {# Step 1: Retrieve the current offset from our 'memory' (the
+        input_number). #} {% set current_offset =
+        states('input_number.emhass_target_soc_offset') | float(0) %} {# Step 3:
+        Find the maximum SOC forecast in the last 24h. #} {% set
+        max_forecast_soc = (state_attr('sensor.dh_soc_batt_forecast',
+        'battery_scheduled_soc')|map(attribute='dh_soc_batt_forecast')|map('float')|list)[-48:]|max
+        %} {# Step 4: Calculate the adjusted offset. #} {% set new_offset =
+        current_offset + (97.5 - max_forecast_soc) %} {# Step 5: Clamp the final
+        value and return it. #} {% set current_soc =
+        states('input_number.battery_soc_30_minute') | float %} {# ([0,
+        min(new_offset, 97.5 - current_soc), 100] | sort)[1] | round(2) #} {# or
+        just return it #} {{ new_offset }}
+    action: input_number.set_value
+mode: single
