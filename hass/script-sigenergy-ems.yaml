@@ -106,49 +106,174 @@ sequence:
       v_pcs_import_limit: >-
         {{ pcs_import_limit_kw if pcs_import_limit_kw is defined and
         pcs_import_limit_kw not in [none, ''] else 100 }}
-  - target:
-      entity_id: input_number.desired_export_limit
-    data:
-      value: "{{ v_export_limit }}"
-    action: input_number.set_value
-  - target:
-      entity_id: input_number.desired_import_limit
-    data:
-      value: "{{ v_import_limit }}"
-    action: input_number.set_value
-  - target:
-      entity_id: input_number.desired_pcs_export_limit
-    data:
-      value: "{{ v_pcs_export_limit }}"
-    action: input_number.set_value
-  - target:
-      entity_id: input_number.desired_pcs_import_limit
-    data:
-      value: "{{ v_pcs_import_limit }}"
-    action: input_number.set_value
-  - target:
-      entity_id: select.sigen_plant_remote_ems_control_mode
-    data:
-      option: "{{ v_control_mode }}"
-    action: select.select_option
-  - target:
-      entity_id: number.sigen_plant_ess_max_charging_limit
-    data:
-      value: "{{ v_charge_limit }}"
-    action: number.set_value
-  - target:
-      entity_id: number.sigen_plant_ess_max_discharging_limit
-    data:
-      value: "{{ v_discharge_limit }}"
-    action: number.set_value
-  - target:
-      entity_id: number.sigen_plant_pv_max_power_limit
-    data:
-      value: "{{ v_pv_max_power_limit }}"
-    action: number.set_value
+  - variables:
+      # Current EMS mode and a flag for whether this call changes it. The
+      # limit/mode race only exists across an actual mode transition.
+      v_current_mode: "{{ states('select.sigen_plant_remote_ems_control_mode') }}"
+      v_mode_changing: >-
+        {{ v_control_mode != states('select.sigen_plant_remote_ems_control_mode') }}
+      # Current hardware limit values, used to compute transition-safe minima.
+      v_cur_export: "{{ states('number.sigen_plant_grid_export_limitation') | float(10) }}"
+      v_cur_import: "{{ states('number.sigen_plant_grid_import_limitation') | float(15) }}"
+      v_cur_pcs_export: "{{ states('number.sigen_plant_pcs_export_limitation') | float(100) }}"
+      v_cur_pcs_import: "{{ states('number.sigen_plant_pcs_import_limitation') | float(100) }}"
+      v_cur_charge: "{{ states('number.sigen_plant_ess_max_charging_limit') | float(21) }}"
+      v_cur_discharge: "{{ states('number.sigen_plant_ess_max_discharging_limit') | float(24) }}"
+      v_cur_pv: "{{ states('number.sigen_plant_pv_max_power_limit') | float(100) }}"
+      # Transition-safe "lowered" values = min(current, target). Applied before
+      # the mode flip so no limit is ever higher than both endpoints mid-flip.
+      v_low_export: "{{ [v_cur_export, v_export_limit | float] | min }}"
+      v_low_import: "{{ [v_cur_import, v_import_limit | float] | min }}"
+      v_low_pcs_export: "{{ [v_cur_pcs_export, v_pcs_export_limit | float] | min }}"
+      v_low_pcs_import: "{{ [v_cur_pcs_import, v_pcs_import_limit | float] | min }}"
+      v_low_charge: "{{ [v_cur_charge, v_charge_limit | float] | min }}"
+      v_low_discharge: "{{ [v_cur_discharge, v_discharge_limit | float] | min }}"
+      v_low_pv: "{{ [v_cur_pv, v_pv_max_power_limit | float] | min }}"
+  # Charge cutoff SoC is not a power limit (no burst risk), so it is set once
+  # regardless of mode-change ordering.
   - target:
       entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
     data:
       value: "{{ v_charge_cutoff }}"
     action: number.set_value
+  - if:
+      - condition: template
+        value_template: "{{ v_mode_changing }}"
+    then:
+      # Mode transition. Lower every limit to min(current, target) BEFORE flipping
+      # the mode, wait for the async grid/PCS limits to land on the hardware, flip
+      # the mode, then raise every limit to its target. This guarantees the
+      # inverter is never in a power-moving mode behind a stale, too-high limit
+      # (the cause of full-power export/import bursts on transitions).
+      # --- Phase 1: lower ---
+      - target:
+          entity_id: input_number.desired_export_limit
+        data:
+          value: "{{ v_low_export }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_import_limit
+        data:
+          value: "{{ v_low_import }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_pcs_export_limit
+        data:
+          value: "{{ v_low_pcs_export }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_pcs_import_limit
+        data:
+          value: "{{ v_low_pcs_import }}"
+        action: input_number.set_value
+      - target:
+          entity_id: number.sigen_plant_ess_max_charging_limit
+        data:
+          value: "{{ v_low_charge }}"
+        action: number.set_value
+      - target:
+          entity_id: number.sigen_plant_ess_max_discharging_limit
+        data:
+          value: "{{ v_low_discharge }}"
+        action: number.set_value
+      - target:
+          entity_id: number.sigen_plant_pv_max_power_limit
+        data:
+          value: "{{ v_low_pv }}"
+        action: number.set_value
+      # Wait for the async (master-limit-controlled) grid/PCS limits to settle at
+      # or below their lowered values before flipping the mode. The controller may
+      # clamp even lower (amber/flexible), which still satisfies the check.
+      # continue_on_timeout avoids hanging if it is slow.
+      - wait_template: >-
+          {{ states('number.sigen_plant_grid_export_limitation') | float(10) <= v_low_export + 0.001
+             and states('number.sigen_plant_grid_import_limitation') | float(15) <= v_low_import + 0.001
+             and states('number.sigen_plant_pcs_export_limitation') | float(100) <= v_low_pcs_export + 0.001
+             and states('number.sigen_plant_pcs_import_limitation') | float(100) <= v_low_pcs_import + 0.001 }}
+        timeout: "00:00:03"
+        continue_on_timeout: true
+      # --- Phase 2: flip mode (all caps now at safe-low values) ---
+      - target:
+          entity_id: select.sigen_plant_remote_ems_control_mode
+        data:
+          option: "{{ v_control_mode }}"
+        action: select.select_option
+      # --- Phase 3: raise limits to their targets, now in the final mode ---
+      - target:
+          entity_id: input_number.desired_export_limit
+        data:
+          value: "{{ v_export_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_import_limit
+        data:
+          value: "{{ v_import_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_pcs_export_limit
+        data:
+          value: "{{ v_pcs_export_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_pcs_import_limit
+        data:
+          value: "{{ v_pcs_import_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: number.sigen_plant_ess_max_charging_limit
+        data:
+          value: "{{ v_charge_limit }}"
+        action: number.set_value
+      - target:
+          entity_id: number.sigen_plant_ess_max_discharging_limit
+        data:
+          value: "{{ v_discharge_limit }}"
+        action: number.set_value
+      - target:
+          entity_id: number.sigen_plant_pv_max_power_limit
+        data:
+          value: "{{ v_pv_max_power_limit }}"
+        action: number.set_value
+    else:
+      # No mode transition: ordering is irrelevant, so apply every target directly.
+      - target:
+          entity_id: input_number.desired_export_limit
+        data:
+          value: "{{ v_export_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_import_limit
+        data:
+          value: "{{ v_import_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_pcs_export_limit
+        data:
+          value: "{{ v_pcs_export_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: input_number.desired_pcs_import_limit
+        data:
+          value: "{{ v_pcs_import_limit }}"
+        action: input_number.set_value
+      - target:
+          entity_id: number.sigen_plant_ess_max_charging_limit
+        data:
+          value: "{{ v_charge_limit }}"
+        action: number.set_value
+      - target:
+          entity_id: number.sigen_plant_ess_max_discharging_limit
+        data:
+          value: "{{ v_discharge_limit }}"
+        action: number.set_value
+      - target:
+          entity_id: number.sigen_plant_pv_max_power_limit
+        data:
+          value: "{{ v_pv_max_power_limit }}"
+        action: number.set_value
+      - target:
+          entity_id: select.sigen_plant_remote_ems_control_mode
+        data:
+          option: "{{ v_control_mode }}"
+        action: select.select_option
 mode: single
