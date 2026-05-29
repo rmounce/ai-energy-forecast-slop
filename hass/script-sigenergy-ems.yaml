@@ -198,6 +198,16 @@ sequence:
         data:
           option: "{{ v_control_mode }}"
         action: select.select_option
+      # Wait for the mode flip to be read back before raising any limit, so we
+      # don't raise the limit that gated the mode we just left (e.g. export when
+      # leaving discharge) while the inverter is still in that mode. Harmless if
+      # the select entity is optimistic (passes immediately); if so, replace with
+      # a short delay (check the script trace — Phase 3 wait returning ~0ms means
+      # optimistic).
+      - wait_template: >-
+          {{ states('select.sigen_plant_remote_ems_control_mode') == v_control_mode }}
+        timeout: "00:00:03"
+        continue_on_timeout: true
       # --- Phase 3: raise limits to their targets, now in the final mode ---
       - target:
           entity_id: input_number.desired_export_limit
