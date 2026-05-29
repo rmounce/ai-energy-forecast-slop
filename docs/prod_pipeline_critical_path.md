@@ -84,17 +84,18 @@ prod sensor.
 4. HA automation **"EMHASS dayahead optim on AI forecast update"** fires
    on state change of either `sensor.ai_price_forecast` (~5×/hr) or
    `sensor.ai_load_forecast` (2×/hr).
-5. Calls `script.emhass_dayahead_optim`. The script: interpolates the
-   prior DH plan at `utcnow()` (anchored on `dh_last_soc_init`), computes
-   signed deviation against the live derived SoC, derives
-   `soc_init_pct = anchor + deviation` and
-   `soc_final_pct = anchor + emhass_target_soc_offset + deviation`,
-   writes the chosen soc_init back to `input_number.dh_last_soc_init`
-   (the next run's chain anchor and MPC's plan-anchor reference), then
-   fires `rest_command.emhass_dayahead_optim` with the values as
-   parameters → EMHASS computes 72h plan →
-   `rest_command.emhass_publish_data_dh` publishes it. See
-   `docs/production_soc_policy.md` for the formula.
+5. Calls `script.emhass_dayahead_optim`. The script: recomputes
+   `emhass_target_soc_offset` from the prior DH plan's +48h..+72h peak SoC
+   (squashed-in feedback loop, formerly a separate HA automation),
+   interpolates the prior DH plan at `utcnow()` (anchored on
+   `dh_last_soc_init`), computes signed deviation against the live derived
+   SoC, derives `soc_init_pct = anchor + deviation` and
+   `soc_final_pct = anchor + emhass_target_soc_offset + deviation`, writes
+   both updated helper values back to `input_number.dh_last_soc_init` and
+   `input_number.emhass_target_soc_offset`, then fires
+   `rest_command.emhass_dayahead_optim` with the values as parameters →
+   EMHASS computes 72h plan → `rest_command.emhass_publish_data_dh`
+   publishes it. See `docs/production_soc_policy.md` for the formulas.
 
 **Latency from forecast publish → DH plan ready**: a couple of seconds
 inside EMHASS plus the 1s defensive action delay.

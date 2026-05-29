@@ -1140,6 +1140,23 @@ script:
   # restart with no restored state), fall back to the live derived SoC sensor
   # for the anchor. With no prior plan, deviation = 0, so soc_init = live_soc
   # on the first cycle. From the second cycle onward the chain is established.
+  #
+  # +72h OFFSET FEEDBACK LOOP (squashed in 2026-05-29):
+  #
+  # target_soc_offset is recomputed each run as:
+  #
+  #   max_tail   = max( prior_plan.battery_scheduled_soc[-48:] )
+  #                # last 48 of the 72h plan (30-min cadence) = +48h..+72h
+  #   new_offset = current_offset + (97.5 - max_tail)
+  #
+  # The new value is persisted to input_number.emhass_target_soc_offset and
+  # used in the soc_final formula in the same run. The loop biases the LP
+  # toward keeping ~97.5% SoC reachable in the back third of the 72h horizon:
+  # if the prior plan's peak tail SoC fell below 97.5%, the offset increments
+  # to push the next solve higher; if it overshot, the offset decrements.
+  # On cold start (no prior plan), the offset is left unchanged. Formerly an
+  # HA automation triggered by sensor.dh_soc_batt_forecast state changes —
+  # same once-per-DH-solve cadence, now race-free across HA restarts.
   emhass_dayahead_optim:
     alias: EMHASS Day-Ahead Optimisation
     sequence:
@@ -1151,7 +1168,19 @@ script:
           anchor_soc: >-
             {% set last = states('input_number.dh_last_soc_init') | float(0) %}
             {{ last if last > 0 else (states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0)) }}
-          target_soc_offset: "{{ states('input_number.emhass_target_soc_offset') | float(0) }}"
+          # +72h offset feedback — see docstring above. Computed inline from the
+          # prior DH plan's tail-end SoC; the new value is written back to
+          # input_number.emhass_target_soc_offset before the rest_command fires.
+          target_soc_offset: >-
+            {%- set current = states('input_number.emhass_target_soc_offset') | float(0) -%}
+            {%- set prior = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') | default([], true) -%}
+            {%- if prior | count > 0 -%}
+              {%- set tail = prior[-48:] | map(attribute='dh_soc_batt_forecast') | map('float') | list -%}
+              {%- set max_tail = tail | max -%}
+              {{ (current + (97.5 - max_tail)) | round(4) }}
+            {%- else -%}
+              {{ current | round(4) }}
+            {%- endif -%}
           min_target: "{{ states('input_number.battery_soc_min_target') | float }}"
       - variables:
           deviation_pct: >-
@@ -1200,6 +1229,11 @@ script:
           entity_id: input_number.dh_last_soc_init
         data:
           value: "{{ soc_init_pct }}"
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.emhass_target_soc_offset
+        data:
+          value: "{{ target_soc_offset }}"
       - service: rest_command.emhass_dayahead_optim
         data:
           soc_init_pct: "{{ soc_init_pct }}"

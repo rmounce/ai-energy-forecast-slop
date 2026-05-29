@@ -73,13 +73,29 @@ from the second cycle onward the chain is established.
 ## The +72h offset feedback loop
 
 `input_number.emhass_target_soc_offset` is **not** static or user-set in normal
-operation. An external HA automation (lives in the user's main HA configuration,
-not in this repo) **continuously adjusts the offset** based on whether the most
-recent DH plan reaches ~98% within the last 24 hours of the 72h forecast:
+operation. `script.emhass_dayahead_optim` **continuously adjusts the offset**
+at the top of every DH run based on whether the most recent DH plan reaches
+~97.5% within the last 24 hours of the 72h forecast:
 
-- If the latest DH-planned trajectory **does not** hit ~98% within +48h..+72h, the
-  offset is **incremented** so the next DH solve targets a higher terminal SoC.
-- If the trajectory **does** hit ~98% comfortably, the offset is **decremented**.
+```
+max_tail   = max( prior_plan.battery_scheduled_soc[-48:] )   # +48h..+72h
+new_offset = current_offset + (97.5 − max_tail)
+```
+
+- If the latest DH-planned trajectory **does not** hit ~97.5% within +48h..+72h,
+  the offset is **incremented** so the same DH solve targets a higher terminal
+  SoC.
+- If the trajectory **does** hit ~97.5% comfortably, the offset is **decremented**.
+
+The new value is written back to `input_number.emhass_target_soc_offset` before
+the rest_command fires, and is also used directly in the current run's
+`soc_final` computation. On cold start (no prior plan), the offset is left
+unchanged.
+
+Pre-2026-05-29 history: this loop lived in an HA-UI automation triggered by
+`sensor.dh_soc_batt_forecast` state changes. It was squashed into the DH script
+on 2026-05-29 — same once-per-DH-solve cadence, no HA UI sync surface,
+race-free across HA restarts.
 
 This is a feedback loop that anchors the terminal target near 100% with a positive
 bias toward maintaining higher SoC. The target itself is a moving target — it may
@@ -249,11 +265,11 @@ comparing what *would* have happened under each forecast had it been driving DH.
 
 ## Open questions
 
-- The HA automation that adjusts `emhass_target_soc_offset` is not synced into
-  this repo. The increment/decrement step size, hysteresis behaviour, and exact
-  "reaches 98% within last 24h" detection logic are all defined in the user's
-  main HA configuration. Worth syncing when convenient — they are part of the
-  production control contract.
+- ~~The HA automation that adjusts `emhass_target_soc_offset` is not synced
+  into this repo.~~ Resolved 2026-05-29: squashed into
+  `script.emhass_dayahead_optim`. The dead `battery_soc_30_minute` clamp from
+  the original automation (already commented out) was dropped in the migration;
+  the offset remains unclamped.
 - A future `eval/rolling_mpc_eval.py` flag (e.g.
   `--strategic-terminal-soc-target-kwh`) could optionally constrain the strategic
   LP to end at ~95–98% SoC, mirroring the production constraint. Not currently
