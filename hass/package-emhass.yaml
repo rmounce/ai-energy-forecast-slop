@@ -1141,6 +1141,19 @@ script:
   # for the anchor. With no prior plan, deviation = 0, so soc_init = live_soc
   # on the first cycle. From the second cycle onward the chain is established.
   #
+  # 30-MIN BOUNDARY RE-GROUNDING (2026-05-30):
+  #
+  # When the script fires within 60s of a wall-clock 30-min boundary (xx:00 or
+  # xx:30), set anchor = live_soc and deviation = 0 directly. EMHASS's DH
+  # quantization shifts at these boundaries (solve quantization snaps to the
+  # new xx:00/xx:30), and the chained anchor + prior-plan interpolation
+  # interact across the boundary to produce a ~1pp jump in the next solve's
+  # plan max_tail. Re-grounding to live_soc cuts that interaction. Re-grounding
+  # is harmless on non-boundary runs (chain still works), and the chain
+  # restarts cleanly from live_soc after each boundary.
+  # Price-triggered solves fire ~10-30s past xx:00/xx:30 (catches them);
+  # load-triggered solves fire ~75-95s past xx:01/xx:31 (does not).
+  #
   # target_soc_offset is maintained by the post-solve "EMHASS — Update target
   # SoC offset" automation in this same package YAML (triggered on
   # sensor.dh_soc_batt_forecast state changes). The script reads the current
@@ -1152,51 +1165,68 @@ script:
     sequence:
       - variables:
           actual_soc_now: "{{ states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) }}"
-          # Anchor = dh_last_soc_init (chain) with live derived sensor as
-          # cold-start fallback. Treating 0 as "missing" is safe — the battery
-          # is never actually at 0%.
+          # Seconds past the most recent wall-clock 30-min boundary. < 60 ⇒
+          # this is a boundary-crossing solve and we should re-ground the
+          # chained anchor; see docstring above.
+          secs_past_30min: "{{ ((utcnow().minute % 30) * 60 + utcnow().second) | int }}"
+      - variables:
+          # Anchor: dh_last_soc_init normally (DH self-correction chain), but
+          # re-grounded to live SoC at 30-min boundary crossings to break the
+          # chain ↔ prior-plan interpolation interaction. Cold-start fallback
+          # to live SoC if dh_last_soc_init is 0. Treating 0 as "missing" is
+          # safe — the battery is never actually at 0%.
           anchor_soc: >-
-            {% set last = states('input_number.dh_last_soc_init') | float(0) %}
-            {{ last if last > 0 else (states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0)) }}
+            {%- if (secs_past_30min | int) < 60 -%}
+              {{ actual_soc_now | float }}
+            {%- else -%}
+              {%- set last = states('input_number.dh_last_soc_init') | float(0) -%}
+              {{ last if last > 0 else (actual_soc_now | float) }}
+            {%- endif -%}
           target_soc_offset: "{{ states('input_number.emhass_target_soc_offset') | float(0) }}"
           min_target: "{{ states('input_number.battery_soc_min_target') | float }}"
       - variables:
+          # Deviation = actual − interp(prior_plan, utcnow()) on normal runs.
+          # Forced to 0 at boundary re-grounding (no chain to correct).
           deviation_pct: >-
-            {% set utc_now = utcnow() %}
-            {% set actual = actual_soc_now | float %}
-            {% set anchor = anchor_soc | float %}
-            {% set prior = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') | default([], true) %}
-            {% set dev = namespace(value=0.0) %}
-            {% if prior | count > 0 %}
-              {% set plan_start = as_datetime(prior[0].date) %}
-              {% set plan_end = as_datetime((prior | last).date) + timedelta(minutes=30) %}
-              {% if plan_start <= utc_now <= plan_end %}
-                {% set pts = namespace(list=[{'t': plan_start, 's': anchor}]) %}
-                {% for item in prior %}
-                  {% set t = as_datetime(item.date) + timedelta(minutes=30) %}
-                  {% set pts.list = pts.list + [{'t': t, 's': item.dh_soc_batt_forecast | float}] %}
-                {% endfor %}
-                {% set seg = namespace(a=none, b=none, ta=none, tb=none) %}
-                {% for p in pts.list %}
-                  {% if p.t <= utc_now %}
-                    {% set seg.a = p.s %}{% set seg.ta = p.t %}
-                  {% elif seg.b == none %}
-                    {% set seg.b = p.s %}{% set seg.tb = p.t %}
+            {%- if (secs_past_30min | int) < 60 -%}
+              0
+            {%- else -%}
+              {% set utc_now = utcnow() %}
+              {% set actual = actual_soc_now | float %}
+              {% set anchor = anchor_soc | float %}
+              {% set prior = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') | default([], true) %}
+              {% set dev = namespace(value=0.0) %}
+              {% if prior | count > 0 %}
+                {% set plan_start = as_datetime(prior[0].date) %}
+                {% set plan_end = as_datetime((prior | last).date) + timedelta(minutes=30) %}
+                {% if plan_start <= utc_now <= plan_end %}
+                  {% set pts = namespace(list=[{'t': plan_start, 's': anchor}]) %}
+                  {% for item in prior %}
+                    {% set t = as_datetime(item.date) + timedelta(minutes=30) %}
+                    {% set pts.list = pts.list + [{'t': t, 's': item.dh_soc_batt_forecast | float}] %}
+                  {% endfor %}
+                  {% set seg = namespace(a=none, b=none, ta=none, tb=none) %}
+                  {% for p in pts.list %}
+                    {% if p.t <= utc_now %}
+                      {% set seg.a = p.s %}{% set seg.ta = p.t %}
+                    {% elif seg.b == none %}
+                      {% set seg.b = p.s %}{% set seg.tb = p.t %}
+                    {% endif %}
+                  {% endfor %}
+                  {% if seg.a != none and seg.b != none %}
+                    {% set span = (seg.tb - seg.ta).total_seconds() %}
+                    {% if span > 0 %}
+                      {% set frac = (utc_now - seg.ta).total_seconds() / span %}
+                      {% set planned = seg.a * (1 - frac) + seg.b * frac %}
+                    {% else %}
+                      {% set planned = seg.a %}
+                    {% endif %}
+                    {% set dev.value = actual - planned %}
                   {% endif %}
-                {% endfor %}
-                {% if seg.a != none and seg.b != none %}
-                  {% set span = (seg.tb - seg.ta).total_seconds() %}
-                  {% if span > 0 %}
-                    {% set frac = (utc_now - seg.ta).total_seconds() / span %}
-                    {% set planned = seg.a * (1 - frac) + seg.b * frac %}
-                  {% else %}
-                    {% set planned = seg.a %}
-                  {% endif %}
-                  {% set dev.value = actual - planned %}
                 {% endif %}
               {% endif %}
-            {% endif %}
-            {{ dev.value | float | round(6) }}
+              {{ dev.value | float | round(6) }}
+            {%- endif -%}
       - variables:
           soc_init_pct: >-
             {{ ([min_target, anchor_soc + (deviation_pct | float), 100] | sort)[1] | round(4) }}
@@ -1421,14 +1451,27 @@ automation:
   #
   # Each time EMHASS publishes a fresh DH plan (sensor.dh_soc_batt_forecast
   # state change), recompute input_number.emhass_target_soc_offset from the
-  # plan's peak SoC in the +48h..+72h tail:
+  # plan's peak SoC in the **clock-anchored** +48h..+72h tail (intervals whose
+  # end > now + 48h, rather than the last 48 indices of the plan):
   #
-  #   max_tail   = max( battery_scheduled_soc[-48:] )   # last 48 of 144 = +48..+72h
+  #   cutoff     = now + 47h30m   (interval start cutoff; interval END > now+48h)
+  #   tail       = [ item.dh_soc_batt_forecast for item in battery_scheduled_soc
+  #                  if as_datetime(item.date) > cutoff ]
+  #   max_tail   = max(tail)
   #   new_offset = current_offset + (97.5 - max_tail)
   #
-  # If the plan's tail peak falls below 97.5%, increment the offset so the
-  # NEXT DH solve targets a higher terminal SoC; if it overshot, decrement.
-  # Soft feedback loop — converges over a few solves.
+  # Clock-anchored chosen 2026-05-30: the original [-48:] slice shifts both
+  # ends by 30 min at each EMHASS quantization boundary (drops front, adds
+  # back), which contributed to the boundary sawtooth in the offset. The
+  # clock-anchored window only adjusts the back end and matches the
+  # conceptual definition of "the plan's tail beyond now+48h".
+  #
+  # If the tail peak falls below 97.5%, increment the offset so the NEXT DH
+  # solve targets a higher terminal SoC; if it overshot, decrement. Soft
+  # feedback loop — converges over a few solves.
+  #
+  # Empty-tail fallback (cutoff past plan_end, e.g. stale plan): emit current
+  # offset unchanged.
   #
   # History: this lived in the HA UI ("EMHASS - Calculate and Set Target SOC
   # Offset", archived at hass/automation-emhass-target-soc-offset.yaml.bak).
@@ -1456,9 +1499,17 @@ automation:
         data:
           value: >-
             {%- set current = states('input_number.emhass_target_soc_offset') | float(0) -%}
-            {%- set tail = (state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc')
-                            | map(attribute='dh_soc_batt_forecast')
-                            | map('float') | list)[-48:] -%}
-            {%- set max_tail = tail | max -%}
-            {{ (current + (97.5 - max_tail)) | round(4) }}
+            {%- set sched = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') | default([], true) -%}
+            {%- set cutoff = utcnow() + timedelta(hours=47, minutes=30) -%}
+            {%- set ns = namespace(vals=[]) -%}
+            {%- for item in sched -%}
+              {%- if as_datetime(item.date) > cutoff -%}
+                {%- set ns.vals = ns.vals + [item.dh_soc_batt_forecast | float] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- if ns.vals -%}
+              {{ (current + (97.5 - (ns.vals | max))) | round(4) }}
+            {%- else -%}
+              {{ current | round(4) }}
+            {%- endif -%}
     mode: single
