@@ -1,0 +1,83 @@
+alias: Sigen Export Ramp Hold (PCS transient controller)
+description: >-
+  Works around the Sigenergy grid-export-limit register's internal ~300 W/s ramp.
+  When the *effective* export limit (number.sigen_plant_grid_export_limitation) is
+  REDUCED, the inverter keeps exporting down the slowly-ramping enforced limit,
+  causing a transient over-export (up to ~10 kW entering Command Discharging, or
+  unwanted PV export when curtailing). This holds actual grid export at the new
+  target by capping the (instant) PCS export limit in a short, event-driven closed
+  loop, then releases it once the grid limit has had time to ramp to target.
+
+  Triggering on grid_export_limitation (not desired_export_limit) means this one
+  automation covers every cause of a decrease: EMHASS desired changes, Amber
+  negative-price clamps to 0, and external SAPN flexible-export-limit updates — the
+  master-limit controller folds all of them into this register.
+
+  Only acts on DECREASES; increases (up-ramps) are tolerated — a cap cannot push
+  flow past the lower-binding grid limit, and up-ramps are benign (gradual rise).
+
+  Control law (watts), using only raw Sigen sensors (Sigen derives load from these,
+  so we don't re-derive it):
+    load           = p_pcs + p_grid            # p_pcs +=toward grid, p_grid +=import
+    PCS_export_cap = p_pcs + p_grid + E_target # = load + desired grid export
+  Export-limit entities are in kW; sensors are in W.
+mode: restart
+triggers:
+  - trigger: state
+    entity_id: number.sigen_plant_grid_export_limitation
+variables:
+  from_kw: "{{ trigger.from_state.state | float(10) }}"
+  to_kw: "{{ trigger.to_state.state | float(0) }}"
+  e_target_w: "{{ (to_kw * 1000) | round(0) }}"
+  # Model the enforced-limit ramp: |Δlimit| / 300 W/s, + buffer, capped at 60s.
+  ramp_s: "{{ [ (((from_kw - to_kw) * 1000 / 300) + 3) | round(0), 60 ] | min }}"
+  hold_until_ts: "{{ as_timestamp(now()) + ramp_s }}"
+conditions:
+  # Real numeric DECREASE only.
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none and trigger.to_state is not none
+         and trigger.from_state.state not in ['unknown', 'unavailable']
+         and trigger.to_state.state not in ['unknown', 'unavailable']
+         and to_kw < from_kw - 0.001 }}
+  # Only meaningful when exporting is possible (discharging, or self-consume PV
+  # export). At trigger time the mode is typically still the source mode.
+  - condition: template
+    value_template: >-
+      {{ states('select.sigen_plant_remote_ems_control_mode') in
+         ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
+actions:
+  - repeat:
+      while:
+        - condition: template
+          value_template: "{{ as_timestamp(now()) < hold_until_ts }}"
+      sequence:
+        # Read a coherent snapshot and cap the (instant) PCS export limit so actual
+        # grid export tracks the target while the grid limit ramps. The first pass
+        # uses the live pre-transition state to pre-position the cap immediately.
+        - variables:
+            p_pcs: "{{ states('sensor.sigen_inverter_active_power') | float(0) }}"
+            p_grid: "{{ states('sensor.sigen_plant_grid_active_power') | float(0) }}"
+            pcs_cap_kw: "{{ [ (p_pcs + p_grid + e_target_w) / 1000, 0 ] | max | round(3) }}"
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.desired_pcs_export_limit
+          data:
+            value: "{{ pcs_cap_kw }}"
+        # Re-evaluate on the next fresh grid-power update (timeout fallback so we
+        # still tick if the value is momentarily static).
+        - wait_for_trigger:
+            - trigger: state
+              entity_id: sensor.sigen_plant_grid_active_power
+          timeout: "00:00:08"
+          continue_on_timeout: true
+        # Brief settle so the next inverter+grid read is a coherent snapshot.
+        - delay: "00:00:00.2"
+  # Hand back to native grid-limit load-following: release the PCS export cap.
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.desired_pcs_export_limit
+    data:
+      value: 100
+trace:
+  stored_traces: 10
