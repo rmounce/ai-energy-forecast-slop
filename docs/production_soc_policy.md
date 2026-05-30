@@ -70,18 +70,43 @@ with no restored state), the anchor falls back to the live derived SoC sensor.
 With no prior plan, deviation = 0 and `soc_init = live_soc` on the first cycle;
 from the second cycle onward the chain is established.
 
+**30-minute boundary re-grounding (2026-05-30):** when the DH script fires
+within 60 seconds of a wall-clock 30-minute boundary (xx:00 or xx:30), it
+re-grounds the anchor to live SoC and forces `deviation = 0`, breaking the
+chain for that single solve. EMHASS's DH quantization snaps to the new
+boundary at exactly that moment, and the chained anchor + prior-plan
+interpolation otherwise interact across the boundary to produce a ~1pp jump
+in the next solve's `max_tail`. Re-grounding cuts that interaction. The chain
+restarts cleanly from `live_soc` on the post-re-grounding solve. Re-grounding
+catches the price-triggered solves (~10–30 s past the boundary) but not the
+load-triggered solves at xx:01 / xx:31 (~75–95 s past).
+
 ## The +72h offset feedback loop
 
 `input_number.emhass_target_soc_offset` is **not** static or user-set in normal
 operation. The automation `"EMHASS — Update target SoC offset"` in
 `hass/package-emhass.yaml` fires on every `sensor.dh_soc_batt_forecast` state
 change (i.e., after every DH solve publishes) and adjusts the offset based on
-whether the just-published plan reaches ~97.5% within the +48h..+72h tail:
+whether the just-published plan reaches ~97.5% in the **clock-anchored** tail
+(intervals whose end > `now + 48h`):
 
 ```
-max_tail   = max( published_plan.battery_scheduled_soc[-48:] )   # +48h..+72h
+cutoff     = now + 47h30m                # interval start cutoff (so end > now+48h)
+tail       = [ p.dh_soc_batt_forecast for p in battery_scheduled_soc
+               if as_datetime(p.date) > cutoff ]
+max_tail   = max(tail)
 new_offset = current_offset + (97.5 − max_tail)
 ```
+
+The clock-anchored window replaces the original `[-48:]` index slice
+(2026-05-30). The slice version shifted *both* ends of the wall-clock window
+by 30 min at each quantization boundary (drops front, adds back), feeding
+boundary noise into the offset; the clock-anchored window only shifts the
+back end, matches the conceptual definition of "the plan's tail beyond
+now+48h", and pairs with the script's boundary re-grounding (see "DH" above)
+to keep the offset chart smooth across quantization shifts. If the cutoff
+falls past `plan_end` (e.g. unusually stale plan), the offset is emitted
+unchanged.
 
 - If the latest DH-planned trajectory **does not** hit ~97.5% within +48h..+72h,
   the offset is **incremented** so the next DH solve targets a higher terminal
@@ -100,8 +125,15 @@ History:
 - 2026-05-30: reverted to a post-publish automation, now in-repo in
   `hass/package-emhass.yaml`. The pre-solve variant added one cycle of lag to
   the feedback loop and caused visible ~1.2pp sawtooth oscillations at every
-  30-min load-forecast boundary. Post-publish timing matches the OLD HA-UI
-  behaviour, which was empirically well-damped (boundary deltas ~0.05pp).
+  30-min load-forecast boundary.
+- 2026-05-30 (same day): post-revert measurement showed a residual ~1pp dip
+  caused not by the trigger model but by the script-wrapper refactor's
+  chained anchor interacting with the prior-plan interpolation at the
+  quantization boundary. Two complementary fixes shipped: (a) script-level
+  boundary re-grounding (see "DH" above), and (b) clock-anchored window in
+  the offset automation (replacing the original `[-48:]` index slice). The
+  pre-script-wrapper baseline had ~0.05pp boundary deltas; these two changes
+  together aim to restore that.
 
 This is a feedback loop that anchors the terminal target near 100% with a positive
 bias toward maintaining higher SoC. The target itself is a moving target — it may
