@@ -8,18 +8,25 @@ description: >-
   target by capping the (instant) PCS export limit in a short, event-driven closed
   loop, then releases it once the grid limit has had time to ramp to target.
 
-  It writes the cap to input_number.transient_pcs_export_cap (a dedicated helper),
-  which script.sigen_apply_limits mins with desired_pcs_export_limit before writing
-  the PCS export register — so this transient controller never fights the EMS
-  script's own steady-state PCS-export setting.
+  Hold lifecycle is gated by a dedicated timer, timer.sigen_export_ramp:
+    - On a qualifying DECREASE this arms the timer (duration = modelled ramp time)
+      and runs the closed loop WHILE the timer is active, writing the cap to
+      input_number.transient_pcs_export_cap each tick.
+    - script.sigen_apply_limits honours that cap ONLY while the timer is active, so
+      the helper's resting value can never strangle PCS export when idle (was Issue 1
+      — a cap stuck at 0 forced grid imports in self-consume).
+    - Release is handled by automation-sigenergy-export-ramp-release on the timer's
+      finished/cancelled event, INDEPENDENT of this loop. So even if mode:restart
+      cancels this run mid-hold (e.g. a later export-limit increase), the cap is still
+      guaranteed to revert (was Issue 2 — the tail release step got stranded).
+    - An export-limit INCREASE while a hold is active cancels the timer (up-ramps are
+      tolerated; a cap can't push flow past the lower-binding grid limit), which
+      triggers the release automation.
 
   Triggering on grid_export_limitation (not desired_export_limit) means this one
   automation covers every cause of a decrease: EMHASS desired changes, Amber
   negative-price clamps to 0, and external SAPN flexible-export-limit updates — the
   master-limit controller folds all of them into this register.
-
-  Only acts on DECREASES; increases (up-ramps) are tolerated — a cap cannot push
-  flow past the lower-binding grid limit, and up-ramps are benign (gradual rise).
 
   Control law (watts), using only raw Sigen sensors (Sigen derives load from these,
   so we don't re-derive it):
@@ -36,53 +43,72 @@ variables:
   e_target_w: "{{ (to_kw * 1000) | round(0) }}"
   # Model the enforced-limit ramp: |Δlimit| / 300 W/s, + buffer, capped at 60s.
   ramp_s: "{{ [ (((from_kw - to_kw) * 1000 / 300) + 3) | round(0), 60 ] | min }}"
-  hold_until_ts: "{{ as_timestamp(now()) + ramp_s }}"
-conditions:
-  # Real numeric DECREASE only.
-  - condition: template
-    value_template: >-
-      {{ trigger.from_state is not none and trigger.to_state is not none
-         and trigger.from_state.state not in ['unknown', 'unavailable']
-         and trigger.to_state.state not in ['unknown', 'unavailable']
-         and to_kw < from_kw - 0.001 }}
-  # Only meaningful when exporting is possible (discharging, or self-consume PV
-  # export). At trigger time the mode is typically still the source mode.
-  - condition: template
-    value_template: >-
-      {{ states('select.sigen_plant_remote_ems_control_mode') in
-         ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
+  ramp_duration: "{{ '00:%02d:%02d' | format((ramp_s | int) // 60, (ramp_s | int) % 60) }}"
+  # A real numeric decrease while exporting is possible.
+  is_decrease: >-
+    {{ trigger.from_state is not none and trigger.to_state is not none
+       and trigger.from_state.state not in ['unknown', 'unavailable']
+       and trigger.to_state.state not in ['unknown', 'unavailable']
+       and to_kw < from_kw - 0.001 }}
+  exporting_mode: >-
+    {{ states('select.sigen_plant_remote_ems_control_mode') in
+       ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
 actions:
-  - repeat:
-      while:
-        - condition: template
-          value_template: "{{ as_timestamp(now()) < hold_until_ts }}"
-      sequence:
-        # Read a coherent snapshot and cap the (instant) PCS export limit so actual
-        # grid export tracks the target while the grid limit ramps. The first pass
-        # uses the live pre-transition state to pre-position the cap immediately.
-        - variables:
-            p_pcs: "{{ states('sensor.sigen_inverter_active_power') | float(0) }}"
-            p_grid: "{{ states('sensor.sigen_plant_grid_active_power') | float(0) }}"
-            pcs_cap_kw: "{{ [ (p_pcs + p_grid + e_target_w) / 1000, 0 ] | max | round(3) }}"
-        - action: input_number.set_value
-          target:
-            entity_id: input_number.transient_pcs_export_cap
-          data:
-            value: "{{ pcs_cap_kw }}"
-        # Re-evaluate on the next fresh grid-power update (timeout fallback so we
-        # still tick if the value is momentarily static).
-        - wait_for_trigger:
-            - trigger: state
-              entity_id: sensor.sigen_plant_grid_active_power
-          timeout: "00:00:08"
-          continue_on_timeout: true
-        # Brief settle so the next inverter+grid read is a coherent snapshot.
-        - delay: "00:00:00.2"
-  # Hand back to native grid-limit load-following: release the PCS export cap.
-  - action: input_number.set_value
-    target:
-      entity_id: input_number.desired_pcs_export_limit
-    data:
-      value: 100
+  - choose:
+      # --- Qualifying DECREASE: arm the timer and run the hold loop. ---
+      - conditions:
+          - condition: template
+            value_template: "{{ is_decrease and exporting_mode }}"
+        sequence:
+          # Arm the single "hold active" signal. apply honours the transient cap only
+          # while this timer is active; the release automation reverts the cap on its
+          # finished/cancelled event regardless of whether this loop survives.
+          - action: timer.start
+            target:
+              entity_id: timer.sigen_export_ramp
+            data:
+              duration: "{{ ramp_duration }}"
+          - repeat:
+              while:
+                - condition: state
+                  entity_id: timer.sigen_export_ramp
+                  state: active
+              sequence:
+                # Coherent snapshot → cap the (instant) PCS export limit so actual grid
+                # export tracks the target while the grid limit ramps. First pass uses
+                # the live pre-transition state to pre-position the cap immediately.
+                - variables:
+                    p_pcs: "{{ states('sensor.sigen_inverter_active_power') | float(0) }}"
+                    p_grid: "{{ states('sensor.sigen_plant_grid_active_power') | float(0) }}"
+                    pcs_cap_kw: "{{ [ (p_pcs + p_grid + e_target_w) / 1000, 0 ] | max | round(3) }}"
+                - action: input_number.set_value
+                  target:
+                    entity_id: input_number.transient_pcs_export_cap
+                  data:
+                    value: "{{ pcs_cap_kw }}"
+                # Push the cap to hardware synchronously (don't wait on the async
+                # master-limit controller for each tick).
+                - action: script.sigen_apply_limits
+                # Re-evaluate on the next fresh grid-power update (timeout fallback so we
+                # still tick if the value is momentarily static).
+                - wait_for_trigger:
+                    - trigger: state
+                      entity_id: sensor.sigen_plant_grid_active_power
+                  timeout: "00:00:08"
+                  continue_on_timeout: true
+                # Brief settle so the next inverter+grid read is a coherent snapshot.
+                - delay: "00:00:00.2"
+      # --- Anything else while a hold is active (typically an INCREASE / up-ramp):
+      #     cancel the timer so the release automation hands back to native
+      #     load-following. No-op (no branch) when the timer is already idle, so normal
+      #     up-ramps don't churn. ---
+      - conditions:
+          - condition: state
+            entity_id: timer.sigen_export_ramp
+            state: active
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: timer.sigen_export_ramp
 trace:
   stored_traces: 10

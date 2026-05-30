@@ -14,8 +14,15 @@ description: >-
   Effective values:
     grid export = min(desired_export, flexible_export(SAPN), amber_limit)
     grid import = desired_import            (also resets the SAPN >4e6 import bug)
-    pcs export  = min(desired_pcs_export, transient_pcs_export_cap(ramp-hold))
+    pcs export  = min(desired_pcs_export, transient_pcs_export_cap) ONLY while
+                  timer.sigen_export_ramp is active; otherwise just desired_pcs_export
     pcs import  = desired_pcs_import
+
+  The transient PCS export cap is gated on timer.sigen_export_ramp: the export
+  ramp-hold controller arms that timer for the modelled ramp duration and only then
+  does the cap bite. When the timer is idle the cap is ignored entirely, so the
+  helper's resting value is irrelevant (a cap stuck at 0 can no longer strangle PCS
+  export in self-consume), and the cap is guaranteed to release when the timer ends.
 sequence:
   - variables:
       amber_limit: >-
@@ -24,9 +31,13 @@ sequence:
         {{ [ states('input_number.desired_export_limit') | float(10),
              states('input_number.flexible_export_limit') | float(9.999),
              amber_limit ] | min }}
+      # The transient cap only applies while the ramp-hold timer is active.
+      pcs_cap_active: "{{ is_state('timer.sigen_export_ramp', 'active') }}"
       correct_pcs_export_limit: >-
         {{ [ states('input_number.desired_pcs_export_limit') | float(100),
-             states('input_number.transient_pcs_export_cap') | float(100) ] | min }}
+             states('input_number.transient_pcs_export_cap') | float(100) ] | min
+           if pcs_cap_active
+           else states('input_number.desired_pcs_export_limit') | float(100) }}
   - if:
       - condition: template
         value_template: >-
