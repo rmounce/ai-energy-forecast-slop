@@ -8,6 +8,11 @@ description: >-
   target by capping the (instant) PCS export limit in a short, event-driven closed
   loop, then releases it once the grid limit has had time to ramp to target.
 
+  It writes the cap to input_number.transient_pcs_export_cap (a dedicated helper),
+  which script.sigen_apply_limits mins with desired_pcs_export_limit before writing
+  the PCS export register — so this transient controller never fights the EMS
+  script's own steady-state PCS-export setting.
+
   Triggering on grid_export_limitation (not desired_export_limit) means this one
   automation covers every cause of a decrease: EMHASS desired changes, Amber
   negative-price clamps to 0, and external SAPN flexible-export-limit updates — the
@@ -61,7 +66,7 @@ actions:
             pcs_cap_kw: "{{ [ (p_pcs + p_grid + e_target_w) / 1000, 0 ] | max | round(3) }}"
         - action: input_number.set_value
           target:
-            entity_id: input_number.desired_pcs_export_limit
+            entity_id: input_number.transient_pcs_export_cap
           data:
             value: "{{ pcs_cap_kw }}"
         # Re-evaluate on the next fresh grid-power update (timeout fallback so we

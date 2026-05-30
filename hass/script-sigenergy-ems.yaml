@@ -140,11 +140,13 @@ sequence:
       - condition: template
         value_template: "{{ v_mode_changing }}"
     then:
-      # Mode transition. Lower every limit to min(current, target) BEFORE flipping
-      # the mode, wait for the async grid/PCS limits to land on the hardware, flip
-      # the mode, then raise every limit to its target. This guarantees the
-      # inverter is never in a power-moving mode behind a stale, too-high limit
-      # (the cause of full-power export/import bursts on transitions).
+      # Mode transition. Lower every limit to min(current, target), push to hardware
+      # synchronously via script.sigen_apply_limits (deterministic Modbus ordering,
+      # no waiting on the async controller), flip the mode, then raise to target and
+      # apply again. The min-before-mode ordering protects the *instant* limits
+      # (import / PCS / charge / discharge) entering their active modes; the export
+      # burst is handled separately by automation-sigenergy-export-ramp-hold.yaml
+      # (the grid export limit's internal ~300 W/s ramp).
       # --- Phase 1: lower ---
       - target:
           entity_id: input_number.desired_export_limit
@@ -181,33 +183,15 @@ sequence:
         data:
           value: "{{ v_low_pv }}"
         action: number.set_value
-      # Wait for the async (master-limit-controlled) grid/PCS limits to settle at
-      # or below their lowered values before flipping the mode. The controller may
-      # clamp even lower (amber/flexible), which still satisfies the check.
-      # continue_on_timeout avoids hanging if it is slow.
-      - wait_template: >-
-          {{ states('number.sigen_plant_grid_export_limitation') | float(10) <= v_low_export + 0.001
-             and states('number.sigen_plant_grid_import_limitation') | float(15) <= v_low_import + 0.001
-             and states('number.sigen_plant_pcs_export_limitation') | float(100) <= v_low_pcs_export + 0.001
-             and states('number.sigen_plant_pcs_import_limitation') | float(100) <= v_low_pcs_import + 0.001 }}
-        timeout: "00:00:02"
-        continue_on_timeout: true
+      # Synchronously push the lowered grid/PCS limits to hardware before the flip
+      # (deterministic ordering; no waiting on the async controller).
+      - action: script.sigen_apply_limits
       # --- Phase 2: flip mode (all caps now at safe-low values) ---
       - target:
           entity_id: select.sigen_plant_remote_ems_control_mode
         data:
           option: "{{ v_control_mode }}"
         action: select.select_option
-      # Wait for the mode flip to be read back before raising any limit, so we
-      # don't raise the limit that gated the mode we just left (e.g. export when
-      # leaving discharge) while the inverter is still in that mode. Harmless if
-      # the select entity is optimistic (passes immediately); if so, replace with
-      # a short delay (check the script trace — Phase 3 wait returning ~0ms means
-      # optimistic).
-      - wait_template: >-
-          {{ states('select.sigen_plant_remote_ems_control_mode') == v_control_mode }}
-        timeout: "00:00:02"
-        continue_on_timeout: true
       # --- Phase 3: raise limits to their targets, now in the final mode ---
       - target:
           entity_id: input_number.desired_export_limit
@@ -244,6 +228,8 @@ sequence:
         data:
           value: "{{ v_pv_max_power_limit }}"
         action: number.set_value
+      # Synchronously push the target grid/PCS limits to hardware.
+      - action: script.sigen_apply_limits
     else:
       # No mode transition: ordering is irrelevant, so apply every target directly.
       - target:
@@ -281,6 +267,7 @@ sequence:
         data:
           value: "{{ v_pv_max_power_limit }}"
         action: number.set_value
+      - action: script.sigen_apply_limits
       - target:
           entity_id: select.sigen_plant_remote_ems_control_mode
         data:

@@ -1,0 +1,75 @@
+alias: Sigen Apply Limits
+description: >-
+  Synchronous enforcer for the Sigenergy grid/PCS limit registers. Computes the
+  correct value for each from the desired_* helpers plus the Amber negative-feed-in
+  override, the captured SAPN flexible export limit, and the transient PCS export
+  cap (set by the export ramp-hold controller), then writes each register only if it
+  differs (idempotent, safe to call repeatedly).
+
+  Called SYNCHRONOUSLY by script.configure_sigen_ems_state for deterministic Modbus
+  ordering (no waiting on async polling), and by automation-sigenergy-master-limit
+  on external/periodic triggers. This is the single source of truth for the actual
+  register writes.
+
+  Effective values:
+    grid export = min(desired_export, flexible_export(SAPN), amber_limit)
+    grid import = desired_import            (also resets the SAPN >4e6 import bug)
+    pcs export  = min(desired_pcs_export, transient_pcs_export_cap(ramp-hold))
+    pcs import  = desired_pcs_import
+sequence:
+  - variables:
+      amber_limit: >-
+        {{ 0 if states('sensor.amber_effective_feed_in_price') | float(0) <= 0 else 10 }}
+      correct_export_limit: >-
+        {{ [ states('input_number.desired_export_limit') | float(10),
+             states('input_number.flexible_export_limit') | float(9.999),
+             amber_limit ] | min }}
+      correct_pcs_export_limit: >-
+        {{ [ states('input_number.desired_pcs_export_limit') | float(100),
+             states('input_number.transient_pcs_export_cap') | float(100) ] | min }}
+  - if:
+      - condition: template
+        value_template: >-
+          {{ (states('number.sigen_plant_grid_export_limitation') | float(0)
+              - correct_export_limit) | abs > 0.001 }}
+    then:
+      - action: number.set_value
+        target:
+          entity_id: number.sigen_plant_grid_export_limitation
+        data:
+          value: "{{ correct_export_limit }}"
+  - if:
+      - condition: template
+        value_template: >-
+          {{ (states('number.sigen_plant_grid_import_limitation') | float(0)
+              - states('input_number.desired_import_limit') | float(100)) | abs > 0.001 }}
+    then:
+      - action: number.set_value
+        target:
+          entity_id: number.sigen_plant_grid_import_limitation
+        data:
+          value: "{{ states('input_number.desired_import_limit') | float(100) }}"
+  - if:
+      - condition: template
+        value_template: >-
+          {{ (states('number.sigen_plant_pcs_export_limitation') | float(0)
+              - correct_pcs_export_limit) | abs > 0.001 }}
+    then:
+      - action: number.set_value
+        target:
+          entity_id: number.sigen_plant_pcs_export_limitation
+        data:
+          value: "{{ correct_pcs_export_limit }}"
+  - if:
+      - condition: template
+        value_template: >-
+          {{ (states('number.sigen_plant_pcs_import_limitation') | float(0)
+              - states('input_number.desired_pcs_import_limit') | float(100)) | abs > 0.001 }}
+    then:
+      - action: number.set_value
+        target:
+          entity_id: number.sigen_plant_pcs_import_limitation
+        data:
+          value: "{{ states('input_number.desired_pcs_import_limit') | float(100) }}"
+mode: queued
+max_exceeded: silent
