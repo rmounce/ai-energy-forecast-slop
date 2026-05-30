@@ -39,10 +39,10 @@ Sign convention: feed-in prices are **negative** (Amber convention: cost of expo
 
 | Entity | Items | Resolution | Horizon | APF? | Used by |
 |---|---|---|---|---|---|
-| `sensor.amber_5min_forecasts_general_price` | ~10 | 5-min | ~50 min | ✓ | `package-emhass.yaml` (effective price blending) |
-| `sensor.amber_5min_forecasts_feed_in_price` | ~10 | 5-min | ~50 min | ✓ | `package-emhass.yaml` (effective feed-in blending) |
-| `sensor.amber_5min_forecasts_extended_general_price` | 288 | 5-min | ~24h | ✓ | `package-emhass.yaml` (MPC REST payload) |
-| `sensor.amber_5min_forecasts_extended_feed_in_price` | 288 | 5-min | ~24h | ✓ | `package-emhass.yaml` (MPC REST payload) |
+| `sensor.amber_5min_forecasts_general_price` | ~10 | 5-min | ~50 min | ✓ | `emhass.yaml` (effective price blending) |
+| `sensor.amber_5min_forecasts_feed_in_price` | ~10 | 5-min | ~50 min | ✓ | `emhass.yaml` (effective feed-in blending) |
+| `sensor.amber_5min_forecasts_extended_general_price` | 288 | 5-min | ~24h | ✓ | `emhass.yaml` (MPC REST payload) |
+| `sensor.amber_5min_forecasts_extended_feed_in_price` | 288 | 5-min | ~24h | ✓ | `emhass.yaml` (MPC REST payload) |
 | `sensor.amber_30min_forecasts_general_price` | 74 | 30-min | ~37h | ✓ | `config.json` as `amber_entity`; `forecast.py` LightGBM seed |
 | `sensor.amber_30min_forecasts_feed_in_price` | 74 | 30-min | ~37h | ✓ | `config.json` as `amber_feed_in_entity` |
 | `sensor.amber_billing_interval_forecasts_general_price` | ~56 | mixed 5+30-min | ~24h | ✓ | `config.json` as `amber_billing_entity`; `forecast.py` APF-seeded LightGBM quantiles |
@@ -186,7 +186,7 @@ not selectable for control until a deliberate promotion step reintroduces an AI 
 
 ---
 
-## HA template sensors (package-emhass.yaml)
+## HA template sensors (emhass.yaml)
 
 Derived sensors computed by HA template engine. Recalculate on state change.
 
@@ -243,7 +243,7 @@ the `forecasts` attribute.
 | `input_number.emhass_weight_battery_discharge` | Battery discharge cost penalty in EMHASS objective | 0.0+ |
 | `input_number.emhass_weight_forecast_probability` | EMHASS stochastic optimisation probability weight | 0–1 |
 | `input_number.emhass_day_ahead_forecast_probability_weight` | DH probability weight | 0–1 |
-| `input_number.emhass_target_soc_offset` | Offset added to EMHASS-derived target SoC. Adjusted after every DH plan publish by the `"EMHASS — Update target SoC offset"` automation in `hass/package-emhass.yaml` (see `docs/production_soc_policy.md`) | — |
+| `input_number.emhass_target_soc_offset` | Offset added to EMHASS-derived target SoC. Adjusted after every DH plan publish by the `"EMHASS — Update target SoC offset"` automation in `hass/packages/emhass.yaml` (see `docs/production_soc_policy.md`) | — |
 | `input_number.emhass_dayahead_soc_init` | **Legacy**, written by an older DH automation but no longer consumed by `rest_command.emhass_dayahead_optim` after the script-wrapper refactor. Retained for diagnostics only | % |
 | `input_number.dh_last_soc_init` | soc_init actually passed to the most recent DH run. Written by `script.emhass_dayahead_optim`. Used by both DH (next run's chain anchor) and MPC (prior plan's start anchor for interpolation, because the published `dh_soc_batt_forecast` only carries end-of-interval values) | % |
 | `input_number.mpc_last_soc_init` | soc_init actually passed to the most recent MPC run. Written by `script.emhass_mpc`. Diagnostic only — no current consumer | % |

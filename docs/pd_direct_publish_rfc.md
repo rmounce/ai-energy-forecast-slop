@@ -56,7 +56,7 @@ export revenue). Only the source data and entity names differ.
 
 ### Selector options
 
-In `hass/package-emhass.yaml`, extend each selector by **adding** an option, not replacing:
+In `hass/packages/emhass.yaml`, extend each selector by **adding** an option, not replacing:
 
 ```yaml
 input_select:
@@ -172,7 +172,7 @@ graphs without flipping anything. EMHASS/MPC sees no change unless the selector 
 
 - **Wall time:** ~half-day of editing + smoke. No new dependencies.
 - **Production risk:** low. Additive, default selector unchanged, separate try/except.
-  Rolling back is `git revert` on the `forecast.py` and `package-emhass.yaml` changes.
+  Rolling back is `git revert` on the `forecast.py` and `emhass.yaml` changes.
 - **Quota:** modest — 6–10 well-targeted edits, then a smoke run of `predict-price
   --publish-hass --debug-tft` and a quick HA-side sanity check.
 

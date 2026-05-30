@@ -243,10 +243,10 @@ needed, and Amber Express covers the remaining use cases cleanly.
 
 **Migration scope once AI sources are primary:**
 
-1. `package-emhass.yaml`: Replace `sensor.amber_5min_current_general_price` / `end_time` check
+1. `emhass.yaml`: Replace `sensor.amber_5min_current_general_price` / `end_time` check
    with `sensor.amber_express_home_general_price_detailed` current state. Replace `Forecasts`
    attribute lookups with `forecasts` + nested APF accessor.
-2. `package-emhass.yaml`: Update `sensor.amber_effective_general_price` and `amber_effective_feed_in_price`
+2. `emhass.yaml`: Update `sensor.amber_effective_general_price` and `amber_effective_feed_in_price`
    template sensors to use Amber Express entities.
 3. `forecast.py`: `get_amber_spot_price_forecast()` and `get_amber_advanced_forecast()` — update
    entity IDs and attribute paths. APF values move from flat to `item.advanced_price_predicted.predicted`.

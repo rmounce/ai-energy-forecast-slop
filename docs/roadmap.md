@@ -140,7 +140,7 @@ known headline spike). This is the gate for "consider retiring Run 011b shadow".
 
 **Step 2 — PD-direct production switchability.** `forecast.py` learns to publish a
 `pd_direct` forecast as a new family of shadow HA entities (`sensor.ai_pd_direct_*`);
-`hass/package-emhass.yaml` exposes `ai_pd_direct` as a third option in each source
+`hass/packages/emhass.yaml` exposes `ai_pd_direct` as a third option in each source
 selector (default unchanged). Six entities for full parity with the existing `ai_shadow`
 family; parallel status sensors for stale-data safety. Live inference uses the existing
 final-model debiaser (`models/pd_debiaser/lgbm_final.pkl` via `_apply_pd_debiaser`); the
@@ -305,7 +305,7 @@ What's in place:
 What's still TODO:
 
 - **HA Jinja template branches** for `ai_pd_direct` source-selector option in
-  `hass/package-emhass.yaml` (PD-DIRECT TODO markers at line ~377 and ~712).
+  `hass/packages/emhass.yaml` (PD-DIRECT TODO markers at line ~377 and ~712).
   Reserved for the user.
 - **What-if dispatch comparison** in the compare script — currently does forecast
   quality only. Adding a rolling-MPC pass that consumes log entries (not the
@@ -710,13 +710,13 @@ Current committed state:
 - Existing AI Amber-shaped compatibility sensors are retired:
   - `sensor.ai_combined_general_price_forecast`
   - `sensor.ai_combined_feed_in_price_forecast`
-- `hass/package-emhass.yaml` declares source selectors:
+- `hass/packages/emhass.yaml` declares source selectors:
   - `input_select.emhass_mpc_price_source`
   - `input_select.emhass_dh_price_source`
 - The selected-source diagnostic sensors now expose requested source, effective source,
   fallback reason, AI readiness, and AI Tier 2 provenance, so a future guarded
   `ai_shadow` selector cannot appear active when the payload fell back to legacy prices.
-- `hass/package-emhass.yaml` declares AI forecast health/status sensors:
+- `hass/packages/emhass.yaml` declares AI forecast health/status sensors:
   - `sensor.ai_mpc_price_forecast_status`
   - `sensor.ai_dh_price_forecast_status`
 - Those status sensors require count, freshness, horizon, timestamp alignment, and matching
@@ -744,7 +744,7 @@ Important production constraint:
 Immediate next actions for the next implementer:
 
 1. **Sync and verify current HA package changes before adding more behavior.**
-   - Sync `hass/package-emhass.yaml` into HA.
+   - Sync `hass/packages/emhass.yaml` into HA.
    - Restart HA or reload enough YAML domains to create the new `input_select` helpers and
      template sensors.
    - Verify the new AI status sensors are `ready`.
