@@ -120,15 +120,39 @@ sequence:
       v_cur_charge: "{{ states('number.sigen_plant_ess_max_charging_limit') | float(21) }}"
       v_cur_discharge: "{{ states('number.sigen_plant_ess_max_discharging_limit') | float(24) }}"
       v_cur_pv: "{{ states('number.sigen_plant_pv_max_power_limit') | float(100) }}"
+      v_amber_export_limit: >-
+        {{ 0 if states('sensor.amber_effective_feed_in_price') | float(0) <= 0 else 10 }}
+      v_effective_export_target: >-
+        {{ [ v_export_limit | float,
+             states('input_number.flexible_export_limit') | float(9.999),
+             v_amber_export_limit | float ] | min }}
       # Transition-safe "lowered" values = min(current, target). Applied before
       # the mode flip so no limit is ever higher than both endpoints mid-flip.
-      v_low_export: "{{ [v_cur_export, v_export_limit | float] | min }}"
+      v_low_export: "{{ [v_cur_export | float, v_effective_export_target | float] | min }}"
       v_low_import: "{{ [v_cur_import, v_import_limit | float] | min }}"
       v_low_pcs_export: "{{ [v_cur_pcs_export, v_pcs_export_limit | float] | min }}"
       v_low_pcs_import: "{{ [v_cur_pcs_import, v_pcs_import_limit | float] | min }}"
       v_low_charge: "{{ [v_cur_charge, v_charge_limit | float] | min }}"
       v_low_discharge: "{{ [v_cur_discharge, v_discharge_limit | float] | min }}"
       v_low_pv: "{{ [v_cur_pv, v_pv_max_power_limit | float] | min }}"
+      v_exporting_current_mode: >-
+        {{ v_current_mode in ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
+      v_exporting_target_mode: >-
+        {{ v_control_mode in ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
+      v_prearm_export_ramp: >-
+        {{ (v_exporting_current_mode or v_exporting_target_mode)
+           and (v_low_export | float) < ((v_cur_export | float) - 0.001) }}
+      v_ramp_s: >-
+        {{ [ (((v_cur_export | float) - (v_low_export | float)) * 1000 / 300 + 3) | round(0), 60 ] | min }}
+      v_ramp_duration: "{{ '00:%02d:%02d' | format((v_ramp_s | int) // 60, (v_ramp_s | int) % 60) }}"
+      v_command_settle_delay: "00:00:00.1"
+      v_transition_pcs_export_cap: >-
+        {{ [ ((states('sensor.sigen_inverter_active_power') | float(0))
+              + (states('sensor.sigen_plant_grid_active_power') | float(0))
+              + ((v_low_export | float) * 1000)) / 1000, 0 ] | max | round(3) }}
+      v_safe_pcs_export_before_mode: >-
+        {{ [v_low_pcs_export | float, v_transition_pcs_export_cap | float] | min
+           if (v_prearm_export_ramp | bool) else v_low_pcs_export | float }}
   # Charge cutoff SoC is not a power limit (no burst risk), so it is set once
   # regardless of mode-change ordering.
   - target:
@@ -136,6 +160,24 @@ sequence:
     data:
       value: "{{ v_charge_cutoff }}"
     action: number.set_value
+  # If this call reduces the effective grid-export limit, arm the PCS transient cap
+  # before writing the grid-export register. Otherwise the export-ramp automation only
+  # reacts after the decrease is visible, leaving a short window where Command
+  # Discharging can run behind the old high PCS export limit.
+  - if:
+      - condition: template
+        value_template: "{{ v_prearm_export_ramp | bool }}"
+    then:
+      - action: timer.start
+        target:
+          entity_id: timer.sigen_export_ramp
+        data:
+          duration: "{{ v_ramp_duration }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.transient_pcs_export_cap
+        data:
+          value: "{{ v_transition_pcs_export_cap }}"
   - if:
       - condition: template
         value_template: "{{ v_mode_changing }}"
@@ -186,12 +228,32 @@ sequence:
       # Synchronously push the lowered grid/PCS limits to hardware before the flip
       # (deterministic ordering; no waiting on the async controller).
       - action: script.sigen_apply_limits
+      # Wait for the lowered hardware limits to be read back before the mode flip.
+      # The PCS export check uses the pre-armed transient cap when this transition is
+      # an export decrease; that is the actual burst-prevention limit.
+      - wait_template: >-
+          {{ states('number.sigen_plant_grid_export_limitation') | float(10) <= ((v_low_export | float) + 0.001)
+             and states('number.sigen_plant_grid_import_limitation') | float(15) <= ((v_low_import | float) + 0.001)
+             and states('number.sigen_plant_pcs_export_limitation') | float(100) <= ((v_safe_pcs_export_before_mode | float) + 0.001)
+             and states('number.sigen_plant_pcs_import_limitation') | float(100) <= ((v_low_pcs_import | float) + 0.001) }}
+        timeout: "00:00:02"
+        continue_on_timeout: true
       # --- Phase 2: flip mode (all caps now at safe-low values) ---
       - target:
           entity_id: select.sigen_plant_remote_ems_control_mode
         data:
           option: "{{ v_control_mode }}"
         action: select.select_option
+      # The select entity may be optimistic. Wait for readback when it is meaningful,
+      # then always hold the lowered export/PCS limits for a short physical settle
+      # window before raising targets. Without the fixed delay, an optimistic select
+      # can let Phase 3 raise grid export back to ~10 kW while the inverter is still
+      # physically in Command Discharging.
+      - wait_template: >-
+          {{ states('select.sigen_plant_remote_ems_control_mode') == v_control_mode }}
+        timeout: "00:00:02"
+        continue_on_timeout: true
+      - delay: "{{ v_command_settle_delay }}"
       # --- Phase 3: raise limits to their targets, now in the final mode ---
       - target:
           entity_id: input_number.desired_export_limit
@@ -231,7 +293,8 @@ sequence:
       # Synchronously push the target grid/PCS limits to hardware.
       - action: script.sigen_apply_limits
     else:
-      # No mode transition: ordering is irrelevant, so apply every target directly.
+      # No mode transition: export decreases were pre-armed above; otherwise apply
+      # every target directly.
       - target:
           entity_id: input_number.desired_export_limit
         data:
