@@ -1141,22 +1141,12 @@ script:
   # for the anchor. With no prior plan, deviation = 0, so soc_init = live_soc
   # on the first cycle. From the second cycle onward the chain is established.
   #
-  # +72h OFFSET FEEDBACK LOOP (squashed in 2026-05-29):
-  #
-  # target_soc_offset is recomputed each run as:
-  #
-  #   max_tail   = max( prior_plan.battery_scheduled_soc[-48:] )
-  #                # last 48 of the 72h plan (30-min cadence) = +48h..+72h
-  #   new_offset = current_offset + (97.5 - max_tail)
-  #
-  # The new value is persisted to input_number.emhass_target_soc_offset and
-  # used in the soc_final formula in the same run. The loop biases the LP
-  # toward keeping ~97.5% SoC reachable in the back third of the 72h horizon:
-  # if the prior plan's peak tail SoC fell below 97.5%, the offset increments
-  # to push the next solve higher; if it overshot, the offset decrements.
-  # On cold start (no prior plan), the offset is left unchanged. Formerly an
-  # HA automation triggered by sensor.dh_soc_batt_forecast state changes —
-  # same once-per-DH-solve cadence, now race-free across HA restarts.
+  # target_soc_offset is maintained by the post-solve "EMHASS — Update target
+  # SoC offset" automation in this same package YAML (triggered on
+  # sensor.dh_soc_batt_forecast state changes). The script reads the current
+  # value of the input_number unchanged — pre-solve reads here would lag by
+  # one solve and produce ~1.2pp sawtooth oscillations at the 30-min
+  # load-forecast boundary (observed 2026-05-30, reverted same day).
   emhass_dayahead_optim:
     alias: EMHASS Day-Ahead Optimisation
     sequence:
@@ -1168,19 +1158,7 @@ script:
           anchor_soc: >-
             {% set last = states('input_number.dh_last_soc_init') | float(0) %}
             {{ last if last > 0 else (states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0)) }}
-          # +72h offset feedback — see docstring above. Computed inline from the
-          # prior DH plan's tail-end SoC; the new value is written back to
-          # input_number.emhass_target_soc_offset before the rest_command fires.
-          target_soc_offset: >-
-            {%- set current = states('input_number.emhass_target_soc_offset') | float(0) -%}
-            {%- set prior = state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc') | default([], true) -%}
-            {%- if prior | count > 0 -%}
-              {%- set tail = prior[-48:] | map(attribute='dh_soc_batt_forecast') | map('float') | list -%}
-              {%- set max_tail = tail | max -%}
-              {{ (current + (97.5 - max_tail)) | round(4) }}
-            {%- else -%}
-              {{ current | round(4) }}
-            {%- endif -%}
+          target_soc_offset: "{{ states('input_number.emhass_target_soc_offset') | float(0) }}"
           min_target: "{{ states('input_number.battery_soc_min_target') | float }}"
       - variables:
           deviation_pct: >-
@@ -1229,11 +1207,6 @@ script:
           entity_id: input_number.dh_last_soc_init
         data:
           value: "{{ soc_init_pct }}"
-      - service: input_number.set_value
-        target:
-          entity_id: input_number.emhass_target_soc_offset
-        data:
-          value: "{{ target_soc_offset }}"
       - service: rest_command.emhass_dayahead_optim
         data:
           soc_init_pct: "{{ soc_init_pct }}"
@@ -1442,3 +1415,50 @@ script:
         data:
           soc_init_pct: "{{ soc_init_pct }}"
           soc_final_pct: "{{ soc_final_pct }}"
+
+automation:
+  # +72h offset feedback loop.
+  #
+  # Each time EMHASS publishes a fresh DH plan (sensor.dh_soc_batt_forecast
+  # state change), recompute input_number.emhass_target_soc_offset from the
+  # plan's peak SoC in the +48h..+72h tail:
+  #
+  #   max_tail   = max( battery_scheduled_soc[-48:] )   # last 48 of 144 = +48..+72h
+  #   new_offset = current_offset + (97.5 - max_tail)
+  #
+  # If the plan's tail peak falls below 97.5%, increment the offset so the
+  # NEXT DH solve targets a higher terminal SoC; if it overshot, decrement.
+  # Soft feedback loop — converges over a few solves.
+  #
+  # History: this lived in the HA UI ("EMHASS - Calculate and Set Target SOC
+  # Offset", archived at hass/automation-emhass-target-soc-offset.yaml.bak).
+  # Briefly squashed into script.emhass_dayahead_optim on 2026-05-29, but that
+  # added one cycle of lag to the feedback loop and caused visible ~1.2pp
+  # sawtooth oscillations at every 30-min load-forecast boundary. Restored as
+  # a standalone post-publish automation 2026-05-30, now in-repo instead of
+  # HA UI. The old dead `battery_soc_30_minute` clamp from the original Jinja
+  # is dropped — offset remains unclamped.
+  - alias: "EMHASS — Update target SoC offset"
+    id: emhass_update_target_soc_offset
+    triggers:
+      - trigger: state
+        entity_id: sensor.dh_soc_batt_forecast
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.to_state.state not in ['unavailable', 'unknown', 'none']
+             and trigger.to_state.attributes.battery_scheduled_soc is defined
+             and trigger.to_state.attributes.battery_scheduled_soc is not none }}
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.emhass_target_soc_offset
+        data:
+          value: >-
+            {%- set current = states('input_number.emhass_target_soc_offset') | float(0) -%}
+            {%- set tail = (state_attr('sensor.dh_soc_batt_forecast', 'battery_scheduled_soc')
+                            | map(attribute='dh_soc_batt_forecast')
+                            | map('float') | list)[-48:] -%}
+            {%- set max_tail = tail | max -%}
+            {{ (current + (97.5 - max_tail)) | round(4) }}
+    mode: single

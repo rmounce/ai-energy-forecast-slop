@@ -73,29 +73,35 @@ from the second cycle onward the chain is established.
 ## The +72h offset feedback loop
 
 `input_number.emhass_target_soc_offset` is **not** static or user-set in normal
-operation. `script.emhass_dayahead_optim` **continuously adjusts the offset**
-at the top of every DH run based on whether the most recent DH plan reaches
-~97.5% within the last 24 hours of the 72h forecast:
+operation. The automation `"EMHASS — Update target SoC offset"` in
+`hass/package-emhass.yaml` fires on every `sensor.dh_soc_batt_forecast` state
+change (i.e., after every DH solve publishes) and adjusts the offset based on
+whether the just-published plan reaches ~97.5% within the +48h..+72h tail:
 
 ```
-max_tail   = max( prior_plan.battery_scheduled_soc[-48:] )   # +48h..+72h
+max_tail   = max( published_plan.battery_scheduled_soc[-48:] )   # +48h..+72h
 new_offset = current_offset + (97.5 − max_tail)
 ```
 
 - If the latest DH-planned trajectory **does not** hit ~97.5% within +48h..+72h,
-  the offset is **incremented** so the same DH solve targets a higher terminal
+  the offset is **incremented** so the next DH solve targets a higher terminal
   SoC.
-- If the trajectory **does** hit ~97.5% comfortably, the offset is **decremented**.
+- If the trajectory **does** hit ~97.5% comfortably, the offset is
+  **decremented**.
 
-The new value is written back to `input_number.emhass_target_soc_offset` before
-the rest_command fires, and is also used directly in the current run's
-`soc_final` computation. On cold start (no prior plan), the offset is left
-unchanged.
+The next DH solve picks up the new value from the input_number.
 
-Pre-2026-05-29 history: this loop lived in an HA-UI automation triggered by
-`sensor.dh_soc_batt_forecast` state changes. It was squashed into the DH script
-on 2026-05-29 — same once-per-DH-solve cadence, no HA UI sync surface,
-race-free across HA restarts.
+History:
+
+- Pre-2026-05-29: this loop lived in an HA-UI automation (archived at
+  `hass/automation-emhass-target-soc-offset.yaml.bak`).
+- 2026-05-29: squashed into `script.emhass_dayahead_optim` (pre-solve reads of
+  the prior plan).
+- 2026-05-30: reverted to a post-publish automation, now in-repo in
+  `hass/package-emhass.yaml`. The pre-solve variant added one cycle of lag to
+  the feedback loop and caused visible ~1.2pp sawtooth oscillations at every
+  30-min load-forecast boundary. Post-publish timing matches the OLD HA-UI
+  behaviour, which was empirically well-damped (boundary deltas ~0.05pp).
 
 This is a feedback loop that anchors the terminal target near 100% with a positive
 bias toward maintaining higher SoC. The target itself is a moving target — it may
@@ -266,10 +272,10 @@ comparing what *would* have happened under each forecast had it been driving DH.
 ## Open questions
 
 - ~~The HA automation that adjusts `emhass_target_soc_offset` is not synced
-  into this repo.~~ Resolved 2026-05-29: squashed into
-  `script.emhass_dayahead_optim`. The dead `battery_soc_30_minute` clamp from
-  the original automation (already commented out) was dropped in the migration;
-  the offset remains unclamped.
+  into this repo.~~ Resolved 2026-05-30: now lives as the
+  `"EMHASS — Update target SoC offset"` automation in `hass/package-emhass.yaml`.
+  The dead `battery_soc_30_minute` clamp from the original Jinja (already
+  commented out) was dropped in the migration; the offset remains unclamped.
 - A future `eval/rolling_mpc_eval.py` flag (e.g.
   `--strategic-terminal-soc-target-kwh`) could optionally constrain the strategic
   LP to end at ~95–98% SoC, mirroring the production constraint. Not currently
