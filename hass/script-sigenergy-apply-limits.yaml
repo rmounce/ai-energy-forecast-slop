@@ -38,11 +38,28 @@ sequence:
              states('input_number.transient_pcs_export_cap') | float(100) ] | min
            if pcs_cap_active
            else states('input_number.desired_pcs_export_limit') | float(100) }}
+      current_export_limit: "{{ states('number.sigen_plant_grid_export_limitation') | float(0) }}"
+      current_pcs_export_limit: "{{ states('number.sigen_plant_pcs_export_limitation') | float(0) }}"
+      write_pcs_export_before_grid_export: >-
+        {{ pcs_cap_active
+           and (correct_export_limit | float) < ((current_export_limit | float) - 0.001)
+           and (((current_pcs_export_limit | float) - (correct_pcs_export_limit | float)) | abs) > 0.001 }}
+  # When a ramp-hold cap is already active and this call is about to reduce the
+  # grid-export register, push the instant PCS cap first. This removes the window
+  # where the inverter can enter/continue exporting behind the old high PCS limit.
+  - if:
+      - condition: template
+        value_template: "{{ write_pcs_export_before_grid_export | bool }}"
+    then:
+      - action: number.set_value
+        target:
+          entity_id: number.sigen_plant_pcs_export_limitation
+        data:
+          value: "{{ correct_pcs_export_limit }}"
   - if:
       - condition: template
         value_template: >-
-          {{ (states('number.sigen_plant_grid_export_limitation') | float(0)
-              - correct_export_limit) | abs > 0.001 }}
+          {{ (((current_export_limit | float) - (correct_export_limit | float)) | abs) > 0.001 }}
     then:
       - action: number.set_value
         target:
@@ -63,8 +80,8 @@ sequence:
   - if:
       - condition: template
         value_template: >-
-          {{ (states('number.sigen_plant_pcs_export_limitation') | float(0)
-              - correct_pcs_export_limit) | abs > 0.001 }}
+          {{ not (write_pcs_export_before_grid_export | bool)
+             and (((current_pcs_export_limit | float) - (correct_pcs_export_limit | float)) | abs) > 0.001 }}
     then:
       - action: number.set_value
         target:

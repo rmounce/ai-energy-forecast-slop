@@ -7,7 +7,9 @@ description: >-
   manual edits and the export ramp-hold's transient_pcs_export_cap propagate to
   hardware), Amber price changes, and a periodic failsafe. The actual register writes
   live in script.sigen_apply_limits, which is also called synchronously by
-  script.configure_sigen_ems_state for deterministic Modbus ordering.
+  script.configure_sigen_ems_state for deterministic Modbus ordering. Export-register
+  changes caused by HA service calls are never captured as SAPN limits; queued echoes
+  from our own earlier writes can otherwise poison flexible_export_limit.
 triggers:
   - trigger: state
     entity_id: number.sigen_plant_grid_import_limitation
@@ -44,8 +46,9 @@ triggers:
     id: failsafe_check
 actions:
   # Capture an externally-imposed (e.g. SAPN) grid export limit so apply can honour
-  # it: only when the export register itself changed to a value that isn't our
-  # sentinel (1.5) and differs from what we would otherwise command.
+  # it: only when the export register itself changed outside HA to a value that isn't
+  # our sentinel (1.5) and differs from what we would otherwise command. HA-originated
+  # writes carry a parent/user context; external inverter/SAPN writes should not.
   - variables:
       amber_limit: >-
         {{ 0 if states('sensor.amber_effective_feed_in_price') | float(0) <= 0 else 10 }}
@@ -53,9 +56,18 @@ actions:
         {{ [ states('input_number.desired_export_limit') | float(10),
              states('input_number.flexible_export_limit') | float(9.999),
              amber_limit ] | min }}
+      export_update_is_external: >-
+        {{ trigger is defined
+           and trigger.id == 'export_limit_update'
+           and trigger.to_state is defined
+           and trigger.to_state is not none
+           and trigger.to_state.context.parent_id is none
+           and trigger.to_state.context.user_id is none }}
   - if:
       - condition: trigger
         id: export_limit_update
+      - condition: template
+        value_template: "{{ export_update_is_external }}"
       - condition: template
         value_template: >-
           {{ trigger.to_state is defined and trigger.to_state.state | float(0) not in [1.5] }}

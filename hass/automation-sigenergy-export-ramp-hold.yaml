@@ -97,7 +97,7 @@ actions:
                   timeout: "00:00:08"
                   continue_on_timeout: true
                 # Brief settle so the next inverter+grid read is a coherent snapshot.
-                - delay: "00:00:00.2"
+                - delay: "00:00:00.1"
       # --- Anything else while a hold is active (typically an INCREASE / up-ramp):
       #     cancel the timer so the release automation hands back to native
       #     load-following. No-op (no branch) when the timer is already idle, so normal
