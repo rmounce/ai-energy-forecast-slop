@@ -190,7 +190,7 @@ sequence:
              and states('number.sigen_plant_grid_import_limitation') | float(15) <= v_low_import + 0.001
              and states('number.sigen_plant_pcs_export_limitation') | float(100) <= v_low_pcs_export + 0.001
              and states('number.sigen_plant_pcs_import_limitation') | float(100) <= v_low_pcs_import + 0.001 }}
-        timeout: "00:00:03"
+        timeout: "00:00:02"
         continue_on_timeout: true
       # --- Phase 2: flip mode (all caps now at safe-low values) ---
       - target:
@@ -206,7 +206,7 @@ sequence:
       # optimistic).
       - wait_template: >-
           {{ states('select.sigen_plant_remote_ems_control_mode') == v_control_mode }}
-        timeout: "00:00:03"
+        timeout: "00:00:02"
         continue_on_timeout: true
       # --- Phase 3: raise limits to their targets, now in the final mode ---
       - target:
