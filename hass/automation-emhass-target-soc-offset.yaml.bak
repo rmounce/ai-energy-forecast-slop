@@ -1,11 +1,18 @@
 # Backup of the "EMHASS - Calculate and Set Target SOC Offset" automation
-# as it existed in HA UI before being squashed into script.emhass_dayahead_optim
-# on 2026-05-30. Kept for reference; not loaded by HA.
+# as it existed in HA UI before being migrated into this repo on 2026-05-29.
+# Kept for reference; not loaded by HA.
 #
-# The squashed-in equivalent lives in hass/package-emhass.yaml under
-# script.emhass_dayahead_optim (look for "+72h OFFSET FEEDBACK LOOP").
+# The live equivalent now lives in hass/package-emhass.yaml as the
+# `"EMHASS — Update target SoC offset"` automation (also triggered on
+# sensor.dh_soc_batt_forecast state change, same once-per-publish cadence).
 # See docs/production_soc_policy.md § "The +72h offset feedback loop" for
 # the rationale and the formula.
+#
+# 2026-05-29 → 2026-05-30 detour: briefly squashed into
+# script.emhass_dayahead_optim (pre-solve read of prior plan), but that added
+# one cycle of lag and caused visible ~1.2pp sawtooth oscillations at every
+# 30-min load-forecast boundary. Reverted to a post-publish automation
+# (matching this original's trigger model) on 2026-05-30.
 #
 # Notable original quirks preserved here verbatim:
 # - The commented-out clamp on the last line referenced
