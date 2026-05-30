@@ -81,7 +81,7 @@ Reasoning:
 
 ## Repo-Side Template Fix
 
-`hass/package-emhass.yaml` has been updated so `sensor.ai_spot_price_forecast`
+`hass/packages/emhass.yaml` has been updated so `sensor.ai_spot_price_forecast`
 reads the current `sensor.ai_p5min_price_forecast` schema:
 
 - preferred field: `wholesale_price`

@@ -88,7 +88,7 @@ Implementation status as of 2026-05-09:
   Adelaide-vs-NEM timezone conversion.
 - All four canonical sensors use HAEO-style `forecast` points with UTC
   `datetime` and positive economic `native_value` prices.
-- `hass/package-emhass.yaml` declares source selectors, read-only status
+- `hass/packages/emhass.yaml` declares source selectors, read-only status
   sensors, and diagnostic sensors for both MPC and DH price sources.
 - The selectors currently expose only production legacy options:
   - MPC: `amber`
@@ -184,7 +184,7 @@ payload templates.
 1. Publish canonical AI forecast sensors. **Done in `forecast.py`; verify against
    live HA state.**
 2. Add source selectors and AI forecast health/status sensors. **Done in
-   `hass/package-emhass.yaml`; selectors are currently legacy-only by design.**
+   `hass/packages/emhass.yaml`; selectors are currently legacy-only by design.**
 3. Add read-only diagnostic template sensors. **Done: `sensor.emhass_mpc_price_diagnostic`
    and `sensor.emhass_dh_price_diagnostic` expose side-by-side first values and hourly/daily
    means for both sources.**

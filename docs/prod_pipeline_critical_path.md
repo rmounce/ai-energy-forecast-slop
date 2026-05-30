@@ -94,7 +94,7 @@ prod sensor.
    EMHASS computes 72h plan → `rest_command.emhass_publish_data_dh`
    publishes it. The plan publish triggers the
    `"EMHASS — Update target SoC offset"` automation (also in
-   `hass/package-emhass.yaml`), which adjusts
+   `hass/packages/emhass.yaml`), which adjusts
    `input_number.emhass_target_soc_offset` for the next DH solve. See
    `docs/production_soc_policy.md` for the formulas.
 

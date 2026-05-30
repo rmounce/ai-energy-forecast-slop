@@ -2,7 +2,7 @@
 # as it existed in HA UI before being migrated into this repo on 2026-05-29.
 # Kept for reference; not loaded by HA.
 #
-# The live equivalent now lives in hass/package-emhass.yaml as the
+# The live equivalent now lives in hass/packages/emhass.yaml as the
 # `"EMHASS — Update target SoC offset"` automation (also triggered on
 # sensor.dh_soc_batt_forecast state change, same once-per-publish cadence).
 # See docs/production_soc_policy.md § "The +72h offset feedback loop" for

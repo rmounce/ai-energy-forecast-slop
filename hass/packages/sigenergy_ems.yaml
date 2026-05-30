@@ -1,0 +1,702 @@
+# Consolidated downstream Sigenergy EMS execution package.
+#
+# Scope boundary:
+# - Upstream policy/decision logic remains in automation-sigenergy-emhass.yaml.
+# - This package owns the downstream execution layer: EMS command sequencing,
+#   limit register enforcement, external limit capture, and export-ramp hold/release.
+# - Do not load the retired split files at the same time as this package; they define
+#   the same script object IDs and automation aliases.
+# - This file lives under hass/packages/ with a Home Assistant-safe package slug.
+#   HA rejects hyphenated package names such as sigenergy-ems.
+#
+# Helper migration note:
+# The helpers below are intentionally not declared here yet, so existing HA UI-created
+# entities keep their history and there is no duplicate-entity migration during this
+# package consolidation. They can be moved into this package later if full YAML
+# ownership is desired:
+# - input_number.desired_export_limit
+# - input_number.desired_import_limit
+# - input_number.desired_pcs_export_limit
+# - input_number.desired_pcs_import_limit
+# - input_number.flexible_export_limit
+# - input_number.transient_pcs_export_cap
+# - timer.sigen_export_ramp
+
+script:
+  configure_sigen_ems_state:
+    alias: Configure Sigen EMS State
+    description: Sets desired state helpers and other key Sigen EMS parameters.
+    fields:
+      control_mode:
+        name: Control Mode
+        description: The remote EMS control mode.
+        selector:
+          select:
+            options:
+              - Maximum Self Consumption
+              - Command Charging (PV First)
+              - Command Charging (Grid First)
+              - Command Discharging (PV First)
+              - Standby
+        default: Maximum Self Consumption
+      export_limit_kw:
+        name: Grid Export Limit (kW)
+        description: The maximum power to export to the grid.
+        selector:
+          number:
+            min: 0
+            max: 10
+        default: 10
+      import_limit_kw:
+        name: Grid Import Limit (kW)
+        description: The maximum power to import from the grid.
+        selector:
+          number:
+            min: 0
+            max: 15
+        default: 15
+      pv_max_power_limit_kw:
+        name: PV Max Power Limit (kW)
+        description: The maximum power to generate from PV.
+        selector:
+          number:
+            min: 0
+            max: 100
+        default: 100
+      charge_limit_kw:
+        name: Max Charging Limit (kW)
+        description: The maximum power to charge the battery.
+        selector:
+          number:
+            min: 0
+            max: 21
+        default: 21
+      discharge_limit_kw:
+        name: Max Discharging Limit (kW)
+        description: The maximum power to discharge the battery.
+        selector:
+          number:
+            min: 0
+            max: 24
+        default: 24
+      charge_cutoff_soc:
+        name: Charge Cutoff SoC (%)
+        description: The SoC at which to stop charging.
+        selector:
+          number:
+            min: 0
+            max: 100
+        default: 100
+      pcs_export_limit_kw:
+        name: PCS Export Limit (kW)
+        description: The maximum AC power the PCS can output.
+        selector:
+          number:
+            min: 0
+            max: 100
+        default: 100
+      pcs_import_limit_kw:
+        name: PCS Import Limit (kW)
+        description: The maximum AC power the PCS can input.
+        selector:
+          number:
+            min: 0
+            max: 100
+        default: 100
+    sequence:
+      - variables:
+          v_export_limit: >-
+            {{ export_limit_kw if export_limit_kw is defined and export_limit_kw not
+            in [none, ''] else 10 }}
+          v_import_limit: >-
+            {{ import_limit_kw if import_limit_kw is defined and import_limit_kw not
+            in [none, ''] else 15 }}
+          v_control_mode: >-
+            {{ control_mode if control_mode is defined and control_mode not in
+            [none, ''] else 'Maximum Self Consumption' }}
+          v_pv_max_power_limit: >-
+            {{ pv_max_power_limit_kw if pv_max_power_limit_kw is defined and
+            pv_max_power_limit_kw not in [none, ''] else 100 }}
+          v_charge_limit: >-
+            {{ charge_limit_kw if charge_limit_kw is defined and charge_limit_kw not
+            in [none, ''] else 21 }}
+          v_discharge_limit: >-
+            {{ discharge_limit_kw if discharge_limit_kw is defined and
+            discharge_limit_kw not in [none, ''] else 24 }}
+          v_charge_cutoff: >-
+            {{ charge_cutoff_soc if charge_cutoff_soc is defined and
+            charge_cutoff_soc not in [none, ''] else 100 }}
+          v_pcs_export_limit: >-
+            {{ pcs_export_limit_kw if pcs_export_limit_kw is defined and
+            pcs_export_limit_kw not in [none, ''] else 100 }}
+          v_pcs_import_limit: >-
+            {{ pcs_import_limit_kw if pcs_import_limit_kw is defined and
+            pcs_import_limit_kw not in [none, ''] else 100 }}
+      - variables:
+          # Current EMS mode and a flag for whether this call changes it. The
+          # limit/mode race only exists across an actual mode transition.
+          v_current_mode: "{{ states('select.sigen_plant_remote_ems_control_mode') }}"
+          v_mode_changing: >-
+            {{ v_control_mode != states('select.sigen_plant_remote_ems_control_mode') }}
+          # Current hardware limit values, used to compute transition-safe minima.
+          v_cur_export: "{{ states('number.sigen_plant_grid_export_limitation') | float(10) }}"
+          v_cur_import: "{{ states('number.sigen_plant_grid_import_limitation') | float(15) }}"
+          v_cur_pcs_export: "{{ states('number.sigen_plant_pcs_export_limitation') | float(100) }}"
+          v_cur_pcs_import: "{{ states('number.sigen_plant_pcs_import_limitation') | float(100) }}"
+          v_cur_charge: "{{ states('number.sigen_plant_ess_max_charging_limit') | float(21) }}"
+          v_cur_discharge: "{{ states('number.sigen_plant_ess_max_discharging_limit') | float(24) }}"
+          v_cur_pv: "{{ states('number.sigen_plant_pv_max_power_limit') | float(100) }}"
+          v_amber_export_limit: >-
+            {{ 0 if states('sensor.amber_effective_feed_in_price') | float(0) <= 0 else 10 }}
+          v_effective_export_target: >-
+            {{ [ v_export_limit | float,
+                 states('input_number.flexible_export_limit') | float(9.999),
+                 v_amber_export_limit | float ] | min }}
+          # Transition-safe "lowered" values = min(current, target). Applied before
+          # the mode flip so no limit is ever higher than both endpoints mid-flip.
+          v_low_export: "{{ [v_cur_export | float, v_effective_export_target | float] | min }}"
+          v_low_import: "{{ [v_cur_import, v_import_limit | float] | min }}"
+          v_low_pcs_export: "{{ [v_cur_pcs_export, v_pcs_export_limit | float] | min }}"
+          v_low_pcs_import: "{{ [v_cur_pcs_import, v_pcs_import_limit | float] | min }}"
+          v_low_charge: "{{ [v_cur_charge, v_charge_limit | float] | min }}"
+          v_low_discharge: "{{ [v_cur_discharge, v_discharge_limit | float] | min }}"
+          v_low_pv: "{{ [v_cur_pv, v_pv_max_power_limit | float] | min }}"
+          v_exporting_current_mode: >-
+            {{ v_current_mode in ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
+          v_exporting_target_mode: >-
+            {{ v_control_mode in ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
+          v_prearm_export_ramp: >-
+            {{ (v_exporting_current_mode or v_exporting_target_mode)
+               and (v_low_export | float) < ((v_cur_export | float) - 0.001) }}
+          v_ramp_s: >-
+            {{ [ (((v_cur_export | float) - (v_low_export | float)) * 1000 / 300 + 3) | round(0), 60 ] | min }}
+          v_ramp_duration: "{{ '00:%02d:%02d' | format((v_ramp_s | int) // 60, (v_ramp_s | int) % 60) }}"
+          v_command_settle_delay: "00:00:00.1"
+          v_transition_pcs_export_cap: >-
+            {{ [ ((states('sensor.sigen_inverter_active_power') | float(0))
+                  + (states('sensor.sigen_plant_grid_active_power') | float(0))
+                  + ((v_low_export | float) * 1000)) / 1000, 0 ] | max | round(3) }}
+          v_safe_pcs_export_before_mode: >-
+            {{ [v_low_pcs_export | float, v_transition_pcs_export_cap | float] | min
+               if (v_prearm_export_ramp | bool) else v_low_pcs_export | float }}
+      # Charge cutoff SoC is not a power limit (no burst risk), so it is set once
+      # regardless of mode-change ordering.
+      - target:
+          entity_id: number.sigen_plant_ess_charge_cut_off_state_of_charge
+        data:
+          value: "{{ v_charge_cutoff }}"
+        action: number.set_value
+      # If this call reduces the effective grid-export limit, arm the PCS transient
+      # cap before writing the grid-export register. Otherwise the export-ramp
+      # automation only reacts after the decrease is visible, leaving a short window
+      # where Command Discharging can run behind the old high PCS export limit.
+      - if:
+          - condition: template
+            value_template: "{{ v_prearm_export_ramp | bool }}"
+        then:
+          - action: timer.start
+            target:
+              entity_id: timer.sigen_export_ramp
+            data:
+              duration: "{{ v_ramp_duration }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.transient_pcs_export_cap
+            data:
+              value: "{{ v_transition_pcs_export_cap }}"
+      - if:
+          - condition: template
+            value_template: "{{ v_mode_changing }}"
+        then:
+          # Mode transition. Lower every limit to min(current, target), push to
+          # hardware synchronously via script.sigen_apply_limits (deterministic Modbus
+          # ordering, no waiting on the async controller), flip the mode, then raise
+          # to target and apply again. The min-before-mode ordering protects the
+          # instant limits (import / PCS / charge / discharge) entering their active
+          # modes; the export burst is handled separately by the ramp-hold controller
+          # (the grid export limit's internal ~300 W/s ramp).
+          # --- Phase 1: lower ---
+          - target:
+              entity_id: input_number.desired_export_limit
+            data:
+              value: "{{ v_low_export }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_import_limit
+            data:
+              value: "{{ v_low_import }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_pcs_export_limit
+            data:
+              value: "{{ v_low_pcs_export }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_pcs_import_limit
+            data:
+              value: "{{ v_low_pcs_import }}"
+            action: input_number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_max_charging_limit
+            data:
+              value: "{{ v_low_charge }}"
+            action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_max_discharging_limit
+            data:
+              value: "{{ v_low_discharge }}"
+            action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_pv_max_power_limit
+            data:
+              value: "{{ v_low_pv }}"
+            action: number.set_value
+          # Synchronously push the lowered grid/PCS limits to hardware before the flip
+          # (deterministic ordering; no waiting on the async controller).
+          - action: script.sigen_apply_limits
+          # Wait for the lowered hardware limits to be read back before the mode flip.
+          # The PCS export check uses the pre-armed transient cap when this transition
+          # is an export decrease; that is the actual burst-prevention limit.
+          - wait_template: >-
+              {{ states('number.sigen_plant_grid_export_limitation') | float(10) <= ((v_low_export | float) + 0.001)
+                 and states('number.sigen_plant_grid_import_limitation') | float(15) <= ((v_low_import | float) + 0.001)
+                 and states('number.sigen_plant_pcs_export_limitation') | float(100) <= ((v_safe_pcs_export_before_mode | float) + 0.001)
+                 and states('number.sigen_plant_pcs_import_limitation') | float(100) <= ((v_low_pcs_import | float) + 0.001) }}
+            timeout: "00:00:02"
+            continue_on_timeout: true
+          # --- Phase 2: flip mode (all caps now at safe-low values) ---
+          - target:
+              entity_id: select.sigen_plant_remote_ems_control_mode
+            data:
+              option: "{{ v_control_mode }}"
+            action: select.select_option
+          # The select entity may be optimistic. Wait for readback when it is
+          # meaningful, then always hold the lowered export/PCS limits for a short
+          # physical settle window before raising targets. Without the fixed delay,
+          # an optimistic select can let Phase 3 raise grid export back to ~10 kW
+          # while the inverter is still physically in Command Discharging.
+          - wait_template: >-
+              {{ states('select.sigen_plant_remote_ems_control_mode') == v_control_mode }}
+            timeout: "00:00:02"
+            continue_on_timeout: true
+          - delay: "{{ v_command_settle_delay }}"
+          # --- Phase 3: raise limits to their targets, now in the final mode ---
+          - target:
+              entity_id: input_number.desired_export_limit
+            data:
+              value: "{{ v_export_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_import_limit
+            data:
+              value: "{{ v_import_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_pcs_export_limit
+            data:
+              value: "{{ v_pcs_export_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_pcs_import_limit
+            data:
+              value: "{{ v_pcs_import_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_max_charging_limit
+            data:
+              value: "{{ v_charge_limit }}"
+            action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_max_discharging_limit
+            data:
+              value: "{{ v_discharge_limit }}"
+            action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_pv_max_power_limit
+            data:
+              value: "{{ v_pv_max_power_limit }}"
+            action: number.set_value
+          # Synchronously push the target grid/PCS limits to hardware.
+          - action: script.sigen_apply_limits
+        else:
+          # No mode transition: export decreases were pre-armed above; otherwise apply
+          # every target directly.
+          - target:
+              entity_id: input_number.desired_export_limit
+            data:
+              value: "{{ v_export_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_import_limit
+            data:
+              value: "{{ v_import_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_pcs_export_limit
+            data:
+              value: "{{ v_pcs_export_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: input_number.desired_pcs_import_limit
+            data:
+              value: "{{ v_pcs_import_limit }}"
+            action: input_number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_max_charging_limit
+            data:
+              value: "{{ v_charge_limit }}"
+            action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_ess_max_discharging_limit
+            data:
+              value: "{{ v_discharge_limit }}"
+            action: number.set_value
+          - target:
+              entity_id: number.sigen_plant_pv_max_power_limit
+            data:
+              value: "{{ v_pv_max_power_limit }}"
+            action: number.set_value
+          - action: script.sigen_apply_limits
+          - target:
+              entity_id: select.sigen_plant_remote_ems_control_mode
+            data:
+              option: "{{ v_control_mode }}"
+            action: select.select_option
+    mode: single
+
+  sigen_apply_limits:
+    alias: Sigen Apply Limits
+    description: >-
+      Synchronous enforcer for the Sigenergy grid/PCS limit registers. Computes the
+      correct value for each from the desired_* helpers plus the Amber negative-feed-in
+      override, the captured SAPN flexible export limit, and the transient PCS export
+      cap (set by the export ramp-hold controller), then writes each register only if
+      it differs (idempotent, safe to call repeatedly).
+
+      Called SYNCHRONOUSLY by script.configure_sigen_ems_state for deterministic
+      Modbus ordering (no waiting on async polling), and by the master-limit
+      automation on external/periodic triggers. This is the single source of truth
+      for the actual register writes.
+
+      Effective values:
+        grid export = min(desired_export, flexible_export(SAPN), amber_limit)
+        grid import = desired_import            (also resets the SAPN >4e6 import bug)
+        pcs export  = min(desired_pcs_export, transient_pcs_export_cap) ONLY while
+                      timer.sigen_export_ramp is active; otherwise just desired_pcs_export
+        pcs import  = desired_pcs_import
+
+      The transient PCS export cap is gated on timer.sigen_export_ramp: the export
+      ramp-hold controller arms that timer for the modelled ramp duration and only
+      then does the cap bite. When the timer is idle the cap is ignored entirely, so
+      the helper's resting value is irrelevant (a cap stuck at 0 can no longer
+      strangle PCS export in self-consume), and the cap is guaranteed to release when
+      the timer ends.
+    sequence:
+      - variables:
+          amber_limit: >-
+            {{ 0 if states('sensor.amber_effective_feed_in_price') | float(0) <= 0 else 10 }}
+          correct_export_limit: >-
+            {{ [ states('input_number.desired_export_limit') | float(10),
+                 states('input_number.flexible_export_limit') | float(9.999),
+                 amber_limit ] | min }}
+          # The transient cap only applies while the ramp-hold timer is active.
+          pcs_cap_active: "{{ is_state('timer.sigen_export_ramp', 'active') }}"
+          correct_pcs_export_limit: >-
+            {{ [ states('input_number.desired_pcs_export_limit') | float(100),
+                 states('input_number.transient_pcs_export_cap') | float(100) ] | min
+               if pcs_cap_active
+               else states('input_number.desired_pcs_export_limit') | float(100) }}
+          current_export_limit: "{{ states('number.sigen_plant_grid_export_limitation') | float(0) }}"
+          current_pcs_export_limit: "{{ states('number.sigen_plant_pcs_export_limitation') | float(0) }}"
+          write_pcs_export_before_grid_export: >-
+            {{ pcs_cap_active
+               and (correct_export_limit | float) < ((current_export_limit | float) - 0.001)
+               and (((current_pcs_export_limit | float) - (correct_pcs_export_limit | float)) | abs) > 0.001 }}
+      # When a ramp-hold cap is already active and this call is about to reduce the
+      # grid-export register, push the instant PCS cap first. This removes the window
+      # where the inverter can enter/continue exporting behind the old high PCS limit.
+      - if:
+          - condition: template
+            value_template: "{{ write_pcs_export_before_grid_export | bool }}"
+        then:
+          - action: number.set_value
+            target:
+              entity_id: number.sigen_plant_pcs_export_limitation
+            data:
+              value: "{{ correct_pcs_export_limit }}"
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (((current_export_limit | float) - (correct_export_limit | float)) | abs) > 0.001 }}
+        then:
+          - action: number.set_value
+            target:
+              entity_id: number.sigen_plant_grid_export_limitation
+            data:
+              value: "{{ correct_export_limit }}"
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (states('number.sigen_plant_grid_import_limitation') | float(0)
+                  - states('input_number.desired_import_limit') | float(100)) | abs > 0.001 }}
+        then:
+          - action: number.set_value
+            target:
+              entity_id: number.sigen_plant_grid_import_limitation
+            data:
+              value: "{{ states('input_number.desired_import_limit') | float(100) }}"
+      - if:
+          - condition: template
+            value_template: >-
+              {{ not (write_pcs_export_before_grid_export | bool)
+                 and (((current_pcs_export_limit | float) - (correct_pcs_export_limit | float)) | abs) > 0.001 }}
+        then:
+          - action: number.set_value
+            target:
+              entity_id: number.sigen_plant_pcs_export_limitation
+            data:
+              value: "{{ correct_pcs_export_limit }}"
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (states('number.sigen_plant_pcs_import_limitation') | float(0)
+                  - states('input_number.desired_pcs_import_limit') | float(100)) | abs > 0.001 }}
+        then:
+          - action: number.set_value
+            target:
+              entity_id: number.sigen_plant_pcs_import_limitation
+            data:
+              value: "{{ states('input_number.desired_pcs_import_limit') | float(100) }}"
+    mode: queued
+    max_exceeded: silent
+
+automation:
+  - alias: Sigen Master Limit Controller
+    description: >-
+      External-event handler for the Sigen grid/PCS limits. Captures
+      externally-imposed SAPN flexible export limits into input_number.flexible_export_limit,
+      then delegates ALL enforcement to script.sigen_apply_limits. Fires on register
+      changes (to catch external/SAPN writes and the SAPN >4e6 import bug), desired_*
+      helper changes (so manual edits and the export ramp-hold's transient_pcs_export_cap
+      propagate to hardware), Amber price changes, and a periodic failsafe. The actual
+      register writes live in script.sigen_apply_limits, which is also called
+      synchronously by script.configure_sigen_ems_state for deterministic Modbus
+      ordering. Export-register changes caused by HA service calls are never captured
+      as SAPN limits; queued echoes from our own earlier writes can otherwise poison
+      flexible_export_limit.
+    triggers:
+      - trigger: state
+        entity_id: number.sigen_plant_grid_import_limitation
+        id: import_limit_update
+      - trigger: state
+        entity_id: number.sigen_plant_grid_export_limitation
+        id: export_limit_update
+      - trigger: state
+        entity_id: number.sigen_plant_pcs_import_limitation
+        id: pcs_import_limit_update
+      - trigger: state
+        entity_id: number.sigen_plant_pcs_export_limitation
+        id: pcs_export_limit_update
+      - trigger: state
+        entity_id: input_number.desired_export_limit
+        id: desired_export_update
+      - trigger: state
+        entity_id: input_number.desired_import_limit
+        id: desired_import_update
+      - trigger: state
+        entity_id: input_number.desired_pcs_export_limit
+        id: desired_pcs_export_update
+      - trigger: state
+        entity_id: input_number.desired_pcs_import_limit
+        id: desired_pcs_import_update
+      - trigger: state
+        entity_id: input_number.transient_pcs_export_cap
+        id: transient_pcs_export_update
+      - trigger: state
+        entity_id: sensor.amber_effective_feed_in_price
+        id: amber_price_update
+      - trigger: time_pattern
+        minutes: /5
+        id: failsafe_check
+    actions:
+      # Capture an externally-imposed (e.g. SAPN) grid export limit so apply can
+      # honour it: only when the export register itself changed outside HA to a value
+      # that isn't our sentinel (1.5) and differs from what we would otherwise
+      # command. HA-originated writes carry a parent/user context; external
+      # inverter/SAPN writes should not.
+      - variables:
+          amber_limit: >-
+            {{ 0 if states('sensor.amber_effective_feed_in_price') | float(0) <= 0 else 10 }}
+          correct_export_limit: >-
+            {{ [ states('input_number.desired_export_limit') | float(10),
+                 states('input_number.flexible_export_limit') | float(9.999),
+                 amber_limit ] | min }}
+          export_update_is_external: >-
+            {{ trigger is defined
+               and trigger.id == 'export_limit_update'
+               and trigger.to_state is defined
+               and trigger.to_state is not none
+               and trigger.to_state.context.parent_id is none
+               and trigger.to_state.context.user_id is none }}
+      - if:
+          - condition: trigger
+            id: export_limit_update
+          - condition: template
+            value_template: "{{ export_update_is_external }}"
+          - condition: template
+            value_template: >-
+              {{ trigger.to_state is defined and trigger.to_state.state | float(0) not in [1.5] }}
+          - condition: template
+            value_template: >-
+              {{ (trigger.to_state.state | float(0) - correct_export_limit) | abs > 0.001 }}
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.flexible_export_limit
+            data:
+              value: "{{ trigger.to_state.state }}"
+      - action: script.sigen_apply_limits
+    mode: queued
+    max_exceeded: silent
+    trace:
+      stored_traces: 10
+
+  - alias: Sigen Export Ramp Hold (PCS transient controller)
+    description: >-
+      Works around the Sigenergy grid-export-limit register's internal ~300 W/s ramp.
+      When the *effective* export limit (number.sigen_plant_grid_export_limitation)
+      is REDUCED, the inverter keeps exporting down the slowly-ramping enforced limit,
+      causing a transient over-export (up to ~10 kW entering Command Discharging, or
+      unwanted PV export when curtailing). This holds actual grid export at the new
+      target by capping the (instant) PCS export limit in a short, event-driven closed
+      loop, then releases it once the grid limit has had time to ramp to target.
+
+      Hold lifecycle is gated by a dedicated timer, timer.sigen_export_ramp:
+        - On a qualifying DECREASE this arms the timer (duration = modelled ramp time)
+          and runs the closed loop WHILE the timer is active, writing the cap to
+          input_number.transient_pcs_export_cap each tick.
+        - script.sigen_apply_limits honours that cap ONLY while the timer is active,
+          so the helper's resting value can never strangle PCS export when idle.
+        - Release is handled by the export-ramp-release automation on the timer's
+          finished/cancelled event, independent of this loop.
+        - An export-limit INCREASE while a hold is active cancels the timer.
+
+      Triggering on grid_export_limitation (not desired_export_limit) means this one
+      automation covers every cause of a decrease: EMHASS desired changes, Amber
+      negative-price clamps to 0, and external SAPN flexible-export-limit updates.
+
+      Control law (watts), using only raw Sigen sensors:
+        load           = p_pcs + p_grid            # p_pcs +=toward grid, p_grid +=import
+        PCS_export_cap = p_pcs + p_grid + E_target # = load + desired grid export
+      Export-limit entities are in kW; sensors are in W.
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: number.sigen_plant_grid_export_limitation
+    variables:
+      from_kw: "{{ trigger.from_state.state | float(10) }}"
+      to_kw: "{{ trigger.to_state.state | float(0) }}"
+      e_target_w: "{{ (to_kw * 1000) | round(0) }}"
+      # Model the enforced-limit ramp: |delta limit| / 300 W/s, + buffer, capped at 60s.
+      ramp_s: "{{ [ (((from_kw - to_kw) * 1000 / 300) + 3) | round(0), 60 ] | min }}"
+      ramp_duration: "{{ '00:%02d:%02d' | format((ramp_s | int) // 60, (ramp_s | int) % 60) }}"
+      # A real numeric decrease while exporting is possible.
+      is_decrease: >-
+        {{ trigger.from_state is not none and trigger.to_state is not none
+           and trigger.from_state.state not in ['unknown', 'unavailable']
+           and trigger.to_state.state not in ['unknown', 'unavailable']
+           and to_kw < from_kw - 0.001 }}
+      exporting_mode: >-
+        {{ states('select.sigen_plant_remote_ems_control_mode') in
+           ['Command Discharging (PV First)', 'Maximum Self Consumption'] }}
+    actions:
+      - choose:
+          # --- Qualifying DECREASE: arm the timer and run the hold loop. ---
+          - conditions:
+              - condition: template
+                value_template: "{{ is_decrease and exporting_mode }}"
+            sequence:
+              # Arm the single "hold active" signal. apply honours the transient cap
+              # only while this timer is active; the release automation reverts the cap
+              # on its finished/cancelled event regardless of whether this loop survives.
+              - action: timer.start
+                target:
+                  entity_id: timer.sigen_export_ramp
+                data:
+                  duration: "{{ ramp_duration }}"
+              - repeat:
+                  while:
+                    - condition: state
+                      entity_id: timer.sigen_export_ramp
+                      state: active
+                  sequence:
+                    # Coherent snapshot -> cap the instant PCS export limit so actual
+                    # grid export tracks the target while the grid limit ramps. First
+                    # pass uses the live pre-transition state to pre-position the cap.
+                    - variables:
+                        p_pcs: "{{ states('sensor.sigen_inverter_active_power') | float(0) }}"
+                        p_grid: "{{ states('sensor.sigen_plant_grid_active_power') | float(0) }}"
+                        pcs_cap_kw: "{{ [ (p_pcs + p_grid + e_target_w) / 1000, 0 ] | max | round(3) }}"
+                    - action: input_number.set_value
+                      target:
+                        entity_id: input_number.transient_pcs_export_cap
+                      data:
+                        value: "{{ pcs_cap_kw }}"
+                    # Push the cap to hardware synchronously.
+                    - action: script.sigen_apply_limits
+                    # Re-evaluate on the next fresh grid-power update (timeout fallback
+                    # so we still tick if the value is momentarily static).
+                    - wait_for_trigger:
+                        - trigger: state
+                          entity_id: sensor.sigen_plant_grid_active_power
+                      timeout: "00:00:08"
+                      continue_on_timeout: true
+                    # Brief settle so the next inverter+grid read is a coherent snapshot.
+                    - delay: "00:00:00.1"
+          # --- Anything else while a hold is active (typically an INCREASE/up-ramp):
+          #     cancel the timer so the release automation hands back to native
+          #     load-following. No-op when the timer is already idle.
+          - conditions:
+              - condition: state
+                entity_id: timer.sigen_export_ramp
+                state: active
+            sequence:
+              - action: timer.cancel
+                target:
+                  entity_id: timer.sigen_export_ramp
+    trace:
+      stored_traces: 10
+
+  - alias: Sigen Export Ramp Release (PCS cap revert)
+    description: >-
+      Guarantees the transient PCS export cap is released when the export-ramp hold
+      ends, whether timer.sigen_export_ramp finished naturally or was cancelled (by
+      an export-limit increase, a mode change, etc.). This fires on the timer's own
+      event, so it runs independently of the ramp-hold loop. It resets the cap helper
+      to 100 and re-applies limits; script.sigen_apply_limits already ignores the cap
+      once the timer is no longer active, so PCS export returns to native grid-limit
+      load-following the instant the hold ends.
+    triggers:
+      - trigger: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.sigen_export_ramp
+        id: ramp_finished
+      - trigger: event
+        event_type: timer.cancelled
+        event_data:
+          entity_id: timer.sigen_export_ramp
+        id: ramp_cancelled
+    actions:
+      # Tidy the helper back to its inert value (cosmetic; apply ignores it now the
+      # timer is idle) and recompute the real registers, releasing the PCS export cap.
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.transient_pcs_export_cap
+        data:
+          value: 100
+      - action: script.sigen_apply_limits
+    mode: queued
+    max_exceeded: silent
+    trace:
+      stored_traces: 10

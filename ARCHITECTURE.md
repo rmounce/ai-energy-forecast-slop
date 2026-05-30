@@ -368,23 +368,24 @@ These files live in HA but are backed up here. They are **not loaded directly fr
 
 | File | Purpose |
 |---|---|
-| `package-emhass.yaml` | HA package: template sensors for price/feed-in blending, the `script.emhass_dayahead_optim` / `script.emhass_mpc` wrappers that compute soc_init/soc_final and persist them to helper input_numbers, and the underlying `rest_command.emhass_dayahead_optim` / `rest_command.emhass_mpc` that POST a Jinja-built JSON payload to EMHASS |
+| `emhass.yaml` | HA package: template sensors for price/feed-in blending, the `script.emhass_dayahead_optim` / `script.emhass_mpc` wrappers that compute soc_init/soc_final and persist them to helper input_numbers, and the underlying `rest_command.emhass_dayahead_optim` / `rest_command.emhass_mpc` that POST a Jinja-built JSON payload to EMHASS |
 | `automation-sigenergy-emhass.yaml` | HA automation: reads EMHASS `mpc_*` output entities every 5 min, evaluates battery control scenarios (grid charge, PV curtail, discharge, standby), calls EMS script |
-| `script-sigenergy-ems.yaml` | HA script: sets SiG Energy EMS parameters (control mode, charge/discharge limits, SoC cutoffs, export limits). Writes the `desired_*` helpers + direct charge/discharge/PV registers, and calls `script.sigen_apply_limits` **synchronously** to push grid/PCS limits to hardware (deterministic Modbus ordering, no polling wait). When the effective export target is below the current grid-export register it **pre-arms** `timer.sigen_export_ramp` and `input_number.transient_pcs_export_cap` before lowering export, so the instant PCS cap is already active before a Command Discharging mode flip can expose a high PCS limit. On a **mode change** it lowers limits → applies and waits briefly for readback → flips mode → waits for mode readback plus a 100 ms command-settle window → raises targets → applies. When the mode is unchanged it writes targets and applies directly. |
-| `script-sigenergy-apply-limits.yaml` | HA script (`script.sigen_apply_limits`): the **single source of truth** for writing the four Sigen grid/PCS `*_limitation` registers. Computes effective values — grid export `= min(desired_export, flexible_export(SAPN), amber_limit)`, grid import `= desired_import` (also clears the SAPN >4e6 import bug), pcs export `= min(desired_pcs_export, transient_pcs_export_cap)` **only while `timer.sigen_export_ramp` is active** else just `desired_pcs_export` (so the cap can't bite when idle), pcs import `= desired_pcs_import` — and writes each only if it differs (idempotent). On a ramp-armed export decrease it writes the PCS export cap before the grid-export decrease; otherwise it uses the normal grid/import/PCS order. `mode: queued`. Called synchronously by the EMS script and by the master-limit automation. |
-| `automation-sigenergy-master-limit.yaml` | HA automation: **external-event handler** only. Captures externally-imposed SAPN flexible export limits into `input_number.flexible_export_limit`, then delegates all enforcement to `script.sigen_apply_limits`. Fires on register changes (external/SAPN writes, import bug), `desired_*`/`transient_pcs_export_cap` helper changes (so manual edits and the ramp-hold propagate), Amber price changes, and a 5-min failsafe. Export-register changes caused by HA service calls are ignored for SAPN capture so queued echoes from our own writes cannot pin `flexible_export_limit` to a stale value. No longer contains the write logic itself. |
-| `automation-sigenergy-export-ramp-hold.yaml` | HA automation (`mode: restart`): works around the Sigen grid-export-limit register's internal **~300 W/s ramp**. On a **decrease** of `number.sigen_plant_grid_export_limitation` (from EMHASS desired, Amber negative-price, or SAPN flexible limit — `apply_limits` folds all into this register), it **arms `timer.sigen_export_ramp`** for the modelled ramp duration and runs a closed loop *while the timer is active*, capping the *instant* PCS export limit (`PCS_cap = p_pcs + p_grid + E_target`, event-driven on grid-power updates) via `input_number.transient_pcs_export_cap` so actual grid export tracks the new target. An export-limit **increase** while a hold is active cancels the timer (up-ramps are tolerated). This is the actual fix for the transient over-export/burst when reducing export. |
-| `automation-sigenergy-export-ramp-release.yaml` | HA automation: fires on `timer.sigen_export_ramp`'s `timer.finished`/`timer.cancelled` event, resets `input_number.transient_pcs_export_cap` to 100 and re-applies. Independent of the ramp-hold loop, so a `mode:restart` cancellation can never strand the cap; PCS export returns to native load-following the instant the hold ends. |
+| `hass/packages/sigenergy_ems.yaml` | HA package: downstream Sigenergy execution layer. Defines `script.configure_sigen_ems_state`, `script.sigen_apply_limits`, the master-limit controller, export-ramp-hold controller, and export-ramp-release automation together so their ordering/timing/helper invariants live in one file. Upstream EMHASS policy remains in `automation-sigenergy-emhass.yaml`. This package replaces the retired split files; do not load both forms in HA at once. The repo `hass/packages/` directory is intended to mirror HA's `config/packages/`; filenames use HA-safe underscore package slugs. |
 
-> **New helpers required in HA:**
+> **Helpers required in HA:**
 > - `input_number.transient_pcs_export_cap` (min 0, max 100, step 0.001, **kW**). The
 >   export ramp-hold writes it; `apply_limits` mins it with `desired_pcs_export_limit`
 >   **but only while `timer.sigen_export_ramp` is active**, so the helper's resting value
 >   is irrelevant (a value of 0 can no longer strangle PCS export when idle).
 > - `timer.sigen_export_ramp` (a Timer helper) — the single "hold active" signal; its
 >   duration is overridden per `timer.start` call by the ramp-hold automation.
-> - `script.sigen_apply_limits` must be created with that object_id so
->   `script.configure_sigen_ems_state` and the master-limit automation can call it.
+> - Existing desired-limit helpers: `input_number.desired_export_limit`,
+>   `input_number.desired_import_limit`, `input_number.desired_pcs_export_limit`,
+>   `input_number.desired_pcs_import_limit`, and `input_number.flexible_export_limit`.
+>
+> These helpers are intentionally not declared in `hass/packages/sigenergy_ems.yaml` yet, so
+> existing HA UI-created helper history is preserved and migration avoids duplicate
+> entities. They can be moved into the package later if full YAML ownership is desired.
 
 **Sigenergy timing policy:**
 
@@ -403,7 +404,7 @@ These files live in HA but are backed up here. They are **not loaded directly fr
   `timer.sigen_export_ramp` duration models the inverter's internal grid-export-limit
   ramp (`delta / 300 W/s + 3 s`, capped at 60 s), not command serialization.
 
-#### `package-emhass.yaml` in detail
+#### `emhass.yaml` in detail
 
 This is the most complex HA file. It does:
 
@@ -472,7 +473,7 @@ open issues.
 
 1. **`forecast.py` is a monolith.** At ~3,500 lines it handles training, prediction, tariff management, logging, bias correction, HA publishing, and both Tier 1/Tier 2 inference. The natural module boundaries are clear (see table above) but the code is not yet split. Hard to navigate and test. Refactoring is gated on Phase 8 (test framework) to avoid regressions.
 
-2. **`hass/package-emhass.yaml` Jinja complexity.** The EMHASS REST command payload is built entirely in Jinja2 template syntax inside a YAML string. It's ~350 lines of logic that is hard to debug, diff, and maintain.
+2. **`hass/packages/emhass.yaml` Jinja complexity.** The EMHASS REST command payload is built entirely in Jinja2 template syntax inside a YAML string. It's ~350 lines of logic that is hard to debug, diff, and maintain.
 
 3. **Ad-hoc ingest scripts are disconnected.** The manual/historical backfill scripts (`ingest-ha-data.py`, `ingest-nem-data.py`, etc.) are run ad-hoc with no systemd timers. The automated ingest scripts (predispatch, p5min, pd7day, sevendayoutlook) all use `config_utils.load_config()` and run via systemd.
 

@@ -11,9 +11,9 @@ this doc is the source of truth for what the production stack actually does.
 Cross-references:
 
 - DH script (computes soc_init/soc_final, writes `dh_last_soc_init`, fires the
-  rest_command): `script.emhass_dayahead_optim` in `hass/package-emhass.yaml`.
+  rest_command): `script.emhass_dayahead_optim` in `hass/packages/emhass.yaml`.
 - MPC script (computes soc_init/soc_final, writes `mpc_last_soc_init`, fires the
-  rest_command): `script.emhass_mpc` in `hass/package-emhass.yaml`.
+  rest_command): `script.emhass_mpc` in `hass/packages/emhass.yaml`.
 - The underlying `rest_command.emhass_dayahead_optim` and `rest_command.emhass_mpc`
   now expect `soc_init_pct` and `soc_final_pct` as parameters. They must be called
   via the scripts above, not directly.
@@ -85,7 +85,7 @@ load-triggered solves at xx:01 / xx:31 (~75–95 s past).
 
 `input_number.emhass_target_soc_offset` is **not** static or user-set in normal
 operation. The automation `"EMHASS — Update target SoC offset"` in
-`hass/package-emhass.yaml` fires on every `sensor.dh_soc_batt_forecast` state
+`hass/packages/emhass.yaml` fires on every `sensor.dh_soc_batt_forecast` state
 change (i.e., after every DH solve publishes) and adjusts the offset based on
 whether the just-published plan reaches ~97.5% in the **clock-anchored** tail
 (intervals whose end > `now + 48h`):
@@ -123,7 +123,7 @@ History:
 - 2026-05-29: squashed into `script.emhass_dayahead_optim` (pre-solve reads of
   the prior plan).
 - 2026-05-30: reverted to a post-publish automation, now in-repo in
-  `hass/package-emhass.yaml`. The pre-solve variant added one cycle of lag to
+  `hass/packages/emhass.yaml`. The pre-solve variant added one cycle of lag to
   the feedback loop and caused visible ~1.2pp sawtooth oscillations at every
   30-min load-forecast boundary.
 - 2026-05-30 (same day): post-revert measurement showed a residual ~1pp dip
@@ -305,7 +305,7 @@ comparing what *would* have happened under each forecast had it been driving DH.
 
 - ~~The HA automation that adjusts `emhass_target_soc_offset` is not synced
   into this repo.~~ Resolved 2026-05-30: now lives as the
-  `"EMHASS — Update target SoC offset"` automation in `hass/package-emhass.yaml`.
+  `"EMHASS — Update target SoC offset"` automation in `hass/packages/emhass.yaml`.
   The dead `battery_soc_30_minute` clamp from the original Jinja (already
   commented out) was dropped in the migration; the offset remains unclamped.
 - A future `eval/rolling_mpc_eval.py` flag (e.g.
