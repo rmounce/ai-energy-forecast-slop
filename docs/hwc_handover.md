@@ -28,7 +28,8 @@ that originally forced the pause is **fixed and deployed**, so the pause is now 
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
 | COP characterisation | done & committed `5c1ab55` (measured COP ≈ 2.4) |
 | Engine decision (EMHASS vs custom) | **OPEN** — direction agreed: *recalibrate now, decide later* |
-| Recalibration (`carnot_efficiency` 0.45→~0.38) | **not yet applied** — next concrete step |
+| Recalibration (`carnot_efficiency` 0.45→0.38) | **applied in working tree**; `supply_temperature` still needs review |
+| COP analyzer `wet_bulb` column | **fixed in working tree**; regenerate `data/hwc_cop_cycles.csv` when InfluxDB is available |
 
 ## What's committed
 
@@ -38,7 +39,8 @@ that originally forced the pause is **fixed and deployed**, so the pause is now 
 - `5c1ab55` — `hwc_cop_analysis.py` (reusable COP sweep), `data/hwc_cop_cycles.csv`,
   `docs/hwc_thermal_characterisation.md`.
 
-Pre-existing uncommitted changes in the working tree (`docs/ha_entity_inventory.md`,
+Pre-existing uncommitted changes in the working tree (`docs/emhass_shared_state_race.md`,
+`docs/ha_entity_inventory.md`,
 `docs/prod_pipeline_critical_path.md`, `docs/production_soc_policy.md`,
 `eval/results/load_overnight_eval.json`, `hass/packages/emhass.yaml`) are **not ours** —
 leave them alone.
@@ -96,15 +98,17 @@ the engine-independent long pole — gather it regardless.
 
 ## Concrete next steps (suggested order)
 
-1. **Recalibrate** `config.json` → `hwc.thermal.carnot_efficiency` 0.45 → ~0.38 (and revisit
-   `supply_temperature`). Cheap; removes the optimism. (Agreed; not yet done.)
+1. **Review `supply_temperature`** now that `hwc.thermal.carnot_efficiency` is 0.38. The
+   cheap optimism fix is applied, but the effective supply temperature may need to be >60 °C
+   to approximate the measured condensing-temperature tail.
 2. **Lower the routine target** below 60 °C (e.g. 55) with a separate periodic 60 °C legionella
    reheat — the COP data shows the 55→60 tail is dear. Reconsider `desired/min_temperatures`
    and the once-daily assumption (Aquatech suggest a main 10:00–18:00 window + a morning boost).
 3. **Keep gathering clean COP cycles** (`python hwc_cop_analysis.py`); pursue a dedicated power
    meter; build COP(target, wet-bulb, start) — then make the engine decision (A/B/C) on evidence.
-4. **Fix the `wet_bulb` column** in `hwc_cop_analysis.py` (the `humidity_adelaide` join — wrong
-   RP/tag, currently empty).
+4. **Regenerate `data/hwc_cop_cycles.csv`** with `hwc_cop_analysis.py` once InfluxDB access is
+   available; the humidity query now reads aggregate `rp_30m.humidity_adelaide` without the
+   invalid `entity_id` filter.
 5. **Re-enable** only when ready: confirm EMHASS runs the fixed image (it does:
    `emhass:metadata-race-20260601`), then `systemctl --user enable --now ai-energy-hwc.timer`.
    The planner still uses `entity_save` against the shared store — now safe because of the
