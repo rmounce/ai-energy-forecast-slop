@@ -321,7 +321,8 @@
         "predicted_temp_entity": "sensor.predicted_temp",
         "power_plan_entity": "sensor.power_plan",
         "publish_prefix": "hwc_",
-        "horizon_steps": 72,
+        "planner": "block",
+        "horizon_steps": 144,
         "optimization_time_step": 30,
         "thermal": {
             "volume_l": 225,
@@ -335,7 +336,18 @@
             "max_temp": 62,
             "desired_temp": 60,
             "penalty_factor": 15,
-            "thermal_inertia_time_constant": 0.5
+            "thermal_inertia_time_constant": 0.5,
+            "standing_loss_ua_kw_per_c": 0.0025,
+            "heat_rate_c_per_hour": 5.2,
+            "terminal_target": "current"
+        },
+        "block_planner": {
+            "main_window_start": "10:00",
+            "main_window_end": "18:00",
+            "overnight_window_start": "00:00",
+            "overnight_window_end": "06:00",
+            "boost_target_temp": 50,
+            "terminal_lookback_hours": 24
         },
         "draw_off": {
             "total_kwh": 1.3,

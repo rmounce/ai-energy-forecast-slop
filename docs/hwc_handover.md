@@ -17,17 +17,16 @@ prices are later phases.
 ## TL;DR state (2026-06-01)
 
 A working planner exists and produces sensible plans. It is now **enabled for modelling only**
-(publishes a plan, no actuation) while we continue to improve COP/model accuracy and decide
-the modelling engine. The EMHASS shared-state race that originally forced the pause is
-**fixed and deployed**.
+(publishes a plan, no actuation). The default engine is a direct fixed-speed block planner;
+EMHASS thermal-battery mode remains as a fallback/comparison path.
 
 | Thing | State |
 |---|---|
-| `hwc_planner.py` (planner) | committed `d9f171f`, **works**, modelling-only timer enabled |
+| `hwc_planner.py` (planner) | fixed-speed block planner, **works**, modelling-only timer enabled |
 | `ai-energy-hwc.timer` (user systemd unit) | **enabled/active**; live publish verified 2026-06-01 |
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
 | COP characterisation | done & committed `5c1ab55` (measured COP ≈ 2.4) |
-| Engine decision (EMHASS vs custom) | **OPEN** — direction agreed: *recalibrate now, decide later* |
+| Engine decision (EMHASS vs custom) | custom block planner is now default; EMHASS kept as fallback |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 
@@ -48,12 +47,13 @@ leave them alone.
 ## How it works (architecture)
 
 - `hwc_planner.py` runs as a Python script (`systemd/ai-energy-hwc.{service,timer}`, every
-  30 min), *not* a Jinja `rest_command` (deliberate — wet-bulb + clock-aligned arrays are
-  fragile in Jinja). It: reads tank temp + the import-price forecast
-  (`sensor.ai_dh_import_price_forecast`) + BOM weather from HA; computes **wet-bulb** (Stull)
-  and clock-aligned `draw_off`/temperature arrays; POSTs `naive-mpc-optim` to the shared
-  EMHASS instance with `set_use_battery:false`/`set_use_pv:false` and one `thermal_battery`
-  deferrable load; lets EMHASS publish the plan.
+  30 min), *not* a Jinja `rest_command`. It reads tank temp + the import-price forecast
+  (`sensor.ai_dh_import_price_forecast`) + BOM weather from HA; builds clock-aligned
+  `draw_off`/temperature arrays; creates a 72h fixed-speed block plan; and publishes the plan
+  sensors directly to HA.
+- EMHASS fallback mode is still available with `hwc.planner: "emhass"`, but the block planner
+  is the default because it matches the unit's fixed-speed behavior and avoids fragmented
+  compressor starts.
 - Loads config via `config_utils.load_config()` (merges untracked `config.secrets.json`).
 - Pure helpers are unit-tested: `tests/unit/test_hwc_planner.py` (`.venv/bin/python -m pytest`).
 
@@ -76,19 +76,19 @@ From `docs/hwc_thermal_characterisation.md` (telemetry analysis; reproduce with
 4. **No onboard power meter.** Power is proxied from `sensor.remaining_power_load` − baseline,
    valid only on clean windows. **Getting a real circuit meter is the #1 accuracy lever.**
 
-## The open decision: modelling engine
+## Modelling engine decision
 
 Stock EMHASS `thermal_battery` is a **single-node tank with fixed-supply Carnot COP** — it
-can model neither the stratification nor the SoC-dependent condensing temp. Agreed direction:
-**recalibrate now, decide the engine later** once we have more calibration data. Options when
-deciding:
+can model neither the stratification nor the SoC-dependent condensing temp, and live plans
+showed a too-short 48-point output, no terminal inventory contract, and fragmented starts.
+The default is now option B:
 
 - **(A) Recalibrate + keep EMHASS** — set `carnot_efficiency` ≈ 0.38 (from 0.45) and an
   effective `supply_temperature` > 60; accept a cycle-average COP. Least work; OK if a single
   average COP is good enough (plausible, since the unit runs as a block).
 - **(B) Purpose-built block optimiser** — model the reheat as a fixed-speed block with measured
   energy/duration vs conditions; find cheapest placement subject to availability + legionella.
-  Most accurate for this unit; small bespoke MILP/enumeration; drops EMHASS for HWC.
+  Most accurate for this unit; small bespoke enumeration; default for HWC.
 - **(C) Enhance EMHASS COP** — add SoC/condensing-temp-dependent supply temperature in EMHASS
   (the owner already patches EMHASS — see race doc). Keeps one framework; more EMHASS surgery;
   still single-node.

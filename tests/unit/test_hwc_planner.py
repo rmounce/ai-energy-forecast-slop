@@ -109,6 +109,17 @@ def _hwc_cfg():
             "desired_temp": 60,
             "penalty_factor": 15,
             "thermal_inertia_time_constant": 0.5,
+            "standing_loss_ua_kw_per_c": 0.0025,
+            "heat_rate_c_per_hour": 5.2,
+            "terminal_target": "current",
+        },
+        "block_planner": {
+            "main_window_start": "10:00",
+            "main_window_end": "18:00",
+            "overnight_window_start": "00:00",
+            "overnight_window_end": "06:00",
+            "boost_target_temp": 50,
+            "terminal_lookback_hours": 24,
         },
     }
 
@@ -149,3 +160,46 @@ def test_build_payload_structure():
         assert len(payload[key]) == 3
 
     assert payload["custom_predicted_temperature_id"][0]["entity_id"] == "sensor.hwc_predicted_temp"
+
+
+def test_block_planner_builds_long_horizon_with_terminal_target():
+    grid = _adelaide_grid(0, 144)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    plan = hp.build_block_plan(
+        grid_times_utc=grid,
+        load_cost=[0.30] * 20 + [0.08] * 16 + [0.22] * 108,
+        dry_bulb=[15.0] * 144,
+        draw_off=hp.build_draw_off_profile(
+            grid, "Australia/Adelaide", "09:00", "10:00", total_kwh=1.3
+        ),
+        start_temperature=55.0,
+        cfg=cfg,
+    )
+
+    assert len(plan["predicted_temperatures"]) == 144
+    assert len(plan["deferrables_schedule"]) == 144
+    assert min(plan["temperatures"]) >= 45
+    assert plan["terminal_temperature"] >= 55.0
+
+
+def test_block_planner_prefers_contiguous_daytime_runs():
+    grid = _adelaide_grid(0, 96)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    plan = hp.build_block_plan(
+        grid_times_utc=grid,
+        load_cost=[0.30] * 20 + [0.08] * 16 + [0.30] * 28 + [0.08] * 16 + [0.30] * 16,
+        dry_bulb=[15.0] * 96,
+        draw_off=hp.build_draw_off_profile(
+            grid, "Australia/Adelaide", "09:00", "10:00", total_kwh=1.3
+        ),
+        start_temperature=55.0,
+        cfg=cfg,
+    )
+
+    starts = sum(
+        1
+        for prev, cur in zip([0.0] + plan["schedule_w"][:-1], plan["schedule_w"], strict=True)
+        if prev <= 0 and cur > 0
+    )
+    assert starts <= 3
+    assert all(power in (0.0, 800.0) for power in plan["schedule_w"])
