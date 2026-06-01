@@ -247,6 +247,7 @@ the `forecasts` attribute.
 | `input_number.emhass_dayahead_soc_init` | **Legacy**, written by an older DH automation but no longer consumed by `rest_command.emhass_dayahead_optim` after the script-wrapper refactor. Retained for diagnostics only | % |
 | `input_number.dh_last_soc_init` | soc_init actually passed to the most recent DH run. Written by `script.emhass_dayahead_optim`. Used by both DH (next run's chain anchor) and MPC (prior plan's start anchor for interpolation, because the published `dh_soc_batt_forecast` only carries end-of-interval values) | % |
 | `input_number.mpc_last_soc_init` | soc_init actually passed to the most recent MPC run. Written by `script.emhass_mpc`. Diagnostic only — no current consumer | % |
+| `input_text.dh_last_reground_block` | Compact UTC key (`dh-YYYYMMDDTHHMMZ`) for the most recent 30-minute DH quantization block where `script.emhass_dayahead_optim` re-grounded its chain anchor to live SoC. Prevents duplicate re-grounding within the same block while still catching delayed/queued first solves | block key |
 
 ### Battery state tracking
 

@@ -40,6 +40,17 @@ input_number:
     unit_of_measurement: "%"
     icon: mdi:battery-sync
 
+input_text:
+  # Compact UTC key for the most recent 30-minute DH quantization block where
+  # script.emhass_dayahead_optim re-grounded its chained anchor to live SoC
+  # (format: dh-YYYYMMDDTHHMMZ). This makes boundary re-grounding "once per new
+  # block" rather than dependent on whether a triggering forecast update arrived
+  # within a fixed seconds window.
+  dh_last_reground_block:
+    name: EMHASS DH Last Re-ground Block
+    max: 32
+    icon: mdi:clock-sync
+
 template:
   - sensor:
     - name: 'Amber Effective General Price'
@@ -1141,18 +1152,17 @@ script:
   # for the anchor. With no prior plan, deviation = 0, so soc_init = live_soc
   # on the first cycle. From the second cycle onward the chain is established.
   #
-  # 30-MIN BOUNDARY RE-GROUNDING (2026-05-30):
+  # 30-MIN BLOCK RE-GROUNDING (2026-05-30, refined 2026-05-30):
   #
-  # When the script fires within 60s of a wall-clock 30-min boundary (xx:00 or
-  # xx:30), set anchor = live_soc and deviation = 0 directly. EMHASS's DH
-  # quantization shifts at these boundaries (solve quantization snaps to the
-  # new xx:00/xx:30), and the chained anchor + prior-plan interpolation
-  # interact across the boundary to produce a ~1pp jump in the next solve's
-  # plan max_tail. Re-grounding to live_soc cuts that interaction. Re-grounding
-  # is harmless on non-boundary runs (chain still works), and the chain
-  # restarts cleanly from live_soc after each boundary.
-  # Price-triggered solves fire ~10-30s past xx:00/xx:30 (catches them);
-  # load-triggered solves fire ~75-95s past xx:01/xx:31 (does not).
+  # On the first DH script invocation in each wall-clock 30-minute block
+  # (xx:00/xx:30 UTC quantization), set anchor = live_soc and deviation = 0
+  # directly. EMHASS's DH quantization shifts at these boundaries, and the
+  # chained anchor + prior-plan interpolation interact across the boundary to
+  # produce a ~1pp jump in the next solve's plan max_tail. Re-grounding to
+  # live_soc cuts that interaction. A persisted block marker makes this robust
+  # to delayed/queued solves: whichever trigger first reaches the script in the
+  # new block re-grounds once; later solves in the same block use normal chained
+  # behaviour.
   #
   # target_soc_offset is maintained by the post-solve "EMHASS — Update target
   # SoC offset" automation in this same package YAML (triggered on
@@ -1165,18 +1175,21 @@ script:
     sequence:
       - variables:
           actual_soc_now: "{{ states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) }}"
-          # Seconds past the most recent wall-clock 30-min boundary. < 60 ⇒
-          # this is a boundary-crossing solve and we should re-ground the
-          # chained anchor; see docstring above.
-          secs_past_30min: "{{ ((utcnow().minute % 30) * 60 + utcnow().second) | int }}"
+          # Compact UTC key for the current 30-minute DH quantization block. The
+          # non-date prefix prevents native-template parsing surprises.
+          current_reground_block: >-
+            {{ utcnow().replace(minute=(utcnow().minute // 30) * 30, second=0, microsecond=0).strftime('dh-%Y%m%dT%H%MZ') }}
+      - variables:
+          should_reground_dh: >-
+            {{ states('input_text.dh_last_reground_block') != current_reground_block }}
       - variables:
           # Anchor: dh_last_soc_init normally (DH self-correction chain), but
-          # re-grounded to live SoC at 30-min boundary crossings to break the
+          # re-grounded to live SoC once per 30-min block to break the
           # chain ↔ prior-plan interpolation interaction. Cold-start fallback
           # to live SoC if dh_last_soc_init is 0. Treating 0 as "missing" is
           # safe — the battery is never actually at 0%.
           anchor_soc: >-
-            {%- if (secs_past_30min | int) < 60 -%}
+            {%- if should_reground_dh | bool -%}
               {{ actual_soc_now | float }}
             {%- else -%}
               {%- set last = states('input_number.dh_last_soc_init') | float(0) -%}
@@ -1186,9 +1199,9 @@ script:
           min_target: "{{ states('input_number.battery_soc_min_target') | float }}"
       - variables:
           # Deviation = actual − interp(prior_plan, utcnow()) on normal runs.
-          # Forced to 0 at boundary re-grounding (no chain to correct).
+          # Forced to 0 at block re-grounding (no chain to correct).
           deviation_pct: >-
-            {%- if (secs_past_30min | int) < 60 -%}
+            {%- if should_reground_dh | bool -%}
               0
             {%- else -%}
               {% set utc_now = utcnow() %}
@@ -1237,6 +1250,15 @@ script:
           entity_id: input_number.dh_last_soc_init
         data:
           value: "{{ soc_init_pct }}"
+      - if:
+          - condition: template
+            value_template: "{{ should_reground_dh | bool }}"
+        then:
+          - service: input_text.set_value
+            target:
+              entity_id: input_text.dh_last_reground_block
+            data:
+              value: "{{ current_reground_block }}"
       - service: rest_command.emhass_dayahead_optim
         data:
           soc_init_pct: "{{ soc_init_pct }}"
@@ -1460,11 +1482,10 @@ automation:
   #   max_tail   = max(tail)
   #   new_offset = current_offset + (97.5 - max_tail)
   #
-  # Clock-anchored chosen 2026-05-30: the original [-48:] slice shifts both
-  # ends by 30 min at each EMHASS quantization boundary (drops front, adds
-  # back), which contributed to the boundary sawtooth in the offset. The
-  # clock-anchored window only adjusts the back end and matches the
-  # conceptual definition of "the plan's tail beyond now+48h".
+  # Clock-anchored chosen 2026-05-30: the original [-48:] slice assumes a full
+  # 144-point plan and binds the feedback metric to list position. The
+  # clock-anchored window makes the intended wall-clock cutoff explicit and
+  # remains correct if EMHASS ever publishes a shorter/longer schedule.
   #
   # If the tail peak falls below 97.5%, increment the offset so the NEXT DH
   # solve targets a higher terminal SoC; if it overshot, decrement. Soft
