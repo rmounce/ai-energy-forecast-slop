@@ -1,0 +1,14 @@
+[Unit]
+Description=HWC event-driven planner/executor daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
+ExecStart=/home/saltspork/src/ai-energy-forecast-slop/.venv/bin/python /home/saltspork/src/ai-energy-forecast-slop/services/hwc_daemon.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
