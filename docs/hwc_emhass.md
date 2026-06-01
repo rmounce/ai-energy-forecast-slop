@@ -110,7 +110,7 @@ Derived from the first ~1.5 days of InfluxDB history (Adelaide local):
   `thermal_loss ≈ 0.12 kW` (225 L × 4.186 × 0.45 / 3600).
 - Reheat **~5–5.6 °C/h to 60 °C** in current cool ambient (slower than datasheet's
   to-55 °C rows, as expected for the hard last 5 °C).
-- Morning shower **~09:00–10:00**, ~5 °C drop beyond standing loss ≈ **~1.3 kWh** draw.
+- Morning shower **~08:00–09:00**, ~5 °C drop beyond standing loss ≈ **~1.3 kWh** draw.
 
 | Param (`thermal_battery` dict) | Start value | Source |
 |---|---|---|
@@ -123,7 +123,7 @@ Derived from the first ~1.5 days of InfluxDB history (Adelaide local):
 | `min_temperatures` | 45 °C | hard floor (required non-empty) |
 | `max_temperatures` | 60 °C | heat-pump-only cutoff; element >60 is out of scope |
 | `desired_temperatures` | 60 °C | daily legionella target |
-| `draw_off_demand` | ~1.3 kWh @ ~09:00 | **shower data** |
+| `draw_off_demand` | ~1.3 kWh @ ~08:00 | **shower data** |
 | `thermal_inertia_time_constant` | ~0.5 h | anti-cycling / probe lag |
 | outdoor temp forecast | **wet-bulb** | from temp + humidity |
 
