@@ -314,5 +314,33 @@
     "training_history_days": 730,
     "prediction_history_days": 10,
     "timezone": "Australia/Adelaide",
-    "gst_rate": 1.1
+    "gst_rate": 1.1,
+    "hwc": {
+        "tank_temp_entity": "sensor.heat_pump_temperature",
+        "import_price_entity": "sensor.ai_dh_import_price_forecast",
+        "predicted_temp_entity": "sensor.predicted_temp",
+        "power_plan_entity": "sensor.power_plan",
+        "publish_prefix": "hwc_",
+        "horizon_steps": 72,
+        "optimization_time_step": 30,
+        "thermal": {
+            "volume_l": 225,
+            "density": 997,
+            "heat_capacity": 4.184,
+            "supply_temperature": 60,
+            "carnot_efficiency": 0.45,
+            "thermal_loss_kw": 0.12,
+            "nominal_power_w": 800,
+            "min_temp": 45,
+            "max_temp": 62,
+            "desired_temp": 60,
+            "penalty_factor": 15,
+            "thermal_inertia_time_constant": 0.5
+        },
+        "draw_off": {
+            "total_kwh": 1.3,
+            "window_start": "09:00",
+            "window_end": "10:00"
+        }
+    }
 }
