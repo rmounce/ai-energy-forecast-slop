@@ -101,7 +101,7 @@ Derived from the first ~1.5 days of InfluxDB history (Adelaide local):
 | `volume` | 0.225 (m³) | datasheet |
 | `density` / `heat_capacity` | 997 / 4.184 | water |
 | `supply_temperature` | ~60 °C | target |
-| `carnot_efficiency` | ~0.45–0.5 | back-solved from datasheet (vs wet-bulb) |
+| `carnot_efficiency` | ~0.38 | measured-cycle calibration (vs wet-bulb) |
 | `thermal_loss` | ~0.12 kW | **standing-loss data** |
 | nominal power (elec) | ~800 W | datasheet compressor input |
 | `min_temperatures` | 45 °C | hard floor (required non-empty) |

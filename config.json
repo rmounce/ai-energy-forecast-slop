@@ -328,7 +328,7 @@
             "density": 997,
             "heat_capacity": 4.184,
             "supply_temperature": 60,
-            "carnot_efficiency": 0.45,
+            "carnot_efficiency": 0.38,
             "thermal_loss_kw": 0.12,
             "nominal_power_w": 800,
             "min_temp": 45,

@@ -44,9 +44,16 @@ def _client():
     )
 
 
-def _series(c, meas, eid, days, field="value", rp=""):
+def _series_query(meas, eid=None, days=10, field="value", rp=""):
     src = f'"{rp}"."{meas}"' if rp else f'"{meas}"'
-    q = f"SELECT \"{field}\" FROM {src} WHERE entity_id='{eid}' AND time> now()-{days}d"
+    where = [f"time> now()-{days}d"]
+    if eid:
+        where.insert(0, f"entity_id='{eid}'")
+    return f"SELECT \"{field}\" FROM {src} WHERE {' AND '.join(where)}"
+
+
+def _series(c, meas, eid=None, days=10, field="value", rp=""):
+    q = _series_query(meas, eid=eid, days=days, field=field, rp=rp)
     pts = list(c.query(q).get_points())
     if not pts:
         return pd.Series(dtype=float)
@@ -71,8 +78,7 @@ def analyse(days=10, min_minutes=20):
     pw = _series(c, "sensor__power", "remaining_power_load", days)
     tank = _series(c, "sensor__temperature", "heat_pump_temperature", days)
     amb = _series(c, "sensor__temperature", "aquatech_temperature", days)
-    hum = _series(c, "humidity_adelaide", "humidity_adelaide", days,
-                  field="mean_value", rp="rp_30m")  # weather-station RH; may be empty
+    hum = _series(c, "humidity_adelaide", days=days, field="mean_value", rp="rp_30m")
     if comp.empty or pw.empty:
         raise SystemExit("Missing compressor or remaining_power_load data")
 

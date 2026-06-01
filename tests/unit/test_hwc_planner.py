@@ -101,7 +101,7 @@ def _hwc_cfg():
             "density": 997,
             "heat_capacity": 4.184,
             "supply_temperature": 60,
-            "carnot_efficiency": 0.45,
+            "carnot_efficiency": 0.38,
             "thermal_loss_kw": 0.12,
             "nominal_power_w": 800,
             "min_temp": 45,
@@ -135,7 +135,7 @@ def test_build_payload_structure():
     tb = payload["def_load_config"][0]["thermal_battery"]
     assert tb["volume"] == pytest.approx(0.225)  # litres → m³
     assert tb["start_temperature"] == pytest.approx(48.5)
-    assert tb["carnot_efficiency"] == 0.45
+    assert tb["carnot_efficiency"] == 0.38
     assert tb["thermal_loss"] == 0.12
     assert tb["draw_off_demand"] == [0.0, 0.65, 0.0]
     # per-timestep temperature arrays match the horizon length
