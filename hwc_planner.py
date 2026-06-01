@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Heat-pump hot water (HWC) scheduling planner — v1 (modelling only).
 
-Optimises a heat-pump hot water unit (Aquatech RAPID X6) as an EMHASS
-``thermal_battery`` deferrable load, *separately* from the home battery, against the
-import-price forecast and a wet-bulb outdoor-temperature forecast. It POSTs a
-``naive-mpc-optim`` request to the existing EMHASS instance with the battery and PV
-disabled, then asks EMHASS to publish the resulting plan (predicted tank temperature +
-planned power) back to Home Assistant.
+Optimises a heat-pump hot water unit (Aquatech RAPID X6), *separately* from the home
+battery, against the import-price forecast and weather. The default planner models the
+unit as a fixed-speed block heater and publishes predicted tank temperature + planned
+power directly to Home Assistant. The older EMHASS ``thermal_battery`` planner is still
+available via config for comparison.
 
 This is the *modelling* phase: it produces and publishes a plan only — it does NOT
 actuate the unit. See ``docs/hwc_emhass.md`` for the full design, the calibration
 anchors, and the v1/v2/v3 roadmap.
 
 Pure helpers (``stull_wet_bulb``, ``interpolate_to_grid``, ``build_draw_off_profile``,
-``build_payload``) are unit-tested in ``tests/unit/test_hwc_planner.py``.
+``build_payload`` and block-planner helpers) are unit-tested in
+``tests/unit/test_hwc_planner.py``.
 """
 
 from __future__ import annotations
@@ -105,6 +105,371 @@ def _step_minutes(grid_times_utc: list[datetime]) -> int:
     return 30
 
 
+def _thermal_capacity_kwh_per_c(th: dict) -> float:
+    """Return tank sensible heat capacity in kWh / °C."""
+    litres = float(th["volume_l"])
+    density_kg_per_l = float(th.get("density", 997)) / 1000.0
+    return litres * density_kg_per_l * float(th.get("heat_capacity", 4.184)) / 3600.0
+
+
+def _parse_hhmm(value: str) -> int:
+    h, m = (int(x) for x in value.split(":"))
+    return h * 60 + m
+
+
+def _minute_in_window(minute: int, start: int, end: int) -> bool:
+    if start <= end:
+        return start <= minute < end
+    return minute >= start or minute < end
+
+
+def _local_minute(t: datetime, tz) -> int:
+    local = t.astimezone(tz)
+    return local.hour * 60 + local.minute
+
+
+def _published_entity_id(prefix: str, entity_id: str) -> str:
+    domain, object_id = entity_id.split(".", 1)
+    return f"{domain}.{prefix}{object_id}"
+
+
+def simulate_block_temperatures(
+    *,
+    schedule_w: list[float],
+    start_temperature: float,
+    dry_bulb: list[float],
+    draw_off: list[float],
+    cfg: dict,
+) -> tuple[list[float], float]:
+    """Simulate the custom HWC block model.
+
+    Temperatures are reported at each forecast timestamp before that interval's heat/loss/draw
+    is applied. The returned terminal temperature is the state after the final interval.
+    """
+    th = cfg["thermal"]
+    step_h = cfg.get("optimization_time_step", 30) / 60.0
+    cap_kwh_per_c = _thermal_capacity_kwh_per_c(th)
+    ua_kw_per_c = float(th.get("standing_loss_ua_kw_per_c", 0.0025))
+    heat_rate_c_per_h = float(th.get("heat_rate_c_per_hour", 5.2))
+    max_temp = float(th.get("max_temp", 62))
+    temp = float(start_temperature)
+    temps = []
+    for power_w, ambient_c, draw_kwh in zip(schedule_w, dry_bulb, draw_off, strict=True):
+        temps.append(round(temp, 2))
+        loss_kwh = max(0.0, temp - float(ambient_c)) * ua_kw_per_c * step_h
+        temp -= loss_kwh / cap_kwh_per_c
+        temp -= float(draw_kwh) / cap_kwh_per_c
+        if power_w > 0:
+            temp += heat_rate_c_per_h * step_h
+        temp = min(max_temp, temp)
+    return temps, round(temp, 2)
+
+
+def _add_contiguous_heat(
+    schedule_w: list[float],
+    *,
+    start_idx: int,
+    end_idx: int,
+    target_temp: float,
+    start_temperature: float,
+    dry_bulb: list[float],
+    draw_off: list[float],
+    cfg: dict,
+) -> list[float]:
+    """Return a copy with one contiguous heater run from start_idx until target is reached."""
+    th = cfg["thermal"]
+    power_w = float(th["nominal_power_w"])
+    out = list(schedule_w)
+    end_idx = min(end_idx, len(out))
+    if start_idx >= end_idx:
+        return out
+    for idx in range(start_idx, end_idx):
+        temps, _ = simulate_block_temperatures(
+            schedule_w=out,
+            start_temperature=start_temperature,
+            dry_bulb=dry_bulb,
+            draw_off=draw_off,
+            cfg=cfg,
+        )
+        if temps[idx] >= target_temp:
+            break
+        out[idx] = power_w
+    return out
+
+
+def _schedule_cost_delta(
+    before: list[float], after: list[float], load_cost: list[float], step_h: float
+) -> float:
+    return sum(
+        max(0.0, new - old) / 1000.0 * float(cost) * step_h
+        for old, new, cost in zip(before, after, load_cost, strict=True)
+    )
+
+
+def _choose_daily_main_blocks(
+    schedule_w: list[float],
+    *,
+    grid_times_utc: list[datetime],
+    load_cost: list[float],
+    start_temperature: float,
+    dry_bulb: list[float],
+    draw_off: list[float],
+    cfg: dict,
+) -> list[float]:
+    tz = pytz.timezone(cfg["timezone"])
+    block_cfg = cfg["hwc"].get("block_planner", {})
+    main_start = _parse_hhmm(block_cfg.get("main_window_start", "10:00"))
+    main_end = _parse_hhmm(block_cfg.get("main_window_end", "18:00"))
+    target = float(cfg["hwc"]["thermal"].get("desired_temp", 60))
+    min_temp = float(cfg["hwc"]["thermal"].get("min_temp", 45))
+    step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
+
+    slots_by_day: dict[datetime.date, list[int]] = {}
+    for idx, t in enumerate(grid_times_utc):
+        minute = _local_minute(t, tz)
+        if _minute_in_window(minute, main_start, main_end):
+            slots_by_day.setdefault(t.astimezone(tz).date(), []).append(idx)
+
+    out = list(schedule_w)
+    for slots in slots_by_day.values():
+        best = out
+        best_score = (math.inf, math.inf, math.inf)
+        for start_idx in slots:
+            candidate = _add_contiguous_heat(
+                out,
+                start_idx=start_idx,
+                end_idx=slots[-1] + 1,
+                target_temp=target,
+                start_temperature=start_temperature,
+                dry_bulb=dry_bulb,
+                draw_off=draw_off,
+                cfg=cfg["hwc"],
+            )
+            ctemps, _ = simulate_block_temperatures(
+                schedule_w=candidate,
+                start_temperature=start_temperature,
+                dry_bulb=dry_bulb,
+                draw_off=draw_off,
+                cfg=cfg["hwc"],
+            )
+            window_shortfall = max(0.0, min_temp - min(ctemps[slots[0] : slots[-1] + 1]))
+            cost = _schedule_cost_delta(out, candidate, load_cost, step_h)
+            score = (window_shortfall, cost, float(start_idx))
+            if score < best_score:
+                best = candidate
+                best_score = score
+        out = best
+    return out
+
+
+def _repair_min_temperature(
+    schedule_w: list[float],
+    *,
+    grid_times_utc: list[datetime],
+    load_cost: list[float],
+    start_temperature: float,
+    dry_bulb: list[float],
+    draw_off: list[float],
+    cfg: dict,
+) -> list[float]:
+    tz = pytz.timezone(cfg["timezone"])
+    hwc = cfg["hwc"]
+    block_cfg = hwc.get("block_planner", {})
+    overnight_start = _parse_hhmm(block_cfg.get("overnight_window_start", "00:00"))
+    overnight_end = _parse_hhmm(block_cfg.get("overnight_window_end", "06:00"))
+    min_temp = float(hwc["thermal"].get("min_temp", 45))
+    boost_target = float(block_cfg.get("boost_target_temp", min_temp + 5))
+    step_h = hwc.get("optimization_time_step", 30) / 60.0
+    lookback = int(round(18 / step_h))
+
+    out = list(schedule_w)
+    for _ in range(8):
+        temps, _ = simulate_block_temperatures(
+            schedule_w=out,
+            start_temperature=start_temperature,
+            dry_bulb=dry_bulb,
+            draw_off=draw_off,
+            cfg=hwc,
+        )
+        bad_idx = next((i for i, temp in enumerate(temps) if temp < min_temp), None)
+        if bad_idx is None:
+            return out
+
+        lo = max(0, bad_idx - lookback)
+        candidate_starts = [
+            i
+            for i in range(lo, bad_idx + 1)
+            if _minute_in_window(_local_minute(grid_times_utc[i], tz), overnight_start, overnight_end)
+        ]
+        if not candidate_starts:
+            candidate_starts = list(range(lo, bad_idx + 1))
+
+        best = None
+        best_score = (math.inf, math.inf)
+        for start_idx in candidate_starts:
+            candidate = list(out)
+            for heat_idx in range(start_idx, bad_idx + 1):
+                ctemps, _ = simulate_block_temperatures(
+                    schedule_w=candidate,
+                    start_temperature=start_temperature,
+                    dry_bulb=dry_bulb,
+                    draw_off=draw_off,
+                    cfg=hwc,
+                )
+                if ctemps[bad_idx] >= min_temp and ctemps[heat_idx] >= boost_target:
+                    break
+                candidate[heat_idx] = float(hwc["thermal"]["nominal_power_w"])
+            ctemps, _ = simulate_block_temperatures(
+                schedule_w=candidate,
+                start_temperature=start_temperature,
+                dry_bulb=dry_bulb,
+                draw_off=draw_off,
+                cfg=hwc,
+            )
+            shortfall = max(0.0, min_temp - ctemps[bad_idx])
+            cost = _schedule_cost_delta(out, candidate, load_cost, step_h)
+            score = (shortfall, cost)
+            if score < best_score:
+                best = candidate
+                best_score = score
+        if best is None or best == out:
+            return out
+        out = best
+    return out
+
+
+def _repair_terminal_temperature(
+    schedule_w: list[float],
+    *,
+    grid_times_utc: list[datetime],
+    load_cost: list[float],
+    start_temperature: float,
+    dry_bulb: list[float],
+    draw_off: list[float],
+    cfg: dict,
+) -> list[float]:
+    hwc = cfg["hwc"]
+    th = hwc["thermal"]
+    target_setting = th.get("terminal_target", "current")
+    if target_setting == "current":
+        terminal_target = float(start_temperature)
+    else:
+        terminal_target = float(target_setting)
+    _, terminal = simulate_block_temperatures(
+        schedule_w=schedule_w,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        draw_off=draw_off,
+        cfg=hwc,
+    )
+    if terminal >= terminal_target:
+        return schedule_w
+
+    step_h = hwc.get("optimization_time_step", 30) / 60.0
+    lookback_h = float(hwc.get("block_planner", {}).get("terminal_lookback_hours", 24))
+    lo = max(0, len(schedule_w) - int(round(lookback_h / step_h)))
+    best = schedule_w
+    best_score = (max(0.0, terminal_target - terminal), math.inf)
+    for start_idx in range(lo, len(schedule_w)):
+        candidate = list(schedule_w)
+        for heat_idx in range(start_idx, len(schedule_w)):
+            _, cterminal = simulate_block_temperatures(
+                schedule_w=candidate,
+                start_temperature=start_temperature,
+                dry_bulb=dry_bulb,
+                draw_off=draw_off,
+                cfg=hwc,
+            )
+            if cterminal >= terminal_target:
+                break
+            candidate[heat_idx] = float(hwc["thermal"]["nominal_power_w"])
+        _, cterminal = simulate_block_temperatures(
+            schedule_w=candidate,
+            start_temperature=start_temperature,
+            dry_bulb=dry_bulb,
+            draw_off=draw_off,
+            cfg=hwc,
+        )
+        score = (
+            max(0.0, terminal_target - cterminal),
+            _schedule_cost_delta(schedule_w, candidate, load_cost, step_h),
+        )
+        if score < best_score:
+            best = candidate
+            best_score = score
+    return best
+
+
+def build_block_plan(
+    *,
+    grid_times_utc: list[datetime],
+    load_cost: list[float],
+    dry_bulb: list[float],
+    draw_off: list[float],
+    start_temperature: float,
+    cfg: dict,
+) -> dict:
+    """Build a fixed-speed HWC block plan and HA-compatible published attributes."""
+    n = len(grid_times_utc)
+    schedule = [0.0] * n
+    schedule = _choose_daily_main_blocks(
+        schedule,
+        grid_times_utc=grid_times_utc,
+        load_cost=load_cost,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        draw_off=draw_off,
+        cfg=cfg,
+    )
+    schedule = _repair_min_temperature(
+        schedule,
+        grid_times_utc=grid_times_utc,
+        load_cost=load_cost,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        draw_off=draw_off,
+        cfg=cfg,
+    )
+    schedule = _repair_terminal_temperature(
+        schedule,
+        grid_times_utc=grid_times_utc,
+        load_cost=load_cost,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        draw_off=draw_off,
+        cfg=cfg,
+    )
+    temps, terminal_temp = simulate_block_temperatures(
+        schedule_w=schedule,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        draw_off=draw_off,
+        cfg=cfg["hwc"],
+    )
+
+    prefix = cfg["hwc"].get("publish_prefix", "hwc_")
+    temp_key = _published_entity_id(prefix, cfg["hwc"]["predicted_temp_entity"]).split(".", 1)[1]
+    power_key = _published_entity_id(prefix, cfg["hwc"]["power_plan_entity"]).split(".", 1)[1]
+    cost_key = f"{prefix}unit_load_cost"
+    return {
+        "schedule_w": schedule,
+        "temperatures": temps,
+        "terminal_temperature": terminal_temp,
+        "predicted_temperatures": [
+            {"date": t.isoformat(), temp_key: f"{temp:.2f}"}
+            for t, temp in zip(grid_times_utc, temps, strict=True)
+        ],
+        "deferrables_schedule": [
+            {"date": t.isoformat(), power_key: f"{power:.1f}"}
+            for t, power in zip(grid_times_utc, schedule, strict=True)
+        ],
+        "unit_load_cost_forecasts": [
+            {"date": t.isoformat(), cost_key: f"{cost:.5f}"}
+            for t, cost in zip(grid_times_utc, load_cost, strict=True)
+        ],
+    }
+
+
 def build_payload(
     *,
     grid_times_utc: list[datetime],
@@ -194,6 +559,15 @@ def _ha_call(cfg: dict, method: str, endpoint: str, payload: dict | None = None)
     return resp.json()
 
 
+def _ha_set_state(cfg: dict, entity_id: str, state, attributes: dict):
+    return _ha_call(
+        cfg,
+        "POST",
+        f"states/{entity_id}",
+        {"state": state, "attributes": attributes},
+    )
+
+
 def get_tank_temperature(cfg: dict) -> float:
     state = _ha_call(cfg, "GET", f"states/{cfg['hwc']['tank_temp_entity']}")
     return float(state["state"])
@@ -252,46 +626,48 @@ def get_weather_series(cfg: dict):
     return epochs, temps, rhs
 
 
-def run(cfg: dict, horizon_steps: int, dry_run: bool) -> dict:
-    grid_times, load_cost = get_import_price_grid(cfg, horizon_steps)
-    grid_epoch = [t.timestamp() for t in grid_times]
+def _publish_block_plan(cfg: dict, plan: dict):
+    hwc = cfg["hwc"]
+    prefix = hwc.get("publish_prefix", "hwc_")
+    temp_entity = _published_entity_id(prefix, hwc["predicted_temp_entity"])
+    power_entity = _published_entity_id(prefix, hwc["power_plan_entity"])
+    cost_entity = f"sensor.{prefix}unit_load_cost"
 
-    w_epoch, w_temp, w_rh = get_weather_series(cfg)
-    temp_grid = interpolate_to_grid(w_epoch, w_temp, grid_epoch)
-    rh_grid = interpolate_to_grid(w_epoch, w_rh, grid_epoch)
-    wet_bulb = [stull_wet_bulb(t, rh) for t, rh in zip(temp_grid, rh_grid)]
-
-    draw_off = build_draw_off_profile(
-        grid_times,
-        cfg["timezone"],
-        cfg["hwc"]["draw_off"]["window_start"],
-        cfg["hwc"]["draw_off"]["window_end"],
-        cfg["hwc"]["draw_off"]["total_kwh"],
+    _ha_set_state(
+        cfg,
+        temp_entity,
+        plan["predicted_temperatures"][0][temp_entity.split(".", 1)[1]],
+        {
+            "unit_of_measurement": "°C",
+            "friendly_name": "HWC Predicted Tank Temp",
+            "predicted_temperatures": plan["predicted_temperatures"],
+            "terminal_temperature": plan["terminal_temperature"],
+        },
     )
-
-    start_temp = get_tank_temperature(cfg)
-
-    payload = build_payload(
-        grid_times_utc=grid_times,
-        load_cost=load_cost,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        start_temperature=start_temp,
-        cfg=cfg["hwc"],
+    _ha_set_state(
+        cfg,
+        power_entity,
+        plan["deferrables_schedule"][0][power_entity.split(".", 1)[1]],
+        {
+            "unit_of_measurement": "W",
+            "friendly_name": "HWC Planned Power",
+            "deferrables_schedule": plan["deferrables_schedule"],
+        },
     )
-
-    logging.info(
-        "HWC plan: horizon=%d steps, start_temp=%.1f°C, wet-bulb %.1f→%.1f°C, "
-        "import $%.3f→$%.3f/kWh, draw-off total=%.2f kWh",
-        len(grid_times),
-        start_temp,
-        min(wet_bulb),
-        max(wet_bulb),
-        min(load_cost),
-        max(load_cost),
-        sum(draw_off),
+    _ha_set_state(
+        cfg,
+        cost_entity,
+        plan["unit_load_cost_forecasts"][0][cost_entity.split(".", 1)[1]],
+        {
+            "unit_of_measurement": "$/kWh",
+            "friendly_name": "HWC Unit Load Cost",
+            "unit_load_cost_forecasts": plan["unit_load_cost_forecasts"],
+        },
     )
+    logging.info("Published HWC block plan to HA (%s, %s, %s)", temp_entity, power_entity, cost_entity)
 
+
+def _run_emhass(cfg: dict, payload: dict, dry_run: bool) -> dict:
     if dry_run:
         logging.info("Dry run — not POSTing to EMHASS. Payload:\n%s", json.dumps(payload, indent=2))
         return payload
@@ -314,8 +690,77 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool) -> dict:
     return payload
 
 
+def run(cfg: dict, horizon_steps: int, dry_run: bool) -> dict:
+    grid_times, load_cost = get_import_price_grid(cfg, horizon_steps)
+    grid_epoch = [t.timestamp() for t in grid_times]
+
+    w_epoch, w_temp, w_rh = get_weather_series(cfg)
+    dry_bulb = interpolate_to_grid(w_epoch, w_temp, grid_epoch)
+    rh_grid = interpolate_to_grid(w_epoch, w_rh, grid_epoch)
+    wet_bulb = [stull_wet_bulb(t, rh) for t, rh in zip(dry_bulb, rh_grid)]
+
+    draw_off = build_draw_off_profile(
+        grid_times,
+        cfg["timezone"],
+        cfg["hwc"]["draw_off"]["window_start"],
+        cfg["hwc"]["draw_off"]["window_end"],
+        cfg["hwc"]["draw_off"]["total_kwh"],
+    )
+
+    start_temp = get_tank_temperature(cfg)
+
+    logging.info(
+        "HWC plan: horizon=%d steps, start_temp=%.1f°C, wet-bulb %.1f→%.1f°C, "
+        "import $%.3f→$%.3f/kWh, draw-off total=%.2f kWh",
+        len(grid_times),
+        start_temp,
+        min(wet_bulb),
+        max(wet_bulb),
+        min(load_cost),
+        max(load_cost),
+        sum(draw_off),
+    )
+
+    if cfg["hwc"].get("planner", "block") == "emhass":
+        payload = build_payload(
+            grid_times_utc=grid_times,
+            load_cost=load_cost,
+            wet_bulb=wet_bulb,
+            draw_off=draw_off,
+            start_temperature=start_temp,
+            cfg=cfg["hwc"],
+        )
+        return _run_emhass(cfg, payload, dry_run)
+
+    plan = build_block_plan(
+        grid_times_utc=grid_times,
+        load_cost=load_cost,
+        dry_bulb=dry_bulb,
+        draw_off=draw_off,
+        start_temperature=start_temp,
+        cfg=cfg,
+    )
+    starts = sum(
+        1
+        for prev, cur in zip([0.0] + plan["schedule_w"][:-1], plan["schedule_w"], strict=True)
+        if prev <= 0 and cur > 0
+    )
+    logging.info(
+        "Block plan: starts=%d, heat_kwh=%.2f, terminal_temp=%.1f°C, min_pred=%.1f°C",
+        starts,
+        sum(plan["schedule_w"]) / 1000.0 * (cfg["hwc"].get("optimization_time_step", 30) / 60.0),
+        plan["terminal_temperature"],
+        min(plan["temperatures"]),
+    )
+    if dry_run:
+        logging.info("Dry run — not publishing to HA. Plan:\n%s", json.dumps(plan, indent=2))
+        return plan
+    _publish_block_plan(cfg, plan)
+    return plan
+
+
 def main():
-    parser = argparse.ArgumentParser(description="HWC EMHASS planner (v1, modelling only)")
+    parser = argparse.ArgumentParser(description="HWC planner (v1, modelling only)")
     parser.add_argument("--dry-run", action="store_true", help="Build + log the payload, don't POST")
     parser.add_argument("--horizon", type=int, default=None, help="Override horizon (timesteps)")
     parser.add_argument("--config", default="config.json", help="Path to config.json")

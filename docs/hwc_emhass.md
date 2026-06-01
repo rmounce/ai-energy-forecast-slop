@@ -1,11 +1,11 @@
-# Heat-Pump Hot Water (HWC) Scheduling via EMHASS
+# Heat-Pump Hot Water (HWC) Scheduling
 
-**Status:** v1 = modelling only (no actuation). Timer enabled 2026-06-01 against
-`emhass:metadata-race-20260601`; live publish verified with HTTP 201 from
-`naive-mpc-optim` and `publish-data`.
-**Operational guard:** the planner still uses HWC `entity_save` alongside the battery, so it
-must run only against an EMHASS build with the shared metadata race fix. See
-`docs/emhass_shared_state_race.md`; do not run it against a stock image that predates that fix.
+**Status:** v1 = modelling only (no actuation). Timer enabled 2026-06-01. The default planner
+is now a direct fixed-speed block planner that publishes the HA plan sensors itself.
+**Operational guard:** the old EMHASS thermal-battery path remains available with
+`hwc.planner: "emhass"`, but it still uses HWC `entity_save` alongside the battery and must run
+only against an EMHASS build with the shared metadata race fix. See
+`docs/emhass_shared_state_race.md`.
 **Started:** 2026-05-31
 **Owner workstream memory:** `project_heat_pump_hot_water`
 
@@ -55,7 +55,24 @@ daily; observed reheat ~11:00–13:00 to 60 °C. This is what v2 actuation will 
 
 ---
 
-## EMHASS model
+## Planner model
+
+The default planner is purpose-built for this unit. It treats the Aquatech as a fixed-speed
+block heater, not a continuously variable thermal store:
+
+- 72h horizon (`horizon_steps: 144` at 30 min).
+- dynamic standing loss: `standing_loss_ua_kw_per_c × (tank_temp - dry_bulb)` rather than
+  EMHASS's constant loss term.
+- fixed heat rate (`heat_rate_c_per_hour`) and full-power schedule steps.
+- one main daytime block per local day, chosen inside `block_planner.main_window_*`.
+- repair boosts only if the model would breach the minimum temperature floor.
+- terminal inventory contract: default `terminal_target: "current"`, so the end-of-horizon
+  tank temperature is at least the current temperature.
+
+It publishes the same HA entities as the former EMHASS path:
+`sensor.hwc_predicted_temp`, `sensor.hwc_power_plan`, and `sensor.hwc_unit_load_cost`.
+
+## EMHASS thermal-battery model (fallback)
 
 **EMHASS is v0.17.5** (standalone docker `ghcr.io/davidusb-geek/emhass`, config in
 `/opt/dockerfiles/emhass/`). Verified that this version ships the **new physics-based
@@ -110,10 +127,9 @@ Derived from the first ~1.5 days of InfluxDB history (Adelaide local):
 | `thermal_inertia_time_constant` | ~0.5 h | anti-cycling / probe lag |
 | outdoor temp forecast | **wet-bulb** | from temp + humidity |
 
-**Anti-cycling:** the thermal model has no startup penalty (only standard deferrable
-loads do). For a once-daily 60 °C reheat with a 45 °C floor the LP should naturally
-produce a single block; rely on that + a small `thermal_inertia_time_constant`. Add a
-hard "max 1 start/day" guard in the actuation layer (v2), not the optimiser.
+**Anti-cycling:** the EMHASS thermal model has no startup penalty (only standard deferrable
+loads do), and in practice it produced fragmented starts. That is why the default planner moved
+to fixed block placement.
 
 ---
 
@@ -128,9 +144,10 @@ complexity" is a noted project pain point. Python keeps it testable. A thin
 `hass/packages/emhass_hwc.yaml` still holds the published plan sensors (and any helpers).
 
 - The script: reads current tank temp + the weather (temp/humidity) and import-price
-  forecasts from HA/InfluxDB, computes wet-bulb and the clock-aligned input arrays, POSTs
-  to EMHASS, and publishes the resulting plan back to HA.
-- A **separate** `naive-mpc-optim` call to the existing EMHASS instance with:
+  forecasts from HA, computes the clock-aligned input arrays, builds a fixed-block plan,
+  and publishes the resulting plan back to HA.
+- Optional EMHASS fallback: a **separate** `naive-mpc-optim` call to the existing EMHASS
+  instance with:
   - `set_use_battery: false`, `set_use_pv: false` (decoupled, fast)
   - `number_of_deferrable_loads: 1`, the load configured as a `thermal_battery`
   - `load_cost_forecast` = our import-price forecast (already encodes the cheap midday
@@ -152,10 +169,10 @@ Run with `python hwc_planner.py --dry-run` to build + log the payload without PO
 
 ### Published entities & visualisation
 
-EMHASS publishes the plan to HA, prefixing every entity with `publish_prefix` (`hwc_`).
-**Gotcha:** the prefix is prepended to the `custom_*_id` you pass, so the custom IDs must
-be the *bare* names (`sensor.predicted_temp`, `sensor.power_plan`) to avoid a double
-prefix (`sensor.hwc_hwc_…`). Published entities:
+The direct block planner publishes these entities using `publish_prefix` (`hwc_`). The EMHASS
+fallback has the same double-prefix gotcha as before: the prefix is prepended to the
+`custom_*_id` you pass, so the custom IDs must be the *bare* names
+(`sensor.predicted_temp`, `sensor.power_plan`) to avoid `sensor.hwc_hwc_…`. Published entities:
 
 | Entity | Attribute (time series) | Item value key |
 |---|---|---|
@@ -168,19 +185,12 @@ forecast arrays are in entity *attributes* (state holds only the first value); v
 strings. Dashboard card: `hass/lovelace-hwc-apexcharts.yaml` (needs the HACS
 `apexcharts-card`), with `data_generator` series + 45 °C / 60 °C annotation lines.
 
-### First real-run observations (2026-06-01) — calibration TODO
+### First block-planner observations (2026-06-01)
 
-First live optim (start 56 °C, cool ambient) behaved qualitatively correctly: coasted to
-the 45 °C floor overnight, reheated in the cheapest midday window ($0.06–0.09/kWh ~10:00–
-13:30), and avoided the evening peak ($0.40+). Two tuning items (anticipated; not blocking):
-
-- **Doesn't reach 60 °C** — topped out ~59 °C; `penalty_factor` (15) is too weak vs cost to
-  force the daily legionella reheat. Options: raise `penalty_factor`, or add a hard daily
-  `min_temperatures` bump (e.g. ≥58 at one afternoon slot) — watch for LP infeasibility.
-- **Some cycling** — heats in a few short bursts rather than one block (no thermal startup
-  penalty in EMHASS). Options: raise `thermal_inertia_time_constant`, or enforce a single
-  block in the actuation layer. Also the LP uses fractional power (e.g. 76 W steps); the
-  real unit is ~735 W on/off — consider `semi_cont` to force 0/full.
+The first live block plan published 144 points (72h), 3 starts, 6.8 kWh of planned compressor
+energy, minimum predicted temperature ~46.6 °C, and terminal temperature ~57.2 °C against a
+57.0 °C start. This addressed the EMHASS symptoms: 48-point output, decay to the 45 °C floor,
+and fragmented/fractional compressor starts.
 
 ### Known v1 gaps (deliberate)
 
