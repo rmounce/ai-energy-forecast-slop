@@ -350,7 +350,7 @@
             "terminal_lookback_hours": 24
         },
         "actuation": {
-            "enabled": false,
+            "enabled": true,
             "water_heater_entity": "water_heater.aquatech",
             "compressor_entity": "binary_sensor.aquatech_compressor",
             "operation_mode": "heat_pump",
