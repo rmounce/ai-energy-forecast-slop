@@ -87,6 +87,25 @@ def test_draw_off_total_per_day_repeats_across_horizon():
     assert sum(profile) == pytest.approx(2.6, abs=1e-6)
 
 
+def test_extra_draw_off_adds_to_matching_clock_window():
+    grid = _adelaide_grid(21, 8)
+    base = [0.0] * len(grid)
+    profile = hp.add_draw_off_event(
+        base, grid, "Australia/Adelaide", "22:00", duration_min=60, total_kwh=1.3
+    )
+
+    assert sum(profile) == pytest.approx(1.3)
+    assert profile[2] == pytest.approx(0.65)
+    assert profile[3] == pytest.approx(0.65)
+    assert profile[1] == 0.0
+    assert profile[4] == 0.0
+
+
+def test_parse_extra_draw_off_default_and_custom_duration():
+    assert hp.parse_extra_draw_off("22:00=1.3") == ("22:00", 60, 1.3)
+    assert hp.parse_extra_draw_off("22:00+30=0.8") == ("22:00", 30, 0.8)
+
+
 # ── build_payload ───────────────────────────────────────────────────────────
 
 
@@ -105,7 +124,7 @@ def _hwc_cfg():
             "thermal_loss_kw": 0.12,
             "nominal_power_w": 800,
             "min_temp": 45,
-            "max_temp": 62,
+            "max_temp": 60,
             "desired_temp": 60,
             "penalty_factor": 15,
             "thermal_inertia_time_constant": 0.5,
@@ -153,7 +172,7 @@ def test_build_payload_structure():
     for key in ("min_temperatures", "max_temperatures", "desired_temperatures"):
         assert len(tb[key]) == 3
     assert tb["min_temperatures"][0] == 45
-    assert tb["max_temperatures"][0] == 62
+    assert tb["max_temperatures"][0] == 60
 
     # All forecast lists are horizon-length.
     for key in ("load_cost_forecast", "prod_price_forecast", "load_power_forecast"):

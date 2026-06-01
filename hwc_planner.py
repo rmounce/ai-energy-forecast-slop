@@ -98,6 +98,43 @@ def build_draw_off_profile(
     return profile
 
 
+def add_draw_off_event(
+    profile: list[float],
+    grid_times_utc: list[datetime],
+    tz_name: str,
+    start_time: str,
+    duration_min: int,
+    total_kwh: float,
+) -> list[float]:
+    """Return ``profile`` with an extra clock-aligned draw-off event added each local day."""
+    tz = pytz.timezone(tz_name)
+    start_min = _parse_hhmm(start_time)
+    end_min = start_min + int(duration_min)
+    slots_per_event = max(1, int(math.ceil(duration_min / _step_minutes(grid_times_utc))))
+    per_slot = float(total_kwh) / slots_per_event
+    out = list(profile)
+    for idx, t in enumerate(grid_times_utc):
+        minute = _local_minute(t, tz)
+        if _minute_in_window(minute, start_min, end_min % (24 * 60)):
+            out[idx] = round(out[idx] + per_slot, 5)
+    return out
+
+
+def parse_extra_draw_off(spec: str) -> tuple[str, int, float]:
+    """Parse ``HH:MM=KWH`` or ``HH:MM+MIN=KWH`` for one-off scenario runs."""
+    when, energy = spec.split("=", 1)
+    if "+" in when:
+        start_time, duration = when.split("+", 1)
+        duration_min = int(duration)
+    else:
+        start_time = when
+        duration_min = 60
+    _parse_hhmm(start_time)
+    if duration_min <= 0:
+        raise ValueError("extra draw-off duration must be positive")
+    return start_time, duration_min, float(energy)
+
+
 def _step_minutes(grid_times_utc: list[datetime]) -> int:
     """Infer the grid step in minutes (defaults to 30 if not inferable)."""
     if len(grid_times_utc) >= 2:
@@ -690,7 +727,7 @@ def _run_emhass(cfg: dict, payload: dict, dry_run: bool) -> dict:
     return payload
 
 
-def run(cfg: dict, horizon_steps: int, dry_run: bool) -> dict:
+def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] | None = None) -> dict:
     grid_times, load_cost = get_import_price_grid(cfg, horizon_steps)
     grid_epoch = [t.timestamp() for t in grid_times]
 
@@ -706,6 +743,22 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool) -> dict:
         cfg["hwc"]["draw_off"]["window_end"],
         cfg["hwc"]["draw_off"]["total_kwh"],
     )
+    for spec in extra_draw_off or []:
+        start_time, duration_min, total_kwh = parse_extra_draw_off(spec)
+        draw_off = add_draw_off_event(
+            draw_off,
+            grid_times,
+            cfg["timezone"],
+            start_time,
+            duration_min,
+            total_kwh,
+        )
+        logging.info(
+            "Added scenario draw-off: %s for %d min, %.2f kWh",
+            start_time,
+            duration_min,
+            total_kwh,
+        )
 
     start_temp = get_tank_temperature(cfg)
 
@@ -762,6 +815,13 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="HWC planner (v1, modelling only)")
     parser.add_argument("--dry-run", action="store_true", help="Build + log the payload, don't POST")
+    parser.add_argument(
+        "--extra-draw-off",
+        action="append",
+        default=[],
+        metavar="HH:MM[+MIN]=KWH",
+        help="Scenario-only extra draw-off event, repeated by local day across the horizon",
+    )
     parser.add_argument("--horizon", type=int, default=None, help="Override horizon (timesteps)")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
     args = parser.parse_args()
@@ -774,7 +834,7 @@ def main():
     cfg = load_config(args.config)
     horizon = args.horizon or cfg["hwc"].get("horizon_steps", 72)
     try:
-        run(cfg, horizon, args.dry_run)
+        run(cfg, horizon, args.dry_run, args.extra_draw_off)
     except Exception:
         logging.exception("HWC planner failed")
         raise
