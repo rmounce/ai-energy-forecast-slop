@@ -212,6 +212,31 @@ and fragmented/fractional compressor starts.
 ## Roadmap
 
 - **v1 (this doc):** modelling only — publish the plan, calibrate from logs.
-- **v2:** actuate via Local Tuya (mode/setpoint), with a max-1-start/day guard.
+- **v2:** actuate via Local Tuya / HA `water_heater` services from the published plan.
 - **v3+:** feed HWC load into the battery optimisation; resistive-element dump load on
   negative prices.
+
+## Execution Layer
+
+`hwc_executor.py` is the first actuation layer. It is **config-disabled by default**
+(`hwc.actuation.enabled: false`) and has its own disabled systemd timer
+(`systemd/ai-energy-hwc-executor.{service,timer}`).
+
+Live HA metadata observed 2026-06-01:
+
+- entity: `water_heater.aquatech`
+- modes: `off`, `heat_pump`, `eco`, `high_demand`, `performance`, `electric`
+- services: `water_heater.set_temperature`, `set_operation_mode`, `turn_on`, `turn_off`
+- current observed state: `eco`, setpoint `55`, compressor sensor `binary_sensor.aquatech_compressor`
+
+The executor policy is intentionally simple:
+
+- inside a planned block, set `hwc.actuation.operation_mode` (default `heat_pump`) and setpoint
+  to the predicted temperature at the end of that contiguous block, clamped to 55-60 °C;
+- just after a block, if the compressor is still running, keep the same mode/setpoint so the
+  unit can finish naturally;
+- outside a block, once the compressor is off, call `water_heater.turn_off` so the tank can
+  drift below the unit's normal 55 °C reheat trigger.
+
+Run `python hwc_executor.py --dry-run` to inspect the current decision without actuation.
+When ready, set `hwc.actuation.enabled` true and enable the executor timer.

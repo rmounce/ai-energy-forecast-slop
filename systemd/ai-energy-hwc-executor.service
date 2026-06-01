@@ -1,0 +1,7 @@
+[Unit]
+Description=HWC (heat-pump hot water) executor
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
+ExecStart=/bin/bash -c 'source .venv/bin/activate && python hwc_executor.py'

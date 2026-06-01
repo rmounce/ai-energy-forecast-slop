@@ -29,6 +29,7 @@ EMHASS thermal-battery mode remains as a fallback/comparison path.
 | Engine decision (EMHASS vs custom) | custom block planner is now default; EMHASS kept as fallback |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
+| Execution layer | `hwc_executor.py` added, **config-disabled** by default; dry-run tested |
 
 ## What's committed
 
@@ -113,6 +114,9 @@ the engine-independent long pole — gather it regardless.
    and `journalctl --user -u ai-energy-hwc.service`. The planner still uses `entity_save`
    against the shared store — safe with the deployed `emhass:metadata-race-20260601` fix; do
    NOT run it against a stock image that predates the fix.
+6. **Execution dry runs**: `python hwc_executor.py --dry-run`. It reads the published block
+   plan and `binary_sensor.aquatech_compressor`; actuation remains disabled until
+   `hwc.actuation.enabled` is set true and `ai-energy-hwc-executor.timer` is enabled.
 
 ## Gotchas / operational notes
 
