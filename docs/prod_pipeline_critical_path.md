@@ -88,7 +88,9 @@ prod sensor.
    prior DH plan at `utcnow()` (anchored on `dh_last_soc_init`), computes
    signed deviation against the live derived SoC, derives
    `soc_init_pct = anchor + deviation` and
-   `soc_final_pct = anchor + emhass_target_soc_offset + deviation`, writes
+   `soc_final_pct = anchor + emhass_target_soc_offset + deviation`, with a
+   once-per-30-minute-block live-SoC re-grounding guard to avoid carrying
+   prior-plan interpolation artifacts across DH quantization boundaries; writes
    the chosen `soc_init` back to `input_number.dh_last_soc_init`, then fires
    `rest_command.emhass_dayahead_optim` with the values as parameters →
    EMHASS computes 72h plan → `rest_command.emhass_publish_data_dh`

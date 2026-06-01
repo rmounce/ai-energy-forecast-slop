@@ -1,6 +1,6 @@
 # Production Terminal SoC Policy
 
-**Last updated: 2026-05-29**
+**Last updated: 2026-05-30**
 
 This document captures the *production* behaviour of how the Sigenergy battery's
 target State-of-Charge (SoC) is set across the day-ahead (DH) and 14-hour MPC layers,
@@ -70,16 +70,17 @@ with no restored state), the anchor falls back to the live derived SoC sensor.
 With no prior plan, deviation = 0 and `soc_init = live_soc` on the first cycle;
 from the second cycle onward the chain is established.
 
-**30-minute boundary re-grounding (2026-05-30):** when the DH script fires
-within 60 seconds of a wall-clock 30-minute boundary (xx:00 or xx:30), it
-re-grounds the anchor to live SoC and forces `deviation = 0`, breaking the
-chain for that single solve. EMHASS's DH quantization snaps to the new
-boundary at exactly that moment, and the chained anchor + prior-plan
-interpolation otherwise interact across the boundary to produce a ~1pp jump
-in the next solve's `max_tail`. Re-grounding cuts that interaction. The chain
-restarts cleanly from `live_soc` on the post-re-grounding solve. Re-grounding
-catches the price-triggered solves (~10–30 s past the boundary) but not the
-load-triggered solves at xx:01 / xx:31 (~75–95 s past).
+**30-minute block re-grounding (2026-05-30, refined same day):** on the first
+DH script invocation in each wall-clock 30-minute block (xx:00 or xx:30 UTC
+quantization), the script re-grounds the anchor to live SoC and forces
+`deviation = 0`, breaking the chain for that single solve. It records a compact
+UTC block key (`dh-YYYYMMDDTHHMMZ`) in `input_text.dh_last_reground_block`, so
+the behavior is "once per new block" rather than dependent on whether a
+price-triggered solve happened to arrive within a fixed seconds window. EMHASS's DH
+quantization snaps to the new boundary at exactly that moment, and the chained
+anchor + prior-plan interpolation otherwise interact across the boundary to
+produce a ~1pp jump in the next solve's `max_tail`. Re-grounding cuts that
+interaction. Later solves in the same block use normal chained behavior.
 
 ## The +72h offset feedback loop
 
@@ -99,14 +100,11 @@ new_offset = current_offset + (97.5 − max_tail)
 ```
 
 The clock-anchored window replaces the original `[-48:]` index slice
-(2026-05-30). The slice version shifted *both* ends of the wall-clock window
-by 30 min at each quantization boundary (drops front, adds back), feeding
-boundary noise into the offset; the clock-anchored window only shifts the
-back end, matches the conceptual definition of "the plan's tail beyond
-now+48h", and pairs with the script's boundary re-grounding (see "DH" above)
-to keep the offset chart smooth across quantization shifts. If the cutoff
-falls past `plan_end` (e.g. unusually stale plan), the offset is emitted
-unchanged.
+(2026-05-30). The slice version assumed a full 144-point plan and bound the
+feedback metric to list position; the clock-anchored version makes the intended
+wall-clock cutoff explicit and remains correct if EMHASS ever publishes a
+shorter/longer schedule. If the cutoff falls past `plan_end` (e.g. unusually
+stale plan), the offset is emitted unchanged.
 
 - If the latest DH-planned trajectory **does not** hit ~97.5% within +48h..+72h,
   the offset is **incremented** so the next DH solve targets a higher terminal
@@ -132,7 +130,10 @@ History:
   quantization boundary. Two complementary fixes shipped: (a) script-level
   boundary re-grounding (see "DH" above), and (b) clock-anchored window in
   the offset automation (replacing the original `[-48:]` index slice). The
-  pre-script-wrapper baseline had ~0.05pp boundary deltas; these two changes
+  first re-grounding pass used a 60-second wall-clock window; it was refined
+  to a persisted once-per-block marker so delayed/queued load-triggered solves
+  still re-ground if no earlier price-triggered solve handled the new block.
+  The pre-script-wrapper baseline had ~0.05pp boundary deltas; these changes
   together aim to restore that.
 
 This is a feedback loop that anchors the terminal target near 100% with a positive
