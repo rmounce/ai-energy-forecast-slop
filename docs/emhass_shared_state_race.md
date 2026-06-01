@@ -6,6 +6,25 @@
 **Scope of this brief:** the fix belongs upstream in EMHASS, not as a workaround in this
 repo. This captures the problem + proposed fixes to seed that discussion.
 
+## Status (updated 2026-06-01)
+
+**Fix #1 (atomic metadata writes) is implemented, tested, and deployed locally.**
+
+- The shared `entities/metadata.json` read-modify-write in `retrieve_hass.py:post_data` is
+  now serialised by a process-wide `asyncio.Lock` and committed atomically via temp-file +
+  `os.replace`; the racy recovery `os.rename` became a guarded `os.replace`. This closes the
+  corruption / HTTP-500 race directly.
+- Branch `fix/metadata-shared-state-race` on `rmounce/emhass` → **PR
+  [davidusb-geek/emhass#919](https://github.com/davidusb-geek/emhass/pull/919)** (one squashed
+  commit). 27 `test_retrieve_hass` tests pass incl. a concurrency regression test that
+  reproduces the original `JSONDecodeError` / `FileNotFoundError` against pre-fix code.
+- Built as the local image `emhass:metadata-race-20260601` (full EMHASS master + the fix) and
+  **running on the production `emhass` container** (per `/opt/dockerfiles/emhass/docker-compose.yml`).
+
+**Not yet done:** fixes #2 (return result in HTTP response) and #3 (prefix-scoped state
+files) below, and the "write once per publish" half of #1 (metadata is still written once per
+entity, now each write atomic + lock-serialised). PR #919 is awaiting upstream review/merge.
+
 ## Symptom
 
 Running a third frequent `entity_save` publisher (the HWC `naive-mpc-optim`, every 30 min)
@@ -67,9 +86,12 @@ store, hence the race). This is the gap proposed fix (2) closes.
 (1)+(3) together remove both the intra-publish and cross-pipeline races; (2) is an
 efficiency + decoupling improvement on top.
 
-## Until a fix lands
+## Re-enabling HWC
 
-The HWC planner (`hwc_planner.py`) and its timer are **disabled** in this repo — it must not
-be re-enabled while it shares `/data/entities/` with the battery via `entity_save`. Once
-EMHASS gains any of the above (or HWC is moved to a dedicated instance), re-enable per
-`docs/hwc_emhass.md`.
+The HWC planner (`hwc_planner.py`) and its timer are **still disabled** in this repo. The
+corruption race they would trigger is now fixed in the deployed build
+(`emhass:metadata-race-20260601`, fix #1 above), so the original blocker is resolved on the
+running instance. Before re-enabling per `docs/hwc_emhass.md`, confirm the EMHASS instance is
+running a build that includes the fix (it is, as of 2026-06-01) — do **not** re-enable against
+a stock image that predates it. Longer term, prefer the upstream release once PR #919 merges,
+or move HWC to a dedicated instance.
