@@ -1,12 +1,11 @@
 # Heat-Pump Hot Water (HWC) Scheduling via EMHASS
 
-**Status:** v1 = modelling only (no actuation). Spec/plan.
-**⚠️ PAUSED (2026-06-01):** the planner + timer are **disabled**. Running HWC `entity_save`
-alongside the battery corrupted EMHASS's shared `/data/entities/metadata.json` (and can
-break the battery's publish). Decision: fix this **upstream in EMHASS** rather than work
-around it here (atomic metadata writes / publish-without-2nd-request / prefix-scoped state
-files). See `docs/emhass_shared_state_race.md`. Do not re-enable until EMHASS is fixed or
-HWC is moved to a dedicated instance.
+**Status:** v1 = modelling only (no actuation). Timer enabled 2026-06-01 against
+`emhass:metadata-race-20260601`; live publish verified with HTTP 201 from
+`naive-mpc-optim` and `publish-data`.
+**Operational guard:** the planner still uses HWC `entity_save` alongside the battery, so it
+must run only against an EMHASS build with the shared metadata race fix. See
+`docs/emhass_shared_state_race.md`; do not run it against a stock image that predates that fix.
 **Started:** 2026-05-31
 **Owner workstream memory:** `project_heat_pump_hot_water`
 

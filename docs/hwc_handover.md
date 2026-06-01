@@ -16,20 +16,20 @@ prices are later phases.
 
 ## TL;DR state (2026-06-01)
 
-A working planner exists and produces sensible plans, but is **paused** while we (a) make
-the COP model accurate and (b) decide the modelling engine. The EMHASS shared-state race
-that originally forced the pause is **fixed and deployed**, so the pause is now about
-*accuracy*, not safety.
+A working planner exists and produces sensible plans. It is now **enabled for modelling only**
+(publishes a plan, no actuation) while we continue to improve COP/model accuracy and decide
+the modelling engine. The EMHASS shared-state race that originally forced the pause is
+**fixed and deployed**.
 
 | Thing | State |
 |---|---|
-| `hwc_planner.py` (planner) | committed `d9f171f`, **works**, timer **disabled** |
-| `ai-energy-hwc.timer` (user systemd unit) | **disabled/stopped** (was briefly enabled) |
+| `hwc_planner.py` (planner) | committed `d9f171f`, **works**, modelling-only timer enabled |
+| `ai-energy-hwc.timer` (user systemd unit) | **enabled/active**; live publish verified 2026-06-01 |
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
 | COP characterisation | done & committed `5c1ab55` (measured COP ≈ 2.4) |
 | Engine decision (EMHASS vs custom) | **OPEN** — direction agreed: *recalibrate now, decide later* |
-| Recalibration (`carnot_efficiency` 0.45→0.38) | **applied in working tree**; `supply_temperature` still needs review |
-| COP analyzer `wet_bulb` column | **fixed in working tree**; regenerate `data/hwc_cop_cycles.csv` when InfluxDB is available |
+| Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
+| COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 
 ## What's committed
 
@@ -109,10 +109,10 @@ the engine-independent long pole — gather it regardless.
 4. **Regenerate `data/hwc_cop_cycles.csv`** with `hwc_cop_analysis.py` once InfluxDB access is
    available; the humidity query now reads aggregate `rp_30m.humidity_adelaide` without the
    invalid `entity_id` filter.
-5. **Re-enable** only when ready: confirm EMHASS runs the fixed image (it does:
-   `emhass:metadata-race-20260601`), then `systemctl --user enable --now ai-energy-hwc.timer`.
-   The planner still uses `entity_save` against the shared store — now safe because of the
-   deployed fix; do NOT run it against a stock image that predates the fix.
+5. **Monitor the enabled modelling timer**: `systemctl --user list-timers ai-energy-hwc.timer`
+   and `journalctl --user -u ai-energy-hwc.service`. The planner still uses `entity_save`
+   against the shared store — safe with the deployed `emhass:metadata-race-20260601` fix; do
+   NOT run it against a stock image that predates the fix.
 
 ## Gotchas / operational notes
 
