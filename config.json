@@ -333,7 +333,7 @@
             "thermal_loss_kw": 0.12,
             "nominal_power_w": 800,
             "min_temp": 45,
-            "max_temp": 62,
+            "max_temp": 60,
             "desired_temp": 60,
             "penalty_factor": 15,
             "thermal_inertia_time_constant": 0.5,

@@ -121,7 +121,7 @@ Derived from the first ~1.5 days of InfluxDB history (Adelaide local):
 | `thermal_loss` | ~0.12 kW | **standing-loss data** |
 | nominal power (elec) | ~800 W | datasheet compressor input |
 | `min_temperatures` | 45 °C | hard floor (required non-empty) |
-| `max_temperatures` | ~62 °C | element handles >60 (required non-empty) |
+| `max_temperatures` | 60 °C | heat-pump-only cutoff; element >60 is out of scope |
 | `desired_temperatures` | 60 °C | daily legionella target |
 | `draw_off_demand` | ~1.3 kWh @ ~09:00 | **shower data** |
 | `thermal_inertia_time_constant` | ~0.5 h | anti-cycling / probe lag |
