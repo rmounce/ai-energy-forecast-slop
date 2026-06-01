@@ -316,7 +316,7 @@
     "timezone": "Australia/Adelaide",
     "gst_rate": 1.1,
     "hwc": {
-        "tank_temp_entity": "sensor.heat_pump_temperature",
+        "tank_temp_entity": "sensor.aquatech_current_temperature_local",
         "import_price_entity": "sensor.ai_dh_import_price_forecast",
         "predicted_temp_entity": "sensor.predicted_temp",
         "power_plan_entity": "sensor.power_plan",
@@ -358,6 +358,13 @@
             "setpoint_min_c": 55,
             "setpoint_max_c": 60,
             "post_block_grace_minutes": 90
+        },
+        "daemon": {
+            "debounce_seconds": 2,
+            "heartbeat_seconds": 1800,
+            "execution_interval_seconds": 60,
+            "minimum_replan_interval_seconds": 60,
+            "tank_temp_replan_delta_c": 0.3
         },
         "draw_off": {
             "total_kwh": 1.3,
