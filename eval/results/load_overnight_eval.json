@@ -1,6 +1,6 @@
 {
-  "generated": "2026-04-17T08:57:38.226468+00:00",
-  "checkpoint": "models/tft_load/checkpoint_20260417_181610_ep32.pt",
+  "generated": "2026-05-27T13:28:37.142775+00:00",
+  "checkpoint": "models/tft_load/checkpoint_best.pt",
   "val_start": "2026-01-13T14:00:00",
   "val_end": "2026-04-13T14:00:00",
   "n_val": 1081,
