@@ -346,6 +346,7 @@
             "main_window_end": "18:00",
             "overnight_window_start": "00:00",
             "overnight_window_end": "06:00",
+            "min_main_block_lift_c": 2.0,
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24
         },
@@ -357,6 +358,7 @@
             "power_on_threshold_w": 100,
             "setpoint_min_c": 55,
             "setpoint_max_c": 60,
+            "min_heat_start_delta_c": 2.0,
             "post_block_grace_minutes": 90
         },
         "daemon": {

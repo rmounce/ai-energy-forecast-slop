@@ -222,3 +222,20 @@ def test_block_planner_prefers_contiguous_daytime_runs():
     )
     assert starts <= 3
     assert all(power in (0.0, 800.0) for power in plan["schedule_w"])
+
+
+def test_main_block_skips_tiny_topup_near_target():
+    grid = _adelaide_grid(10, 4)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    cfg["hwc"]["block_planner"]["min_main_block_lift_c"] = 2.0
+    schedule = hp._choose_daily_main_blocks(
+        [0.0] * len(grid),
+        grid_times_utc=grid,
+        load_cost=[0.05] * len(grid),
+        start_temperature=59.0,
+        dry_bulb=[15.0] * len(grid),
+        draw_off=[0.0] * len(grid),
+        cfg=cfg,
+    )
+
+    assert schedule == [0.0] * len(grid)

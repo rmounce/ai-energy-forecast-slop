@@ -72,3 +72,46 @@ def test_decide_caps_setpoint():
     )
 
     assert decision.setpoint_c == 60
+
+
+def test_decide_current_suppresses_heat_when_tank_near_setpoint(monkeypatch):
+    cfg = {
+        "hwc": {
+            "tank_temp_entity": "sensor.tank",
+            "actuation": {
+                "compressor_entity": "binary_sensor.compressor",
+                "power_on_threshold_w": 100,
+                "setpoint_min_c": 55,
+                "setpoint_max_c": 60,
+                "post_block_grace_minutes": 90,
+                "min_heat_start_delta_c": 2.0,
+            },
+        },
+    }
+
+    monkeypatch.setattr(he, "load_plan", lambda _cfg: _points())
+
+    def fake_state(_cfg, entity_id):
+        if entity_id == "binary_sensor.compressor":
+            return {"state": "off"}
+        if entity_id == "sensor.tank":
+            return {"state": "59.0"}
+        raise AssertionError(entity_id)
+
+    monkeypatch.setattr(he, "_entity_state", fake_state)
+    monkeypatch.setattr(
+        he,
+        "decide",
+        lambda *_args, **_kwargs: he.Decision(
+            action="heat",
+            reason="inside planned block",
+            setpoint_c=60.0,
+            block_start=datetime(2026, 6, 1, 1, 0, tzinfo=timezone.utc),
+            block_end=datetime(2026, 6, 1, 1, 30, tzinfo=timezone.utc),
+        ),
+    )
+
+    decision = he.decide_current(cfg)
+
+    assert decision.action == "off"
+    assert decision.reason.startswith("planned heat suppressed")

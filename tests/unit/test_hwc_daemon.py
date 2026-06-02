@@ -106,6 +106,7 @@ def test_suppresses_off_inside_heat_command_grace():
         now=110.0,
         last_heat_command_at=100.0,
         grace_seconds=600,
+        compressor_seen_on_since_heat=False,
     )
 
 
@@ -115,10 +116,19 @@ def test_does_not_suppress_heat_or_expired_grace():
         now=110.0,
         last_heat_command_at=100.0,
         grace_seconds=600,
+        compressor_seen_on_since_heat=False,
     )
     assert not hd.should_suppress_off_after_heat(
         decision_action="off",
         now=701.0,
         last_heat_command_at=100.0,
         grace_seconds=600,
+        compressor_seen_on_since_heat=False,
+    )
+    assert not hd.should_suppress_off_after_heat(
+        decision_action="off",
+        now=110.0,
+        last_heat_command_at=100.0,
+        grace_seconds=600,
+        compressor_seen_on_since_heat=True,
     )
