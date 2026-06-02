@@ -368,7 +368,12 @@
             "execution_interval_seconds": 60,
             "minimum_replan_interval_seconds": 60,
             "tank_temp_replan_delta_c": 0.3,
-            "heat_command_grace_seconds": 600
+            "heat_command_grace_seconds": 600,
+            "fallback_enabled": true,
+            "fallback_window_start": "10:00",
+            "fallback_window_end": "16:00",
+            "fallback_min_temp_c": 48,
+            "fallback_setpoint_c": 60
         },
         "draw_off": {
             "total_kwh": 1.3,

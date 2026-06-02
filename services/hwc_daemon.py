@@ -22,7 +22,7 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time as dt_time, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -156,6 +156,63 @@ def should_suppress_off_after_heat(
     if last_heat_command_at <= 0:
         return False
     return now - last_heat_command_at < grace_seconds
+
+
+def _parse_hhmm_time(value: str) -> dt_time:
+    hour, minute = (int(part) for part in value.split(":", 1))
+    return dt_time(hour=hour, minute=minute)
+
+
+def _time_in_window(value: dt_time, start: dt_time, end: dt_time) -> bool:
+    if start <= end:
+        return start <= value < end
+    return value >= start or value < end
+
+
+def fallback_decision(
+    config: dict,
+    *,
+    now_utc: datetime,
+    tank_temp_c: float,
+    compressor_on: bool,
+) -> hwc_executor.Decision | None:
+    """Return a fixed-window safety decision when normal plan execution fails."""
+    daemon = config["hwc"].get("daemon", {})
+    if not daemon.get("fallback_enabled", False):
+        return None
+
+    act = config["hwc"].get("actuation", {})
+    th = config["hwc"].get("thermal", {})
+    local = now_utc.astimezone(ZoneInfo(config["timezone"]))
+    start = _parse_hhmm_time(daemon.get("fallback_window_start", "10:00"))
+    end = _parse_hhmm_time(daemon.get("fallback_window_end", "16:00"))
+    in_window = _time_in_window(local.time(), start, end)
+    setpoint_min = float(act.get("setpoint_min_c", 55))
+    setpoint_max = float(act.get("setpoint_max_c", 60))
+    fallback_setpoint = float(daemon.get("fallback_setpoint_c", th.get("desired_temp", 60)))
+    setpoint = min(setpoint_max, max(setpoint_min, fallback_setpoint))
+    min_temp = float(daemon.get("fallback_min_temp_c", th.get("min_temp", 45)))
+    min_delta = float(act.get("min_heat_start_delta_c", 0.0))
+    heat_threshold = setpoint - min_delta
+
+    if tank_temp_c < min_temp:
+        return hwc_executor.Decision(
+            action="heat",
+            reason=f"fallback emergency heat: tank {tank_temp_c:.1f}C below {min_temp:.1f}C",
+            setpoint_c=round(setpoint, 1),
+        )
+    if in_window and (compressor_on or tank_temp_c < heat_threshold):
+        return hwc_executor.Decision(
+            action="heat",
+            reason=(
+                f"fallback fixed-window heat: tank {tank_temp_c:.1f}C, "
+                f"window {start.strftime('%H:%M')}-{end.strftime('%H:%M')}"
+            ),
+            setpoint_c=round(setpoint, 1),
+        )
+    if compressor_on:
+        return hwc_executor.Decision(action="wait", reason="fallback outside window but compressor is running")
+    return hwc_executor.Decision(action="off", reason="fallback outside fixed heat conditions")
 
 
 class HwcDaemon:
@@ -355,7 +412,11 @@ class HwcDaemon:
                 decision = await asyncio.to_thread(hwc_executor.decide_current, self.config)
             except Exception:
                 log.exception("HWC executor failed")
-                return
+                decision = await asyncio.to_thread(self._fallback_decision_current)
+                if decision is None:
+                    log.error("HWC fallback disabled or unavailable; no water_heater command issued")
+                    return
+                log.warning("Using HWC fallback decision: %s (%s)", decision.action, decision.reason)
             log.info(
                 "HWC executor decision: %s (%s), setpoint=%s",
                 decision.action,
@@ -383,6 +444,23 @@ class HwcDaemon:
                     self.last_heat_command_at = time.monotonic()
                     self.compressor_seen_on_since_heat = False
             log.info("HWC executor completed in %.1fs: %s", time.monotonic() - started, decision.action)
+
+    def _fallback_decision_current(self) -> hwc_executor.Decision | None:
+        try:
+            tank_temp = hwc_executor._tank_temperature(self.config)
+            compressor_state = hwc_executor._entity_state(
+                self.config,
+                self.config["hwc"].get("actuation", {})["compressor_entity"],
+            )
+        except Exception:
+            log.exception("HWC fallback could not read tank/compressor state")
+            return None
+        return fallback_decision(
+            self.config,
+            now_utc=datetime.now(timezone.utc),
+            tank_temp_c=tank_temp,
+            compressor_on=compressor_state.get("state") == "on",
+        )
 
     def _should_suppress_off_after_heat(self, decision: hwc_executor.Decision) -> bool:
         grace = float(self.config["hwc"].get("daemon", {}).get("heat_command_grace_seconds", 600))

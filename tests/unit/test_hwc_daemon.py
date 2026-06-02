@@ -19,10 +19,18 @@ def _config():
             "actuation": {
                 "water_heater_entity": "water_heater.aquatech",
                 "compressor_entity": "binary_sensor.aquatech_compressor",
+                "setpoint_min_c": 55,
+                "setpoint_max_c": 60,
+                "min_heat_start_delta_c": 2.0,
             },
             "daemon": {
                 "tank_temp_replan_delta_c": 0.3,
                 "heat_command_grace_seconds": 600,
+                "fallback_enabled": True,
+                "fallback_window_start": "10:00",
+                "fallback_window_end": "16:00",
+                "fallback_min_temp_c": 48,
+                "fallback_setpoint_c": 60,
             },
         },
     }
@@ -148,3 +156,51 @@ def test_target_reached_local_date_maps_utc_to_local_date():
 def test_target_reached_local_date_ignores_missing_or_bad_timestamp():
     assert hd.target_reached_local_date(_config(), None) is None
     assert hd.target_reached_local_date(_config(), "not-a-date") is None
+
+
+def test_fallback_heats_inside_fixed_window_when_tank_below_threshold():
+    decision = hd.fallback_decision(
+        _config(),
+        now_utc=hd.datetime(2026, 6, 2, 1, 0, tzinfo=hd.timezone.utc),  # 10:30 ACST
+        tank_temp_c=56.0,
+        compressor_on=False,
+    )
+
+    assert decision.action == "heat"
+    assert decision.setpoint_c == 60
+    assert decision.reason.startswith("fallback fixed-window heat")
+
+
+def test_fallback_emergency_heats_outside_window_below_floor():
+    decision = hd.fallback_decision(
+        _config(),
+        now_utc=hd.datetime(2026, 6, 2, 12, 0, tzinfo=hd.timezone.utc),
+        tank_temp_c=47.5,
+        compressor_on=False,
+    )
+
+    assert decision.action == "heat"
+    assert decision.reason.startswith("fallback emergency heat")
+
+
+def test_fallback_waits_if_compressor_running_outside_window():
+    decision = hd.fallback_decision(
+        _config(),
+        now_utc=hd.datetime(2026, 6, 2, 12, 0, tzinfo=hd.timezone.utc),
+        tank_temp_c=55.0,
+        compressor_on=True,
+    )
+
+    assert decision.action == "wait"
+
+
+def test_fallback_can_be_disabled():
+    config = _config()
+    config["hwc"]["daemon"]["fallback_enabled"] = False
+
+    assert hd.fallback_decision(
+        config,
+        now_utc=hd.datetime(2026, 6, 2, 1, 0, tzinfo=hd.timezone.utc),
+        tank_temp_c=45.0,
+        compressor_on=False,
+    ) is None
