@@ -273,10 +273,10 @@ def _choose_daily_main_blocks(
         if _minute_in_window(minute, main_start, main_end):
             slots_by_day.setdefault(t.astimezone(tz).date(), []).append(idx)
 
-    completed_dates = set(block_cfg.get("completed_main_dates", []))
+    satisfied_dates = set(block_cfg.get("main_satisfied_dates", []))
     out = list(schedule_w)
     for day, slots in slots_by_day.items():
-        if day.isoformat() in completed_dates:
+        if day.isoformat() in satisfied_dates:
             continue
         best = out
         best_score = (math.inf, math.inf, math.inf)
