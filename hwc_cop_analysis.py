@@ -98,6 +98,17 @@ def _round_or_nan(value, ndigits=1):
     return round(value, ndigits) if pd.notna(value) else np.nan
 
 
+def _first_rise_minutes(series: pd.Series, start, start_temp: float, end_temp: float, fraction: float):
+    lift = end_temp - start_temp
+    if lift <= 0:
+        return np.nan
+    threshold = start_temp + lift * fraction
+    reached = series[series >= threshold]
+    if reached.empty:
+        return np.nan
+    return (reached.index[0] - start).total_seconds() / 60
+
+
 def stull_wet_bulb(t, rh):
     if pd.isna(t) or pd.isna(rh):
         return np.nan
@@ -167,6 +178,10 @@ def analyse(days=None, since=DEFAULT_SINCE, min_minutes=20):
             (probe_rise.index[0] - cs).total_seconds() / 60
             if not probe_rise.empty else np.nan
         )
+        tank_cycle = T[cyc_mask].dropna()
+        probe_rise_10_min = _first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.10)
+        probe_rise_50_min = _first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.50)
+        probe_rise_90_min = _first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.90)
         x_cycle = X[cyc_mask].dropna()
         c_cycle = C[cyc_mask].dropna()
         r_cycle = R[cyc_mask].dropna()
@@ -184,6 +199,9 @@ def analyse(days=None, since=DEFAULT_SINCE, min_minutes=20):
             elec_kwh=round(elec, 2), therm_kwh=round(therm, 2),
             cop=round(cop, 2) if pd.notna(cop) else np.nan, clean=clean,
             probe_lag_min=_round_or_nan(probe_lag_min, 1),
+            probe_rise_10_min=_round_or_nan(probe_rise_10_min, 1),
+            probe_rise_50_min=_round_or_nan(probe_rise_50_min, 1),
+            probe_rise_90_min=_round_or_nan(probe_rise_90_min, 1),
             exhaust_start=_round_or_nan(x_cycle.iloc[0] if not x_cycle.empty else np.nan, 1),
             exhaust_max=_round_or_nan(x_cycle.max() if not x_cycle.empty else np.nan, 1),
             exhaust_end=_round_or_nan(x_cycle.iloc[-1] if not x_cycle.empty else np.nan, 1),
@@ -228,7 +246,8 @@ def write_summary_markdown(df: pd.DataFrame, path: str, since: str | None, days:
         cols = [
             "start", "dur_min", "tank_start", "tank_end", "ambient", "wet_bulb",
             "baseline_w", "hp_mean_w", "hp_p95_w", "elec_kwh", "therm_kwh",
-            "cop", "probe_lag_min", "exhaust_start", "exhaust_max", "exhaust_end",
+            "cop", "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min",
+            "probe_rise_90_min", "exhaust_start", "exhaust_max", "exhaust_end",
             "element_on", "defrost_on", "four_way_on", "clean",
         ]
         table = display[cols].astype(str)

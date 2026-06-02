@@ -17,6 +17,9 @@ def _cycles():
                 "cop": 2.4,
                 "clean": True,
                 "probe_lag_min": 22.0,
+                "probe_rise_10_min": 50.0,
+                "probe_rise_50_min": 80.0,
+                "probe_rise_90_min": 110.0,
                 "element_on": False,
                 "defrost_on": False,
                 "four_way_on": False,
@@ -31,6 +34,9 @@ def _cycles():
                 "cop": 2.0,
                 "clean": True,
                 "probe_lag_min": 15.0,
+                "probe_rise_10_min": 12.0,
+                "probe_rise_50_min": 35.0,
+                "probe_rise_90_min": 55.0,
                 "element_on": False,
                 "defrost_on": False,
                 "four_way_on": False,
@@ -45,6 +51,9 @@ def _cycles():
                 "cop": 12.0,
                 "clean": False,
                 "probe_lag_min": 20.0,
+                "probe_rise_10_min": 20.0,
+                "probe_rise_50_min": 50.0,
+                "probe_rise_90_min": 90.0,
                 "element_on": False,
                 "defrost_on": False,
                 "four_way_on": False,
@@ -70,6 +79,8 @@ def test_fit_parameters_uses_clean_compressor_only_target_cycles():
     assert result["suggestions"]["heat_rate_c_per_hour"] == 6.5
     assert result["suggestions"]["top_up_heat_rate_c_per_hour"] == 6.0
     assert result["suggestions"]["mean_clean_cop"] == 2.2
+    assert result["stratified_hints"]["probe_height_fraction"] == pytest.approx(0.62, abs=0.01)
+    assert result["stratified_hints"]["thermocline_width_fraction"] == pytest.approx(0.61)
 
 
 def test_fit_parameters_rejects_no_usable_cycles():
