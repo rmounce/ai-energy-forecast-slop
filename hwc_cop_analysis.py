@@ -82,6 +82,22 @@ def _series(c, meas, eid=None, days=None, since=DEFAULT_SINCE, field="value", rp
     return s[~s.index.duplicated(keep="last")]
 
 
+def _interp_to_idx(s, idx):
+    if s.empty:
+        return pd.Series(index=idx, dtype=float)
+    return s.reindex(idx.union(s.index)).interpolate("time").reindex(idx)
+
+
+def _state_to_idx(s, idx):
+    if s.empty:
+        return pd.Series(False, index=idx)
+    return s.reindex(idx, method="ffill").fillna(0) > 0.5
+
+
+def _round_or_nan(value, ndigits=1):
+    return round(value, ndigits) if pd.notna(value) else np.nan
+
+
 def stull_wet_bulb(t, rh):
     if pd.isna(t) or pd.isna(rh):
         return np.nan
@@ -98,13 +114,27 @@ def analyse(days=None, since=DEFAULT_SINCE, min_minutes=20):
     tank = _series(c, "sensor__temperature", "heat_pump_temperature", days=days, since=since)
     amb = _series(c, "sensor__temperature", "aquatech_temperature", days=days, since=since)
     hum = _series(c, "humidity_adelaide", days=days, since=since, field="mean_value", rp="rp_30m")
+    exhaust = _series(c, "sensor__temperature", "aquatech_exhaust_temperature", days=days, since=since)
+    coil = _series(c, "sensor__temperature", "aquatech_coil_temperature", days=days, since=since)
+    return_air = _series(c, "sensor__temperature", "aquatech_return_air_temperature", days=days, since=since)
+    inlet = _series(c, "sensor__temperature", "aquatech_inlet_temperature", days=days, since=since)
+    element = _series(c, "binary_sensor__running", "aquatech_element", days=days, since=since)
+    defrost = _series(c, "binary_sensor__running", "aquatech_defrost", days=days, since=since)
+    four_way = _series(c, "binary_sensor__running", "aquatech_four_way_valve", days=days, since=since)
     if comp.empty or pw.empty:
         raise SystemExit("Missing compressor or remaining_power_load data")
 
     idx = pd.date_range(pw.index.min(), pw.index.max(), freq="30s", tz="UTC")
-    P = pw.reindex(idx.union(pw.index)).interpolate("time").reindex(idx)
-    on = comp.reindex(idx, method="ffill").fillna(0) > 0.5
-    T = tank.reindex(idx.union(tank.index)).interpolate("time").reindex(idx)
+    P = _interp_to_idx(pw, idx)
+    on = _state_to_idx(comp, idx)
+    T = _interp_to_idx(tank, idx)
+    X = _interp_to_idx(exhaust, idx)
+    C = _interp_to_idx(coil, idx)
+    R = _interp_to_idx(return_air, idx)
+    I = _interp_to_idx(inlet, idx)
+    element_on = _state_to_idx(element, idx)
+    defrost_on = _state_to_idx(defrost, idx)
+    four_way_on = _state_to_idx(four_way, idx)
 
     rows = []
     grp = (on != on.shift()).cumsum()
@@ -131,6 +161,16 @@ def analyse(days=None, since=DEFAULT_SINCE, min_minutes=20):
         cop = therm / elec if elec > 0 else np.nan
         a = amb[(amb.index >= cs) & (amb.index <= ce)].mean()
         h = hum[(hum.index >= cs) & (hum.index <= ce)].mean() if not hum.empty else np.nan
+        cyc_mask = (idx >= cs) & (idx <= ce)
+        probe_rise = T[cyc_mask & (T >= t_start + 0.5)]
+        probe_lag_min = (
+            (probe_rise.index[0] - cs).total_seconds() / 60
+            if not probe_rise.empty else np.nan
+        )
+        x_cycle = X[cyc_mask].dropna()
+        c_cycle = C[cyc_mask].dropna()
+        r_cycle = R[cyc_mask].dropna()
+        i_cycle = I[cyc_mask].dropna()
         # Clean = stable, matching pre/post baselines, plausible HP power, and a
         # physically plausible apparent COP (contamination shows up as elec too low
         # → COP above the ~3 sensible-capacity ceiling for a to-60 °C reheat).
@@ -140,8 +180,19 @@ def analyse(days=None, since=DEFAULT_SINCE, min_minutes=20):
             start=cs, dur_min=round(dur_h * 60), tank_start=round(t_start, 1),
             tank_end=round(t_end, 1), ambient=round(a, 1) if pd.notna(a) else np.nan,
             wet_bulb=round(stull_wet_bulb(a, h), 1), baseline_w=round(baseline),
+            hp_mean_w=round(hp.mean()), hp_p95_w=round(hp.quantile(0.95)),
             elec_kwh=round(elec, 2), therm_kwh=round(therm, 2),
             cop=round(cop, 2) if pd.notna(cop) else np.nan, clean=clean,
+            probe_lag_min=_round_or_nan(probe_lag_min, 1),
+            exhaust_start=_round_or_nan(x_cycle.iloc[0] if not x_cycle.empty else np.nan, 1),
+            exhaust_max=_round_or_nan(x_cycle.max() if not x_cycle.empty else np.nan, 1),
+            exhaust_end=_round_or_nan(x_cycle.iloc[-1] if not x_cycle.empty else np.nan, 1),
+            coil_mean=_round_or_nan(c_cycle.mean() if not c_cycle.empty else np.nan, 1),
+            return_air_mean=_round_or_nan(r_cycle.mean() if not r_cycle.empty else np.nan, 1),
+            inlet_mean=_round_or_nan(i_cycle.mean() if not i_cycle.empty else np.nan, 1),
+            element_on=bool(element_on[cyc_mask].any()),
+            defrost_on=bool(defrost_on[cyc_mask].any()),
+            four_way_on=bool(four_way_on[cyc_mask].any()),
         ))
     return pd.DataFrame(rows)
 
@@ -176,7 +227,9 @@ def write_summary_markdown(df: pd.DataFrame, path: str, since: str | None, days:
             display["start"] = display["start"].dt.tz_convert(LOCAL_TZ).dt.strftime("%Y-%m-%d %H:%M")
         cols = [
             "start", "dur_min", "tank_start", "tank_end", "ambient", "wet_bulb",
-            "baseline_w", "elec_kwh", "therm_kwh", "cop", "clean",
+            "baseline_w", "hp_mean_w", "hp_p95_w", "elec_kwh", "therm_kwh",
+            "cop", "probe_lag_min", "exhaust_start", "exhaust_max", "exhaust_end",
+            "element_on", "defrost_on", "four_way_on", "clean",
         ]
         table = display[cols].astype(str)
         lines.append("| " + " | ".join(cols) + " |")
