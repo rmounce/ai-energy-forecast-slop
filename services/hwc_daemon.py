@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 import signal
@@ -21,7 +22,9 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidStatus
@@ -49,6 +52,54 @@ class TriggerDecision:
 def _published_entity_id(prefix: str, entity_id: str) -> str:
     domain, object_id = entity_id.split(".", 1)
     return f"{domain}.{prefix}{object_id}"
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    hour, minute = (int(x) for x in value.split(":"))
+    return hour, minute
+
+
+def _daemon_state_path(config: dict) -> Path:
+    configured = config["hwc"].get("daemon", {}).get("state_file", "data/hwc_daemon_state.json")
+    path = Path(configured)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _parse_event_time_utc(raw: str | None) -> datetime:
+    if not raw:
+        return datetime.now(timezone.utc)
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return datetime.now(timezone.utc)
+
+
+def main_window_overlap_dates(config: dict, start_utc: datetime, end_utc: datetime) -> set[str]:
+    if end_utc <= start_utc:
+        return set()
+
+    hwc = config["hwc"]
+    block_cfg = hwc.get("block_planner", {})
+    tz = ZoneInfo(config["timezone"])
+    start_hour, start_minute = _parse_hhmm(block_cfg.get("main_window_start", "10:00"))
+    end_hour, end_minute = _parse_hhmm(block_cfg.get("main_window_end", "18:00"))
+
+    local_start = start_utc.astimezone(tz)
+    local_end = end_utc.astimezone(tz)
+    cursor = local_start.date()
+    end_date = local_end.date()
+    out: set[str] = set()
+    while cursor <= end_date:
+        window_start = datetime.combine(cursor, datetime_time(start_hour, start_minute), tz)
+        window_end = datetime.combine(cursor, datetime_time(end_hour, end_minute), tz)
+        if window_end <= window_start:
+            window_end += timedelta(days=1)
+        overlap_start = max(start_utc, window_start.astimezone(timezone.utc))
+        overlap_end = min(end_utc, window_end.astimezone(timezone.utc))
+        if overlap_start < overlap_end:
+            out.add(cursor.isoformat())
+        cursor += timedelta(days=1)
+    return out
 
 
 def watched_entities(config: dict) -> set[str]:
@@ -142,6 +193,8 @@ class HwcDaemon:
         self.last_plan_at = 0.0
         self.last_heat_command_at = 0.0
         self.compressor_seen_on_since_heat = False
+        self.compressor_on_since_utc: datetime | None = None
+        self.completed_main_dates = self._load_state()
         self._next_msg_id = 1
 
     def _msg_id(self) -> int:
@@ -205,15 +258,12 @@ class HwcDaemon:
                 continue
             if msg.get("type") != "event":
                 continue
-            data = msg.get("event", {}).get("data", {})
+            event = msg.get("event", {})
+            data = event.get("data", {})
             entity_id = data.get("entity_id")
             if entity_id not in self.entities:
                 continue
-            if (
-                entity_id == self.config["hwc"].get("actuation", {}).get("compressor_entity")
-                and (data.get("new_state") or {}).get("state") == "on"
-            ):
-                self.compressor_seen_on_since_heat = True
+            self._track_compressor_event(entity_id, data, _parse_event_time_utc(event.get("time_fired")))
             decision = classify_state_change(
                 self.config,
                 entity_id,
@@ -303,8 +353,12 @@ class HwcDaemon:
         async with self.run_lock:
             started = time.monotonic()
             horizon = int(self.config["hwc"].get("horizon_steps", 72))
+            planner_config = copy.deepcopy(self.config)
+            planner_config["hwc"].setdefault("block_planner", {})["completed_main_dates"] = sorted(
+                self.completed_main_dates
+            )
             try:
-                await asyncio.to_thread(hwc_planner.run, self.config, horizon, self.dry_run)
+                await asyncio.to_thread(hwc_planner.run, planner_config, horizon, self.dry_run)
             except Exception:
                 log.exception("HWC planner failed")
                 return
@@ -356,6 +410,56 @@ class HwcDaemon:
             grace_seconds=grace,
             compressor_seen_on_since_heat=self.compressor_seen_on_since_heat,
         )
+
+    def _track_compressor_event(self, entity_id: str, data: dict, at_utc: datetime) -> None:
+        if entity_id != self.config["hwc"].get("actuation", {}).get("compressor_entity"):
+            return
+
+        old_state = (data.get("old_state") or {}).get("state")
+        new_state = (data.get("new_state") or {}).get("state")
+        if new_state == "on" and old_state != "on":
+            self.compressor_seen_on_since_heat = True
+            self.compressor_on_since_utc = at_utc
+            return
+
+        if old_state == "on" and new_state != "on" and self.compressor_on_since_utc is not None:
+            started = self.compressor_on_since_utc
+            self.compressor_on_since_utc = None
+            run_minutes = (at_utc - started).total_seconds() / 60.0
+            minimum = float(
+                self.config["hwc"].get("daemon", {}).get("main_completion_min_run_minutes", 20)
+            )
+            if run_minutes < minimum:
+                log.info(
+                    "Compressor run %.1fmin below %.1fmin main-completion threshold",
+                    run_minutes,
+                    minimum,
+                )
+                return
+
+            added = main_window_overlap_dates(self.config, started, at_utc) - self.completed_main_dates
+            if not added:
+                return
+            self.completed_main_dates.update(added)
+            self._save_state()
+            log.info("Marked HWC main block complete for %s", ", ".join(sorted(added)))
+
+    def _load_state(self) -> set[str]:
+        path = _daemon_state_path(self.config)
+        try:
+            data = json.loads(path.read_text())
+        except FileNotFoundError:
+            return set()
+        except Exception:
+            log.exception("Failed to load HWC daemon state from %s", path)
+            return set()
+        return set(data.get("completed_main_dates", []))
+
+    def _save_state(self) -> None:
+        path = _daemon_state_path(self.config)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"completed_main_dates": sorted(self.completed_main_dates)}
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
     async def run(self) -> None:
         self.replan_trigger.set()
