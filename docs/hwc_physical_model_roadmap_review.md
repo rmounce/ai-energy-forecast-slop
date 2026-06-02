@@ -27,6 +27,12 @@ explicitly benchmark **stratified vs single-node-with-lag** shadow error. If the
 doesn't measurably cut error, it's parameters you have to defend against 5 cycles. The fit is
 hinting it may not earn its keep yet.
 
+> RESP: Agreed. The current `probe_height_fraction` / `thermocline_width_fraction` estimates
+> should be treated as weak hints, not as a defended physical fit. The validator should include
+> at least three baselines: current single-node, single-node-with-lag, and the two-layer model.
+> If the two-layer state does not materially improve probe trajectory and end-state error, it
+> should remain an explanatory model rather than becoming planner state.
+
 ## 2. Fit-method units error: time-fraction ≠ hot-fraction
 
 `probe_height_fraction` is derived "from median 50% probe-rise *timing* as a fraction of cycle
@@ -40,6 +46,12 @@ The replay-fit in steps 2–3 is the right mechanism — just don't pre-anchor o
 as if it's physically meaningful; let the replay own those parameters. (This is the honest answer
 to Review Q3: probe-rise timing alone is not enough.)
 
+> RESP: Agreed. This is the strongest technical correction in the review. I used timing fraction
+> as a convenient seed, but the model parameter is state/energy-space, not time-space. The roadmap
+> should demote those values to diagnostics and require replay fitting before using them. The fit
+> report should probably label them "initial guesses" or "shape diagnostics" rather than
+> "parameter estimates".
+
 ## 3. `exhaust_temperature` is confounded, not exogenous (Review Q2)
 
 `power = f(exhaust, wet_bulb)` and `exhaust = f(hot_fraction)` are not independent. Exhaust/
@@ -50,6 +62,13 @@ but it's partly circular and won't answer "what power will I draw starting from 
 For a fixed-speed compressor the cleaner causal chain is condensing ≈ f(water temp being heated),
 evaporating ≈ f(wet-bulb/coil). Model condensing off the **hot-layer water temperature** and keep
 `exhaust` as a validation diagnostic. So: lean to "observed diagnostic," as Q2 already half-suspects.
+
+> RESP: Agreed with the causal framing. `exhaust_temperature` is valuable because it is close to
+> the hidden condensing state, but fitting `power = f(exhaust, wet_bulb)` and then using exhaust as
+> an independent planning input would be circular. Better: model condensing/exhaust as an output of
+> tank state plus evaporator condition, use observed exhaust for validation, and only then derive
+> power/COP. A purely empirical power regression may still be useful for sanity checks on observed
+> cycles, but not as the planner's causal model.
 
 ## 4. At n=5, fit what you measure — not COP (Review Q5) — strongest recommendation
 
@@ -64,6 +83,12 @@ Meanwhile `elec_kwh` (∫ baseline-subtracted power over compressor-on) and `dur
 robust at small N because it doesn't route through the probe. Promote it to the primary near-term
 fit; treat physical COP as the later, metering-gated goal.
 
+> RESP: Agreed. Near-term modelling should fit observed duration and electrical kWh to target,
+> not inferred COP. COP remains useful language for interpreting efficiency, but it should not be
+> the optimisation target while thermal output is estimated from the same misleading probe we are
+> trying to correct. I would update the roadmap order so empirical duration/kWh-to-target comes
+> before physical COP fitting.
+
 ## 5. No power meter caps everything above
 
 Row `2026-05-30` (baseline 820 W, hp_mean 130 W, COP 12.6, correctly `clean=False`) shows one
@@ -73,6 +98,12 @@ that step 4 (power-curve fit) is gated on metering quality, not cycle count.
 
 Reframe Review Q7: track **coverage** (wet-bulb × start-temp × fan-regime), not a cycle count.
 Twenty single-regime cycles won't help; five across regimes might.
+
+> RESP: Agreed. Cycle count alone is the wrong gate. We need a coverage table by start/probe temp,
+> target, wet-bulb/evaporator proxy, fan regime, and contamination status. The power-curve step
+> should be explicitly gated on metering quality. With `remaining_power_load`, we can do broad
+> cycle-level electrical-energy estimates on clean windows, but detailed within-cycle power curves
+> are fragile.
 
 ## 6. Live-safety flag: we're already paying for the thing the analysis told us to stop
 
@@ -90,6 +121,23 @@ From the code, not the roadmap:
   Agreed principle was *never leave the tank cold* — confirm the daemon degrades to a fixed window
   rather than silently going quiet.
 
+> RESP: Partly agreed, with one owner-policy caveat. Technically, yes: live actuation is enabled
+> and `desired_temp` is `60`. The daemon now suppresses already-satisfied local dates via
+> `last_reached_target_at`, and `terminal_target` is `current`, but the daily main target is still
+> `60`. The efficient policy is likely routine lower target plus explicit periodic `60`.
+>
+> I would not silently change that to weekly `60` without owner confirmation because the owner
+> previously framed reaching `60` as the main-run completion/safety criterion. But I agree this
+> should be pulled forward as a near-term config-policy decision independent of stratified modelling:
+> implement explicit cadence support, make routine target and sanitation target separate, then choose
+> the cadence deliberately.
+>
+> On stale-plan fallback: confirmed. There is heartbeat-triggered replanning and WebSocket
+> reconnect/backoff, but no explicit "planner unavailable / HA unavailable / stale plan -> fixed
+> daytime safe reheat" fallback. If planning keeps failing, `_run_planner()` logs and returns; if
+> executor cannot load a valid plan, `_run_executor()` logs and returns. That does not satisfy
+> "never leave the tank cold". This should be a near-term safety issue before relying on the daemon.
+
 ## 7. Smaller notes
 
 - `apply_heat` pins the hot layer to `hot_target_c = 60`, but the real hot layer exceeds 60
@@ -101,6 +149,12 @@ From the code, not the roadmap:
 - The guardrail "keep execution conservative until shadow is better" is in mild tension with
   daily-60 being live. Resolve it in words: live = the dumb-but-safe block planner (and lower its
   target now); stratified = shadow-only until it beats live.
+
+> RESP: Agreed on all three. `hot_target_c=60` is acceptable for probe-timing experiments but wrong
+> for stored-energy accounting once we care about water above 60 or high-temperature top layers.
+> Household-load contamination should be promoted to an explicit exclusion criterion. And the
+> guardrail wording should distinguish the live simple planner from the stratified model: live may
+> change by explicit owner-approved policy/config; stratified remains shadow-only until validated.
 
 ## Answers to the roadmap's Review Questions
 
@@ -128,3 +182,16 @@ From the code, not the roadmap:
 5. Power-curve / physical-COP work: gate on a real meter, not on cycle count.
 
 — Previous implementer (modelling/characterisation phase).
+
+> RESP: Proposed merged near-term order:
+>
+> 1. Decide owner policy for routine target and sanitation cadence. I support implementing the code
+>    so routine target and `60 C` cadence are explicit, but the actual cadence should be a deliberate
+>    owner choice rather than inferred from the model discussion.
+> 2. Add daemon stale-plan/failure fallback. This is a safety/control reliability issue, not a model
+>    accuracy issue.
+> 3. Add incremental cycle extraction and contamination/coverage reporting.
+> 4. Build replay validator with current single-node, single-node-with-lag, and two-layer benchmarks.
+> 5. Make empirical duration/electrical-kWh-to-target the primary near-term fit.
+> 6. Keep power-curve/COP work as a diagnostic until metering quality is better or the clean-proxy
+>    dataset has enough regime coverage.
