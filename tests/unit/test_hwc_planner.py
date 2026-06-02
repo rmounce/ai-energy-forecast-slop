@@ -241,6 +241,23 @@ def test_main_block_skips_tiny_topup_near_target():
     assert schedule == [0.0] * len(grid)
 
 
+def test_main_block_skips_completed_local_date():
+    grid = _adelaide_grid(10, 4)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    cfg["hwc"]["block_planner"]["completed_main_dates"] = ["2026-06-02"]
+    schedule = hp._choose_daily_main_blocks(
+        [0.0] * len(grid),
+        grid_times_utc=grid,
+        load_cost=[0.05] * len(grid),
+        start_temperature=55.0,
+        dry_bulb=[15.0] * len(grid),
+        draw_off=[0.0] * len(grid),
+        cfg=cfg,
+    )
+
+    assert schedule == [0.0] * len(grid)
+
+
 def test_terminal_repair_skips_tiny_shortfall_below_min_lift():
     grid = _adelaide_grid(0, 4)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}

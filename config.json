@@ -362,11 +362,13 @@
             "post_block_grace_minutes": 90
         },
         "daemon": {
+            "state_file": "data/hwc_daemon_state.json",
             "debounce_seconds": 2,
             "heartbeat_seconds": 1800,
             "execution_interval_seconds": 60,
             "minimum_replan_interval_seconds": 60,
             "tank_temp_replan_delta_c": 0.3,
+            "main_completion_min_run_minutes": 20,
             "heat_command_grace_seconds": 600
         },
         "draw_off": {

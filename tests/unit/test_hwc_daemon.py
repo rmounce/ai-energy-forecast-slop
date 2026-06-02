@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import services.hwc_daemon as hd
 
 
@@ -26,6 +28,18 @@ def _config():
 
 def _state(value):
     return {"state": str(value)}
+
+
+def _overlap_config():
+    return {
+        "timezone": "Australia/Adelaide",
+        "hwc": {
+            "block_planner": {
+                "main_window_start": "10:00",
+                "main_window_end": "18:00",
+            },
+        },
+    }
 
 
 def test_watched_entities_include_inputs_equipment_and_published_plan():
@@ -132,3 +146,19 @@ def test_does_not_suppress_heat_or_expired_grace():
         grace_seconds=600,
         compressor_seen_on_since_heat=True,
     )
+
+
+def test_main_window_overlap_dates_marks_local_main_window_run():
+    assert hd.main_window_overlap_dates(
+        _overlap_config(),
+        datetime(2026, 6, 2, 3, 0, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, 4, 0, tzinfo=timezone.utc),
+    ) == {"2026-06-02"}
+
+
+def test_main_window_overlap_dates_ignores_outside_window():
+    assert hd.main_window_overlap_dates(
+        _overlap_config(),
+        datetime(2026, 6, 2, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, 0, 30, tzinfo=timezone.utc),
+    ) == set()
