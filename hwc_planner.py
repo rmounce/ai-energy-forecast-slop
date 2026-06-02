@@ -243,6 +243,11 @@ def _schedule_cost_delta(
     )
 
 
+def _min_block_lift_c(hwc: dict) -> float:
+    block_cfg = hwc.get("block_planner", {})
+    return float(block_cfg.get("min_block_lift_c", block_cfg.get("min_main_block_lift_c", 0.0)))
+
+
 def _choose_daily_main_blocks(
     schedule_w: list[float],
     *,
@@ -259,7 +264,7 @@ def _choose_daily_main_blocks(
     main_end = _parse_hhmm(block_cfg.get("main_window_end", "18:00"))
     target = float(cfg["hwc"]["thermal"].get("desired_temp", 60))
     min_temp = float(cfg["hwc"]["thermal"].get("min_temp", 45))
-    min_lift_c = float(block_cfg.get("min_main_block_lift_c", 0.0))
+    min_lift_c = _min_block_lift_c(cfg["hwc"])
     step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
 
     slots_by_day: dict[datetime.date, list[int]] = {}
@@ -411,6 +416,9 @@ def _repair_terminal_temperature(
         cfg=hwc,
     )
     if terminal >= terminal_target:
+        return schedule_w
+    min_lift_c = _min_block_lift_c(hwc)
+    if terminal_target - terminal < min_lift_c:
         return schedule_w
 
     step_h = hwc.get("optimization_time_step", 30) / 60.0
