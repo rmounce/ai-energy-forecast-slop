@@ -241,10 +241,10 @@ def test_main_block_skips_tiny_topup_near_target():
     assert schedule == [0.0] * len(grid)
 
 
-def test_main_block_skips_completed_local_date():
+def test_main_block_skips_satisfied_local_date():
     grid = _adelaide_grid(10, 4)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["completed_main_dates"] = ["2026-06-02"]
+    cfg["hwc"]["block_planner"]["main_satisfied_dates"] = ["2026-06-02"]
     schedule = hp._choose_daily_main_blocks(
         [0.0] * len(grid),
         grid_times_utc=grid,

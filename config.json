@@ -368,7 +368,6 @@
             "execution_interval_seconds": 60,
             "minimum_replan_interval_seconds": 60,
             "tank_temp_replan_delta_c": 0.3,
-            "main_completion_min_run_minutes": 20,
             "heat_command_grace_seconds": 600
         },
         "draw_off": {
