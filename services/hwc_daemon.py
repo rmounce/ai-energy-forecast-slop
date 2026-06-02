@@ -115,8 +115,11 @@ def should_suppress_off_after_heat(
     now: float,
     last_heat_command_at: float,
     grace_seconds: float,
+    compressor_seen_on_since_heat: bool,
 ) -> bool:
     if decision_action != "off":
+        return False
+    if compressor_seen_on_since_heat:
         return False
     if last_heat_command_at <= 0:
         return False
@@ -138,6 +141,7 @@ class HwcDaemon:
         self.started_at = time.monotonic()
         self.last_plan_at = 0.0
         self.last_heat_command_at = 0.0
+        self.compressor_seen_on_since_heat = False
         self._next_msg_id = 1
 
     def _msg_id(self) -> int:
@@ -205,6 +209,11 @@ class HwcDaemon:
             entity_id = data.get("entity_id")
             if entity_id not in self.entities:
                 continue
+            if (
+                entity_id == self.config["hwc"].get("actuation", {}).get("compressor_entity")
+                and (data.get("new_state") or {}).get("state") == "on"
+            ):
+                self.compressor_seen_on_since_heat = True
             decision = classify_state_change(
                 self.config,
                 entity_id,
@@ -335,6 +344,7 @@ class HwcDaemon:
                     return
                 if decision.action == "heat":
                     self.last_heat_command_at = time.monotonic()
+                    self.compressor_seen_on_since_heat = False
             log.info("HWC executor completed in %.1fs: %s", time.monotonic() - started, decision.action)
 
     def _should_suppress_off_after_heat(self, decision: hwc_executor.Decision) -> bool:
@@ -344,6 +354,7 @@ class HwcDaemon:
             now=time.monotonic(),
             last_heat_command_at=self.last_heat_command_at,
             grace_seconds=grace,
+            compressor_seen_on_since_heat=self.compressor_seen_on_since_heat,
         )
 
     async def run(self) -> None:

@@ -259,6 +259,7 @@ def _choose_daily_main_blocks(
     main_end = _parse_hhmm(block_cfg.get("main_window_end", "18:00"))
     target = float(cfg["hwc"]["thermal"].get("desired_temp", 60))
     min_temp = float(cfg["hwc"]["thermal"].get("min_temp", 45))
+    min_lift_c = float(block_cfg.get("min_main_block_lift_c", 0.0))
     step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
 
     slots_by_day: dict[datetime.date, list[int]] = {}
@@ -271,17 +272,27 @@ def _choose_daily_main_blocks(
     for slots in slots_by_day.values():
         best = out
         best_score = (math.inf, math.inf, math.inf)
+        base_temps, _ = simulate_block_temperatures(
+            schedule_w=out,
+            start_temperature=start_temperature,
+            dry_bulb=dry_bulb,
+            draw_off=draw_off,
+            cfg=cfg["hwc"],
+        )
         for start_idx in slots:
-            candidate = _add_contiguous_heat(
-                out,
-                start_idx=start_idx,
-                end_idx=slots[-1] + 1,
-                target_temp=target,
-                start_temperature=start_temperature,
-                dry_bulb=dry_bulb,
-                draw_off=draw_off,
-                cfg=cfg["hwc"],
-            )
+            if base_temps[start_idx] > target - min_lift_c:
+                candidate = out
+            else:
+                candidate = _add_contiguous_heat(
+                    out,
+                    start_idx=start_idx,
+                    end_idx=slots[-1] + 1,
+                    target_temp=target,
+                    start_temperature=start_temperature,
+                    dry_bulb=dry_bulb,
+                    draw_off=draw_off,
+                    cfg=cfg["hwc"],
+                )
             ctemps, _ = simulate_block_temperatures(
                 schedule_w=candidate,
                 start_temperature=start_temperature,

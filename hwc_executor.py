@@ -70,6 +70,10 @@ def _entity_state(cfg: dict, entity_id: str) -> dict:
     return _ha_call(cfg, "GET", f"states/{entity_id}")
 
 
+def _tank_temperature(cfg: dict) -> float:
+    return float(_entity_state(cfg, cfg["hwc"]["tank_temp_entity"])["state"])
+
+
 def _point_time(item: dict) -> datetime:
     return pd.to_datetime(item["date"], utc=True).to_pydatetime()
 
@@ -213,7 +217,7 @@ def decide_current(cfg: dict) -> Decision:
     points = load_plan(cfg)
     compressor_state = _entity_state(cfg, act["compressor_entity"])
     compressor_on = compressor_state.get("state") == "on"
-    return decide(
+    decision = decide(
         points,
         now=datetime.now(timezone.utc),
         compressor_on=compressor_on,
@@ -222,6 +226,25 @@ def decide_current(cfg: dict) -> Decision:
         setpoint_max=float(act.get("setpoint_max_c", 60)),
         post_block_grace=timedelta(minutes=float(act.get("post_block_grace_minutes", 90))),
     )
+    min_delta = float(act.get("min_heat_start_delta_c", 0.0))
+    if (
+        decision.action == "heat"
+        and not compressor_on
+        and decision.setpoint_c is not None
+        and min_delta > 0
+    ):
+        tank_temp = _tank_temperature(cfg)
+        if tank_temp >= decision.setpoint_c - min_delta:
+            return Decision(
+                action="off",
+                reason=(
+                    f"planned heat suppressed: tank {tank_temp:.1f}C within "
+                    f"{min_delta:.1f}C of setpoint {decision.setpoint_c:.1f}C"
+                ),
+                block_start=decision.block_start,
+                block_end=decision.block_end,
+            )
+    return decision
 
 
 def run(cfg: dict, *, dry_run: bool = False, force: bool = False) -> Decision:
