@@ -364,7 +364,8 @@
             "heartbeat_seconds": 1800,
             "execution_interval_seconds": 60,
             "minimum_replan_interval_seconds": 60,
-            "tank_temp_replan_delta_c": 0.3
+            "tank_temp_replan_delta_c": 0.3,
+            "heat_command_grace_seconds": 600
         },
         "draw_off": {
             "total_kwh": 1.3,

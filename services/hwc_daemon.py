@@ -109,6 +109,20 @@ def classify_state_change(config: dict, entity_id: str, old_state: dict | None, 
     return TriggerDecision(False, False, "not watched")
 
 
+def should_suppress_off_after_heat(
+    *,
+    decision_action: str,
+    now: float,
+    last_heat_command_at: float,
+    grace_seconds: float,
+) -> bool:
+    if decision_action != "off":
+        return False
+    if last_heat_command_at <= 0:
+        return False
+    return now - last_heat_command_at < grace_seconds
+
+
 class HwcDaemon:
     def __init__(self, config: dict, *, dry_run: bool = False):
         ha = config["home_assistant"]
@@ -123,6 +137,7 @@ class HwcDaemon:
         self.shutdown = asyncio.Event()
         self.started_at = time.monotonic()
         self.last_plan_at = 0.0
+        self.last_heat_command_at = 0.0
         self._next_msg_id = 1
 
     def _msg_id(self) -> int:
@@ -291,11 +306,45 @@ class HwcDaemon:
         async with self.run_lock:
             started = time.monotonic()
             try:
-                decision = await asyncio.to_thread(hwc_executor.run, self.config, dry_run=self.dry_run)
+                decision = await asyncio.to_thread(hwc_executor.decide_current, self.config)
             except Exception:
                 log.exception("HWC executor failed")
                 return
+            log.info(
+                "HWC executor decision: %s (%s), setpoint=%s",
+                decision.action,
+                decision.reason,
+                decision.setpoint_c,
+            )
+
+            if self._should_suppress_off_after_heat(decision):
+                log.warning(
+                    "Suppressing HWC off command %.1fs after heat command",
+                    time.monotonic() - self.last_heat_command_at,
+                )
+                return
+
+            act = self.config["hwc"].get("actuation", {})
+            if self.dry_run or not act.get("enabled", False):
+                log.info("Dry/config-disabled run; not calling water_heater services")
+            else:
+                try:
+                    await asyncio.to_thread(hwc_executor.apply_decision, self.config, decision)
+                except Exception:
+                    log.exception("HWC executor apply failed")
+                    return
+                if decision.action == "heat":
+                    self.last_heat_command_at = time.monotonic()
             log.info("HWC executor completed in %.1fs: %s", time.monotonic() - started, decision.action)
+
+    def _should_suppress_off_after_heat(self, decision: hwc_executor.Decision) -> bool:
+        grace = float(self.config["hwc"].get("daemon", {}).get("heat_command_grace_seconds", 600))
+        return should_suppress_off_after_heat(
+            decision_action=decision.action,
+            now=time.monotonic(),
+            last_heat_command_at=self.last_heat_command_at,
+            grace_seconds=grace,
+        )
 
     async def run(self) -> None:
         self.replan_trigger.set()
