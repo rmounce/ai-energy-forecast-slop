@@ -5,6 +5,10 @@ telemetry. This is the empirical ground truth behind the COP/thermal assumptions
 `docs/hwc_emhass.md`. Reproduce/extend with `hwc_cop_analysis.py` (writes
 `data/hwc_cop_cycles.csv`).
 
+The Aquatech unit was installed on **2026-05-28**. `hwc_cop_analysis.py` defaults
+to that date as the earliest query bound so future sweeps do not scan unrelated
+pre-installation Home Assistant history.
+
 ## Telemetry available (Local Tuya → HA → InfluxDB)
 
 Tank/control: `sensor.heat_pump_temperature` (control probe). Refrigerant/air:
@@ -72,7 +76,9 @@ Recent clean full-reheat-to-60 °C cycles (see `data/hwc_cop_cycles.csv`):
 Across the last 12 days the sweep flags **4 of 6 cycles clean** (mean clean COP ≈ **2.4**);
 the two excluded are a contaminated baseline (another load on) and a short partial heat.
 (`wet_bulb` is populated from `rp_30m.humidity_adelaide`; regenerate the CSV after analyzer
-changes before using it for calibration.)
+changes before using it for calibration.) Raw CSV output remains generated data and is
+gitignored; when a run is considered suitable for model calibration, write a curated
+Markdown table with `--summary-md docs/hwc_calibration_cycles.md`.
 
 ## Fan-speed regime (calibration caveat)
 
