@@ -106,6 +106,7 @@ def fit_parameters(
         "mean_clean_cop": round(float(usable["cop"].mean()), 2),
     }
     if not top_up.empty:
+        suggestions["top_up_start_temp_c"] = top_up_start_c
         suggestions["top_up_heat_rate_c_per_hour"] = _round_to(
             top_up["heat_rate_c_per_hour"].median(), 0.1
         )
@@ -151,6 +152,13 @@ def write_markdown(fit: dict, path: str) -> None:
     ]
     if "top_up_heat_rate_c_per_hour" in suggestions:
         lines += [
+            "## Optional Top-Up Model Parameters",
+            "",
+            "| parameter | suggested | note |",
+            "| --- | --- | --- |",
+            f"| `thermal.top_up_start_temp_c` | `{suggestions['top_up_start_temp_c']}` | use the top-up rate at or above this modelled tank temp |",
+            f"| `thermal.top_up_heat_rate_c_per_hour` | `{suggestions['top_up_heat_rate_c_per_hour']}` | median near-target top-up probe lift rate |",
+            "",
             "## Diagnostic Split",
             "",
             f"- Top-up median heat rate: `{suggestions['top_up_heat_rate_c_per_hour']}` C/h",

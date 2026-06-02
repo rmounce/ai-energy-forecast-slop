@@ -149,6 +149,20 @@ def _thermal_capacity_kwh_per_c(th: dict) -> float:
     return litres * density_kg_per_l * float(th.get("heat_capacity", 4.184)) / 3600.0
 
 
+def _heat_rate_c_per_hour(th: dict, temp_c: float) -> float:
+    """Return empirical compressor heat rate for the current modelled tank temp.
+
+    The Aquatech data shows lower effective probe lift rate for near-target top-ups.
+    Keep this optional so existing configs retain the original single-rate model.
+    """
+    base = float(th.get("heat_rate_c_per_hour", 5.2))
+    top_up = th.get("top_up_heat_rate_c_per_hour")
+    top_up_start = th.get("top_up_start_temp_c")
+    if top_up is not None and top_up_start is not None and temp_c >= float(top_up_start):
+        return float(top_up)
+    return base
+
+
 def _parse_hhmm(value: str) -> int:
     h, m = (int(x) for x in value.split(":"))
     return h * 60 + m
@@ -187,7 +201,6 @@ def simulate_block_temperatures(
     step_h = cfg.get("optimization_time_step", 30) / 60.0
     cap_kwh_per_c = _thermal_capacity_kwh_per_c(th)
     ua_kw_per_c = float(th.get("standing_loss_ua_kw_per_c", 0.0025))
-    heat_rate_c_per_h = float(th.get("heat_rate_c_per_hour", 5.2))
     max_temp = float(th.get("max_temp", 62))
     temp = float(start_temperature)
     temps = []
@@ -197,6 +210,7 @@ def simulate_block_temperatures(
         temp -= loss_kwh / cap_kwh_per_c
         temp -= float(draw_kwh) / cap_kwh_per_c
         if power_w > 0:
+            heat_rate_c_per_h = _heat_rate_c_per_hour(th, temp)
             temp += heat_rate_c_per_h * step_h
         temp = min(max_temp, temp)
     return temps, round(temp, 2)

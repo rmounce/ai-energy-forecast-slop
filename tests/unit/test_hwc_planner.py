@@ -106,6 +106,54 @@ def test_parse_extra_draw_off_default_and_custom_duration():
     assert hp.parse_extra_draw_off("22:00+30=0.8") == ("22:00", 30, 0.8)
 
 
+def test_simulate_uses_single_heat_rate_without_top_up_config():
+    temps, terminal = hp.simulate_block_temperatures(
+        schedule_w=[800.0],
+        start_temperature=54.0,
+        dry_bulb=[54.0],
+        draw_off=[0.0],
+        cfg={
+            "optimization_time_step": 60,
+            "thermal": {
+                "volume_l": 225,
+                "density": 997,
+                "heat_capacity": 4.184,
+                "standing_loss_ua_kw_per_c": 0.0,
+                "heat_rate_c_per_hour": 6.6,
+                "max_temp": 60,
+            },
+        },
+    )
+
+    assert temps == [54.0]
+    assert terminal == pytest.approx(60.0)
+
+
+def test_simulate_uses_top_up_heat_rate_above_threshold():
+    temps, terminal = hp.simulate_block_temperatures(
+        schedule_w=[800.0],
+        start_temperature=54.0,
+        dry_bulb=[54.0],
+        draw_off=[0.0],
+        cfg={
+            "optimization_time_step": 60,
+            "thermal": {
+                "volume_l": 225,
+                "density": 997,
+                "heat_capacity": 4.184,
+                "standing_loss_ua_kw_per_c": 0.0,
+                "heat_rate_c_per_hour": 6.6,
+                "top_up_heat_rate_c_per_hour": 5.5,
+                "top_up_start_temp_c": 53.0,
+                "max_temp": 60,
+            },
+        },
+    )
+
+    assert temps == [54.0]
+    assert terminal == pytest.approx(59.5)
+
+
 # ── build_payload ───────────────────────────────────────────────────────────
 
 

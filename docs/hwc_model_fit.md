@@ -13,6 +13,13 @@ Derived from clean, compressor-only cycles in `data/hwc_cop_cycles.csv`.
 | `thermal.nominal_power_w` | `810` | median clean HP proxy watts, rounded to 10 W |
 | `thermal.heat_rate_c_per_hour` | `6.6` | median full-reheat probe lift rate where available |
 
+## Optional Top-Up Model Parameters
+
+| parameter | suggested | note |
+| --- | --- | --- |
+| `thermal.top_up_start_temp_c` | `53.0` | use the top-up rate at or above this modelled tank temp |
+| `thermal.top_up_heat_rate_c_per_hour` | `5.5` | median near-target top-up probe lift rate |
+
 ## Diagnostic Split
 
 - Top-up median heat rate: `5.5` C/h
