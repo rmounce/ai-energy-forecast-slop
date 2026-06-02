@@ -346,7 +346,7 @@
             "main_window_end": "18:00",
             "overnight_window_start": "00:00",
             "overnight_window_end": "06:00",
-            "min_main_block_lift_c": 2.0,
+            "min_block_lift_c": 2.0,
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24
         },
