@@ -76,9 +76,9 @@ Recent clean full-reheat-to-60 °C cycles (see `data/hwc_cop_cycles.csv`):
 Across the last 12 days the sweep flags **4 of 6 cycles clean** (mean clean COP ≈ **2.4**);
 the two excluded are a contaminated baseline (another load on) and a short partial heat.
 (`wet_bulb` is populated from `rp_30m.humidity_adelaide`; regenerate the CSV after analyzer
-changes before using it for calibration.) Raw CSV output remains generated data and is
-gitignored; when a run is considered suitable for model calibration, write a curated
-Markdown table with `--summary-md docs/hwc_calibration_cycles.md`.
+changes before using it for calibration.) Keep `data/hwc_cop_cycles.csv` as the
+machine-readable cycle table, and write `--summary-md docs/hwc_calibration_cycles.md`
+when a run should be easy to review in Git.
 
 ## Fan-speed regime (calibration caveat)
 
