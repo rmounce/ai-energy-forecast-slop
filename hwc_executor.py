@@ -208,12 +208,12 @@ def apply_decision(cfg: dict, decision: Decision):
         _service_call(cfg, "turn_off", {"entity_id": entity})
 
 
-def run(cfg: dict, *, dry_run: bool = False, force: bool = False) -> Decision:
+def decide_current(cfg: dict) -> Decision:
     act = cfg["hwc"].get("actuation", {})
     points = load_plan(cfg)
     compressor_state = _entity_state(cfg, act["compressor_entity"])
     compressor_on = compressor_state.get("state") == "on"
-    decision = decide(
+    return decide(
         points,
         now=datetime.now(timezone.utc),
         compressor_on=compressor_on,
@@ -222,6 +222,11 @@ def run(cfg: dict, *, dry_run: bool = False, force: bool = False) -> Decision:
         setpoint_max=float(act.get("setpoint_max_c", 60)),
         post_block_grace=timedelta(minutes=float(act.get("post_block_grace_minutes", 90))),
     )
+
+
+def run(cfg: dict, *, dry_run: bool = False, force: bool = False) -> Decision:
+    act = cfg["hwc"].get("actuation", {})
+    decision = decide_current(cfg)
     logging.info("HWC executor decision: %s (%s), setpoint=%s", decision.action, decision.reason, decision.setpoint_c)
 
     if dry_run or (not act.get("enabled", False) and not force):

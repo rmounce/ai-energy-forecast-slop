@@ -18,6 +18,7 @@ def _config():
             },
             "daemon": {
                 "tank_temp_replan_delta_c": 0.3,
+                "heat_command_grace_seconds": 600,
             },
         },
     }
@@ -97,3 +98,27 @@ def test_published_plan_change_triggers_executor_only():
 
     assert decision.replan is False
     assert decision.execute is True
+
+
+def test_suppresses_off_inside_heat_command_grace():
+    assert hd.should_suppress_off_after_heat(
+        decision_action="off",
+        now=110.0,
+        last_heat_command_at=100.0,
+        grace_seconds=600,
+    )
+
+
+def test_does_not_suppress_heat_or_expired_grace():
+    assert not hd.should_suppress_off_after_heat(
+        decision_action="heat",
+        now=110.0,
+        last_heat_command_at=100.0,
+        grace_seconds=600,
+    )
+    assert not hd.should_suppress_off_after_heat(
+        decision_action="off",
+        now=701.0,
+        last_heat_command_at=100.0,
+        grace_seconds=600,
+    )
