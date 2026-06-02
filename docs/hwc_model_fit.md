@@ -26,12 +26,21 @@ Derived from clean, compressor-only cycles in `data/hwc_cop_cycles.csv`.
 - Top-up mean COP: `1.89`
 - Mean usable-cycle COP: `2.35`
 
+## Stratified Model Hints
+
+| parameter | estimate | note |
+| --- | --- | --- |
+| `probe_height_fraction` | `0.62` | estimated from median 50% probe-rise timing as a fraction of cycle duration |
+| `thermocline_width_fraction` | `0.63` | estimated from median 10%→90% probe-rise timing span |
+| `probe_rise_10_cycle_fraction` | `0.25` | diagnostic only |
+| `probe_rise_90_cycle_fraction` | `0.91` | diagnostic only |
+
 ## Cycle Class Summary
 
-| class | n | median_heat_rate_c_per_hour | median_hp_mean_w | mean_cop | median_elec_kwh_per_c | median_probe_lag_min |
-| --- | --- | --- | --- | --- | --- | --- |
-| all_usable | 5 | 6.58 | 806 | 2.35 | 0.118 | 15.5 |
-| full_reheat | 3 | 6.61 | 771 | 2.66 | 0.109 | 22.0 |
-| top_up | 2 | 5.45 | 812 | 1.89 | 0.151 | 15.0 |
+| class | n | median_heat_rate_c_per_hour | median_hp_mean_w | mean_cop | median_elec_kwh_per_c | median_probe_lag_min | median_probe_rise_10_min | median_probe_rise_50_min | median_probe_rise_90_min |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| all_usable | 5 | 6.58 | 806 | 2.35 | 0.118 | 15.5 | 16.0 | 46.0 | 71.5 |
+| full_reheat | 3 | 6.61 | 771 | 2.66 | 0.109 | 22.0 | 43.0 | 78.0 | 108.5 |
+| top_up | 2 | 5.45 | 812 | 1.89 | 0.151 | 15.0 | 14.8 | 34.5 | 51.8 |
 
 Do not treat this as a stratified tank model yet; it is a parameter fit for the current single-node block planner.

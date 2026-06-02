@@ -69,6 +69,9 @@ def _summary_row(df: pd.DataFrame, label: str) -> dict:
             "mean_cop": None,
             "median_elec_kwh_per_c": None,
             "median_probe_lag_min": None,
+            "median_probe_rise_10_min": None,
+            "median_probe_rise_50_min": None,
+            "median_probe_rise_90_min": None,
         }
     return {
         "class": label,
@@ -82,6 +85,40 @@ def _summary_row(df: pd.DataFrame, label: str) -> dict:
             if "probe_lag_min" in df and df["probe_lag_min"].notna().any()
             else None
         ),
+        "median_probe_rise_10_min": (
+            round(float(df["probe_rise_10_min"].median()), 1)
+            if "probe_rise_10_min" in df and df["probe_rise_10_min"].notna().any()
+            else None
+        ),
+        "median_probe_rise_50_min": (
+            round(float(df["probe_rise_50_min"].median()), 1)
+            if "probe_rise_50_min" in df and df["probe_rise_50_min"].notna().any()
+            else None
+        ),
+        "median_probe_rise_90_min": (
+            round(float(df["probe_rise_90_min"].median()), 1)
+            if "probe_rise_90_min" in df and df["probe_rise_90_min"].notna().any()
+            else None
+        ),
+    }
+
+
+def _stratified_hints(df: pd.DataFrame) -> dict:
+    required = {"dur_min", "probe_rise_10_min", "probe_rise_50_min", "probe_rise_90_min"}
+    if not required.issubset(df.columns):
+        return {}
+    complete = df.dropna(subset=list(required))
+    complete = complete[complete["dur_min"] > 0]
+    if complete.empty:
+        return {}
+    rise10 = complete["probe_rise_10_min"] / complete["dur_min"]
+    rise50 = complete["probe_rise_50_min"] / complete["dur_min"]
+    rise90 = complete["probe_rise_90_min"] / complete["dur_min"]
+    return {
+        "probe_height_fraction": round(float(rise50.median()), 2),
+        "thermocline_width_fraction": round(float((rise90 - rise10).median()), 2),
+        "probe_rise_10_cycle_fraction": round(float(rise10.median()), 2),
+        "probe_rise_90_cycle_fraction": round(float(rise90.median()), 2),
     }
 
 
@@ -117,6 +154,7 @@ def fit_parameters(
         "top_up_start_c": top_up_start_c,
         "usable_cycle_count": int(len(usable)),
         "suggestions": suggestions,
+        "stratified_hints": _stratified_hints(usable),
         "summaries": [
             _summary_row(usable, "all_usable"),
             _summary_row(full, "full_reheat"),
@@ -167,6 +205,20 @@ def write_markdown(fit: dict, path: str) -> None:
             "",
         ]
 
+    hints = fit.get("stratified_hints", {})
+    if hints:
+        lines += [
+            "## Stratified Model Hints",
+            "",
+            "| parameter | estimate | note |",
+            "| --- | --- | --- |",
+            f"| `probe_height_fraction` | `{hints['probe_height_fraction']}` | estimated from median 50% probe-rise timing as a fraction of cycle duration |",
+            f"| `thermocline_width_fraction` | `{hints['thermocline_width_fraction']}` | estimated from median 10%→90% probe-rise timing span |",
+            f"| `probe_rise_10_cycle_fraction` | `{hints['probe_rise_10_cycle_fraction']}` | diagnostic only |",
+            f"| `probe_rise_90_cycle_fraction` | `{hints['probe_rise_90_cycle_fraction']}` | diagnostic only |",
+            "",
+        ]
+
     cols = [
         "class",
         "n",
@@ -175,6 +227,9 @@ def write_markdown(fit: dict, path: str) -> None:
         "mean_cop",
         "median_elec_kwh_per_c",
         "median_probe_lag_min",
+        "median_probe_rise_10_min",
+        "median_probe_rise_50_min",
+        "median_probe_rise_90_min",
     ]
     lines += [
         "## Cycle Class Summary",
