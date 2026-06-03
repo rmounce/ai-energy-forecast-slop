@@ -61,6 +61,25 @@ def _cycles():
                 "probe_rise_50_min": 25.0,
                 "probe_rise_90_min": 45.0,
             },
+            {
+                "start": "2026-06-03 10:00",
+                "dur_min": 55,
+                "tank_start": 53.0,
+                "tank_end": 60.0,
+                "ambient": 17.0,
+                "wet_bulb": 14.0,
+                "hp_mean_w": 790,
+                "elec_kwh": 1.0,
+                "therm_kwh": 2.0,
+                "cop": 2.0,
+                "clean": True,
+                "element_on": False,
+                "defrost_on": False,
+                "four_way_on": False,
+                "probe_rise_10_min": 12.0,
+                "probe_rise_50_min": 30.0,
+                "probe_rise_90_min": 50.0,
+            },
         ]
     )
 
@@ -96,10 +115,41 @@ def test_validate_trace_cycles_writes_report_and_trace_rows():
         cycles, _config(), step_seconds=600, series_loader=loader,
     )
 
-    assert len(report) == 2
-    assert len(trace_rows) == 13
+    assert len(report) == 3
+    assert len(trace_rows) == 19
     assert params.hot_target_c == 60
     assert {"single_node_mae_c", "stratified_mae_c", "exhaust_max"}.issubset(report.columns)
     assert {"observed_tank_c", "single_node_tank_c", "stratified_tank_c"}.issubset(
         trace_rows.columns
     )
+
+
+def test_validate_leave_one_out_trace_cycles_reports_held_out_fit_parameters():
+    cycles = traces.load_cycles_from_frame(_cycles(), target_c=60)
+
+    def loader(row):
+        idx = traces._trace_index(row, step_seconds=600)
+        tank = pd.Series(
+            pd.Series(range(len(idx)), index=idx, dtype=float)
+            / max(1, len(idx) - 1)
+            * (float(row["tank_end"]) - float(row["tank_start"]))
+            + float(row["tank_start"])
+        )
+        return {
+            "tank": tank,
+            "exhaust": tank + 20.0,
+            "power": pd.Series(800.0, index=idx),
+            "compressor": pd.Series(1.0, index=idx),
+        }
+
+    report = traces.validate_leave_one_out_trace_cycles(
+        cycles, _config(), step_seconds=600, series_loader=loader,
+    )
+
+    assert len(report) == 3
+    assert set(report["train_cycles"]) == {2}
+    assert {
+        "loo_probe_height_fraction",
+        "loo_thermocline_width_fraction",
+        "stratified_mae_c",
+    }.issubset(report.columns)
