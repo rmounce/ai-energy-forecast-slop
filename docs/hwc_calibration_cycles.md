@@ -2,7 +2,7 @@
 
 Curated cycle-level calibration output from `hwc_cop_analysis.py`.
 
-- Source window: since `2026-05-28`
+- Source window: existing CSV merged with extracted window (since `2026-06-03`)
 - Rows: 8 total, 6 clean
 - Method: compressor-on windows from HA/InfluxDB; electrical input from baseline-subtracted `sensor.remaining_power_load`; thermal output from tank probe delta plus standing loss.
 - Caveat: tank stratification means single-probe thermal output is approximate; use clean flags and cycle context before fitting model parameters.
@@ -16,4 +16,4 @@ Curated cycle-level calibration output from `hwc_cop_analysis.py`.
 | 2026-05-31 10:54 | 134 | 45.2 | 59.9 | 15.6 | 12.9 | 153 | 715 | 862 | 1.6 | 4.11 | 2.56 | 33.0 | 52.0 | 84.0 | 122.0 | 29.4 | 78.0 | 72.5 | False | False | False | True |
 | 2026-06-01 11:31 | 118 | 47.0 | 60.0 | 17.2 | 13.0 | 117 | 771 | 905 | 1.53 | 3.63 | 2.38 | 22.0 | 43.0 | 78.0 | 108.5 | 27.8 | 82.9 | 79.4 | False | False | False | True |
 | 2026-06-02 10:07 | 63 | 53.9 | 60.0 | 16.5 | 14.7 | 123 | 810 | 901 | 0.85 | 1.72 | 2.02 | 15.5 | 16.0 | 36.0 | 55.5 | 26.9 | 72.0 | 65.3 | False | False | False | True |
-| 2026-06-03 10:24 | 125 | 47.7 | 60.0 | 14.5 | 12.3 | 108 | 738 | 875 | 1.54 | 3.46 | 2.24 | 50.0 | 57.5 | 85.0 | 115.0 | 20.3 | 81.9 | 76.1 | False | False | False | True |
+| 2026-06-03 10:24 | 125 | 47.7 | 60.0 | 14.5 | 12.3 | 107 | 738 | 876 | 1.54 | 3.46 | 2.24 | 50.0 | 57.5 | 85.0 | 115.0 | 20.3 | 81.9 | 76.1 | False | False | False | True |

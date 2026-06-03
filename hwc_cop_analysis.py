@@ -19,6 +19,7 @@ Caveats (see docs/hwc_thermal_characterisation.md):
 Usage:
   python hwc_cop_analysis.py
   python hwc_cop_analysis.py --days 3 --csv data/hwc_cop_cycles.csv
+  python hwc_cop_analysis.py --since 2026-06-03 --merge-existing
   python hwc_cop_analysis.py --summary-md docs/hwc_calibration_cycles.md
 """
 
@@ -57,13 +58,23 @@ def _format_influx_time(value):
     return ts.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _series_query(meas, eid=None, days=None, since=DEFAULT_SINCE, field="value", rp=""):
+def _series_query(
+    meas,
+    eid=None,
+    days=None,
+    since=DEFAULT_SINCE,
+    until=None,
+    field="value",
+    rp="",
+):
     src = f'"{rp}"."{meas}"' if rp else f'"{meas}"'
     where = []
     if eid:
         where.append(f"entity_id='{eid}'")
     if since:
         where.append(f"time >= '{_format_influx_time(since)}'")
+    if until:
+        where.append(f"time <= '{_format_influx_time(until)}'")
     if days is not None:
         where.append(f"time> now()-{days}d")
     if not where:
@@ -71,8 +82,19 @@ def _series_query(meas, eid=None, days=None, since=DEFAULT_SINCE, field="value",
     return f"SELECT \"{field}\" FROM {src} WHERE {' AND '.join(where)}"
 
 
-def _series(c, meas, eid=None, days=None, since=DEFAULT_SINCE, field="value", rp=""):
-    q = _series_query(meas, eid=eid, days=days, since=since, field=field, rp=rp)
+def _series(
+    c,
+    meas,
+    eid=None,
+    days=None,
+    since=DEFAULT_SINCE,
+    until=None,
+    field="value",
+    rp="",
+):
+    q = _series_query(
+        meas, eid=eid, days=days, since=since, until=until, field=field, rp=rp
+    )
     pts = list(c.query(q).get_points())
     if not pts:
         return pd.Series(dtype=float)
@@ -118,20 +140,56 @@ def stull_wet_bulb(t, rh):
             - 4.686035)
 
 
-def analyse(days=None, since=DEFAULT_SINCE, min_minutes=20):
+def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
     c = _client()
-    comp = _series(c, "binary_sensor__running", "aquatech_compressor", days=days, since=since)
-    pw = _series(c, "sensor__power", "remaining_power_load", days=days, since=since)
-    tank = _series(c, "sensor__temperature", "heat_pump_temperature", days=days, since=since)
-    amb = _series(c, "sensor__temperature", "aquatech_temperature", days=days, since=since)
-    hum = _series(c, "humidity_adelaide", days=days, since=since, field="mean_value", rp="rp_30m")
-    exhaust = _series(c, "sensor__temperature", "aquatech_exhaust_temperature", days=days, since=since)
-    coil = _series(c, "sensor__temperature", "aquatech_coil_temperature", days=days, since=since)
-    return_air = _series(c, "sensor__temperature", "aquatech_return_air_temperature", days=days, since=since)
-    inlet = _series(c, "sensor__temperature", "aquatech_inlet_temperature", days=days, since=since)
-    element = _series(c, "binary_sensor__running", "aquatech_element", days=days, since=since)
-    defrost = _series(c, "binary_sensor__running", "aquatech_defrost", days=days, since=since)
-    four_way = _series(c, "binary_sensor__running", "aquatech_four_way_valve", days=days, since=since)
+    comp = _series(
+        c, "binary_sensor__running", "aquatech_compressor",
+        days=days, since=since, until=until,
+    )
+    pw = _series(
+        c, "sensor__power", "remaining_power_load",
+        days=days, since=since, until=until,
+    )
+    tank = _series(
+        c, "sensor__temperature", "heat_pump_temperature",
+        days=days, since=since, until=until,
+    )
+    amb = _series(
+        c, "sensor__temperature", "aquatech_temperature",
+        days=days, since=since, until=until,
+    )
+    hum = _series(
+        c, "humidity_adelaide", days=days, since=since, until=until,
+        field="mean_value", rp="rp_30m",
+    )
+    exhaust = _series(
+        c, "sensor__temperature", "aquatech_exhaust_temperature",
+        days=days, since=since, until=until,
+    )
+    coil = _series(
+        c, "sensor__temperature", "aquatech_coil_temperature",
+        days=days, since=since, until=until,
+    )
+    return_air = _series(
+        c, "sensor__temperature", "aquatech_return_air_temperature",
+        days=days, since=since, until=until,
+    )
+    inlet = _series(
+        c, "sensor__temperature", "aquatech_inlet_temperature",
+        days=days, since=since, until=until,
+    )
+    element = _series(
+        c, "binary_sensor__running", "aquatech_element",
+        days=days, since=since, until=until,
+    )
+    defrost = _series(
+        c, "binary_sensor__running", "aquatech_defrost",
+        days=days, since=since, until=until,
+    )
+    four_way = _series(
+        c, "binary_sensor__running", "aquatech_four_way_valve",
+        days=days, since=since, until=until,
+    )
     if comp.empty or pw.empty:
         raise SystemExit("Missing compressor or remaining_power_load data")
 
@@ -215,16 +273,53 @@ def analyse(days=None, since=DEFAULT_SINCE, min_minutes=20):
     return pd.DataFrame(rows)
 
 
-def write_summary_markdown(df: pd.DataFrame, path: str, since: str | None, days: int | None) -> None:
+def format_cycles_for_output(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if not out.empty and pd.api.types.is_datetime64_any_dtype(out["start"]):
+        out["start"] = out["start"].dt.tz_convert(LOCAL_TZ).dt.strftime("%Y-%m-%d %H:%M")
+    return out
+
+
+def merge_cycle_tables(existing: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
+    """Merge extracted cycle tables by local start time, replacing duplicate rows."""
+    frames = [df for df in (existing, new) if not df.empty]
+    if not frames:
+        return new.copy()
+    merged = pd.concat(frames, ignore_index=True)
+    merged = merged.drop_duplicates(subset=["start"], keep="last")
+    order = pd.to_datetime(merged["start"], errors="coerce")
+    merged = (
+        merged.assign(_sort_start=order)
+        .sort_values(["_sort_start", "start"], kind="mergesort")
+        .drop(columns=["_sort_start"])
+        .reset_index(drop=True)
+    )
+    return merged
+
+
+def write_summary_markdown(
+    df: pd.DataFrame,
+    path: str,
+    since: str | None,
+    days: int | None,
+    until: str | None = None,
+    merged: bool = False,
+) -> None:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     clean = df[df["clean"]] if not df.empty else df
     source_window = []
     if since:
         source_window.append(f"since `{since}`")
+    if until:
+        source_window.append(f"until `{until}`")
     if days is not None:
         source_window.append(f"last `{days}` days")
-    source = " and ".join(source_window) if source_window else "custom bounded query"
+    if merged:
+        extracted_source = " and ".join(source_window) if source_window else "custom bounded query"
+        source = f"existing CSV merged with extracted window ({extracted_source})"
+    else:
+        source = " and ".join(source_window) if source_window else "custom bounded query"
 
     lines = [
         "# HWC Calibration Cycles",
@@ -240,9 +335,7 @@ def write_summary_markdown(df: pd.DataFrame, path: str, since: str | None, days:
     if df.empty:
         lines.append("No qualifying cycles found.")
     else:
-        display = df.copy()
-        if pd.api.types.is_datetime64_any_dtype(display["start"]):
-            display["start"] = display["start"].dt.tz_convert(LOCAL_TZ).dt.strftime("%Y-%m-%d %H:%M")
+        display = format_cycles_for_output(df)
         cols = [
             "start", "dur_min", "tank_start", "tank_end", "ambient", "wet_bulb",
             "baseline_w", "hp_mean_w", "hp_p95_w", "elec_kwh", "therm_kwh",
@@ -264,22 +357,37 @@ if __name__ == "__main__":
                     help="Optional rolling lookback, still bounded by --since when set")
     ap.add_argument("--since", default=DEFAULT_SINCE,
                     help="Earliest local date/time to query; default is Aquatech install date")
+    ap.add_argument("--until", default=None,
+                    help="Optional latest local date/time to query")
+    ap.add_argument("--merge-existing", action="store_true",
+                    help="Merge extracted rows into --csv by local cycle start time")
     ap.add_argument("--csv", default="data/hwc_cop_cycles.csv")
     ap.add_argument("--summary-md", default=None,
                     help="Optional curated Markdown table to write, e.g. docs/hwc_calibration_cycles.md")
     args = ap.parse_args()
-    df = analyse(days=args.days, since=args.since)
-    if df.empty:
+    df = analyse(days=args.days, since=args.since, until=args.until)
+    output_df = format_cycles_for_output(df)
+    if args.merge_existing:
+        csv_path = Path(args.csv)
+        existing = pd.read_csv(csv_path) if csv_path.exists() else pd.DataFrame()
+        output_df = merge_cycle_tables(existing, output_df)
+
+    if output_df.empty:
         print("No qualifying cycles found.")
     else:
-        df["start"] = df["start"].dt.tz_convert(LOCAL_TZ).dt.strftime("%Y-%m-%d %H:%M")
         with pd.option_context("display.width", 160, "display.max_columns", None):
-            print(df.to_string(index=False))
-        clean = df[df["clean"]]
+            print(output_df.to_string(index=False))
+        clean = output_df[output_df["clean"]]
         if not clean.empty:
-            print(f"\nclean cycles: {len(clean)}/{len(df)}  |  mean COP (clean) = {clean['cop'].mean():.2f}")
-        df.to_csv(args.csv, index=False)
+            print(
+                f"\nclean cycles: {len(clean)}/{len(output_df)}  |  "
+                f"mean COP (clean) = {clean['cop'].mean():.2f}"
+            )
+        output_df.to_csv(args.csv, index=False)
         print(f"wrote {args.csv}")
     if args.summary_md:
-        write_summary_markdown(df, args.summary_md, since=args.since, days=args.days)
+        write_summary_markdown(
+            output_df, args.summary_md, since=args.since, days=args.days,
+            until=args.until, merged=args.merge_existing,
+        )
         print(f"wrote {args.summary_md}")
