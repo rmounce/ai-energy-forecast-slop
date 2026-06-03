@@ -25,6 +25,8 @@ DEFAULT_CYCLES_CSV = "data/hwc_cop_cycles.csv"
 DEFAULT_TRACE_CSV = "data/hwc_cycle_traces.csv"
 DEFAULT_REPORT_CSV = "data/hwc_cycle_trace_validation.csv"
 DEFAULT_REPORT_MD = "docs/hwc_cycle_trace_validation.md"
+DEFAULT_LOO_REPORT_CSV = "data/hwc_cycle_trace_loo_validation.csv"
+DEFAULT_LOO_REPORT_MD = "docs/hwc_cycle_trace_loo_validation.md"
 LOCAL_TZ = cop.LOCAL_TZ
 
 
@@ -116,6 +118,11 @@ def _model_traces(row: pd.Series, config: dict, params: strat.StratifiedTankPara
     }
 
 
+def _fit_params(cycles: pd.DataFrame, config: dict) -> strat.StratifiedTankParams:
+    fit_result = summary_val.fit.fit_parameters(cycles)
+    return summary_val._thermal_params(config, fit_result)
+
+
 def _mae(predicted: pd.Series, observed: pd.Series) -> float:
     err = predicted - observed
     return round(float(err.abs().mean()), 3)
@@ -135,6 +142,66 @@ def _initial_flat_error_minutes(predicted: pd.Series, observed: pd.Series, start
     return round((pred.index[0] - obs.index[0]).total_seconds() / 60.0, 1)
 
 
+def _validate_one_trace_cycle(
+    row: pd.Series,
+    config: dict,
+    params: strat.StratifiedTankParams,
+    *,
+    step_seconds: int,
+    series: dict[str, pd.Series],
+) -> tuple[dict | None, list[dict]]:
+    idx = _trace_index(row, step_seconds=step_seconds)
+    observed = cop._interp_to_idx(series["tank"], idx)
+    traces = _model_traces(row, config, params, idx_len=len(idx))
+    block = pd.Series(traces["single_node_temp"], index=idx)
+    layered = pd.Series(traces["stratified_temp"], index=idx)
+    exhaust = cop._interp_to_idx(series["exhaust"], idx)
+    power = cop._interp_to_idx(series["power"], idx)
+    compressor = cop._state_to_idx(series["compressor"], idx)
+    valid = observed.dropna()
+    if valid.empty:
+        return None, []
+
+    start_local = str(row["start"])
+    report = {
+        "start": start_local,
+        "cycle_class": row["cycle_class"],
+        "points": int(observed.notna().sum()),
+        "duration_min": float(row["dur_min"]),
+        "observed_start": round(float(valid.iloc[0]), 2),
+        "observed_end": round(float(valid.iloc[-1]), 2),
+        "single_node_mae_c": _mae(block, observed),
+        "single_node_max_err_c": _max_abs_error(block, observed),
+        "single_node_end_err_c": round(float(block.iloc[-1] - valid.iloc[-1]), 3),
+        "single_node_flat_lag_err_min": _initial_flat_error_minutes(
+            block, observed, float(row["tank_start"])
+        ),
+        "stratified_mae_c": _mae(layered, observed),
+        "stratified_max_err_c": _max_abs_error(layered, observed),
+        "stratified_end_err_c": round(float(layered.iloc[-1] - valid.iloc[-1]), 3),
+        "stratified_flat_lag_err_min": _initial_flat_error_minutes(
+            layered, observed, float(row["tank_start"])
+        ),
+        "exhaust_start": round(float(exhaust.dropna().iloc[0]), 2) if exhaust.notna().any() else np.nan,
+        "exhaust_end": round(float(exhaust.dropna().iloc[-1]), 2) if exhaust.notna().any() else np.nan,
+        "exhaust_max": round(float(exhaust.max()), 2) if exhaust.notna().any() else np.nan,
+    }
+    trace_rows = []
+    for ts in idx:
+        trace_rows.append({
+            "cycle_start": start_local,
+            "time": ts.tz_convert(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+            "minute": round((ts - idx[0]).total_seconds() / 60.0, 2),
+            "observed_tank_c": round(float(observed.loc[ts]), 3) if pd.notna(observed.loc[ts]) else np.nan,
+            "single_node_tank_c": round(float(block.loc[ts]), 3),
+            "stratified_tank_c": round(float(layered.loc[ts]), 3),
+            "exhaust_c": round(float(exhaust.loc[ts]), 3) if pd.notna(exhaust.loc[ts]) else np.nan,
+            "remaining_power_w": round(float(power.loc[ts]), 3) if pd.notna(power.loc[ts]) else np.nan,
+            "compressor_on": bool(compressor.loc[ts]),
+        })
+    return report, trace_rows
+
+
 def validate_trace_cycles(
     cycles: pd.DataFrame,
     config: dict,
@@ -142,60 +209,45 @@ def validate_trace_cycles(
     step_seconds: int = 60,
     series_loader=_query_cycle_series,
 ) -> tuple[pd.DataFrame, pd.DataFrame, strat.StratifiedTankParams]:
-    fit_result = summary_val.fit.fit_parameters(cycles)
-    params = summary_val._thermal_params(config, fit_result)
+    params = _fit_params(cycles, config)
     trace_rows = []
     report_rows = []
     for _, row in cycles.iterrows():
-        idx = _trace_index(row, step_seconds=step_seconds)
-        series = series_loader(row)
-        observed = cop._interp_to_idx(series["tank"], idx)
-        traces = _model_traces(row, config, params, idx_len=len(idx))
-        block = pd.Series(traces["single_node_temp"], index=idx)
-        layered = pd.Series(traces["stratified_temp"], index=idx)
-        exhaust = cop._interp_to_idx(series["exhaust"], idx)
-        power = cop._interp_to_idx(series["power"], idx)
-        compressor = cop._state_to_idx(series["compressor"], idx)
-        valid = observed.dropna()
-        if valid.empty:
+        report, rows = _validate_one_trace_cycle(
+            row, config, params, step_seconds=step_seconds, series=series_loader(row)
+        )
+        if report is None:
             continue
-        start_local = str(row["start"])
-        report_rows.append({
-            "start": start_local,
-            "cycle_class": row["cycle_class"],
-            "points": int(observed.notna().sum()),
-            "duration_min": float(row["dur_min"]),
-            "observed_start": round(float(valid.iloc[0]), 2),
-            "observed_end": round(float(valid.iloc[-1]), 2),
-            "single_node_mae_c": _mae(block, observed),
-            "single_node_max_err_c": _max_abs_error(block, observed),
-            "single_node_end_err_c": round(float(block.iloc[-1] - valid.iloc[-1]), 3),
-            "single_node_flat_lag_err_min": _initial_flat_error_minutes(
-                block, observed, float(row["tank_start"])
-            ),
-            "stratified_mae_c": _mae(layered, observed),
-            "stratified_max_err_c": _max_abs_error(layered, observed),
-            "stratified_end_err_c": round(float(layered.iloc[-1] - valid.iloc[-1]), 3),
-            "stratified_flat_lag_err_min": _initial_flat_error_minutes(
-                layered, observed, float(row["tank_start"])
-            ),
-            "exhaust_start": round(float(exhaust.dropna().iloc[0]), 2) if exhaust.notna().any() else np.nan,
-            "exhaust_end": round(float(exhaust.dropna().iloc[-1]), 2) if exhaust.notna().any() else np.nan,
-            "exhaust_max": round(float(exhaust.max()), 2) if exhaust.notna().any() else np.nan,
-        })
-        for ts in idx:
-            trace_rows.append({
-                "cycle_start": start_local,
-                "time": ts.tz_convert(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-                "minute": round((ts - idx[0]).total_seconds() / 60.0, 2),
-                "observed_tank_c": round(float(observed.loc[ts]), 3) if pd.notna(observed.loc[ts]) else np.nan,
-                "single_node_tank_c": round(float(block.loc[ts]), 3),
-                "stratified_tank_c": round(float(layered.loc[ts]), 3),
-                "exhaust_c": round(float(exhaust.loc[ts]), 3) if pd.notna(exhaust.loc[ts]) else np.nan,
-                "remaining_power_w": round(float(power.loc[ts]), 3) if pd.notna(power.loc[ts]) else np.nan,
-                "compressor_on": bool(compressor.loc[ts]),
-            })
+        report_rows.append(report)
+        trace_rows.extend(rows)
     return pd.DataFrame(report_rows), pd.DataFrame(trace_rows), params
+
+
+def validate_leave_one_out_trace_cycles(
+    cycles: pd.DataFrame,
+    config: dict,
+    *,
+    step_seconds: int = 60,
+    series_loader=_query_cycle_series,
+) -> pd.DataFrame:
+    report_rows = []
+    for idx, row in cycles.iterrows():
+        train = cycles.drop(index=idx)
+        if train.empty:
+            continue
+        params = _fit_params(train, config)
+        report, _ = _validate_one_trace_cycle(
+            row, config, params, step_seconds=step_seconds, series=series_loader(row)
+        )
+        if report is None:
+            continue
+        report.update({
+            "train_cycles": int(len(train)),
+            "loo_probe_height_fraction": params.probe_height_fraction,
+            "loo_thermocline_width_fraction": params.thermocline_width_fraction,
+        })
+        report_rows.append(report)
+    return pd.DataFrame(report_rows)
 
 
 def load_cycles(path: str, *, target_c: float) -> pd.DataFrame:
@@ -261,12 +313,60 @@ def write_markdown(report: pd.DataFrame, params: strat.StratifiedTankParams, pat
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_loo_markdown(report: pd.DataFrame, path: str) -> None:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# HWC Cycle Trace Leave-One-Out Validation",
+        "",
+        "Held-out raw-trace validation against clean compressor-only cycles from",
+        "`data/hwc_cop_cycles.csv`.",
+        "",
+        "For each row, the stratified probe-shape parameters are fitted from the other",
+        "clean cycles, then replayed against the held-out cycle. The stratified trace still",
+        "uses observed per-cycle thermal input, so this validates probe-shape transfer, not",
+        "forecast-ready heat input.",
+        "",
+        "## Aggregate Held-Out Trace Error",
+        "",
+        "| metric | single_node | stratified_loo |",
+        "| --- | --- | --- |",
+        f"| mean trace MAE C | `{_summary_metric(report, 'single_node_mae_c')}` | "
+        f"`{_summary_metric(report, 'stratified_mae_c')}` |",
+        f"| mean max abs error C | `{_summary_metric(report, 'single_node_max_err_c')}` | "
+        f"`{_summary_metric(report, 'stratified_max_err_c')}` |",
+        f"| mean end error C | `{_summary_metric(report, 'single_node_end_err_c')}` | "
+        f"`{_summary_metric(report, 'stratified_end_err_c')}` |",
+        f"| mean +0.5C flat-lag error min | "
+        f"`{_summary_metric(report, 'single_node_flat_lag_err_min')}` | "
+        f"`{_summary_metric(report, 'stratified_flat_lag_err_min')}` |",
+        "",
+        "## Cycle Detail",
+        "",
+    ]
+    cols = [
+        "start", "cycle_class", "train_cycles", "loo_probe_height_fraction",
+        "loo_thermocline_width_fraction", "points", "duration_min", "observed_start",
+        "observed_end", "single_node_mae_c", "single_node_max_err_c",
+        "single_node_end_err_c", "single_node_flat_lag_err_min", "stratified_mae_c",
+        "stratified_max_err_c", "stratified_end_err_c", "stratified_flat_lag_err_min",
+    ]
+    lines.append("| " + " | ".join(cols) + " |")
+    lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
+    for _, row in report[cols].astype(str).iterrows():
+        lines.append("| " + " | ".join(str(row[col]) for col in cols) + " |")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cycles-csv", default=DEFAULT_CYCLES_CSV)
     parser.add_argument("--trace-csv", default=DEFAULT_TRACE_CSV)
     parser.add_argument("--report-csv", default=DEFAULT_REPORT_CSV)
     parser.add_argument("--report-md", default=DEFAULT_REPORT_MD)
+    parser.add_argument("--leave-one-out", action="store_true")
+    parser.add_argument("--loo-report-csv", default=DEFAULT_LOO_REPORT_CSV)
+    parser.add_argument("--loo-report-md", default=DEFAULT_LOO_REPORT_MD)
     parser.add_argument("--step-seconds", type=int, default=60)
     args = parser.parse_args()
 
@@ -275,6 +375,20 @@ def main() -> int:
         args.cycles_csv,
         target_c=float(config["hwc"]["thermal"].get("desired_temp", 60.0)),
     )
+    if args.leave_one_out:
+        report = validate_leave_one_out_trace_cycles(
+            cycles, config, step_seconds=args.step_seconds,
+        )
+        Path(args.loo_report_csv).parent.mkdir(parents=True, exist_ok=True)
+        report.to_csv(args.loo_report_csv, index=False)
+        write_loo_markdown(report, args.loo_report_md)
+        print(f"validated held-out cycles: {len(report)}")
+        print(f"mean single-node trace MAE C: {_summary_metric(report, 'single_node_mae_c')}")
+        print(f"mean stratified LOO trace MAE C: {_summary_metric(report, 'stratified_mae_c')}")
+        print(f"wrote {args.loo_report_csv}")
+        print(f"wrote {args.loo_report_md}")
+        return 0
+
     report, traces, params = validate_trace_cycles(
         cycles, config, step_seconds=args.step_seconds,
     )
