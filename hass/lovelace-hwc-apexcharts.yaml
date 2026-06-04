@@ -4,9 +4,11 @@
 # `apexcharts-card` (HACS → "ApexCharts Card").
 #
 # It plots the measured tank temperature, executor forecast, stratified-model
-# shadow forecast, planned heat-pump blocks, and import-price context. The card
-# is intentionally sparse: the plan is mainly judged by whether the temperature
-# forecasts diverge and whether planned reheats land in relative price valleys.
+# shadow forecast, forecast wet-bulb temperature, planned heat-pump blocks, and
+# import-price context. The card is intentionally sparse: the plan is mainly
+# judged by whether the temperature forecasts diverge, whether planned reheats
+# land in relative price valleys, and whether recovery-speed assumptions track
+# ambient conditions.
 #
 # The plan sensors are published by hwc_planner.py via EMHASS. The forecast
 # arrays live in entity attributes (not the state), so each series uses a
@@ -41,6 +43,13 @@ yaxis:
     opposite: true
     min: 0
     decimals: 2
+    apex_config:
+      show: false
+  - id: ambient
+    opposite: true
+    min: 0
+    max: 30
+    decimals: 0
     apex_config:
       show: false
   - id: power
@@ -82,6 +91,19 @@ series:
     data_generator: |
       return (entity.attributes.predicted_temperatures || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_stratified_predicted_temp)];
+      });
+  - entity: sensor.hwc_wet_bulb_forecast
+    name: Wet bulb (forecast)
+    extend_to: false
+    type: line
+    curve: smooth
+    stroke_width: 1
+    opacity: 0.45
+    color: '#0097a7'
+    yaxis_id: ambient
+    data_generator: |
+      return (entity.attributes.wet_bulb_forecasts || []).map(p => {
+        return [new Date(p.date).getTime(), parseFloat(p.hwc_wet_bulb_forecast)];
       });
   - entity: sensor.amber_5min_current_general_price
     name: Import price (actual)
