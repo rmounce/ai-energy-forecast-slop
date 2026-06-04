@@ -188,6 +188,13 @@ def _hwc_cfg():
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24,
         },
+        "stratified_shadow": {
+            "enabled": True,
+            "predicted_temp_entity": "sensor.stratified_predicted_temp",
+            "hot_fraction_entity": "sensor.stratified_hot_fraction",
+            "probe_height_fraction": 0.62,
+            "thermocline_width_fraction": 0.60,
+        },
     }
 
 
@@ -245,8 +252,29 @@ def test_block_planner_builds_long_horizon_with_terminal_target():
 
     assert len(plan["predicted_temperatures"]) == 144
     assert len(plan["deferrables_schedule"]) == 144
+    assert len(plan["stratified_shadow"]["predicted_temperatures"]) == 144
+    assert len(plan["stratified_shadow"]["hot_fractions"]) == 144
     assert min(plan["temperatures"]) >= 45
     assert plan["terminal_temperature"] >= 55.0
+    assert plan["stratified_shadow"]["temperature_entity"] == "sensor.hwc_stratified_predicted_temp"
+    assert plan["stratified_shadow"]["hot_fraction_entity"] == "sensor.hwc_stratified_hot_fraction"
+
+
+def test_stratified_shadow_reports_hot_fraction_without_changing_schedule():
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    shadow = hp.simulate_stratified_shadow(
+        schedule_w=[0.0, 800.0, 800.0],
+        start_temperature=50.0,
+        dry_bulb=[15.0, 15.0, 15.0],
+        draw_off=[0.0, 0.0, 0.0],
+        cfg=cfg,
+    )
+
+    assert shadow["temperatures"][0] == pytest.approx(50.0)
+    assert len(shadow["hot_fractions"]) == 3
+    assert shadow["hot_fractions"][0] == 0.0
+    assert shadow["terminal_hot_fraction"] > 0.0
+    assert shadow["probe_height_fraction"] == 0.62
 
 
 def test_block_planner_prefers_contiguous_daytime_runs():

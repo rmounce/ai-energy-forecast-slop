@@ -350,6 +350,13 @@
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24
         },
+        "stratified_shadow": {
+            "enabled": true,
+            "predicted_temp_entity": "sensor.stratified_predicted_temp",
+            "hot_fraction_entity": "sensor.stratified_hot_fraction",
+            "probe_height_fraction": 0.62,
+            "thermocline_width_fraction": 0.6
+        },
         "actuation": {
             "enabled": true,
             "water_heater_entity": "water_heater.aquatech",
