@@ -3,10 +3,10 @@
 # Paste this as a Manual card on a Lovelace dashboard. Requires the custom
 # `apexcharts-card` (HACS → "ApexCharts Card").
 #
-# It plots the published HWC plan (see docs/hwc_emhass.md): predicted tank
-# temperature, the planned heat-pump power, and the import-price forecast that
-# drives the schedule — so you can eyeball that the reheat lands in the cheap
-# window and respects the 45 °C floor / 60 °C legionella target.
+# It plots the measured tank temperature, executor forecast, stratified-model
+# shadow forecast, planned heat-pump blocks, and import-price context. The card
+# is intentionally sparse: the plan is mainly judged by whether the temperature
+# forecasts diverge and whether planned reheats land in relative price valleys.
 #
 # The plan sensors are published by hwc_planner.py via EMHASS. The forecast
 # arrays live in entity attributes (not the state), so each series uses a
@@ -16,16 +16,17 @@ type: custom:apexcharts-card
 header:
   show: true
   title: Hot water plan
-  show_states: true
+  show_states: false
   colorize_states: true
-# Forecast runs from "now" for ~72 h; start the window at midnight today so the
-# whole forecast is visible regardless of run time.
-graph_span: 84h
+# Forecast runs from "now" for ~72 h. Show recent history, then let the window
+# roll continuously instead of snapping to calendar days.
+graph_span: 36h
 span:
-  start: day
+  start: minute
+  offset: -12h
 now:
   show: true
-  label: Now
+  label: ''
   color: '#90a4ae'
 yaxis:
   - id: temp
@@ -36,24 +37,31 @@ yaxis:
       title:
         text: °C
       tickAmount: 5
+  - id: price
+    opposite: true
+    min: 0
+    decimals: 2
+    apex_config:
+      show: false
   - id: power
     opposite: true
     min: 0
     max: 1000
     decimals: 0
     apex_config:
-      title:
-        text: W
-  - id: price
-    opposite: true
-    min: 0
-    decimals: 2
-    apex_config:
-      title:
-        text: $/kWh
+      show: false
 series:
+  - entity: sensor.aquatech_current_temperature_local
+    name: Tank temp (measured)
+    extend_to: false
+    type: line
+    curve: stepline
+    stroke_width: 2
+    color: '#1e88e5'
+    yaxis_id: temp
   - entity: sensor.hwc_predicted_temp
-    name: Tank temp (predicted)
+    name: Tank temp (executor)
+    extend_to: false
     type: line
     curve: smooth
     stroke_width: 2
@@ -63,12 +71,34 @@ series:
       return (entity.attributes.predicted_temperatures || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_predicted_temp)];
       });
-  - entity: sensor.hwc_power_plan
-    name: Planned power
-    type: area
+  - entity: sensor.hwc_stratified_predicted_temp
+    name: Tank temp (stratified shadow)
+    extend_to: false
+    type: line
+    curve: smooth
+    stroke_width: 2
+    color: '#8e24aa'
+    yaxis_id: temp
+    data_generator: |
+      return (entity.attributes.predicted_temperatures || []).map(p => {
+        return [new Date(p.date).getTime(), parseFloat(p.hwc_stratified_predicted_temp)];
+      });
+  - entity: sensor.amber_5min_current_general_price
+    name: Import price (actual)
+    extend_to: false
+    type: line
     curve: stepline
     stroke_width: 1
     opacity: 0.25
+    color: '#fb8c00'
+    yaxis_id: price
+  - entity: sensor.hwc_power_plan
+    name: Planned heat pump
+    extend_to: false
+    type: area
+    curve: stepline
+    stroke_width: 1
+    opacity: 0.16
     color: '#43a047'
     yaxis_id: power
     data_generator: |
@@ -76,10 +106,12 @@ series:
         return [new Date(p.date).getTime(), parseFloat(p.hwc_power_plan)];
       });
   - entity: sensor.hwc_unit_load_cost
-    name: Import price
+    name: Import price (forecast)
+    extend_to: false
     type: line
     curve: stepline
-    stroke_width: 1.5
+    stroke_width: 1
+    opacity: 0.35
     color: '#fb8c00'
     yaxis_id: price
     data_generator: |
@@ -89,23 +121,3 @@ series:
 apex_config:
   chart:
     height: 320
-  annotations:
-    yaxis:
-      - y: 45
-        yAxisIndex: 0
-        borderColor: '#e53935'
-        strokeDashArray: 4
-        label:
-          text: Floor 45°C
-          style:
-            color: '#fff'
-            background: '#e53935'
-      - y: 60
-        yAxisIndex: 0
-        borderColor: '#fb8c00'
-        strokeDashArray: 4
-        label:
-          text: Legionella 60°C
-          style:
-            color: '#fff'
-            background: '#fb8c00'
