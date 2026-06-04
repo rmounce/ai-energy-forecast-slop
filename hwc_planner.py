@@ -327,6 +327,7 @@ def _add_contiguous_heat(
     """Return a copy with one contiguous heater run from start_idx until target is reached."""
     th = cfg["thermal"]
     power_w = float(th["nominal_power_w"])
+    min_steps = _min_block_steps(cfg)
     out = list(schedule_w)
     end_idx = min(end_idx, len(out))
     if start_idx >= end_idx:
@@ -340,7 +341,8 @@ def _add_contiguous_heat(
             draw_off=draw_off,
             cfg=cfg,
         )
-        if temps[idx] >= target_temp:
+        duration_ok = idx - start_idx >= min_steps
+        if duration_ok and temps[idx] >= target_temp:
             break
         out[idx] = power_w
     return out
@@ -358,6 +360,13 @@ def _schedule_cost_delta(
 def _min_block_lift_c(hwc: dict) -> float:
     block_cfg = hwc.get("block_planner", {})
     return float(block_cfg.get("min_block_lift_c", block_cfg.get("min_main_block_lift_c", 0.0)))
+
+
+def _min_block_steps(hwc: dict) -> int:
+    block_cfg = hwc.get("block_planner", {})
+    step_min = int(hwc.get("optimization_time_step", 30))
+    duration_min = int(block_cfg.get("min_block_duration_minutes", step_min))
+    return max(1, int(math.ceil(duration_min / step_min)))
 
 
 def _choose_daily_main_blocks(
@@ -378,6 +387,7 @@ def _choose_daily_main_blocks(
     target = float(cfg["hwc"]["thermal"].get("desired_temp", 60))
     min_temp = float(cfg["hwc"]["thermal"].get("min_temp", 45))
     min_lift_c = _min_block_lift_c(cfg["hwc"])
+    min_steps = _min_block_steps(cfg["hwc"])
     step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
 
     slots_by_day: dict[datetime.date, list[int]] = {}
@@ -392,7 +402,7 @@ def _choose_daily_main_blocks(
         if day.isoformat() in satisfied_dates:
             continue
         best = out
-        best_score = (math.inf, math.inf, math.inf)
+        best_score = (math.inf, math.inf, math.inf, math.inf)
         base_temps, _ = simulate_block_temperatures(
             schedule_w=out,
             start_temperature=start_temperature,
@@ -424,9 +434,16 @@ def _choose_daily_main_blocks(
                 draw_off=draw_off,
                 cfg=cfg["hwc"],
             )
-            window_shortfall = max(0.0, min_temp - min(ctemps[slots[0] : slots[-1] + 1]))
+            eval_end = min(len(ctemps), slots[-1] + 2)
+            window_temps = ctemps[slots[0] : eval_end]
+            target_shortfall = max(0.0, target - max(window_temps))
+            window_shortfall = max(0.0, min_temp - min(window_temps))
+            added_slots = sum(
+                1 for old, new in zip(out, candidate, strict=True) if new > old
+            )
+            duration_shortfall = max(0, min_steps - added_slots) if added_slots else 0
             cost = _schedule_cost_delta(out, candidate, load_cost, step_h)
-            score = (window_shortfall, cost, float(start_idx))
+            score = (target_shortfall, duration_shortfall, cost, float(start_idx))
             if score < best_score:
                 best = candidate
                 best_score = score
@@ -453,6 +470,7 @@ def _repair_min_temperature(
     min_temp = float(hwc["thermal"].get("min_temp", 45))
     boost_target = float(block_cfg.get("boost_target_temp", min_temp + 5))
     step_h = hwc.get("optimization_time_step", 30) / 60.0
+    min_steps = _min_block_steps(hwc)
     lookback = int(round(18 / step_h))
 
     out = list(schedule_w)
@@ -477,6 +495,9 @@ def _repair_min_temperature(
         ]
         if not candidate_starts:
             candidate_starts = list(range(lo, bad_idx + 1))
+        viable_starts = [i for i in candidate_starts if bad_idx - i + 1 >= min_steps]
+        if viable_starts:
+            candidate_starts = viable_starts
 
         best = None
         best_score = (math.inf, math.inf)
@@ -491,7 +512,8 @@ def _repair_min_temperature(
                     draw_off=draw_off,
                     cfg=hwc,
                 )
-                if ctemps[bad_idx] >= min_temp and ctemps[heat_idx] >= boost_target:
+                duration_ok = heat_idx - start_idx >= min_steps
+                if duration_ok and ctemps[bad_idx] >= min_temp and ctemps[heat_idx] >= boost_target:
                     break
                 candidate[heat_idx] = float(hwc["thermal"]["nominal_power_w"])
             ctemps, _ = simulate_block_temperatures(
@@ -547,6 +569,7 @@ def _repair_terminal_temperature(
         return schedule_w
 
     step_h = hwc.get("optimization_time_step", 30) / 60.0
+    min_steps = _min_block_steps(hwc)
     lookback_h = float(hwc.get("block_planner", {}).get("terminal_lookback_hours", 24))
     lo = max(0, len(schedule_w) - int(round(lookback_h / step_h)))
     best = schedule_w
@@ -562,7 +585,8 @@ def _repair_terminal_temperature(
                 draw_off=draw_off,
                 cfg=hwc,
             )
-            if cterminal >= terminal_target:
+            duration_ok = heat_idx - start_idx >= min_steps
+            if duration_ok and cterminal >= terminal_target:
                 break
             candidate[heat_idx] = float(hwc["thermal"]["nominal_power_w"])
         _, cterminal = simulate_block_temperatures(

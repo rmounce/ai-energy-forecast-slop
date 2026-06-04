@@ -237,6 +237,7 @@ def _hwc_cfg():
             "main_window_end": "18:00",
             "overnight_window_start": "00:00",
             "overnight_window_end": "06:00",
+            "min_block_duration_minutes": 60,
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24,
         },
@@ -369,6 +370,33 @@ def test_main_block_skips_tiny_topup_near_target():
     assert schedule == [0.0] * len(grid)
 
 
+def test_main_block_prioritises_reaching_daily_target_over_low_total_cost():
+    grid = _adelaide_grid(10, 16)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    schedule = hp._choose_daily_main_blocks(
+        [0.0] * len(grid),
+        grid_times_utc=grid,
+        load_cost=[0.08] * 8 + [0.60] * 8,
+        start_temperature=49.0,
+        dry_bulb=[15.0] * len(grid),
+        wet_bulb=[12.5] * len(grid),
+        draw_off=[0.0] * len(grid),
+        cfg=cfg,
+    )
+    temps, _ = hp.simulate_block_temperatures(
+        schedule_w=schedule,
+        start_temperature=49.0,
+        dry_bulb=[15.0] * len(grid),
+        wet_bulb=[12.5] * len(grid),
+        draw_off=[0.0] * len(grid),
+        cfg=cfg["hwc"],
+    )
+
+    assert max(temps) >= 60.0
+    assert sum(1 for power in schedule if power > 0) >= 2
+    assert any(power > 0 for power in schedule[:8])
+
+
 def test_main_block_skips_satisfied_local_date():
     grid = _adelaide_grid(10, 4)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
@@ -384,6 +412,24 @@ def test_main_block_skips_satisfied_local_date():
     )
 
     assert schedule == [0.0] * len(grid)
+
+
+def test_terminal_repair_respects_minimum_block_duration():
+    grid = _adelaide_grid(0, 8)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    cfg["hwc"]["thermal"]["terminal_target"] = 53.0
+    schedule = hp._repair_terminal_temperature(
+        [0.0] * len(grid),
+        grid_times_utc=grid,
+        load_cost=[0.05] * len(grid),
+        start_temperature=49.0,
+        dry_bulb=[49.0] * len(grid),
+        wet_bulb=[12.5] * len(grid),
+        draw_off=[0.0] * len(grid),
+        cfg=cfg,
+    )
+
+    assert sum(1 for power in schedule if power > 0) >= 2
 
 
 def test_terminal_repair_skips_tiny_shortfall_below_min_lift():
