@@ -70,9 +70,11 @@ only over "probe reaches 60 C".
 
 ## COP And Compressor Power
 
-We are not yet modelling COP from wet-bulb temperature in the live planner. We are collecting
-cycle wet-bulb data and compressor-power proxies, but the current planner still uses fixed
-heat-rate/power assumptions.
+We are not yet modelling physical COP from wet-bulb temperature in the live planner.
+The block planner now has a conservative wet-bulb adjustment to empirical recovery
+speed, seeded from the datasheet direction but anchored to observed cycles. We are
+still collecting cycle wet-bulb data and compressor-power proxies before promoting
+this into a real COP/power model.
 
 The compressor power curve should be modelled as a function of temperatures. The most useful
 temperature proxy is likely exhaust/condensing temperature, not the control-probe temperature.

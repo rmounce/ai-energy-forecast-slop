@@ -13,6 +13,21 @@ Derived from clean, compressor-only cycles in `data/hwc_cop_cycles.csv`.
 | `thermal.nominal_power_w` | `780` | median clean HP proxy watts, rounded to 10 W |
 | `thermal.heat_rate_c_per_hour` | `6.6` | median full-reheat probe lift rate where available |
 
+These values are now used as the live block-planner anchor. The planner also supports
+a small wet-bulb adjustment to this empirical heat rate:
+
+| parameter | configured | note |
+| --- | --- | --- |
+| `thermal.heat_rate_reference_wet_bulb_c` | `12.5` | approximate centre of observed clean cycles |
+| `thermal.heat_rate_wet_bulb_slope_c_per_c` | `0.08` | weak datasheet-informed prior: warmer wet-bulb should recover faster |
+| `thermal.heat_rate_min_c_per_hour` | `4.8` | guard against cold-weather extrapolation |
+| `thermal.heat_rate_max_c_per_hour` | `7.6` | guard against datasheet optimism outside observed conditions |
+
+The datasheet COP/recovery table is useful for the *direction* and broad shape of
+wet-bulb sensitivity, but it is not used directly as the live COP model. The observed
+to-60 C cycles remain the scale anchor because the datasheet is for recovery to 55 C
+under rating conditions.
+
 ## Optional Top-Up Model Parameters
 
 | parameter | suggested | note |

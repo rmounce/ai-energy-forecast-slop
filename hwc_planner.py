@@ -150,17 +150,30 @@ def _thermal_capacity_kwh_per_c(th: dict) -> float:
     return litres * density_kg_per_l * float(th.get("heat_capacity", 4.184)) / 3600.0
 
 
-def _heat_rate_c_per_hour(th: dict, temp_c: float) -> float:
+def _heat_rate_c_per_hour(th: dict, temp_c: float, wet_bulb_c: float | None = None) -> float:
     """Return empirical compressor heat rate for the current modelled tank temp.
 
     The Aquatech data shows lower effective probe lift rate for near-target top-ups.
-    Keep this optional so existing configs retain the original single-rate model.
+    A small wet-bulb adjustment can be configured as a weak datasheet-informed prior:
+    warmer evaporator conditions should recover faster, but observed cycle data remains
+    the anchor for the base rate.
     """
     base = float(th.get("heat_rate_c_per_hour", 5.2))
     top_up = th.get("top_up_heat_rate_c_per_hour")
     top_up_start = th.get("top_up_start_temp_c")
     if top_up is not None and top_up_start is not None and temp_c >= float(top_up_start):
-        return float(top_up)
+        base = float(top_up)
+    if wet_bulb_c is not None:
+        reference_wb = th.get("heat_rate_reference_wet_bulb_c")
+        slope = th.get("heat_rate_wet_bulb_slope_c_per_c")
+        if reference_wb is not None and slope is not None:
+            base += (float(wet_bulb_c) - float(reference_wb)) * float(slope)
+    min_rate = th.get("heat_rate_min_c_per_hour")
+    max_rate = th.get("heat_rate_max_c_per_hour")
+    if min_rate is not None:
+        base = max(float(min_rate), base)
+    if max_rate is not None:
+        base = min(float(max_rate), base)
     return base
 
 
@@ -191,6 +204,7 @@ def simulate_block_temperatures(
     start_temperature: float,
     dry_bulb: list[float],
     draw_off: list[float],
+    wet_bulb: list[float] | None = None,
     cfg: dict,
 ) -> tuple[list[float], float]:
     """Simulate the custom HWC block model.
@@ -205,13 +219,16 @@ def simulate_block_temperatures(
     max_temp = float(th.get("max_temp", 62))
     temp = float(start_temperature)
     temps = []
-    for power_w, ambient_c, draw_kwh in zip(schedule_w, dry_bulb, draw_off, strict=True):
+    heat_ambient = wet_bulb if wet_bulb is not None else [None] * len(schedule_w)
+    for power_w, ambient_c, heat_wb, draw_kwh in zip(
+        schedule_w, dry_bulb, heat_ambient, draw_off, strict=True
+    ):
         temps.append(round(temp, 2))
         loss_kwh = max(0.0, temp - float(ambient_c)) * ua_kw_per_c * step_h
         temp -= loss_kwh / cap_kwh_per_c
         temp -= float(draw_kwh) / cap_kwh_per_c
         if power_w > 0:
-            heat_rate_c_per_h = _heat_rate_c_per_hour(th, temp)
+            heat_rate_c_per_h = _heat_rate_c_per_hour(th, temp, heat_wb)
             temp += heat_rate_c_per_h * step_h
         temp = min(max_temp, temp)
     return temps, round(temp, 2)
@@ -237,6 +254,7 @@ def simulate_stratified_shadow(
     schedule_w: list[float],
     start_temperature: float,
     dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
     draw_off: list[float],
     cfg: dict,
 ) -> dict:
@@ -259,7 +277,10 @@ def simulate_stratified_shadow(
     probes = []
     hot_fractions = []
     mean_temps = []
-    for power_w, ambient_c, draw_kwh in zip(schedule_w, dry_bulb, draw_off, strict=True):
+    heat_ambient = wet_bulb if wet_bulb is not None else [None] * len(schedule_w)
+    for power_w, ambient_c, heat_wb, draw_kwh in zip(
+        schedule_w, dry_bulb, heat_ambient, draw_off, strict=True
+    ):
         probes.append(round(stratified_model.probe_temp_c(state, params), 2))
         hot_fractions.append(round(max(0.0, min(1.0, state.hot_fraction)), 3))
         mean_temps.append(round(stratified_model.mean_temp_c(state), 2))
@@ -269,7 +290,7 @@ def simulate_stratified_shadow(
         state = stratified_model.apply_draw_off(state, params, draw_kwh=float(draw_kwh))
         if power_w > 0:
             heat_rate_c_per_h = _heat_rate_c_per_hour(
-                th, stratified_model.probe_temp_c(state, params)
+                th, stratified_model.probe_temp_c(state, params), heat_wb
             )
             state = stratified_model.apply_heat(
                 state, params, heat_kwh=heat_rate_c_per_h * cap_kwh_per_c * step_h
@@ -299,6 +320,7 @@ def _add_contiguous_heat(
     target_temp: float,
     start_temperature: float,
     dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
     draw_off: list[float],
     cfg: dict,
 ) -> list[float]:
@@ -314,6 +336,7 @@ def _add_contiguous_heat(
             schedule_w=out,
             start_temperature=start_temperature,
             dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
             draw_off=draw_off,
             cfg=cfg,
         )
@@ -344,6 +367,7 @@ def _choose_daily_main_blocks(
     load_cost: list[float],
     start_temperature: float,
     dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
     draw_off: list[float],
     cfg: dict,
 ) -> list[float]:
@@ -373,6 +397,7 @@ def _choose_daily_main_blocks(
             schedule_w=out,
             start_temperature=start_temperature,
             dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
             draw_off=draw_off,
             cfg=cfg["hwc"],
         )
@@ -387,6 +412,7 @@ def _choose_daily_main_blocks(
                     target_temp=target,
                     start_temperature=start_temperature,
                     dry_bulb=dry_bulb,
+                    wet_bulb=wet_bulb,
                     draw_off=draw_off,
                     cfg=cfg["hwc"],
                 )
@@ -394,6 +420,7 @@ def _choose_daily_main_blocks(
                 schedule_w=candidate,
                 start_temperature=start_temperature,
                 dry_bulb=dry_bulb,
+                wet_bulb=wet_bulb,
                 draw_off=draw_off,
                 cfg=cfg["hwc"],
             )
@@ -414,6 +441,7 @@ def _repair_min_temperature(
     load_cost: list[float],
     start_temperature: float,
     dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
     draw_off: list[float],
     cfg: dict,
 ) -> list[float]:
@@ -433,6 +461,7 @@ def _repair_min_temperature(
             schedule_w=out,
             start_temperature=start_temperature,
             dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
             draw_off=draw_off,
             cfg=hwc,
         )
@@ -458,6 +487,7 @@ def _repair_min_temperature(
                     schedule_w=candidate,
                     start_temperature=start_temperature,
                     dry_bulb=dry_bulb,
+                    wet_bulb=wet_bulb,
                     draw_off=draw_off,
                     cfg=hwc,
                 )
@@ -468,6 +498,7 @@ def _repair_min_temperature(
                 schedule_w=candidate,
                 start_temperature=start_temperature,
                 dry_bulb=dry_bulb,
+                wet_bulb=wet_bulb,
                 draw_off=draw_off,
                 cfg=hwc,
             )
@@ -490,6 +521,7 @@ def _repair_terminal_temperature(
     load_cost: list[float],
     start_temperature: float,
     dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
     draw_off: list[float],
     cfg: dict,
 ) -> list[float]:
@@ -504,6 +536,7 @@ def _repair_terminal_temperature(
         schedule_w=schedule_w,
         start_temperature=start_temperature,
         dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
         draw_off=draw_off,
         cfg=hwc,
     )
@@ -525,6 +558,7 @@ def _repair_terminal_temperature(
                 schedule_w=candidate,
                 start_temperature=start_temperature,
                 dry_bulb=dry_bulb,
+                wet_bulb=wet_bulb,
                 draw_off=draw_off,
                 cfg=hwc,
             )
@@ -535,6 +569,7 @@ def _repair_terminal_temperature(
             schedule_w=candidate,
             start_temperature=start_temperature,
             dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
             draw_off=draw_off,
             cfg=hwc,
         )
@@ -553,6 +588,7 @@ def build_block_plan(
     grid_times_utc: list[datetime],
     load_cost: list[float],
     dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
     draw_off: list[float],
     start_temperature: float,
     cfg: dict,
@@ -566,6 +602,7 @@ def build_block_plan(
         load_cost=load_cost,
         start_temperature=start_temperature,
         dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
         draw_off=draw_off,
         cfg=cfg,
     )
@@ -575,6 +612,7 @@ def build_block_plan(
         load_cost=load_cost,
         start_temperature=start_temperature,
         dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
         draw_off=draw_off,
         cfg=cfg,
     )
@@ -584,6 +622,7 @@ def build_block_plan(
         load_cost=load_cost,
         start_temperature=start_temperature,
         dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
         draw_off=draw_off,
         cfg=cfg,
     )
@@ -591,6 +630,7 @@ def build_block_plan(
         schedule_w=schedule,
         start_temperature=start_temperature,
         dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
         draw_off=draw_off,
         cfg=cfg["hwc"],
     )
@@ -600,6 +640,7 @@ def build_block_plan(
             schedule_w=schedule,
             start_temperature=start_temperature,
             dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
             draw_off=draw_off,
             cfg=cfg,
         )
@@ -972,6 +1013,7 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         grid_times_utc=grid_times,
         load_cost=load_cost,
         dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
         draw_off=draw_off,
         start_temperature=start_temp,
         cfg=cfg,
