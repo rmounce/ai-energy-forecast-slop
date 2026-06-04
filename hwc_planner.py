@@ -673,6 +673,7 @@ def build_block_plan(
     temp_key = _published_entity_id(prefix, cfg["hwc"]["predicted_temp_entity"]).split(".", 1)[1]
     power_key = _published_entity_id(prefix, cfg["hwc"]["power_plan_entity"]).split(".", 1)[1]
     cost_key = f"{prefix}unit_load_cost"
+    wet_bulb_key = f"{prefix}wet_bulb_forecast"
     plan = {
         "schedule_w": schedule,
         "temperatures": temps,
@@ -690,6 +691,11 @@ def build_block_plan(
             for t, cost in zip(grid_times_utc, load_cost, strict=True)
         ],
     }
+    if wet_bulb is not None:
+        plan["wet_bulb_forecasts"] = [
+            {"date": t.isoformat(), wet_bulb_key: f"{value:.2f}"}
+            for t, value in zip(grid_times_utc, wet_bulb, strict=True)
+        ]
     if shadow is not None:
         shadow_cfg = cfg["hwc"]["stratified_shadow"]
         shadow_temp_entity = _published_entity_id(
@@ -878,6 +884,7 @@ def _publish_block_plan(cfg: dict, plan: dict):
     temp_entity = _published_entity_id(prefix, hwc["predicted_temp_entity"])
     power_entity = _published_entity_id(prefix, hwc["power_plan_entity"])
     cost_entity = f"sensor.{prefix}unit_load_cost"
+    wet_bulb_entity = f"sensor.{prefix}wet_bulb_forecast"
 
     _ha_set_state(
         cfg,
@@ -910,6 +917,17 @@ def _publish_block_plan(cfg: dict, plan: dict):
             "unit_load_cost_forecasts": plan["unit_load_cost_forecasts"],
         },
     )
+    if plan.get("wet_bulb_forecasts"):
+        _ha_set_state(
+            cfg,
+            wet_bulb_entity,
+            plan["wet_bulb_forecasts"][0][wet_bulb_entity.split(".", 1)[1]],
+            {
+                "unit_of_measurement": "°C",
+                "friendly_name": "HWC Wet Bulb Forecast",
+                "wet_bulb_forecasts": plan["wet_bulb_forecasts"],
+            },
+        )
     shadow = plan.get("stratified_shadow")
     if shadow:
         shadow_temp_entity = shadow["temperature_entity"]
@@ -949,7 +967,13 @@ def _publish_block_plan(cfg: dict, plan: dict):
             shadow_temp_entity,
             shadow_fraction_entity,
         )
-    logging.info("Published HWC block plan to HA (%s, %s, %s)", temp_entity, power_entity, cost_entity)
+    logging.info(
+        "Published HWC block plan to HA (%s, %s, %s, %s)",
+        temp_entity,
+        power_entity,
+        cost_entity,
+        wet_bulb_entity if plan.get("wet_bulb_forecasts") else "no wet-bulb forecast",
+    )
 
 
 def _run_emhass(cfg: dict, payload: dict, dry_run: bool) -> dict:

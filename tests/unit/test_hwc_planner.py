@@ -296,6 +296,7 @@ def test_block_planner_builds_long_horizon_with_terminal_target():
         grid_times_utc=grid,
         load_cost=[0.30] * 20 + [0.08] * 16 + [0.22] * 108,
         dry_bulb=[15.0] * 144,
+        wet_bulb=[12.5] * 144,
         draw_off=hp.build_draw_off_profile(
             grid, "Australia/Adelaide", "09:00", "10:00", total_kwh=1.3
         ),
@@ -305,12 +306,45 @@ def test_block_planner_builds_long_horizon_with_terminal_target():
 
     assert len(plan["predicted_temperatures"]) == 144
     assert len(plan["deferrables_schedule"]) == 144
+    assert len(plan["wet_bulb_forecasts"]) == 144
+    assert plan["wet_bulb_forecasts"][0]["hwc_wet_bulb_forecast"] == "12.50"
     assert len(plan["stratified_shadow"]["predicted_temperatures"]) == 144
     assert len(plan["stratified_shadow"]["hot_fractions"]) == 144
     assert min(plan["temperatures"]) >= 45
     assert plan["terminal_temperature"] >= 55.0
     assert plan["stratified_shadow"]["temperature_entity"] == "sensor.hwc_stratified_predicted_temp"
     assert plan["stratified_shadow"]["hot_fraction_entity"] == "sensor.hwc_stratified_hot_fraction"
+
+
+def test_publish_block_plan_includes_wet_bulb_forecast(monkeypatch):
+    grid = _adelaide_grid(8, 3)
+    cfg = {
+        "timezone": "Australia/Adelaide",
+        "home_assistant": {"url": "http://ha", "token": "token"},
+        "hwc": _hwc_cfg(),
+    }
+    plan = hp.build_block_plan(
+        grid_times_utc=grid,
+        load_cost=[0.20, 0.10, 0.30],
+        dry_bulb=[15.0, 16.0, 17.0],
+        wet_bulb=[10.0, 11.0, 12.0],
+        draw_off=[0.0, 0.0, 0.0],
+        start_temperature=55.0,
+        cfg=cfg,
+    )
+    published = {}
+
+    def fake_set_state(config, entity_id, state, attributes):
+        published[entity_id] = {"state": state, "attributes": attributes}
+
+    monkeypatch.setattr(hp, "_ha_set_state", fake_set_state)
+
+    hp._publish_block_plan(cfg, plan)
+
+    wet_bulb = published["sensor.hwc_wet_bulb_forecast"]
+    assert wet_bulb["state"] == "10.00"
+    assert wet_bulb["attributes"]["unit_of_measurement"] == "°C"
+    assert wet_bulb["attributes"]["wet_bulb_forecasts"][1]["hwc_wet_bulb_forecast"] == "11.00"
 
 
 def test_stratified_shadow_reports_hot_fraction_without_changing_schedule():
