@@ -370,6 +370,13 @@ def test_main_block_skips_tiny_topup_near_target():
     assert schedule == [0.0] * len(grid)
 
 
+def test_minimum_block_duration_can_be_disabled():
+    cfg = _hwc_cfg()
+    cfg["block_planner"]["min_block_duration_minutes"] = 0
+
+    assert hp._min_block_steps(cfg) == 1
+
+
 def test_main_block_prioritises_reaching_daily_target_over_low_total_cost():
     grid = _adelaide_grid(10, 16)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
