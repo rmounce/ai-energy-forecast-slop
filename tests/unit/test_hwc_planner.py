@@ -154,6 +154,58 @@ def test_simulate_uses_top_up_heat_rate_above_threshold():
     assert terminal == pytest.approx(59.5)
 
 
+def test_simulate_adjusts_heat_rate_from_wet_bulb_when_configured():
+    temps, terminal = hp.simulate_block_temperatures(
+        schedule_w=[800.0],
+        start_temperature=50.0,
+        dry_bulb=[50.0],
+        wet_bulb=[15.0],
+        draw_off=[0.0],
+        cfg={
+            "optimization_time_step": 60,
+            "thermal": {
+                "volume_l": 225,
+                "density": 997,
+                "heat_capacity": 4.184,
+                "standing_loss_ua_kw_per_c": 0.0,
+                "heat_rate_c_per_hour": 6.0,
+                "heat_rate_reference_wet_bulb_c": 10.0,
+                "heat_rate_wet_bulb_slope_c_per_c": 0.1,
+                "max_temp": 60,
+            },
+        },
+    )
+
+    assert temps == [50.0]
+    assert terminal == pytest.approx(56.5)
+
+
+def test_simulate_clamps_wet_bulb_heat_rate_adjustment():
+    _, terminal = hp.simulate_block_temperatures(
+        schedule_w=[800.0],
+        start_temperature=50.0,
+        dry_bulb=[50.0],
+        wet_bulb=[25.0],
+        draw_off=[0.0],
+        cfg={
+            "optimization_time_step": 60,
+            "thermal": {
+                "volume_l": 225,
+                "density": 997,
+                "heat_capacity": 4.184,
+                "standing_loss_ua_kw_per_c": 0.0,
+                "heat_rate_c_per_hour": 6.0,
+                "heat_rate_reference_wet_bulb_c": 10.0,
+                "heat_rate_wet_bulb_slope_c_per_c": 0.5,
+                "heat_rate_max_c_per_hour": 7.0,
+                "max_temp": 60,
+            },
+        },
+    )
+
+    assert terminal == pytest.approx(57.0)
+
+
 # ── build_payload ───────────────────────────────────────────────────────────
 
 
