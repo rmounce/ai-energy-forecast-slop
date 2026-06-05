@@ -359,6 +359,52 @@ def test_publish_block_plan_includes_wet_bulb_forecast(monkeypatch):
     assert wet_bulb["attributes"]["wet_bulb_forecasts"][1]["hwc_wet_bulb_forecast"] == "11.00"
 
 
+def test_publish_block_plan_includes_dp_shadow(monkeypatch):
+    grid = _adelaide_grid(8, 6, step_min=5)
+    cfg = {
+        "timezone": "Australia/Adelaide",
+        "home_assistant": {"url": "http://ha", "token": "token"},
+        "hwc": _hwc_cfg(),
+    }
+    cfg["hwc"]["dp_planner"] = {
+        "internal_step_minutes": 5,
+        "temp_bin_c": 0.25,
+        "predicted_temp_entity": "sensor.dp_predicted_temp",
+        "power_plan_entity": "sensor.dp_power_plan",
+        "plan_cost_entity": "sensor.dp_plan_cost",
+    }
+    plan = hp.build_block_plan(
+        grid_times_utc=grid,
+        load_cost=[0.20] * len(grid),
+        dry_bulb=[15.0] * len(grid),
+        wet_bulb=[12.0] * len(grid),
+        draw_off=[0.0] * len(grid),
+        start_temperature=55.0,
+        cfg=cfg,
+    )
+    plan["dp_shadow"] = hp.build_dp_shadow_plan(
+        grid_times_utc=grid,
+        load_cost=[0.20] * len(grid),
+        dry_bulb=[15.0] * len(grid),
+        wet_bulb=[12.0] * len(grid),
+        draw_off=[0.0] * len(grid),
+        start_temperature=55.0,
+        cfg=cfg,
+    )
+    published = {}
+
+    def fake_set_state(config, entity_id, state, attributes):
+        published[entity_id] = {"state": state, "attributes": attributes}
+
+    monkeypatch.setattr(hp, "_ha_set_state", fake_set_state)
+
+    hp._publish_block_plan(cfg, plan)
+
+    assert published["sensor.hwc_dp_predicted_temp"]["attributes"]["planner_role"] == "shadow"
+    assert published["sensor.hwc_dp_power_plan"]["attributes"]["planner_role"] == "shadow"
+    assert published["sensor.hwc_dp_plan_cost"]["attributes"]["unit_of_measurement"] == "$"
+
+
 def test_stratified_shadow_reports_hot_fraction_without_changing_schedule():
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
     shadow = hp.simulate_stratified_shadow(

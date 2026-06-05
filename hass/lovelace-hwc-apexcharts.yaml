@@ -73,6 +73,20 @@ series:
       return (entity.attributes.predicted_temperatures || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_predicted_temp)];
       });
+  - entity: sensor.hwc_dp_predicted_temp
+    name: Tank temp (DP shadow)
+    extend_to: false
+    type: line
+    curve: smooth
+    stroke_width: 1
+    stroke_dash: 4
+    opacity: 0.65
+    color: '#2e7d32'
+    yaxis_id: temp
+    data_generator: |
+      return (entity.attributes.predicted_temperatures || []).map(p => {
+        return [new Date(p.date).getTime(), parseFloat(p.hwc_dp_predicted_temp)];
+      });
   - entity: sensor.hwc_stratified_predicted_temp
     name: Tank temp (stratified shadow)
     extend_to: false
@@ -119,6 +133,19 @@ series:
     data_generator: |
       return (entity.attributes.deferrables_schedule || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_power_plan)];
+      });
+  - entity: sensor.hwc_dp_power_plan
+    name: Planned heat pump (DP shadow)
+    extend_to: false
+    type: area
+    curve: stepline
+    stroke_width: 1
+    opacity: 0.08
+    color: '#2e7d32'
+    yaxis_id: power
+    data_generator: |
+      return (entity.attributes.deferrables_schedule || []).map(p => {
+        return [new Date(p.date).getTime(), parseFloat(p.hwc_dp_power_plan)];
       });
   - entity: sensor.hwc_unit_load_cost
     name: Import price (forecast)

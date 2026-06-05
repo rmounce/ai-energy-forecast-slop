@@ -9,6 +9,7 @@
 - Optimises: price, wet-bulb recovery, standing loss, terminal reserve, starts.
 - Constraints: 45 C floor; daily 60 C target unless already satisfied.
 - Short-cycle guard: start penalty first; no separate tiny-lift penalty in V1.
+- Implementation detail: bin temperatures conservatively with floor bins, not nearest bins.
 - Later: swap DP transition from single-node to validated stratified model.
 
 ## Problem
@@ -100,6 +101,10 @@ max_state_temp = 60 C
 
 Values below the 45 C operating floor can exist in the state space only so the optimiser can
 assign a large violation penalty and recover if needed.
+
+Use conservative floor binning when storing temperatures in DP state. Nearest-bin rounding can
+overstate stored heat after many small standing-loss/draw-off transitions and hide floor risk in
+the replayed schedule.
 
 ## Actions
 
