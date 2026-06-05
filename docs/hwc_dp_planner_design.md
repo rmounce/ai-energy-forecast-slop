@@ -4,11 +4,11 @@
 
 - Goal: replace heuristic block picker with whole-horizon optimiser.
 - Mode: shadow first; live executor stays on current block planner.
-- V1 model: current single-node HWC thermal transition, 5 or 10 min internal grid.
+- V1 model: current single-node HWC thermal transition, 5 min internal grid, 48 h horizon.
 - V1 output: publish DP shadow temp/power/cost series to HA.
 - Optimises: price, wet-bulb recovery, standing loss, terminal reserve, starts.
 - Constraints: 45 C floor; daily 60 C target unless already satisfied.
-- Short-cycle guard: start penalty plus minimum useful lift penalty, not minimum duration.
+- Short-cycle guard: start penalty first; no separate tiny-lift penalty in V1.
 - Later: swap DP transition from single-node to validated stratified model.
 
 ## Problem
@@ -48,24 +48,24 @@ model issue at once.
 Use the same live inputs as the block planner:
 
 - current tank/control-probe temperature;
-- 30-minute import price forecast from `sensor.ai_dh_import_price_forecast`;
+- import price forecast; prefer 5-minute short-term prices where available, with a 30-minute
+  day-ahead tail if needed;
 - weather forecast from `weather.woodville_west_hourly`;
-- smoothed wet-bulb forecast;
 - draw-off profile from config;
 - daemon state `last_reached_target_at`.
 
 Internal resampling:
 
-- interpolate price onto DP grid;
+- build a 5-minute price grid inside the DP planner;
 - interpolate draw-off energy onto DP grid preserving total kWh;
-- interpolate/smooth wet-bulb onto DP grid;
-- publish output back on the same or coarser grid expected by HA charts.
+- own weather preprocessing inside the DP planner: interpolate dry-bulb/RH to the 5-minute
+  grid, compute wet-bulb, then smooth on that grid;
+- publish output at 5-minute cadence unless this proves too noisy for HA.
 
-Initial DP grid recommendation:
+Initial DP grid:
 
-- `internal_step_minutes: 10` first;
-- evaluate 5 minutes if 10-minute quantisation still affects decisions;
-- keep published HA series at current forecast cadence unless charting needs finer detail.
+- `internal_step_minutes: 5`;
+- `horizon_hours: 48`.
 
 ## State
 
@@ -75,7 +75,6 @@ V1 state should be small enough for exhaustive dynamic programming:
 state = (
   temp_bin,
   prev_action,
-  run_start_temp_bin_or_none,
   local_day_index,
   target_satisfied_today
 )
@@ -83,15 +82,14 @@ state = (
 
 Definitions:
 
-- `temp_bin`: discretised control-probe temperature, e.g. 0.25 C or 0.5 C bins.
+- `temp_bin`: discretised control-probe temperature. Initial default: 0.25 C.
 - `prev_action`: compressor off/on on previous step; needed for start penalty.
-- `run_start_temp_bin_or_none`: temperature at the start of current compressor run. Used to
-  penalise stopping after a tiny lift.
 - `local_day_index`: derived from timestep; mainly for day-boundary target checks.
 - `target_satisfied_today`: true if the simulated trajectory has reached `desired_temp`
   during the current local day, or if daemon state says the target was already reached today.
 
-V1 should start with 0.5 C bins unless candidate plans are too coarse. Range can be bounded:
+V1 should start with 0.25 C bins because the state space is still modest. If solve time becomes
+annoying, make this a config switch and compare against 0.5 C. Range can be bounded:
 
 ```text
 min_state_temp = 35 C
@@ -146,7 +144,6 @@ Minimise total cost:
 total =
   energy_cost
   + start_penalty
-  + tiny_lift_penalty
   + floor_violation_penalty
   + daily_target_miss_penalty
   + terminal_reserve_penalty
@@ -175,24 +172,10 @@ Treat this as a tunable policy parameter, not a measured physical cost yet.
 
 ### Tiny-Lift Penalty
 
-User preference: minimum useful lift is a better guardrail than minimum duration.
+Do not include a separate tiny-lift penalty in V1. A start penalty should already make tiny
+top-ups unattractive when there is no floor/target/reserve need.
 
-When transitioning from `heat` to `off`, compute:
-
-```text
-run_lift = current_temp - run_start_temp
-```
-
-If `run_lift < min_block_lift_c`, add a high but not infinite penalty.
-
-Initial config:
-
-```json
-"min_block_lift_c": 3.0
-"tiny_lift_penalty_aud": 1.00
-```
-
-This allows emergency/floor recovery if needed but makes 59 -> 60 C top-ups unattractive.
+Revisit only if shadow DP still produces nuisance top-ups such as 59 -> 60 C starts.
 
 ### Floor Violation Penalty
 
@@ -227,13 +210,13 @@ This replaces the current terminal repair pass.
 The terminal value should represent useful reserve, not an arbitrary extra block:
 
 ```text
-terminal_target_temp = current_temp or configured reserve target
+terminal_target_temp = current tank temperature at planning time
 terminal_shortfall = max(0, terminal_target_temp - terminal_temp)
 terminal_penalty = terminal_shortfall^2 * terminal_penalty_aud_per_c2
 ```
 
-Open decision: whether terminal target should be current temperature, morning-shower reserve,
-or enough useful energy under the future stratified model.
+Use current temperature as the V1 terminal target. It is simple and reasonable on a 48 h
+horizon. Future stratified versions can replace this with a useful-hot-water reserve target.
 
 ## Algorithm
 
@@ -260,8 +243,8 @@ Merging by discretised state gives the global optimum for the chosen model/grid/
 Expected complexity is small:
 
 ```text
-72 h at 10 min = 432 steps
-35-60 C at 0.5 C = 51 temp bins
+48 h at 5 min = 576 steps
+35-60 C at 0.25 C = 101 temp bins
 actions = 2
 extra state bits small
 ```
@@ -303,7 +286,7 @@ Unit tests:
 - daily target state initialises from `last_reached_target_at`;
 - floor violation is avoided when possible;
 - start penalty reduces fragmentation;
-- tiny-lift penalty avoids 59 -> 60 C starts when no safety need exists;
+- start penalty avoids fragmented nuisance top-ups when no safety need exists;
 - terminal reserve affects end state without separate repair pass.
 
 Shadow/live checks:
@@ -333,14 +316,13 @@ Promotion gate:
 
 ## Open Decisions
 
-- Internal timestep: 10 min first, or go straight to 5 min?
-- Temperature bin width: 0.5 C first, or 0.25 C?
 - Start penalty value: what AUD-equivalent wear/efficiency penalty is reasonable?
-- Tiny-lift penalty: hard rejection except emergency, or soft penalty?
-- Terminal target: current temperature, morning reserve, or configured fixed target?
+- Price source: exact blend of 5-minute short-term forecast and 30-minute day-ahead tail.
 - Daily target at horizon tail: how much partial-day coverage is enough to require it?
-- Should DP consume block planner's smoothed wet-bulb series exactly, or own all weather
-  preprocessing?
+- Publish cadence: full 5-minute output to HA, or downsample only if HA/chart load becomes
+  annoying?
+- Temperature bin width fallback: keep 0.25 C unless solve time or noisy policy says 0.5 C is
+  enough.
 
 ## Non-Goals For V1
 
