@@ -324,6 +324,9 @@
         "planner": "block",
         "horizon_steps": 144,
         "optimization_time_step": 30,
+        "weather": {
+            "wet_bulb_smoothing_minutes": 180
+        },
         "thermal": {
             "volume_l": 225,
             "density": 997,

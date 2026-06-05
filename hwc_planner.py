@@ -69,6 +69,21 @@ def interpolate_to_grid(
     return np.interp(np.asarray(grid_epoch, dtype=float), xs, ys).tolist()
 
 
+def centered_rolling_mean(values: list[float], window_steps: int) -> list[float]:
+    """Smooth a forecast series without shifting it in time."""
+    if window_steps <= 1 or len(values) <= 1:
+        return list(values)
+    if window_steps % 2 == 0:
+        window_steps += 1
+    radius = window_steps // 2
+    out = []
+    for idx in range(len(values)):
+        lo = max(0, idx - radius)
+        hi = min(len(values), idx + radius + 1)
+        out.append(sum(values[lo:hi]) / (hi - lo))
+    return out
+
+
 def build_draw_off_profile(
     grid_times_utc: list[datetime],
     tz_name: str,
@@ -1006,7 +1021,13 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
     w_epoch, w_temp, w_rh = get_weather_series(cfg)
     dry_bulb = interpolate_to_grid(w_epoch, w_temp, grid_epoch)
     rh_grid = interpolate_to_grid(w_epoch, w_rh, grid_epoch)
-    wet_bulb = [stull_wet_bulb(t, rh) for t, rh in zip(dry_bulb, rh_grid)]
+    wet_bulb = [stull_wet_bulb(t, rh) for t, rh in zip(dry_bulb, rh_grid, strict=True)]
+    smooth_minutes = float(
+        cfg["hwc"].get("weather", {}).get("wet_bulb_smoothing_minutes", 0)
+    )
+    if smooth_minutes > 0:
+        step_minutes = float(cfg["hwc"].get("optimization_time_step", 30))
+        wet_bulb = centered_rolling_mean(wet_bulb, round(smooth_minutes / step_minutes))
 
     draw_off = build_draw_off_profile(
         grid_times,

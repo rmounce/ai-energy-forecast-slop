@@ -49,6 +49,18 @@ def test_interpolate_flat_extrapolation_past_ends():
     assert out == pytest.approx([10.0, 20.0])  # held flat, not extrapolated
 
 
+def test_centered_rolling_mean_smooths_without_time_shift():
+    assert hp.centered_rolling_mean([0.0, 0.0, 9.0, 0.0, 0.0], 3) == pytest.approx(
+        [0.0, 3.0, 3.0, 3.0, 0.0]
+    )
+
+
+def test_centered_rolling_mean_rounds_even_window_to_odd():
+    assert hp.centered_rolling_mean([0.0, 0.0, 9.0, 0.0, 0.0], 2) == pytest.approx(
+        [0.0, 3.0, 3.0, 3.0, 0.0]
+    )
+
+
 # ── build_draw_off_profile ──────────────────────────────────────────────────
 
 
