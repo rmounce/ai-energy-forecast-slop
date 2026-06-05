@@ -21,6 +21,8 @@ Live control is intentionally conservative:
 - `docs/hwc_calibration_cycles.md` and `docs/hwc_model_fit.md` are human-readable snapshots.
 - `hwc_stratified_model.py` is an offline two-layer tank model scaffold. It is not yet used by
   the live planner.
+- `docs/hwc_dp_planner_design.md` defines the next shadow-planner step: a whole-horizon
+  dynamic-programming optimiser, initially using the current single-node transition.
 
 The MVP is good enough to run and observe, but the physical model is still too simple. The
 next improvements should be made offline, validated against observed cycles, then shadowed in
