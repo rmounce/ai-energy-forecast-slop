@@ -10,6 +10,8 @@
 ## Project Documentation
 
 - Be aware of `docs/`, `README.md`, and `ARCHITECTURE.md`, updating them as you go when changes affect documented behaviour.
+- For repository material likely to be referenced often, apply "Caveman compression": add or maintain a concise, low-prose summary with short bullets, concrete facts, decisions, commands, file paths, and current status. Prefer this as a companion summary or top section rather than deleting useful detail from the source document.
+- When updating frequently referenced docs, keep the compressed summary current in the same change.
 
 ## Plans And Memory
 
