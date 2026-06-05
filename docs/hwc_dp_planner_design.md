@@ -48,15 +48,17 @@ model issue at once.
 Use the same live inputs as the block planner:
 
 - current tank/control-probe temperature;
-- import price forecast; prefer 5-minute short-term prices where available, with a 30-minute
-  day-ahead tail if needed;
+- import price forecast, using the same canonical sources as the battery optimiser:
+  `sensor.ai_mpc_import_price_forecast` for the 5-minute horizon, then
+  `sensor.ai_dh_import_price_forecast` for the 30-minute tail;
 - weather forecast from `weather.woodville_west_hourly`;
 - draw-off profile from config;
 - daemon state `last_reached_target_at`.
 
 Internal resampling:
 
-- build a 5-minute price grid inside the DP planner;
+- build a 5-minute price grid inside the DP planner: use MPC 5-minute points where available,
+  then expand each DH 30-minute interval across its six 5-minute child slots;
 - interpolate draw-off energy onto DP grid preserving total kWh;
 - own weather preprocessing inside the DP planner: interpolate dry-bulb/RH to the 5-minute
   grid, compute wet-bulb, then smooth on that grid;
@@ -168,7 +170,8 @@ Initial config:
 "start_penalty_aud": 0.05
 ```
 
-Treat this as a tunable policy parameter, not a measured physical cost yet.
+Use `$0.05` as the initial V1 default. Treat this as a tunable policy parameter, not a
+measured physical cost yet.
 
 ### Tiny-Lift Penalty
 
@@ -199,9 +202,12 @@ For the first local day in the horizon:
 - if `last_reached_target_at` maps to today, initialise `target_satisfied_today = true`;
 - otherwise false.
 
-At the final horizon boundary, also penalise a missed target for the active local day if enough
-of that day lies inside the planning horizon to make a fair decision. This avoids forcing an
-impossible target for a partial tail day.
+Only enforce the daily target for local days whose normal planning opportunity is represented
+inside the horizon. V1 rule: require the target for a local day only if the horizon includes
+that day's `main_window_end`.
+
+Example: if a 48 h plan runs from Friday 15:00 to Sunday 15:00, do not penalise the Sunday
+target yet, because Sunday still has time after 15:00 that the rolling planner cannot see.
 
 ### Terminal Reserve
 
@@ -316,13 +322,12 @@ Promotion gate:
 
 ## Open Decisions
 
-- Start penalty value: what AUD-equivalent wear/efficiency penalty is reasonable?
-- Price source: exact blend of 5-minute short-term forecast and 30-minute day-ahead tail.
-- Daily target at horizon tail: how much partial-day coverage is enough to require it?
 - Publish cadence: full 5-minute output to HA, or downsample only if HA/chart load becomes
   annoying?
 - Temperature bin width fallback: keep 0.25 C unless solve time or noisy policy says 0.5 C is
   enough.
+- Whether to make `start_penalty_aud` adaptive later, e.g. higher for near-target starts if a
+  fixed `$0.05` penalty still permits nuisance top-ups.
 
 ## Non-Goals For V1
 
