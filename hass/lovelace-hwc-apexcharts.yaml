@@ -32,8 +32,6 @@ now:
   color: '#90a4ae'
 yaxis:
   - id: temp
-    min: 40
-    max: 65
     decimals: 0
     apex_config:
       title:
@@ -41,21 +39,16 @@ yaxis:
       tickAmount: 5
   - id: price
     opposite: true
-    min: 0
     decimals: 2
     apex_config:
       show: false
   - id: ambient
     opposite: true
-    min: 0
-    max: 30
     decimals: 0
     apex_config:
       show: false
   - id: power
     opposite: true
-    min: 0
-    max: 1000
     decimals: 0
     apex_config:
       show: false

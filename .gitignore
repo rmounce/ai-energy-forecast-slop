@@ -49,4 +49,5 @@ models/
 # explicitly with `git add -f` only when they are deliberately preserved.
 eval/results/*
 docs/review_*.md
+docs/hwc_questions_for_previous_implementer.md
 HANDOVER.md
