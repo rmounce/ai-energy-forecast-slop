@@ -761,6 +761,7 @@ def build_dp_shadow_plan(
         floor_penalty_aud_per_c2=float(dp_cfg_raw.get("floor_penalty_aud_per_c2", 5.0)),
         target_miss_penalty_aud=float(dp_cfg_raw.get("target_miss_penalty_aud", 20.0)),
         terminal_penalty_aud_per_c2=float(dp_cfg_raw.get("terminal_penalty_aud_per_c2", 0.02)),
+        target_tolerance_c=float(dp_cfg_raw.get("target_tolerance_c", 0.05)),
         main_window_end=block_cfg.get("main_window_end", "18:00"),
     )
     result = dp_planner.solve(

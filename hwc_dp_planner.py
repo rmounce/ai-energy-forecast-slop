@@ -17,13 +17,14 @@ from zoneinfo import ZoneInfo
 @dataclass(frozen=True)
 class DpConfig:
     step_minutes: int = 5
-    temp_bin_c: float = 0.25
+    temp_bin_c: float = 0.01
     min_state_temp_c: float = 35.0
     max_state_temp_c: float = 60.0
     start_penalty_aud: float = 0.05
     floor_penalty_aud_per_c2: float = 5.0
     target_miss_penalty_aud: float = 20.0
     terminal_penalty_aud_per_c2: float = 0.02
+    target_tolerance_c: float = 0.05
     main_window_end: str = "18:00"
 
 
@@ -148,13 +149,14 @@ def solve(
     nominal_power_w = float(th["nominal_power_w"])
     min_temp = float(th.get("min_temp", 45.0))
     target_temp = float(th.get("desired_temp", 60.0))
+    target_threshold = target_temp - cfg.target_tolerance_c
     satisfied_initial = set(already_satisfied_dates or set())
     required_dates = required_target_dates(
         grid_times_utc, tz_name=tz_name, main_window_end=cfg.main_window_end
     )
 
     start_date = grid_times_utc[0].astimezone(tz).date().isoformat()
-    start_satisfied = start_date in satisfied_initial or start_temperature >= target_temp
+    start_satisfied = start_date in satisfied_initial or start_temperature >= target_threshold
     start_key = (_temp_to_bin(start_temperature, cfg), 0, int(start_satisfied))
     frontier: dict[StateKey, tuple[float, dict[str, float]]] = {
         start_key: (0.0, _empty_breakdown())
@@ -182,13 +184,13 @@ def solve(
                     step_h=step_h,
                 )
                 next_temp = _bounded_temp(next_temp_raw, cfg)
-                day_satisfied = bool(satisfied_flag) or next_temp_raw >= target_temp
+                day_satisfied = bool(satisfied_flag) or next_temp_raw >= target_threshold
                 target_penalty = 0.0
                 next_satisfied_flag = int(day_satisfied)
                 if next_date != cur_date:
                     if cur_date in required_dates and not day_satisfied:
                         target_penalty = cfg.target_miss_penalty_aud
-                    next_satisfied_flag = int(next_temp_raw >= target_temp)
+                    next_satisfied_flag = int(next_temp_raw >= target_threshold)
 
                 energy_cost = (
                     nominal_power_w / 1000.0 * float(load_cost[idx]) * step_h if action else 0.0
@@ -249,7 +251,9 @@ def solve(
         hwc_cfg=hwc_cfg,
         step_h=step_h,
     )
-    satisfied_dates = _satisfied_dates(grid_times_utc, temperatures, tz_name, target_temp)
+    satisfied_dates = _satisfied_dates(
+        grid_times_utc, temperatures, terminal_temp, tz_name, target_threshold
+    )
     starts = sum(1 for prev, cur in zip([0] + actions[:-1], actions, strict=True) if cur and not prev)
     best_breakdown["total_cost_aud"] = best_cost
     return DpResult(
@@ -310,7 +314,7 @@ def _empty_breakdown() -> dict[str, float]:
 
 def _temp_to_bin(temp_c: float, cfg: DpConfig) -> int:
     bounded = _bounded_temp(temp_c, cfg)
-    return int(math.floor(bounded / cfg.temp_bin_c + 1e-9))
+    return int(math.floor(bounded / cfg.temp_bin_c + 0.5))
 
 
 def _bin_to_temp(temp_bin: int, cfg: DpConfig) -> float:
@@ -333,11 +337,23 @@ def _backtrack_actions(final_key: StateKey, parents: list[dict[StateKey, Parent]
 
 
 def _satisfied_dates(
-    grid_times_utc: list[datetime], temperatures: list[float], tz_name: str, target_temp: float
+    grid_times_utc: list[datetime],
+    temperatures: list[float],
+    terminal_temperature: float,
+    tz_name: str,
+    target_temp: float,
 ) -> set[str]:
     tz = ZoneInfo(tz_name)
-    return {
+    out = {
         t.astimezone(tz).date().isoformat()
         for t, temp in zip(grid_times_utc, temperatures, strict=True)
         if temp >= target_temp
     }
+    step = _grid_step(grid_times_utc)
+    temps_after = list(temperatures[1:]) + [terminal_temperature]
+    out.update(
+        (t + step).astimezone(tz).date().isoformat()
+        for t, temp in zip(grid_times_utc, temps_after, strict=True)
+        if temp >= target_temp
+    )
+    return out
