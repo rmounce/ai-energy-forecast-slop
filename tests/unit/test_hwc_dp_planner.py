@@ -65,6 +65,37 @@ def test_transition_matches_single_node_simulator_for_one_step():
     assert next_temp == pytest.approx(terminal, abs=0.01)
 
 
+def test_fine_nearest_bins_do_not_accumulate_large_fake_standing_loss():
+    hwc = _hwc_cfg()
+    cfg = dp.DpConfig(step_minutes=5, temp_bin_c=0.01, min_state_temp_c=0.0)
+    step_h = cfg.step_minutes / 60
+    continuous = 55.0
+    binned = 55.0
+
+    for _ in range(48 * 12):
+        continuous = dp.transition_temperature(
+            temp_c=continuous,
+            action_heat=False,
+            dry_bulb_c=10.0,
+            wet_bulb_c=10.0,
+            draw_off_kwh=0.0,
+            hwc_cfg=hwc,
+            step_h=step_h,
+        )
+        next_binned = dp.transition_temperature(
+            temp_c=binned,
+            action_heat=False,
+            dry_bulb_c=10.0,
+            wet_bulb_c=10.0,
+            draw_off_kwh=0.0,
+            hwc_cfg=hwc,
+            step_h=step_h,
+        )
+        binned = dp._bin_to_temp(dp._temp_to_bin(next_binned, cfg), cfg)
+
+    assert binned == pytest.approx(continuous, abs=0.5)
+
+
 def test_required_target_dates_skip_partial_tail_day():
     grid = _adelaide_grid(2026, 6, 5, 15, 0, 48 * 12, step_min=5)
 
@@ -73,6 +104,18 @@ def test_required_target_dates_skip_partial_tail_day():
         tz_name="Australia/Adelaide",
         main_window_end="18:00",
     ) == {"2026-06-05", "2026-06-06"}
+
+
+def test_satisfied_dates_include_interval_end_crossing():
+    grid = _adelaide_grid(2026, 6, 5, 13, 0, 1, step_min=5)
+
+    assert dp._satisfied_dates(
+        grid,
+        temperatures=[59.5],
+        terminal_temperature=59.96,
+        tz_name="Australia/Adelaide",
+        target_temp=59.95,
+    ) == {"2026-06-05"}
 
 
 def test_start_penalty_discourages_fragmented_cheap_slots():

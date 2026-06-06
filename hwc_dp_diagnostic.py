@@ -213,11 +213,21 @@ def _removal_effect(
         draw_off=draw_off,
         cfg=replay_cfg,
     )
+    step = dp._grid_step(grid_times)
+    temps_after = list(temps[1:]) + [terminal]
+    target_threshold = float(hwc_cfg["thermal"].get("desired_temp", 60)) - float(
+        hwc_cfg.get("dp_planner", {}).get("target_tolerance_c", 0.05)
+    )
     satisfied = {
         t.astimezone(ZoneInfo(tz_name)).date().isoformat()
         for t, temp in zip(grid_times, temps, strict=True)
-        if temp >= float(hwc_cfg["thermal"].get("desired_temp", 60))
+        if temp >= target_threshold
     }
+    satisfied.update(
+        (t + step).astimezone(ZoneInfo(tz_name)).date().isoformat()
+        for t, temp in zip(grid_times, temps_after, strict=True)
+        if temp >= target_threshold
+    )
     missing = sorted(required_target_dates - satisfied)
     flags = []
     if min(temps) < min_temp:

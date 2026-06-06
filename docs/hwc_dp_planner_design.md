@@ -69,6 +69,10 @@ Initial DP grid:
 
 - `internal_step_minutes: 5`;
 - `horizon_hours: 48`.
+- `temp_bin_c: 0.01`, using nearest-bin mapping. Coarser bins distort slow standing-loss
+  dynamics at 5-minute cadence.
+- `target_tolerance_c: 0.05`, because the daily target is also the hard 60 C cutoff and replay
+  can otherwise disagree with the solver by floating-point/model-rounding noise.
 
 ## State
 
@@ -313,9 +317,10 @@ Current diagnostic finding:
 
 - The first live DP shadow produced many blocks that could be removed one-at-a-time while still
   satisfying the replayed floor, daily-target, and terminal checks.
-- The likely cause is cumulative temperature-bin error: floor-binning every 5-minute transition
-  adds artificial cooling inside the DP. Fix the state discretisation before tuning start penalties
-  or considering executor promotion.
+- The likely cause was cumulative temperature-bin error: floor-binning every 5-minute transition
+  added artificial cooling inside the DP. The shadow planner now uses `0.01 C` nearest bins; keep
+  validating against live diagnostics before tuning start penalties or considering executor
+  promotion.
 
 Promotion gate:
 
@@ -339,8 +344,8 @@ Promotion gate:
 
 - Publish cadence: full 5-minute output to HA, or downsample only if HA/chart load becomes
   annoying?
-- Temperature bin width fallback: keep 0.25 C unless solve time or noisy policy says 0.5 C is
-  enough.
+- Temperature bin width fallback: keep `0.01 C` unless solve time becomes too high. Do not return
+  to coarse bins without a replay check for accumulated fake standing loss.
 - Whether to make `start_penalty_aud` adaptive later, e.g. higher for near-target starts if a
   fixed `$0.05` penalty still permits nuisance top-ups.
 
