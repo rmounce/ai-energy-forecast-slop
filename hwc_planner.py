@@ -30,8 +30,6 @@ import pytz
 import requests
 
 from config_utils import load_config
-import hwc_dp_planner as dp_planner
-import hwc_stratified_model as stratified_model
 
 
 # ── Pure helpers (unit-tested) ──────────────────────────────────────────────
@@ -248,84 +246,6 @@ def simulate_block_temperatures(
             temp += heat_rate_c_per_h * step_h
         temp = min(max_temp, temp)
     return temps, round(temp, 2)
-
-
-def _stratified_shadow_params(cfg: dict) -> stratified_model.StratifiedTankParams:
-    hwc = cfg["hwc"]
-    th = hwc["thermal"]
-    shadow = hwc.get("stratified_shadow", {})
-    return stratified_model.StratifiedTankParams(
-        volume_l=float(th.get("volume_l", 225.0)),
-        density_kg_per_m3=float(th.get("density", 997.0)),
-        heat_capacity_kj_per_kg_c=float(th.get("heat_capacity", 4.184)),
-        standing_loss_ua_kw_per_c=float(th.get("standing_loss_ua_kw_per_c", 0.0025)),
-        hot_target_c=float(th.get("desired_temp", 60.0)),
-        probe_height_fraction=float(shadow.get("probe_height_fraction", 0.62)),
-        thermocline_width_fraction=float(shadow.get("thermocline_width_fraction", 0.60)),
-    )
-
-
-def simulate_stratified_shadow(
-    *,
-    schedule_w: list[float],
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None = None,
-    draw_off: list[float],
-    cfg: dict,
-) -> dict:
-    """Simulate the shadow two-layer tank model from the current block schedule.
-
-    This is deliberately shadow-only: the executor continues to consume the existing
-    planned power and single-node temperature entities.
-    """
-    hwc = cfg["hwc"]
-    th = hwc["thermal"]
-    params = _stratified_shadow_params(cfg)
-    step_h = hwc.get("optimization_time_step", 30) / 60.0
-    cap_kwh_per_c = stratified_model.capacity_kwh_per_c(params)
-    max_temp = float(th.get("max_temp", 60.0))
-    state = stratified_model.StratifiedTankState(
-        cold_temp_c=float(start_temperature),
-        hot_temp_c=float(start_temperature),
-        hot_fraction=0.0,
-    )
-    probes = []
-    hot_fractions = []
-    mean_temps = []
-    heat_ambient = wet_bulb if wet_bulb is not None else [None] * len(schedule_w)
-    for power_w, ambient_c, heat_wb, draw_kwh in zip(
-        schedule_w, dry_bulb, heat_ambient, draw_off, strict=True
-    ):
-        probes.append(round(stratified_model.probe_temp_c(state, params), 2))
-        hot_fractions.append(round(max(0.0, min(1.0, state.hot_fraction)), 3))
-        mean_temps.append(round(stratified_model.mean_temp_c(state), 2))
-        state = stratified_model.apply_idle_loss(
-            state, params, ambient_c=float(ambient_c), step_h=step_h
-        )
-        state = stratified_model.apply_draw_off(state, params, draw_kwh=float(draw_kwh))
-        if power_w > 0:
-            heat_rate_c_per_h = _heat_rate_c_per_hour(
-                th, stratified_model.probe_temp_c(state, params), heat_wb
-            )
-            state = stratified_model.apply_heat(
-                state, params, heat_kwh=heat_rate_c_per_h * cap_kwh_per_c * step_h
-            )
-            state = stratified_model.StratifiedTankState(
-                cold_temp_c=min(max_temp, state.cold_temp_c),
-                hot_temp_c=min(max_temp, state.hot_temp_c),
-                hot_fraction=state.hot_fraction,
-            )
-    return {
-        "temperatures": probes,
-        "hot_fractions": hot_fractions,
-        "mean_temperatures": mean_temps,
-        "terminal_temperature": round(stratified_model.probe_temp_c(state, params), 2),
-        "terminal_hot_fraction": round(max(0.0, min(1.0, state.hot_fraction)), 3),
-        "terminal_mean_temperature": round(stratified_model.mean_temp_c(state), 2),
-        "probe_height_fraction": params.probe_height_fraction,
-        "thermocline_width_fraction": params.thermocline_width_fraction,
-    }
 
 
 def _add_contiguous_heat(
@@ -674,17 +594,6 @@ def build_block_plan(
         draw_off=draw_off,
         cfg=cfg["hwc"],
     )
-    shadow = None
-    if cfg["hwc"].get("stratified_shadow", {}).get("enabled", False):
-        shadow = simulate_stratified_shadow(
-            schedule_w=schedule,
-            start_temperature=start_temperature,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            cfg=cfg,
-        )
-
     prefix = cfg["hwc"].get("publish_prefix", "hwc_")
     temp_key = _published_entity_id(prefix, cfg["hwc"]["predicted_temp_entity"]).split(".", 1)[1]
     power_key = _published_entity_id(prefix, cfg["hwc"]["power_plan_entity"]).split(".", 1)[1]
@@ -712,106 +621,7 @@ def build_block_plan(
             {"date": t.isoformat(), wet_bulb_key: f"{value:.2f}"}
             for t, value in zip(grid_times_utc, wet_bulb, strict=True)
         ]
-    if shadow is not None:
-        shadow_cfg = cfg["hwc"]["stratified_shadow"]
-        shadow_temp_entity = _published_entity_id(
-            prefix, shadow_cfg.get("predicted_temp_entity", "sensor.stratified_predicted_temp")
-        )
-        shadow_fraction_entity = _published_entity_id(
-            prefix, shadow_cfg.get("hot_fraction_entity", "sensor.stratified_hot_fraction")
-        )
-        shadow_temp_key = shadow_temp_entity.split(".", 1)[1]
-        shadow_fraction_key = shadow_fraction_entity.split(".", 1)[1]
-        plan["stratified_shadow"] = {
-            **shadow,
-            "predicted_temperatures": [
-                {"date": t.isoformat(), shadow_temp_key: f"{temp:.2f}"}
-                for t, temp in zip(grid_times_utc, shadow["temperatures"], strict=True)
-            ],
-            "hot_fractions": [
-                {"date": t.isoformat(), shadow_fraction_key: f"{fraction:.3f}"}
-                for t, fraction in zip(grid_times_utc, shadow["hot_fractions"], strict=True)
-            ],
-            "temperature_entity": shadow_temp_entity,
-            "hot_fraction_entity": shadow_fraction_entity,
-        }
     return plan
-
-
-def build_dp_shadow_plan(
-    *,
-    grid_times_utc: list[datetime],
-    load_cost: list[float],
-    dry_bulb: list[float],
-    wet_bulb: list[float],
-    draw_off: list[float],
-    start_temperature: float,
-    cfg: dict,
-) -> dict:
-    """Build a shadow DP plan without changing the production block schedule."""
-    hwc = cfg["hwc"]
-    dp_cfg_raw = hwc.get("dp_planner", {})
-    block_cfg = hwc.get("block_planner", {})
-    dp_cfg = dp_planner.DpConfig(
-        step_minutes=int(dp_cfg_raw.get("internal_step_minutes", 5)),
-        temp_bin_c=float(dp_cfg_raw.get("temp_bin_c", 0.25)),
-        min_state_temp_c=float(dp_cfg_raw.get("min_state_temp_c", 35.0)),
-        max_state_temp_c=float(dp_cfg_raw.get("max_state_temp_c", hwc["thermal"].get("max_temp", 60.0))),
-        start_penalty_aud=float(dp_cfg_raw.get("start_penalty_aud", 0.05)),
-        floor_penalty_aud_per_c2=float(dp_cfg_raw.get("floor_penalty_aud_per_c2", 5.0)),
-        target_miss_penalty_aud=float(dp_cfg_raw.get("target_miss_penalty_aud", 20.0)),
-        terminal_penalty_aud_per_c2=float(dp_cfg_raw.get("terminal_penalty_aud_per_c2", 0.02)),
-        target_tolerance_c=float(dp_cfg_raw.get("target_tolerance_c", 0.05)),
-        main_window_end=block_cfg.get("main_window_end", "18:00"),
-    )
-    result = dp_planner.solve(
-        grid_times_utc=grid_times_utc,
-        load_cost=load_cost,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        start_temperature=start_temperature,
-        hwc_cfg=hwc,
-        tz_name=cfg["timezone"],
-        already_satisfied_dates=set(block_cfg.get("main_satisfied_dates", [])),
-        dp_cfg=dp_cfg,
-    )
-
-    prefix = hwc.get("publish_prefix", "hwc_")
-    temp_entity = _published_entity_id(
-        prefix, dp_cfg_raw.get("predicted_temp_entity", "sensor.dp_predicted_temp")
-    )
-    power_entity = _published_entity_id(
-        prefix, dp_cfg_raw.get("power_plan_entity", "sensor.dp_power_plan")
-    )
-    cost_entity = _published_entity_id(
-        prefix, dp_cfg_raw.get("plan_cost_entity", "sensor.dp_plan_cost")
-    )
-    temp_key = temp_entity.split(".", 1)[1]
-    power_key = power_entity.split(".", 1)[1]
-    return {
-        "schedule_w": result.schedule_w,
-        "temperatures": result.temperatures,
-        "terminal_temperature": result.terminal_temperature,
-        "objective_cost": result.objective_cost,
-        "objective_breakdown": result.objective_breakdown,
-        "required_target_dates": result.required_target_dates,
-        "target_satisfied_dates": result.target_satisfied_dates,
-        "starts": result.starts,
-        "internal_step_minutes": dp_cfg.step_minutes,
-        "temp_bin_c": dp_cfg.temp_bin_c,
-        "temperature_entity": temp_entity,
-        "power_entity": power_entity,
-        "cost_entity": cost_entity,
-        "predicted_temperatures": [
-            {"date": t.isoformat(), temp_key: f"{temp:.2f}"}
-            for t, temp in zip(grid_times_utc, result.temperatures, strict=True)
-        ],
-        "deferrables_schedule": [
-            {"date": t.isoformat(), power_key: f"{power:.1f}"}
-            for t, power in zip(grid_times_utc, result.schedule_w, strict=True)
-        ],
-    }
 
 
 def build_payload(
@@ -943,57 +753,6 @@ def get_import_price_grid(cfg: dict, horizon_steps: int):
     return [r[0] for r in rows], [r[1] for r in rows]
 
 
-def _forecast_rows_from_entity(cfg: dict, entity_id: str) -> list[tuple[datetime, float]]:
-    state = _ha_call(cfg, "GET", f"states/{entity_id}")
-    forecast = state.get("attributes", {}).get("forecast", []) or []
-    rows = []
-    for item in forecast:
-        dt = pd.to_datetime(item["datetime"], utc=True).to_pydatetime()
-        rows.append((dt, float(item["native_value"])))
-    rows.sort(key=lambda r: r[0])
-    return rows
-
-
-def get_dp_import_price_grid(cfg: dict) -> tuple[list[datetime], list[float]]:
-    """Return a 5-minute DP price grid from MPC prices plus DH tail."""
-    dp_cfg = cfg["hwc"].get("dp_planner", {})
-    step = int(dp_cfg.get("internal_step_minutes", 5))
-    horizon_hours = float(dp_cfg.get("horizon_hours", 48))
-    horizon_steps = int(round(horizon_hours * 60 / step))
-    mpc_entity = dp_cfg.get("mpc_import_price_entity", "sensor.ai_mpc_import_price_forecast")
-    dh_entity = dp_cfg.get("dh_import_price_entity", cfg["hwc"]["import_price_entity"])
-
-    now = datetime.now(timezone.utc)
-    now_floor = now.replace(
-        minute=(now.minute // step) * step, second=0, microsecond=0
-    )
-    grid = [now_floor + timedelta(minutes=step * i) for i in range(horizon_steps)]
-
-    mpc_prices = {
-        dt: price for dt, price in _forecast_rows_from_entity(cfg, mpc_entity) if dt >= now_floor
-    }
-    dh_rows = [
-        (dt, price) for dt, price in _forecast_rows_from_entity(cfg, dh_entity)
-        if dt + timedelta(minutes=30) > now_floor
-    ]
-    if not mpc_prices and not dh_rows:
-        raise RuntimeError("DP price grid: no MPC or DH import price forecasts available")
-
-    out = []
-    dh_idx = 0
-    for t in grid:
-        if t in mpc_prices:
-            out.append(mpc_prices[t])
-            continue
-        while dh_idx + 1 < len(dh_rows) and dh_rows[dh_idx + 1][0] <= t:
-            dh_idx += 1
-        if dh_rows and dh_rows[dh_idx][0] <= t < dh_rows[dh_idx][0] + timedelta(minutes=30):
-            out.append(dh_rows[dh_idx][1])
-            continue
-        raise RuntimeError(f"DP price grid: no price for {t.isoformat()}")
-    return grid, out
-
-
 def get_weather_series(cfg: dict):
     """Return (epoch_seconds, temp_c, rh_pct) from the BOM hourly weather forecast."""
     ha = cfg["home_assistant"]
@@ -1089,104 +848,6 @@ def _publish_block_plan(cfg: dict, plan: dict):
                 "friendly_name": "HWC Wet Bulb Forecast",
                 "wet_bulb_forecasts": plan["wet_bulb_forecasts"],
             },
-        )
-    dp_shadow = plan.get("dp_shadow")
-    if dp_shadow:
-        dp_temp_entity = dp_shadow["temperature_entity"]
-        dp_power_entity = dp_shadow["power_entity"]
-        dp_cost_entity = dp_shadow["cost_entity"]
-        _ha_set_state(
-            cfg,
-            dp_temp_entity,
-            dp_shadow["predicted_temperatures"][0][dp_temp_entity.split(".", 1)[1]],
-            {
-                "unit_of_measurement": "°C",
-                "friendly_name": "HWC DP Predicted Tank Temp",
-                "predicted_temperatures": dp_shadow["predicted_temperatures"],
-                "terminal_temperature": dp_shadow["terminal_temperature"],
-                "objective_cost": round(float(dp_shadow["objective_cost"]), 5),
-                "objective_breakdown": dp_shadow["objective_breakdown"],
-                "required_target_dates": dp_shadow["required_target_dates"],
-                "target_satisfied_dates": dp_shadow["target_satisfied_dates"],
-                "internal_step_minutes": dp_shadow["internal_step_minutes"],
-                "temp_bin_c": dp_shadow["temp_bin_c"],
-                "planner_role": "shadow",
-            },
-        )
-        _ha_set_state(
-            cfg,
-            dp_power_entity,
-            dp_shadow["deferrables_schedule"][0][dp_power_entity.split(".", 1)[1]],
-            {
-                "unit_of_measurement": "W",
-                "friendly_name": "HWC DP Planned Power",
-                "deferrables_schedule": dp_shadow["deferrables_schedule"],
-                "objective_cost": round(float(dp_shadow["objective_cost"]), 5),
-                "objective_breakdown": dp_shadow["objective_breakdown"],
-                "starts": dp_shadow["starts"],
-                "internal_step_minutes": dp_shadow["internal_step_minutes"],
-                "planner_role": "shadow",
-            },
-        )
-        _ha_set_state(
-            cfg,
-            dp_cost_entity,
-            round(float(dp_shadow["objective_cost"]), 5),
-            {
-                "unit_of_measurement": "$",
-                "friendly_name": "HWC DP Objective Cost",
-                "objective_breakdown": dp_shadow["objective_breakdown"],
-                "starts": dp_shadow["starts"],
-                "terminal_temperature": dp_shadow["terminal_temperature"],
-                "required_target_dates": dp_shadow["required_target_dates"],
-                "target_satisfied_dates": dp_shadow["target_satisfied_dates"],
-                "planner_role": "shadow",
-            },
-        )
-        logging.info(
-            "Published HWC DP shadow plan to HA (%s, %s, %s)",
-            dp_temp_entity,
-            dp_power_entity,
-            dp_cost_entity,
-        )
-    shadow = plan.get("stratified_shadow")
-    if shadow:
-        shadow_temp_entity = shadow["temperature_entity"]
-        shadow_fraction_entity = shadow["hot_fraction_entity"]
-        _ha_set_state(
-            cfg,
-            shadow_temp_entity,
-            shadow["predicted_temperatures"][0][shadow_temp_entity.split(".", 1)[1]],
-            {
-                "unit_of_measurement": "°C",
-                "friendly_name": "HWC Stratified Predicted Tank Temp",
-                "predicted_temperatures": shadow["predicted_temperatures"],
-                "terminal_temperature": shadow["terminal_temperature"],
-                "terminal_mean_temperature": shadow["terminal_mean_temperature"],
-                "probe_height_fraction": shadow["probe_height_fraction"],
-                "thermocline_width_fraction": shadow["thermocline_width_fraction"],
-                "model_role": "shadow",
-            },
-        )
-        _ha_set_state(
-            cfg,
-            shadow_fraction_entity,
-            shadow["hot_fractions"][0][shadow_fraction_entity.split(".", 1)[1]],
-            {
-                "unit_of_measurement": "fraction",
-                "friendly_name": "HWC Stratified Hot Fraction",
-                "hot_fractions": shadow["hot_fractions"],
-                "terminal_hot_fraction": shadow["terminal_hot_fraction"],
-                "terminal_mean_temperature": shadow["terminal_mean_temperature"],
-                "probe_height_fraction": shadow["probe_height_fraction"],
-                "thermocline_width_fraction": shadow["thermocline_width_fraction"],
-                "model_role": "shadow",
-            },
-        )
-        logging.info(
-            "Published HWC stratified shadow plan to HA (%s, %s)",
-            shadow_temp_entity,
-            shadow_fraction_entity,
         )
     logging.info(
         "Published HWC block plan to HA (%s, %s, %s, %s)",
@@ -1286,52 +947,6 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         start_temperature=start_temp,
         cfg=cfg,
     )
-    if cfg["hwc"].get("dp_planner", {}).get("enabled", False):
-        try:
-            dp_grid_times, dp_load_cost = get_dp_import_price_grid(cfg)
-            dp_step = int(cfg["hwc"].get("dp_planner", {}).get("internal_step_minutes", 5))
-            dp_dry_bulb, dp_wet_bulb = build_weather_grid(
-                cfg,
-                dp_grid_times,
-                step_minutes=dp_step,
-            )
-            dp_draw_off = build_draw_off_profile(
-                dp_grid_times,
-                cfg["timezone"],
-                cfg["hwc"]["draw_off"]["window_start"],
-                cfg["hwc"]["draw_off"]["window_end"],
-                cfg["hwc"]["draw_off"]["total_kwh"],
-            )
-            for spec in extra_draw_off or []:
-                start_time, duration_min, total_kwh = parse_extra_draw_off(spec)
-                dp_draw_off = add_draw_off_event(
-                    dp_draw_off,
-                    dp_grid_times,
-                    cfg["timezone"],
-                    start_time,
-                    duration_min,
-                    total_kwh,
-                )
-            plan["dp_shadow"] = build_dp_shadow_plan(
-                grid_times_utc=dp_grid_times,
-                load_cost=dp_load_cost,
-                dry_bulb=dp_dry_bulb,
-                wet_bulb=dp_wet_bulb,
-                draw_off=dp_draw_off,
-                start_temperature=start_temp,
-                cfg=cfg,
-            )
-            logging.info(
-                "DP shadow plan: starts=%d, heat_kwh=%.2f, terminal_temp=%.1f°C, "
-                "min_pred=%.1f°C, objective=$%.3f",
-                plan["dp_shadow"]["starts"],
-                sum(plan["dp_shadow"]["schedule_w"]) / 1000.0 * (dp_step / 60.0),
-                plan["dp_shadow"]["terminal_temperature"],
-                min(plan["dp_shadow"]["temperatures"]),
-                plan["dp_shadow"]["objective_cost"],
-            )
-        except Exception:
-            logging.exception("HWC DP shadow planner failed; publishing production block plan only")
     starts = sum(
         1
         for prev, cur in zip([0.0] + plan["schedule_w"][:-1], plan["schedule_w"], strict=True)

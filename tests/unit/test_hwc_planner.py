@@ -253,13 +253,6 @@ def _hwc_cfg():
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24,
         },
-        "stratified_shadow": {
-            "enabled": True,
-            "predicted_temp_entity": "sensor.stratified_predicted_temp",
-            "hot_fraction_entity": "sensor.stratified_hot_fraction",
-            "probe_height_fraction": 0.62,
-            "thermocline_width_fraction": 0.60,
-        },
     }
 
 
@@ -320,12 +313,8 @@ def test_block_planner_builds_long_horizon_with_terminal_target():
     assert len(plan["deferrables_schedule"]) == 144
     assert len(plan["wet_bulb_forecasts"]) == 144
     assert plan["wet_bulb_forecasts"][0]["hwc_wet_bulb_forecast"] == "12.50"
-    assert len(plan["stratified_shadow"]["predicted_temperatures"]) == 144
-    assert len(plan["stratified_shadow"]["hot_fractions"]) == 144
     assert min(plan["temperatures"]) >= 45
     assert plan["terminal_temperature"] >= 55.0
-    assert plan["stratified_shadow"]["temperature_entity"] == "sensor.hwc_stratified_predicted_temp"
-    assert plan["stratified_shadow"]["hot_fraction_entity"] == "sensor.hwc_stratified_hot_fraction"
 
 
 def test_publish_block_plan_includes_wet_bulb_forecast(monkeypatch):
@@ -357,69 +346,6 @@ def test_publish_block_plan_includes_wet_bulb_forecast(monkeypatch):
     assert wet_bulb["state"] == "10.00"
     assert wet_bulb["attributes"]["unit_of_measurement"] == "°C"
     assert wet_bulb["attributes"]["wet_bulb_forecasts"][1]["hwc_wet_bulb_forecast"] == "11.00"
-
-
-def test_publish_block_plan_includes_dp_shadow(monkeypatch):
-    grid = _adelaide_grid(8, 6, step_min=5)
-    cfg = {
-        "timezone": "Australia/Adelaide",
-        "home_assistant": {"url": "http://ha", "token": "token"},
-        "hwc": _hwc_cfg(),
-    }
-    cfg["hwc"]["dp_planner"] = {
-        "internal_step_minutes": 5,
-        "temp_bin_c": 0.25,
-        "predicted_temp_entity": "sensor.dp_predicted_temp",
-        "power_plan_entity": "sensor.dp_power_plan",
-        "plan_cost_entity": "sensor.dp_plan_cost",
-    }
-    plan = hp.build_block_plan(
-        grid_times_utc=grid,
-        load_cost=[0.20] * len(grid),
-        dry_bulb=[15.0] * len(grid),
-        wet_bulb=[12.0] * len(grid),
-        draw_off=[0.0] * len(grid),
-        start_temperature=55.0,
-        cfg=cfg,
-    )
-    plan["dp_shadow"] = hp.build_dp_shadow_plan(
-        grid_times_utc=grid,
-        load_cost=[0.20] * len(grid),
-        dry_bulb=[15.0] * len(grid),
-        wet_bulb=[12.0] * len(grid),
-        draw_off=[0.0] * len(grid),
-        start_temperature=55.0,
-        cfg=cfg,
-    )
-    published = {}
-
-    def fake_set_state(config, entity_id, state, attributes):
-        published[entity_id] = {"state": state, "attributes": attributes}
-
-    monkeypatch.setattr(hp, "_ha_set_state", fake_set_state)
-
-    hp._publish_block_plan(cfg, plan)
-
-    assert published["sensor.hwc_dp_predicted_temp"]["attributes"]["planner_role"] == "shadow"
-    assert published["sensor.hwc_dp_power_plan"]["attributes"]["planner_role"] == "shadow"
-    assert published["sensor.hwc_dp_plan_cost"]["attributes"]["unit_of_measurement"] == "$"
-
-
-def test_stratified_shadow_reports_hot_fraction_without_changing_schedule():
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    shadow = hp.simulate_stratified_shadow(
-        schedule_w=[0.0, 800.0, 800.0],
-        start_temperature=50.0,
-        dry_bulb=[15.0, 15.0, 15.0],
-        draw_off=[0.0, 0.0, 0.0],
-        cfg=cfg,
-    )
-
-    assert shadow["temperatures"][0] == pytest.approx(50.0)
-    assert len(shadow["hot_fractions"]) == 3
-    assert shadow["hot_fractions"][0] == 0.0
-    assert shadow["terminal_hot_fraction"] > 0.0
-    assert shadow["probe_height_fraction"] == 0.62
 
 
 def test_block_planner_prefers_contiguous_daytime_runs():

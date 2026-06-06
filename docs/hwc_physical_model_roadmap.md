@@ -1,10 +1,10 @@
 # HWC Physical Model Roadmap
 
-Status: draft for owner + previous implementer review.
+Status: superseded in part by `docs/hwc_observer_milp_path.md`.
 
 This note records where the hot-water-control model currently stands, what we think the
 important physical/economic effects are, and how to move from the current MVP planner to a
-more accurate stratified/COP-aware optimiser without trying to solve everything at once.
+more accurate inventory/COP-aware optimiser without trying to solve everything at once.
 
 ## Current State
 
@@ -19,10 +19,10 @@ Live control is intentionally conservative:
   date, `2026-05-28`.
 - `data/hwc_cop_cycles.csv` is the machine-readable calibration table.
 - `docs/hwc_calibration_cycles.md` and `docs/hwc_model_fit.md` are human-readable snapshots.
-- `hwc_stratified_model.py` is an offline two-layer tank model scaffold. It is not yet used by
+- `hwc_stratified_model.py` is an offline two-layer tank model scaffold. It is not used by
   the live planner.
-- `docs/hwc_dp_planner_design.md` defines the next shadow-planner step: a whole-horizon
-  dynamic-programming optimiser, initially using the current single-node transition.
+- `docs/hwc_observer_milp_path.md` defines the current next modelling path: an observer that
+  estimates useful thermal inventory, followed by a shadow MILP/MPC planner.
 
 The MVP is good enough to run and observe, but the physical model is still too simple. The
 next improvements should be made offline, validated against observed cycles, then shadowed in
@@ -53,8 +53,14 @@ Treat these as hints, not settled parameters.
 
 ## Modelling Direction
 
-The target model should stop treating the tank as one scalar temperature. A useful first
-physical state is:
+The target model should stop treating the tank as one scalar probe temperature. The current
+preferred live-control state is useful thermal inventory:
+
+- `E_t`: kWh above the `45 C` floor;
+- `E_max`: inventory when the physical probe reaches the `60 C` shut-off event;
+- optional observer internals for hot/cold layer hints and probe correction.
+
+The existing two-layer variables remain useful offline diagnostics:
 
 - `cold_temp_c`
 - `hot_temp_c`
@@ -67,8 +73,9 @@ thermocline reaches the probe region. Draw-off should consume hot-layer useful e
 and refill/mix with cold inlet water. Standing loss should depend on the stratified state, not
 only the control-probe reading.
 
-The economic planner should then optimise over useful hot-water state and constraints, not
-only over "probe reaches 60 C".
+The economic planner should optimise over useful hot-water inventory and constraints, not only
+over "probe reaches 60 C". The physical `60 C` probe event remains the source of truth for
+daily target satisfaction until the observer is validated.
 
 ## COP And Compressor Power
 
@@ -169,21 +176,19 @@ without destabilising the working MVP.
    - COP/power step model, or
    - direct empirical `duration/kWh to target` model.
 
-6. **Shadow-publish stratified predictions**
-   Publish stratified predicted probe temp and hot-water state-of-charge alongside the current
-   plan in HA. Do not execute from it initially.
+6. **Build the useful-inventory observer**
+   Estimate `E_t` from compressor runtime, energy input, draw-off, standing loss, and simple
+   probe-event corrections. Keep physical probe `60 C` events as the target-satisfaction source
+   of truth until the observer is validated.
 
-7. **Use stratified simulation inside the block planner**
-   Keep current planning policy initially, but swap the internal temperature simulation from
-   single-node to stratified. This should reduce false confidence from the misleading probe
-   temperature.
+7. **Prototype a shadow MILP/MPC planner**
+   Optimise useful inventory over a 48 h horizon with 5 min price steps, binary compressor
+   action, start penalty, reserve/floor constraints, daily target deadline, and demand-based
+   terminal inventory.
 
-8. **Let the planner reason about useful hot-water state**
-   Move from "make probe hit 60 C" to constraints such as:
-   - enough hot fraction for expected draw-off
-   - avoid top-up tail unless safety/demand requires it
-   - satisfy `60 C` cadence based on `last_reached_target_at`
-   - prefer long efficient runs when cold reservoir remains
+8. **Shadow-publish inventory/MILP diagnostics**
+   Publish only the new inventory/MILP shadow once it exists. The old DP and stratified live
+   shadows are retired; offline stratified validation remains for observer design.
 
 ## Review Questions
 
@@ -194,8 +199,8 @@ For constructive adversarial review:
    or should we model it only as an observed diagnostic?
 3. Is the observed control-probe rise timing enough to fit `probe_height_fraction` and
    `thermocline_width_fraction`, or do we need a different parameterisation?
-4. Should the first production improvement be better prediction only, or should it also change
-   scheduling once shadow error is acceptable?
+4. Should the first production improvement be better inventory estimation only, or should it
+   also change scheduling once shadow error is acceptable?
 5. Is a direct empirical `duration/kWh to target` model more robust than a physical COP model
    at the current sample size?
 6. What operating regimes should be excluded from calibration: fan-speed changes, defrost,
@@ -208,6 +213,6 @@ For constructive adversarial review:
 - Keep live execution conservative until shadow predictions are demonstrably better.
 - Do not tune many parameters against five clean cycles.
 - Preserve raw-ish cycle summaries in `data/hwc_cop_cycles.csv` so future fits are reproducible.
-- Prefer small, reviewable changes: extractor -> validator -> fitter -> shadow publish ->
+- Prefer small, reviewable changes: extractor -> observer -> validator -> MILP shadow ->
   planner integration.
 - Keep the owner-visible HA charts as the arbiter of whether the model is improving behaviour.
