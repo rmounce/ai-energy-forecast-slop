@@ -96,6 +96,8 @@ def watched_entities(config: dict) -> set[str]:
         _published_entity_id(prefix, hwc["power_plan_entity"]),
         _published_entity_id(prefix, hwc["predicted_temp_entity"]),
     }
+    if hwc.get("short_term_import_price_entity"):
+        entities.add(hwc["short_term_import_price_entity"])
     for key in ("water_heater_entity", "compressor_entity"):
         if act.get(key):
             entities.add(act[key])
@@ -129,7 +131,13 @@ def classify_state_change(config: dict, entity_id: str, old_state: dict | None, 
             return TriggerDecision(True, False, "tank temperature changed")
         return TriggerDecision(False, False, "tank temperature change below threshold")
 
-    if entity_id in {hwc["import_price_entity"], config["home_assistant"]["weather_entity"]}:
+    forecast_entities = {
+        hwc["import_price_entity"],
+        config["home_assistant"]["weather_entity"],
+    }
+    if hwc.get("short_term_import_price_entity"):
+        forecast_entities.add(hwc["short_term_import_price_entity"])
+    if entity_id in forecast_entities:
         return TriggerDecision(True, False, "forecast input changed")
 
     if entity_id in {act.get("water_heater_entity"), act.get("compressor_entity")}:

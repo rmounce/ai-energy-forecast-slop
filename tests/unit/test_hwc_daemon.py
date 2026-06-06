@@ -10,6 +10,7 @@ def _config():
         "hwc": {
             "tank_temp_entity": "sensor.aquatech_current_temperature_local",
             "import_price_entity": "sensor.ai_dh_import_price_forecast",
+            "short_term_import_price_entity": "sensor.ai_mpc_import_price_forecast",
             "predicted_temp_entity": "sensor.predicted_temp",
             "power_plan_entity": "sensor.power_plan",
             "publish_prefix": "hwc_",
@@ -44,6 +45,7 @@ def test_watched_entities_include_inputs_equipment_and_published_plan():
     assert hd.watched_entities(_config()) == {
         "sensor.aquatech_current_temperature_local",
         "sensor.ai_dh_import_price_forecast",
+        "sensor.ai_mpc_import_price_forecast",
         "weather.woodville_west_hourly",
         "water_heater.aquatech",
         "binary_sensor.aquatech_compressor",
@@ -56,6 +58,18 @@ def test_forecast_change_triggers_replan_only():
     decision = hd.classify_state_change(
         _config(),
         "sensor.ai_dh_import_price_forecast",
+        {"state": "old"},
+        {"state": "new"},
+    )
+
+    assert decision.replan is True
+    assert decision.execute is False
+
+
+def test_short_term_forecast_change_triggers_replan_only():
+    decision = hd.classify_state_change(
+        _config(),
+        "sensor.ai_mpc_import_price_forecast",
         {"state": "old"},
         {"state": "new"},
     )

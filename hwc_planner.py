@@ -23,6 +23,7 @@ import json
 import logging
 import math
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -30,6 +31,8 @@ import pytz
 import requests
 
 from config_utils import load_config
+
+REPO_ROOT = Path(__file__).resolve().parent
 
 
 # ── Pure helpers (unit-tested) ──────────────────────────────────────────────
@@ -212,6 +215,42 @@ def _published_entity_id(prefix: str, entity_id: str) -> str:
     return f"{domain}.{prefix}{object_id}"
 
 
+def _floor_time_utc(now: datetime, step_minutes: int) -> datetime:
+    now = now.astimezone(timezone.utc)
+    minute = (now.minute // step_minutes) * step_minutes
+    return now.replace(minute=minute, second=0, microsecond=0)
+
+
+def _target_reached_local_date(cfg: dict, reached_at_utc: str | None) -> str | None:
+    if not reached_at_utc:
+        return None
+    try:
+        reached_at = pd.to_datetime(reached_at_utc, utc=True).to_pydatetime()
+    except (TypeError, ValueError):
+        return None
+    return reached_at.astimezone(pytz.timezone(cfg["timezone"])).date().isoformat()
+
+
+def _state_file_path(cfg: dict) -> Path:
+    configured = cfg["hwc"].get("daemon", {}).get("state_file", "data/hwc_daemon_state.json")
+    path = Path(configured)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _main_satisfied_dates_from_state(cfg: dict) -> list[str]:
+    block_cfg = cfg["hwc"].get("block_planner", {})
+    configured = block_cfg.get("main_satisfied_dates")
+    if configured:
+        return list(configured)
+    path = _state_file_path(cfg)
+    try:
+        data = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    local_date = _target_reached_local_date(cfg, data.get("last_reached_target_at"))
+    return [local_date] if local_date else []
+
+
 def simulate_block_temperatures(
     *,
     schedule_w: list[float],
@@ -325,6 +364,8 @@ def _choose_daily_main_blocks(
     min_lift_c = _min_block_lift_c(cfg["hwc"])
     min_steps = _min_block_steps(cfg["hwc"])
     step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
+    reserve_target = float(block_cfg.get("main_end_reserve_target_c", target))
+    reserve_penalty_per_c2 = float(block_cfg.get("main_end_reserve_penalty_aud_per_c2", 0.0))
 
     slots_by_day: dict[datetime.date, list[int]] = {}
     for idx, t in enumerate(grid_times_utc):
@@ -338,7 +379,7 @@ def _choose_daily_main_blocks(
         if day.isoformat() in satisfied_dates:
             continue
         best = out
-        best_score = (math.inf, math.inf, math.inf, math.inf)
+        best_score = (math.inf, math.inf, math.inf, math.inf, math.inf)
         base_temps, _ = simulate_block_temperatures(
             schedule_w=out,
             start_temperature=start_temperature,
@@ -362,7 +403,7 @@ def _choose_daily_main_blocks(
                     draw_off=draw_off,
                     cfg=cfg["hwc"],
                 )
-            ctemps, _ = simulate_block_temperatures(
+            ctemps, cterminal = simulate_block_temperatures(
                 schedule_w=candidate,
                 start_temperature=start_temperature,
                 dry_bulb=dry_bulb,
@@ -374,12 +415,22 @@ def _choose_daily_main_blocks(
             window_temps = ctemps[slots[0] : eval_end]
             target_shortfall = max(0.0, target - max(window_temps))
             window_shortfall = max(0.0, min_temp - min(window_temps))
+            end_state_idx = slots[-1] + 1
+            end_state_temp = ctemps[end_state_idx] if end_state_idx < len(ctemps) else cterminal
+            reserve_shortfall = max(0.0, reserve_target - end_state_temp)
+            reserve_penalty = reserve_shortfall * reserve_shortfall * reserve_penalty_per_c2
             added_slots = sum(
                 1 for old, new in zip(out, candidate, strict=True) if new > old
             )
             duration_shortfall = max(0, min_steps - added_slots) if added_slots else 0
             cost = _schedule_cost_delta(out, candidate, load_cost, step_h)
-            score = (target_shortfall, duration_shortfall, cost, float(start_idx))
+            score = (
+                target_shortfall,
+                window_shortfall,
+                duration_shortfall,
+                cost + reserve_penalty,
+                -float(start_idx),
+            )
             if score < best_score:
                 best = candidate
                 best_score = score
@@ -728,29 +779,79 @@ def get_tank_temperature(cfg: dict) -> float:
 
 
 def get_import_price_grid(cfg: dict, horizon_steps: int):
-    """Return (grid_times_utc, load_cost) from the published DH import-price forecast,
-    starting at the current 30-min interval."""
-    entity = cfg["hwc"]["import_price_entity"]
-    state = _ha_call(cfg, "GET", f"states/{entity}")
+    """Return (grid_times_utc, load_cost) from HWC import-price forecasts.
+
+    At 5-minute resolution this prefers the canonical short-term MPC price forecast, then
+    expands the 30-minute DH tail across its child 5-minute slots.
+    """
+    hwc = cfg["hwc"]
+    step = int(hwc.get("optimization_time_step", 30))
+    dh_entity = hwc["import_price_entity"]
+    dh_rows = _forecast_rows_from_entity(cfg, dh_entity)
+    primary_rows: list[tuple[datetime, float]] = []
+    primary_entity = hwc.get("short_term_import_price_entity")
+    if step < 30 and primary_entity:
+        primary_rows = _forecast_rows_from_entity(cfg, primary_entity)
+
+    return _build_price_grid_from_rows(
+        now_utc=datetime.now(timezone.utc),
+        horizon_steps=horizon_steps,
+        step_minutes=step,
+        primary_rows=primary_rows,
+        tail_rows=dh_rows,
+        tail_step_minutes=30,
+        source_name=f"{primary_entity or dh_entity}+{dh_entity}" if primary_rows else dh_entity,
+    )
+
+
+def _forecast_rows_from_entity(cfg: dict, entity_id: str) -> list[tuple[datetime, float]]:
+    state = _ha_call(cfg, "GET", f"states/{entity_id}")
     forecast = state.get("attributes", {}).get("forecast", []) or []
     if not forecast:
-        raise RuntimeError(f"{entity} has no 'forecast' attribute")
+        raise RuntimeError(f"{entity_id} has no 'forecast' attribute")
 
-    now = datetime.now(timezone.utc)
-    step = cfg["hwc"].get("optimization_time_step", 30)
-    now_floor = now.replace(
-        minute=(now.minute // step) * step, second=0, microsecond=0
-    )
     rows = []
     for item in forecast:
         dt = pd.to_datetime(item["datetime"], utc=True).to_pydatetime()
-        if dt >= now_floor:
-            rows.append((dt, float(item["native_value"])))
+        rows.append((dt, float(item["native_value"])))
     rows.sort(key=lambda r: r[0])
-    rows = rows[:horizon_steps]
-    if not rows:
-        raise RuntimeError(f"{entity}: no future forecast points")
-    return [r[0] for r in rows], [r[1] for r in rows]
+    return rows
+
+
+def _build_price_grid_from_rows(
+    *,
+    now_utc: datetime,
+    horizon_steps: int,
+    step_minutes: int,
+    primary_rows: list[tuple[datetime, float]],
+    tail_rows: list[tuple[datetime, float]],
+    tail_step_minutes: int,
+    source_name: str,
+) -> tuple[list[datetime], list[float]]:
+    now_floor = _floor_time_utc(now_utc, step_minutes)
+    grid = [now_floor + timedelta(minutes=step_minutes * i) for i in range(horizon_steps)]
+    primary = {dt: price for dt, price in primary_rows if dt >= now_floor}
+    tail = [
+        (dt, price)
+        for dt, price in sorted(tail_rows, key=lambda r: r[0])
+        if dt + timedelta(minutes=tail_step_minutes) > now_floor
+    ]
+    if not primary and not tail:
+        raise RuntimeError(f"{source_name}: no future forecast points")
+
+    prices = []
+    tail_idx = 0
+    for t in grid:
+        if t in primary:
+            prices.append(primary[t])
+            continue
+        while tail_idx + 1 < len(tail) and tail[tail_idx + 1][0] <= t:
+            tail_idx += 1
+        if tail and tail[tail_idx][0] <= t < tail[tail_idx][0] + timedelta(minutes=tail_step_minutes):
+            prices.append(tail[tail_idx][1])
+            continue
+        raise RuntimeError(f"{source_name}: no price for {t.isoformat()}")
+    return grid, prices
 
 
 def get_weather_series(cfg: dict):
@@ -882,6 +983,9 @@ def _run_emhass(cfg: dict, payload: dict, dry_run: bool) -> dict:
 
 
 def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] | None = None) -> dict:
+    cfg["hwc"].setdefault("block_planner", {})["main_satisfied_dates"] = (
+        _main_satisfied_dates_from_state(cfg)
+    )
     grid_times, load_cost = get_import_price_grid(cfg, horizon_steps)
     dry_bulb, wet_bulb = build_weather_grid(
         cfg,
