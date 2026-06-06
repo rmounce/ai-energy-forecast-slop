@@ -318,12 +318,13 @@
     "hwc": {
         "tank_temp_entity": "sensor.aquatech_current_temperature_local",
         "import_price_entity": "sensor.ai_dh_import_price_forecast",
+        "short_term_import_price_entity": "sensor.ai_mpc_import_price_forecast",
         "predicted_temp_entity": "sensor.predicted_temp",
         "power_plan_entity": "sensor.power_plan",
         "publish_prefix": "hwc_",
         "planner": "block",
-        "horizon_steps": 144,
-        "optimization_time_step": 30,
+        "horizon_steps": 576,
+        "optimization_time_step": 5,
         "weather": {
             "wet_bulb_smoothing_minutes": 180
         },
@@ -357,6 +358,7 @@
             "overnight_window_end": "06:00",
             "min_block_lift_c": 3.0,
             "min_block_duration_minutes": 0,
+            "main_end_reserve_penalty_aud_per_c2": 0.03,
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24
         },
@@ -368,7 +370,7 @@
             "power_on_threshold_w": 100,
             "setpoint_min_c": 55,
             "setpoint_max_c": 60,
-            "min_heat_start_delta_c": 2.0,
+            "min_heat_start_delta_c": 3.0,
             "post_block_grace_minutes": 90
         },
         "daemon": {

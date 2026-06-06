@@ -118,6 +118,43 @@ def test_parse_extra_draw_off_default_and_custom_duration():
     assert hp.parse_extra_draw_off("22:00+30=0.8") == ("22:00", 30, 0.8)
 
 
+def test_price_grid_prefers_5min_primary_then_expands_30min_tail():
+    now = datetime(2026, 6, 1, 0, 2, tzinfo=timezone.utc)
+    base = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    grid, prices = hp._build_price_grid_from_rows(
+        now_utc=now,
+        horizon_steps=8,
+        step_minutes=5,
+        primary_rows=[
+            (base + timedelta(minutes=5 * i), 0.10 + i * 0.01)
+            for i in range(3)
+        ],
+        tail_rows=[
+            (base, 0.30),
+            (base + timedelta(minutes=30), 0.40),
+        ],
+        tail_step_minutes=30,
+        source_name="test",
+    )
+
+    assert grid == [base + timedelta(minutes=5 * i) for i in range(8)]
+    assert prices == pytest.approx([0.10, 0.11, 0.12, 0.30, 0.30, 0.30, 0.40, 0.40])
+
+
+def test_main_satisfied_dates_from_state_file(tmp_path):
+    state_file = tmp_path / "hwc_state.json"
+    state_file.write_text('{"last_reached_target_at": "2026-06-01T14:00:00+00:00"}')
+    cfg = {
+        "timezone": "Australia/Adelaide",
+        "hwc": {
+            "daemon": {"state_file": str(state_file)},
+            "block_planner": {},
+        },
+    }
+
+    assert hp._main_satisfied_dates_from_state(cfg) == ["2026-06-01"]
+
+
 def test_simulate_uses_single_heat_rate_without_top_up_config():
     temps, terminal = hp.simulate_block_temperatures(
         schedule_w=[800.0],
@@ -437,6 +474,26 @@ def test_main_block_skips_satisfied_local_date():
     )
 
     assert schedule == [0.0] * len(grid)
+
+
+def test_main_block_prefers_later_equal_cost_run_for_end_window_reserve():
+    grid = _adelaide_grid(9, 22)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    cfg["hwc"]["block_planner"]["main_end_reserve_penalty_aud_per_c2"] = 0.03
+    schedule = hp._choose_daily_main_blocks(
+        [0.0] * len(grid),
+        grid_times_utc=grid,
+        load_cost=[0.10] * len(grid),
+        start_temperature=48.0,
+        dry_bulb=[15.0] * len(grid),
+        wet_bulb=[12.5] * len(grid),
+        draw_off=[0.0] * len(grid),
+        cfg=cfg,
+    )
+
+    first_heat = next(idx for idx, power in enumerate(schedule) if power > 0)
+    first_local = grid[first_heat].astimezone(pytz.timezone("Australia/Adelaide"))
+    assert first_local.hour >= 15
 
 
 def test_terminal_repair_respects_minimum_block_duration():
