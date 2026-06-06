@@ -303,9 +303,19 @@ Unit tests:
 Shadow/live checks:
 
 - compare current block plan vs DP shadow plan on the same inputs;
+- run `hwc_dp_diagnostic.py` to print live block-vs-DP blocks, objective breakdown, and
+  one-block-removal effects;
 - store snapshots for interesting disagreements;
 - inspect candidate reasons: energy cost, starts, terminal reserve, target penalty;
 - compare forecast temperature to measured tank temperature after each real cycle.
+
+Current diagnostic finding:
+
+- The first live DP shadow produced many blocks that could be removed one-at-a-time while still
+  satisfying the replayed floor, daily-target, and terminal checks.
+- The likely cause is cumulative temperature-bin error: floor-binning every 5-minute transition
+  adds artificial cooling inside the DP. Fix the state discretisation before tuning start penalties
+  or considering executor promotion.
 
 Promotion gate:
 
