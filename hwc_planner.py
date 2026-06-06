@@ -167,7 +167,13 @@ def _thermal_capacity_kwh_per_c(th: dict) -> float:
     return litres * density_kg_per_l * float(th.get("heat_capacity", 4.184)) / 3600.0
 
 
-def _heat_rate_c_per_hour(th: dict, temp_c: float, wet_bulb_c: float | None = None) -> float:
+def _heat_rate_c_per_hour(
+    th: dict,
+    temp_c: float,
+    wet_bulb_c: float | None = None,
+    *,
+    heat_block_start_temp_c: float | None = None,
+) -> float:
     """Return empirical compressor heat rate for the current modelled tank temp.
 
     The Aquatech data shows lower effective probe lift rate for near-target top-ups.
@@ -178,7 +184,8 @@ def _heat_rate_c_per_hour(th: dict, temp_c: float, wet_bulb_c: float | None = No
     base = float(th.get("heat_rate_c_per_hour", 5.2))
     top_up = th.get("top_up_heat_rate_c_per_hour")
     top_up_start = th.get("top_up_start_temp_c")
-    if top_up is not None and top_up_start is not None and temp_c >= float(top_up_start):
+    regime_temp = temp_c if heat_block_start_temp_c is None else heat_block_start_temp_c
+    if top_up is not None and top_up_start is not None and regime_temp >= float(top_up_start):
         base = float(top_up)
     if wet_bulb_c is not None:
         reference_wb = th.get("heat_rate_reference_wet_bulb_c")
@@ -273,6 +280,7 @@ def simulate_block_temperatures(
     temp = float(start_temperature)
     temps = []
     heat_ambient = wet_bulb if wet_bulb is not None else [None] * len(schedule_w)
+    heat_block_start_temp: float | None = None
     for power_w, ambient_c, heat_wb, draw_kwh in zip(
         schedule_w, dry_bulb, heat_ambient, draw_off, strict=True
     ):
@@ -281,8 +289,17 @@ def simulate_block_temperatures(
         temp -= loss_kwh / cap_kwh_per_c
         temp -= float(draw_kwh) / cap_kwh_per_c
         if power_w > 0:
-            heat_rate_c_per_h = _heat_rate_c_per_hour(th, temp, heat_wb)
+            if heat_block_start_temp is None:
+                heat_block_start_temp = temp
+            heat_rate_c_per_h = _heat_rate_c_per_hour(
+                th,
+                temp,
+                heat_wb,
+                heat_block_start_temp_c=heat_block_start_temp,
+            )
             temp += heat_rate_c_per_h * step_h
+        else:
+            heat_block_start_temp = None
         temp = min(max_temp, temp)
     return temps, round(temp, 2)
 
