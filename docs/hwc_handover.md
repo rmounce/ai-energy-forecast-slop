@@ -22,14 +22,14 @@ EMHASS thermal-battery mode remains as a fallback/comparison path.
 
 | Thing | State |
 |---|---|
-| `hwc_planner.py` (planner) | fixed-speed block planner, **works**, modelling-only timer enabled |
-| `ai-energy-hwc.timer` (user systemd unit) | **enabled/active**; live publish verified 2026-06-01 |
+| `services/hwc_daemon.py` | event-driven planner/executor daemon, **enabled/active** |
+| old `ai-energy-hwc.{service,timer}` | **obsolete/removed**; daemon owns HWC planning now |
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
 | COP characterisation | done & committed `5c1ab55` (measured COP ≈ 2.4) |
 | Engine decision (EMHASS vs custom) | custom block planner is now default; EMHASS kept as fallback |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
-| Execution layer | `hwc_executor.py` added, **config-disabled** by default; dry-run tested |
+| Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
 
 ## What's committed
 
@@ -110,13 +110,11 @@ the engine-independent long pole — gather it regardless.
 4. **Regenerate `data/hwc_cop_cycles.csv`** with `hwc_cop_analysis.py` once InfluxDB access is
    available; the humidity query now reads aggregate `rp_30m.humidity_adelaide` without the
    invalid `entity_id` filter.
-5. **Monitor the enabled modelling timer**: `systemctl --user list-timers ai-energy-hwc.timer`
-   and `journalctl --user -u ai-energy-hwc.service`. The planner still uses `entity_save`
-   against the shared store — safe with the deployed `emhass:metadata-race-20260601` fix; do
-   NOT run it against a stock image that predates the fix.
-6. **Execution dry runs**: `python hwc_executor.py --dry-run`. It reads the published block
-   plan and `binary_sensor.aquatech_compressor`; actuation remains disabled until
-   `hwc.actuation.enabled` is set true and `ai-energy-hwc-executor.timer` is enabled.
+5. **Monitor the daemon**: `systemctl --user status ai-energy-hwc-daemon.service`
+   and `journalctl --user -u ai-energy-hwc-daemon.service`. The old modelling timer and
+   executor timer are obsolete; do not re-enable them.
+6. **Execution dry runs**: `python hwc_executor.py --dry-run` still exercises the standalone
+   executor helper, but live execution is handled by `services/hwc_daemon.py`.
 
 ## Gotchas / operational notes
 

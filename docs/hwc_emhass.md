@@ -220,9 +220,9 @@ and fragmented/fractional compressor starts.
 
 ## Execution Layer
 
-`hwc_executor.py` is the first actuation layer. It is **config-disabled by default**
-(`hwc.actuation.enabled: false`) and has its own disabled systemd timer
-(`systemd/ai-energy-hwc-executor.{service,timer}`).
+`hwc_executor.py` was the first standalone actuation helper. Live execution is now handled
+by `services/hwc_daemon.py` under `ai-energy-hwc-daemon.service`; the old executor timer
+has been removed.
 
 Live HA metadata observed 2026-06-01:
 
