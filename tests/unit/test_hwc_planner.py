@@ -141,6 +141,35 @@ def test_price_grid_prefers_5min_primary_then_expands_30min_tail():
     assert prices == pytest.approx([0.10, 0.11, 0.12, 0.30, 0.30, 0.30, 0.40, 0.40])
 
 
+def test_unit_load_cost_rows_from_entity(monkeypatch):
+    def fake_ha_call(cfg, method, endpoint, payload=None):
+        assert method == "GET"
+        assert endpoint == "states/sensor.mpc_unit_load_cost"
+        return {
+            "attributes": {
+                "unit_load_cost_forecasts": [
+                    {
+                        "date": "2026-06-01T00:05:00+00:00",
+                        "mpc_unit_load_cost": "0.2345",
+                    },
+                    {
+                        "date": "2026-06-01T00:00:00+00:00",
+                        "mpc_unit_load_cost": "0.1234",
+                    },
+                ]
+            }
+        }
+
+    monkeypatch.setattr(hp, "_ha_call", fake_ha_call)
+
+    rows = hp._unit_load_cost_rows_from_entity({}, "sensor.mpc_unit_load_cost")
+
+    assert rows == [
+        (datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc), 0.1234),
+        (datetime(2026, 6, 1, 0, 5, tzinfo=timezone.utc), 0.2345),
+    ]
+
+
 def test_main_satisfied_dates_from_state_file(tmp_path):
     state_file = tmp_path / "hwc_state.json"
     state_file.write_text('{"last_reached_target_at": "2026-06-01T14:00:00+00:00"}')
