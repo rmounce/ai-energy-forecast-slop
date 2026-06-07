@@ -1,0 +1,35 @@
+template:
+  - sensor:
+      - name: "Aquatech Current Temperature Local"
+        unique_id: aquatech_current_temperature_local
+        device_class: temperature
+        state_class: measurement
+        unit_of_measurement: "°C"
+        state: >
+          {{ state_attr('water_heater.aquatech', 'current_temperature') | float(none) }}
+        availability: >
+          {{ state_attr('water_heater.aquatech', 'current_temperature') is number }}
+
+      - name: "HWC Wet Bulb Current"
+        unique_id: hwc_wet_bulb_current
+        device_class: temperature
+        state_class: measurement
+        unit_of_measurement: "°C"
+        state: >
+          {% set t = state_attr('weather.woodville_west_hourly', 'temperature') | float(none) %}
+          {% set rh = state_attr('weather.woodville_west_hourly', 'humidity') | float(none) %}
+          {% if t is number and rh is number %}
+            {% set rh = [[rh, 1] | max, 100] | min %}
+            {{ (
+              t * atan(0.151977 * ((rh + 8.313659) ** 0.5))
+              + atan(t + rh)
+              - atan(rh - 1.676331)
+              + 0.00391838 * (rh ** 1.5) * atan(0.023101 * rh)
+              - 4.686035
+            ) | round(2) }}
+          {% else %}
+            {{ none }}
+          {% endif %}
+        availability: >
+          {{ state_attr('weather.woodville_west_hourly', 'temperature') is number
+             and state_attr('weather.woodville_west_hourly', 'humidity') is number }}
