@@ -4,7 +4,7 @@
 # `apexcharts-card` (HACS → "ApexCharts Card").
 #
 # It plots the measured tank temperature, executor forecast, current/forecast
-# wet-bulb temperature, planned heat-pump blocks, and import-price context. The card is
+# wet-bulb temperature, planned/observed heat-pump blocks, and import-price context. The card is
 # intentionally sparse: the plan is mainly judged by whether planned reheats land
 # in relative price valleys and whether recovery-speed assumptions track ambient
 # conditions.
@@ -85,7 +85,7 @@ series:
       return (entity.attributes.wet_bulb_forecasts || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_wet_bulb_forecast)];
       });
-  - entity: sensor.hwc_wet_bulb_current
+  - entity: sensor.hwc_wet_bulb_forecast
     name: Wet bulb (measured)
     extend_to: false
     type: line
@@ -116,6 +116,16 @@ series:
       return (entity.attributes.deferrables_schedule || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_power_plan)];
       });
+  - entity: binary_sensor.aquatech_compressor
+    name: Heat pump (measured)
+    extend_to: false
+    type: area
+    curve: stepline
+    stroke_width: 1
+    opacity: 0.22
+    color: '#43a047'
+    yaxis_id: power
+    transform: "return x === 'on' ? 780 : 0;"
   - entity: sensor.hwc_unit_load_cost
     name: Import price (forecast)
     extend_to: false
