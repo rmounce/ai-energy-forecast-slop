@@ -47,11 +47,11 @@ leave them alone.
 
 ## How it works (architecture)
 
-- `hwc_planner.py` runs as a Python script (`systemd/ai-energy-hwc.{service,timer}`, every
-  30 min), *not* a Jinja `rest_command`. It reads tank temp + the import-price forecast
-  (`sensor.ai_dh_import_price_forecast`) + BOM weather from HA; builds clock-aligned
-  `draw_off`/temperature arrays; creates a 72h fixed-speed block plan; and publishes the plan
-  sensors directly to HA.
+- `hwc_planner.py` runs as a Python script under the event-driven HWC daemon, *not* a
+  Jinja `rest_command`. It reads tank temp, EMHASS-prepared import-price series
+  (`sensor.mpc_unit_load_cost` + `sensor.dh_unit_load_cost`), and BOM weather from HA;
+  builds clock-aligned `draw_off`/temperature arrays; creates a 48h fixed-speed block plan;
+  and publishes the plan sensors directly to HA.
 - EMHASS fallback mode is still available with `hwc.planner: "emhass"`, but the block planner
   is the default because it matches the unit's fixed-speed behavior and avoids fragmented
   compressor starts.

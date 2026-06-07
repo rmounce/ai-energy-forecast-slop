@@ -796,41 +796,47 @@ def get_tank_temperature(cfg: dict) -> float:
 
 
 def get_import_price_grid(cfg: dict, horizon_steps: int):
-    """Return (grid_times_utc, load_cost) from HWC import-price forecasts.
+    """Return (grid_times_utc, load_cost) from EMHASS-prepared price series.
 
-    At 5-minute resolution this prefers the canonical short-term MPC price forecast, then
-    expands the 30-minute DH tail across its child 5-minute slots.
+    The battery Jinja templates already apply source selection, current-interval
+    handling, buy-price weighting, rounding, and fallback logic before publishing
+    ``sensor.mpc_unit_load_cost`` and ``sensor.dh_unit_load_cost``. HWC consumes those
+    published series so it stays aligned with the battery optimiser's actual inputs.
     """
     hwc = cfg["hwc"]
     step = int(hwc.get("optimization_time_step", 30))
-    dh_entity = hwc["import_price_entity"]
-    dh_rows = _forecast_rows_from_entity(cfg, dh_entity)
-    primary_rows: list[tuple[datetime, float]] = []
-    primary_entity = hwc.get("short_term_import_price_entity")
-    if step < 30 and primary_entity:
-        primary_rows = _forecast_rows_from_entity(cfg, primary_entity)
+    now_utc = datetime.now(timezone.utc)
+    dh_entity = hwc.get("emhass_dh_unit_load_cost_entity", "sensor.dh_unit_load_cost")
+    mpc_entity = hwc.get("emhass_mpc_unit_load_cost_entity", "sensor.mpc_unit_load_cost")
+    dh_rows = _unit_load_cost_rows_from_entity(cfg, dh_entity)
+    primary_rows = (
+        _unit_load_cost_rows_from_entity(cfg, mpc_entity)
+        if step < 30 and mpc_entity
+        else []
+    )
 
     return _build_price_grid_from_rows(
-        now_utc=datetime.now(timezone.utc),
+        now_utc=now_utc,
         horizon_steps=horizon_steps,
         step_minutes=step,
         primary_rows=primary_rows,
         tail_rows=dh_rows,
         tail_step_minutes=30,
-        source_name=f"{primary_entity or dh_entity}+{dh_entity}" if primary_rows else dh_entity,
+        source_name=f"{mpc_entity}+{dh_entity}" if primary_rows else dh_entity,
     )
 
 
-def _forecast_rows_from_entity(cfg: dict, entity_id: str) -> list[tuple[datetime, float]]:
+def _unit_load_cost_rows_from_entity(cfg: dict, entity_id: str) -> list[tuple[datetime, float]]:
     state = _ha_call(cfg, "GET", f"states/{entity_id}")
-    forecast = state.get("attributes", {}).get("forecast", []) or []
-    if not forecast:
-        raise RuntimeError(f"{entity_id} has no 'forecast' attribute")
+    forecasts = state.get("attributes", {}).get("unit_load_cost_forecasts", []) or []
+    if not forecasts:
+        raise RuntimeError(f"{entity_id} has no 'unit_load_cost_forecasts' attribute")
 
+    value_key = entity_id.split(".", 1)[1]
     rows = []
-    for item in forecast:
-        dt = pd.to_datetime(item["datetime"], utc=True).to_pydatetime()
-        rows.append((dt, float(item["native_value"])))
+    for item in forecasts:
+        dt = pd.to_datetime(item["date"], utc=True).to_pydatetime()
+        rows.append((dt, float(item[value_key])))
     rows.sort(key=lambda r: r[0])
     return rows
 

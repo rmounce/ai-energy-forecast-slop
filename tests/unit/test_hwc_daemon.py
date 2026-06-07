@@ -11,9 +11,12 @@ def _config():
             "tank_temp_entity": "sensor.aquatech_current_temperature_local",
             "import_price_entity": "sensor.ai_dh_import_price_forecast",
             "short_term_import_price_entity": "sensor.ai_mpc_import_price_forecast",
+            "emhass_mpc_unit_load_cost_entity": "sensor.mpc_unit_load_cost",
+            "emhass_dh_unit_load_cost_entity": "sensor.dh_unit_load_cost",
             "predicted_temp_entity": "sensor.predicted_temp",
             "power_plan_entity": "sensor.power_plan",
             "publish_prefix": "hwc_",
+            "optimization_time_step": 5,
             "thermal": {
                 "desired_temp": 60,
             },
@@ -44,8 +47,8 @@ def _state(value):
 def test_watched_entities_include_inputs_equipment_and_published_plan():
     assert hd.watched_entities(_config()) == {
         "sensor.aquatech_current_temperature_local",
-        "sensor.ai_dh_import_price_forecast",
-        "sensor.ai_mpc_import_price_forecast",
+        "sensor.dh_unit_load_cost",
+        "sensor.mpc_unit_load_cost",
         "weather.woodville_west_hourly",
         "water_heater.aquatech",
         "binary_sensor.aquatech_compressor",
@@ -57,7 +60,7 @@ def test_watched_entities_include_inputs_equipment_and_published_plan():
 def test_forecast_change_triggers_replan_only():
     decision = hd.classify_state_change(
         _config(),
-        "sensor.ai_dh_import_price_forecast",
+        "sensor.dh_unit_load_cost",
         {"state": "old"},
         {"state": "new"},
     )
@@ -69,7 +72,7 @@ def test_forecast_change_triggers_replan_only():
 def test_short_term_forecast_change_triggers_replan_only():
     decision = hd.classify_state_change(
         _config(),
-        "sensor.ai_mpc_import_price_forecast",
+        "sensor.mpc_unit_load_cost",
         {"state": "old"},
         {"state": "new"},
     )

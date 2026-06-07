@@ -143,9 +143,11 @@ hourly→30-min interpolation). That is fragile and untestable in Jinja, and "ha
 complexity" is a noted project pain point. Python keeps it testable. A thin
 `hass/packages/emhass_hwc.yaml` still holds the published plan sensors (and any helpers).
 
-- The script: reads current tank temp + the weather (temp/humidity) and import-price
-  forecasts from HA, computes the clock-aligned input arrays, builds a fixed-block plan,
-  and publishes the resulting plan back to HA.
+- The script: reads current tank temp, the weather (temp/humidity), and the
+  EMHASS-prepared import-price series from HA (`sensor.mpc_unit_load_cost` for the
+  5-minute near term, `sensor.dh_unit_load_cost` for the 30-minute tail). This keeps HWC
+  aligned with the same Jinja source selection, current-interval handling, buy-price
+  weighting, rounding, and fallback logic used by the battery optimiser.
 - Optional EMHASS fallback: a **separate** `naive-mpc-optim` call to the existing EMHASS
   instance with:
   - `set_use_battery: false`, `set_use_pv: false` (decoupled, fast)
