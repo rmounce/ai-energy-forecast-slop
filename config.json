@@ -390,9 +390,9 @@
             "fallback_setpoint_c": 60
         },
         "draw_off": {
-            "total_kwh": 1.0,
-            "window_start": "08:00",
-            "window_end": "09:00"
+            "total_kwh": 1.2,
+            "window_start": "06:00",
+            "window_end": "07:00"
         }
     }
 }
