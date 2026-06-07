@@ -3,8 +3,8 @@
 # Paste this as a Manual card on a Lovelace dashboard. Requires the custom
 # `apexcharts-card` (HACS → "ApexCharts Card").
 #
-# It plots the measured tank temperature, executor forecast, forecast wet-bulb
-# temperature, planned heat-pump blocks, and import-price context. The card is
+# It plots the measured tank temperature, executor forecast, current/forecast
+# wet-bulb temperature, planned heat-pump blocks, and import-price context. The card is
 # intentionally sparse: the plan is mainly judged by whether planned reheats land
 # in relative price valleys and whether recovery-speed assumptions track ambient
 # conditions.
@@ -85,6 +85,15 @@ series:
       return (entity.attributes.wet_bulb_forecasts || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_wet_bulb_forecast)];
       });
+  - entity: sensor.hwc_wet_bulb_current
+    name: Wet bulb (measured)
+    extend_to: false
+    type: line
+    curve: smooth
+    stroke_width: 1
+    opacity: 0.45
+    color: '#0097a7'
+    yaxis_id: ambient
   - entity: sensor.amber_5min_current_general_price
     name: Import price (actual)
     extend_to: false
