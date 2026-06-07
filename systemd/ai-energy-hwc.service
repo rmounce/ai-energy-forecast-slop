@@ -1,7 +1,0 @@
-[Unit]
-Description=HWC (heat-pump hot water) planner — v1 modelling only (publishes plan, no actuation)
-
-[Service]
-Type=oneshot
-WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
-ExecStart=/bin/bash -c 'source .venv/bin/activate && python hwc_planner.py'

@@ -1,9 +1,0 @@
-[Unit]
-Description=Run the HWC planner every 30 min (a few minutes past the half-hour, so the import-price forecast is fresh)
-
-[Timer]
-OnCalendar=*-*-* *:04,34:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
