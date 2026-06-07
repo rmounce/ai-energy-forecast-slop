@@ -54,12 +54,16 @@ yaxis:
 series:
   - entity: sensor.aquatech_current_temperature_local
     name: Tank temp (measured)
-    extend_to: false
+    extend_to: now
     type: line
     curve: stepline
     stroke_width: 2
     color: '#1e88e5'
     yaxis_id: temp
+    group_by:
+      duration: 5min
+      func: last
+      fill: last
   - entity: sensor.hwc_predicted_temp
     name: Tank temp (executor)
     extend_to: false
@@ -73,6 +77,15 @@ series:
         return [new Date(p.date).getTime(), parseFloat(p.hwc_predicted_temp)];
       });
   - entity: sensor.hwc_wet_bulb_forecast
+    name: Wet bulb (measured)
+    extend_to: now
+    type: line
+    curve: smooth
+    stroke_width: 1
+    opacity: 0.45
+    color: '#0097a7'
+    yaxis_id: ambient
+  - entity: sensor.hwc_wet_bulb_forecast
     name: Wet bulb (forecast)
     extend_to: false
     type: line
@@ -85,47 +98,19 @@ series:
       return (entity.attributes.wet_bulb_forecasts || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_wet_bulb_forecast)];
       });
-  - entity: sensor.hwc_wet_bulb_forecast
-    name: Wet bulb (measured)
-    extend_to: false
-    type: line
-    curve: smooth
-    stroke_width: 1
-    opacity: 0.45
-    color: '#0097a7'
-    yaxis_id: ambient
   - entity: sensor.amber_5min_current_general_price
     name: Import price (actual)
-    extend_to: false
+    extend_to: now
     type: line
     curve: stepline
     stroke_width: 1
     opacity: 0.25
     color: '#fb8c00'
     yaxis_id: price
-  - entity: sensor.hwc_power_plan
-    name: Planned heat pump
-    extend_to: false
-    type: area
-    curve: stepline
-    stroke_width: 1
-    opacity: 0.16
-    color: '#43a047'
-    yaxis_id: power
-    data_generator: |
-      return (entity.attributes.deferrables_schedule || []).map(p => {
-        return [new Date(p.date).getTime(), parseFloat(p.hwc_power_plan)];
-      });
-  - entity: binary_sensor.aquatech_compressor
-    name: Heat pump (measured)
-    extend_to: false
-    type: area
-    curve: stepline
-    stroke_width: 1
-    opacity: 0.22
-    color: '#43a047'
-    yaxis_id: power
-    transform: "return x === 'on' ? 780 : 0;"
+    group_by:
+      duration: 5min
+      func: last
+      fill: last
   - entity: sensor.hwc_unit_load_cost
     name: Import price (forecast)
     extend_to: false
@@ -138,6 +123,29 @@ series:
     data_generator: |
       return (entity.attributes.unit_load_cost_forecasts || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_unit_load_cost)];
+      });
+  - entity: binary_sensor.aquatech_compressor
+    name: Heat pump (measured)
+    extend_to: now
+    type: area
+    curve: stepline
+    stroke_width: 1
+    opacity: 0.22
+    color: '#43a047'
+    yaxis_id: power
+    transform: "return x === 'on' ? 780 : 0;"
+  - entity: sensor.hwc_power_plan
+    name: Planned heat pump
+    extend_to: false
+    type: area
+    curve: stepline
+    stroke_width: 1
+    opacity: 0.16
+    color: '#43a047'
+    yaxis_id: power
+    data_generator: |
+      return (entity.attributes.deferrables_schedule || []).map(p => {
+        return [new Date(p.date).getTime(), parseFloat(p.hwc_power_plan)];
       });
 apex_config:
   chart:
