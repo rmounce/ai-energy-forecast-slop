@@ -688,19 +688,20 @@ rest_command:
             {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
 
             {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
-            {#- 00:00-14:59 = 0.0 | 15:00-20:59 = +0.0002 per 5 mins | 21:00-23:59 = 0.0 #}
-            {#- REVERT to 15:30: change 900->930 #}
-            {#- REVERT to 15:45: change 900->945 #}
-            {#- REVERT to 16:00: change 900->960 #}
+            {#- 00:00-ramp start = 0.0 | ramp window = +0.0002 per 5 mins | after ramp stop = 0.0 #}
+            {%- set charge_ramp_start_min = 15 * 60 %}
+            {%- set charge_ramp_stop_min = 21 * 60 %}
+            {%- set charge_ramp_step_min = 5 %}
+            {%- set charge_ramp_step_weight = 0.0002 %}
             {#- Use END of period time. Add 30 minutes to start time. #}
             {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
             {%- set m = end_time.hour * 60 + end_time.minute %}
 
-            {#- 15:00 is 900. 21:00 is 1260. Add 0.0002 for each 5-minute step. #}
-            {#- We use > 900 so the 15:00-16:00 block picks up an initial weight. #}
-            {#- We use <= 1260 because 21:00 exactly (end of 20:30-21:00) is the peak of the ramp. #}
-            {%- if 900 < m <= 1260 %}
-               {%- set w_charge = 0.0002 * ((m - 900) / 5) %}
+            {#- Use > start so the first period ending after ramp start picks up an initial weight. #}
+            {#- Use <= stop because the exact stop time is the peak of the ramp. #}
+            {%- if charge_ramp_start_min < m <= charge_ramp_stop_min %}
+               {%- set charge_ramp_steps = (m - charge_ramp_start_min) / charge_ramp_step_min %}
+               {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
             {%- else %}
                {%- set w_charge = 0.0 %}
             {%- endif %}
