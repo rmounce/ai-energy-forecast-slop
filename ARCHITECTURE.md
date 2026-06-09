@@ -419,6 +419,7 @@ This is the most complex HA file. It does:
    - PV forecast: Solcast p10/p50/p90 blended by `input_number.emhass_weight_pv_forecast`, with 65W fixed loss applied
    - Load forecast: from `sensor.ai_load_forecast_high` (p65 model)
    - Price forecast: from `sensor.ai_price_forecast` (p50), blended with p30/p70 by `input_number.emhass_weight_buy_forecast`
+   - Battery charge ramp: DH and MPC both read `sensor.emhass_charge_ramp_config`, which is derived from the `input_datetime.emhass_charge_ramp_*` and `input_number.emhass_charge_ramp_*` helpers.
 
 ---
 
