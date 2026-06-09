@@ -610,6 +610,12 @@ rest_command:
         {#- Get the current allowance state ONCE before the loop. #}
         {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
 
+        {#- Battery charge ramp config. Times are minutes from midnight; weights use period end times. #}
+        {%- set charge_ramp_start_min = 14 * 60 + 30 %}
+        {%- set charge_ramp_stop_min = 21 * 60 %}
+        {%- set charge_ramp_step_min = 5 %}
+        {%- set charge_ramp_step_weight = 0.0002 %}
+
         {%- set ai_load_forecasts = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
         {%- set ai_prod_forecasts = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
         {%- set use_ai_dh_prices = is_state('input_select.emhass_dh_price_source', 'ai_shadow') and is_state('sensor.ai_dh_price_forecast_status', 'ready') and ai_load_forecasts | count >= 144 and ai_prod_forecasts | count >= 144 %}
@@ -636,8 +642,9 @@ rest_command:
             {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
             {%- set m = end_time.hour * 60 + end_time.minute %}
 
-            {%- if 930 < m <= 1260 %}
-               {%- set w_charge = 0.0120 * ((m - 930) / 330) %}
+            {%- if charge_ramp_start_min < m <= charge_ramp_stop_min %}
+               {%- set charge_ramp_steps = (m - charge_ramp_start_min) / charge_ramp_step_min %}
+               {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
             {%- else %}
                {%- set w_charge = 0.0 %}
             {%- endif %}
@@ -689,10 +696,6 @@ rest_command:
 
             {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
             {#- 00:00-ramp start = 0.0 | ramp window = +0.0002 per 5 mins | after ramp stop = 0.0 #}
-            {%- set charge_ramp_start_min = 15 * 60 %}
-            {%- set charge_ramp_stop_min = 21 * 60 %}
-            {%- set charge_ramp_step_min = 5 %}
-            {%- set charge_ramp_step_weight = 0.0002 %}
             {#- Use END of period time. Add 30 minutes to start time. #}
             {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
             {%- set m = end_time.hour * 60 + end_time.minute %}
@@ -871,11 +874,11 @@ rest_command:
         {%- endif %}
         
         {#- --- CONFIGURATION: Relative Panic Curve --- #}
-        {#- REVERT to 15:45: change 330->315 and 930->945 #}
-        {#- REVERT to 16:00: change 330->300 and 930->960 #}
-        {%- set slope = 0.0120 / 330 %}   {# Max cost / Duration in mins #}
-        {%- set win_start = 930 %}        {# 15:30 #}
-        {%- set win_end = 1260 %}         {# 21:00 #}
+        {#- Battery charge ramp config. Times are minutes from midnight; weights use period end times. #}
+        {%- set charge_ramp_start_min = 14 * 60 + 30 %}
+        {%- set charge_ramp_stop_min = 21 * 60 %}
+        {%- set charge_ramp_step_min = 5 %}
+        {%- set charge_ramp_step_weight = 0.0002 %}
         
         {#- Calculate NOW (minutes from midnight, end of current 5min block) #}
         {%- set snapped_minute = (current_time_local.minute // 5) * 5 %}
@@ -883,14 +886,15 @@ rest_command:
         {%- set end_of_period = start_of_period + timedelta(minutes=5) %}
         {%- set m_now = end_of_period.hour * 60 + end_of_period.minute %}
         
-        {#- Dynamic Start: The ramp starts at 16:00 OR Now, whichever is later. #}
+        {#- Dynamic Start: The ramp starts at the configured start OR Now, whichever is later. #}
         {#- This ensures the cost at 'Now' is always 0, preventing disincentive to charge immediately. #}
-        {%- set ramp_start = [win_start, m_now] | max %}
+        {%- set ramp_start = [charge_ramp_start_min, m_now] | max %}
         
         {#- Calculate Weight for NOW (Always 0 based on logic above) #}
         {#- But we keep the check for safety to ensure we don't return negative numbers #}
-        {%- if ramp_start < m_now <= win_end %}
-           {%- set w_charge_now = (m_now - ramp_start) * slope %}
+        {%- if ramp_start < m_now <= charge_ramp_stop_min %}
+           {%- set charge_ramp_steps = (m_now - ramp_start) / charge_ramp_step_min %}
+           {%- set w_charge_now = charge_ramp_step_weight * charge_ramp_steps %}
         {%- else %}
            {%- set w_charge_now = 0.0 %}
         {%- endif %}
@@ -916,8 +920,9 @@ rest_command:
               {%- set forecast_start = as_local(as_datetime(item.datetime)) %}
               {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
               {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
-              {%- if ramp_start < m <= win_end %}
-                {%- set w_charge = (m - ramp_start) * slope %}
+              {%- if ramp_start < m <= charge_ramp_stop_min %}
+                {%- set charge_ramp_steps = (m - ramp_start) / charge_ramp_step_min %}
+                {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
               {%- else %}
                 {%- set w_charge = 0.0 %}
               {%- endif %}
@@ -949,8 +954,9 @@ rest_command:
               {%- set forecast_start = as_local(as_datetime(item.start_time)) %}
               {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
               {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
-              {%- if ramp_start < m <= win_end %}
-                {%- set w_charge = (m - ramp_start) * slope %}
+              {%- if ramp_start < m <= charge_ramp_stop_min %}
+                {%- set charge_ramp_steps = (m - ramp_start) / charge_ramp_step_min %}
+                {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
               {%- else %}
                 {%- set w_charge = 0.0 %}
               {%- endif %}
