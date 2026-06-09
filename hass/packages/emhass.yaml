@@ -17,6 +17,19 @@ input_select:
       - amber_lgbm_extrapolated
     initial: amber_lgbm_extrapolated
 
+input_datetime:
+  emhass_charge_ramp_start_time:
+    name: EMHASS Charge Ramp Start
+    has_date: false
+    has_time: true
+    initial: "14:30:00"
+
+  emhass_charge_ramp_stop_time:
+    name: EMHASS Charge Ramp Stop
+    has_date: false
+    has_time: true
+    initial: "21:00:00"
+
 input_number:
   # soc_init values passed to the most recent DH / MPC EMHASS runs. Written by
   # script.emhass_dayahead_optim and script.emhass_mpc respectively. Used to
@@ -40,6 +53,26 @@ input_number:
     unit_of_measurement: "%"
     icon: mdi:battery-sync
 
+  emhass_charge_ramp_step_minutes:
+    name: EMHASS Charge Ramp Step Minutes
+    min: 1
+    max: 60
+    step: 1
+    initial: 5
+    mode: box
+    unit_of_measurement: min
+    icon: mdi:timer-outline
+
+  emhass_charge_ramp_step_weight:
+    name: EMHASS Charge Ramp Step Weight
+    min: 0
+    max: 0.01
+    step: 0.0001
+    initial: 0.0002
+    mode: box
+    unit_of_measurement: "$/kWh"
+    icon: mdi:chart-line
+
 input_text:
   # Compact UTC key for the most recent 30-minute DH quantization block where
   # script.emhass_dayahead_optim re-grounded its chained anchor to live SoC
@@ -53,6 +86,22 @@ input_text:
 
 template:
   - sensor:
+    - name: 'EMHASS Charge Ramp Config'
+      state: configured
+      attributes:
+        start_time: "{{ states('input_datetime.emhass_charge_ramp_start_time') }}"
+        stop_time: "{{ states('input_datetime.emhass_charge_ramp_stop_time') }}"
+        start_min: >
+          {% set ramp_start_state = states('input_datetime.emhass_charge_ramp_start_time') %}
+          {% set ramp_start_parts = ramp_start_state.split(':') if ':' in ramp_start_state else ['14', '30'] %}
+          {{ (ramp_start_parts[0] | int(14)) * 60 + (ramp_start_parts[1] | int(30)) }}
+        stop_min: >
+          {% set ramp_stop_state = states('input_datetime.emhass_charge_ramp_stop_time') %}
+          {% set ramp_stop_parts = ramp_stop_state.split(':') if ':' in ramp_stop_state else ['21', '00'] %}
+          {{ (ramp_stop_parts[0] | int(21)) * 60 + (ramp_stop_parts[1] | int(0)) }}
+        step_minutes: "{{ [states('input_number.emhass_charge_ramp_step_minutes') | int(5), 1] | max }}"
+        step_weight: "{{ states('input_number.emhass_charge_ramp_step_weight') | float(0.0002) }}"
+
     - name: 'Amber Effective General Price'
       unit_of_measurement: "$/kWh"
       device_class: monetary
@@ -610,11 +659,11 @@ rest_command:
         {#- Get the current allowance state ONCE before the loop. #}
         {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
 
-        {#- Battery charge ramp config. Times are minutes from midnight; weights use period end times. #}
-        {%- set charge_ramp_start_min = 14 * 60 + 30 %}
-        {%- set charge_ramp_stop_min = 21 * 60 %}
-        {%- set charge_ramp_step_min = 5 %}
-        {%- set charge_ramp_step_weight = 0.0002 %}
+        {#- Battery charge ramp config from HA helpers via sensor.emhass_charge_ramp_config. #}
+        {%- set charge_ramp_start_min = state_attr('sensor.emhass_charge_ramp_config', 'start_min') | int(0) %}
+        {%- set charge_ramp_stop_min = state_attr('sensor.emhass_charge_ramp_config', 'stop_min') | int(0) %}
+        {%- set charge_ramp_step_min = [state_attr('sensor.emhass_charge_ramp_config', 'step_minutes') | int(5), 1] | max %}
+        {%- set charge_ramp_step_weight = state_attr('sensor.emhass_charge_ramp_config', 'step_weight') | float(0) %}
 
         {%- set ai_load_forecasts = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
         {%- set ai_prod_forecasts = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
@@ -874,11 +923,11 @@ rest_command:
         {%- endif %}
         
         {#- --- CONFIGURATION: Relative Panic Curve --- #}
-        {#- Battery charge ramp config. Times are minutes from midnight; weights use period end times. #}
-        {%- set charge_ramp_start_min = 14 * 60 + 30 %}
-        {%- set charge_ramp_stop_min = 21 * 60 %}
-        {%- set charge_ramp_step_min = 5 %}
-        {%- set charge_ramp_step_weight = 0.0002 %}
+        {#- Battery charge ramp config from HA helpers via sensor.emhass_charge_ramp_config. #}
+        {%- set charge_ramp_start_min = state_attr('sensor.emhass_charge_ramp_config', 'start_min') | int(0) %}
+        {%- set charge_ramp_stop_min = state_attr('sensor.emhass_charge_ramp_config', 'stop_min') | int(0) %}
+        {%- set charge_ramp_step_min = [state_attr('sensor.emhass_charge_ramp_config', 'step_minutes') | int(5), 1] | max %}
+        {%- set charge_ramp_step_weight = state_attr('sensor.emhass_charge_ramp_config', 'step_weight') | float(0) %}
         
         {#- Calculate NOW (minutes from midnight, end of current 5min block) #}
         {%- set snapped_minute = (current_time_local.minute // 5) * 5 %}
