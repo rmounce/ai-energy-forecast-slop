@@ -1,10 +1,7 @@
 input_select:
-  # 2026-05-08: ai_shadow removed from EMHASS source-selector options per reviewer
-  # call. Rationale: live visual shadowing (TFT/PD-direct triplet sensors) and
-  # selectable EMHASS control are different risk surfaces. Leaving an option that
-  # routes control to potentially-stale bundle entities is a foot-gun. Re-add when
-  # there is a deliberate decision to make a controllable path. Dashboard sensors
-  # continue publishing.
+  # 2026-06-15: suspended APF-free price paths removed from the active HA/EMHASS
+  # surface. Keep only production APF/Amber price sources here; archived source
+  # paths require an explicit revival decision before re-entering templates.
   emhass_mpc_price_source:
     name: EMHASS MPC Price Source
     options:
@@ -187,388 +184,18 @@ template:
       attributes:
         production_default: amber
         requested_source: "{{ states('input_select.emhass_mpc_price_source') }}"
-        effective_source: >
-          {%- set requested = states('input_select.emhass_mpc_price_source') %}
-          {%- if requested == 'ai_shadow' and is_state('sensor.ai_mpc_price_forecast_status', 'ready') %}
-            {{- 'ai_shadow' -}}
-          {%- else %}
-            {{- 'amber' -}}
-          {%- endif %}
-        fallback_reason: >
-          {%- set requested = states('input_select.emhass_mpc_price_source') %}
-          {%- if requested == 'ai_shadow' and not is_state('sensor.ai_mpc_price_forecast_status', 'ready') %}
-            {{- 'ai_shadow_not_ready' -}}
-          {%- elif requested != 'ai_shadow' %}
-            {{- 'legacy_source_selected' -}}
-          {%- else %}
-            {{- 'none' -}}
-          {%- endif %}
-        ai_status: "{{ states('sensor.ai_mpc_price_forecast_status') }}"
-        ai_tier2_source: "{{ state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default(none, true) }}"
-        ai_import_entity: sensor.ai_mpc_import_price_forecast
-        ai_export_entity: sensor.ai_mpc_export_price_forecast
+        effective_source: amber
+        fallback_reason: none
+        archived_sources: "ai_shadow / Tier 1 / PD-direct disabled 2026-06-15"
 
     - name: 'EMHASS Selected DH Price Source'
       state: "{{ states('input_select.emhass_dh_price_source') }}"
       attributes:
         production_default: amber_lgbm_extrapolated
         requested_source: "{{ states('input_select.emhass_dh_price_source') }}"
-        effective_source: >
-          {%- set requested = states('input_select.emhass_dh_price_source') %}
-          {%- if requested == 'ai_shadow' and is_state('sensor.ai_dh_price_forecast_status', 'ready') %}
-            {{- 'ai_shadow' -}}
-          {%- else %}
-            {{- 'amber_lgbm_extrapolated' -}}
-          {%- endif %}
-        fallback_reason: >
-          {%- set requested = states('input_select.emhass_dh_price_source') %}
-          {%- if requested == 'ai_shadow' and not is_state('sensor.ai_dh_price_forecast_status', 'ready') %}
-            {{- 'ai_shadow_not_ready' -}}
-          {%- elif requested != 'ai_shadow' %}
-            {{- 'legacy_source_selected' -}}
-          {%- else %}
-            {{- 'none' -}}
-          {%- endif %}
-        ai_status: "{{ states('sensor.ai_dh_price_forecast_status') }}"
-        ai_tier2_source: "{{ state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default(none, true) }}"
-        ai_import_entity: sensor.ai_dh_import_price_forecast
-        ai_export_entity: sensor.ai_dh_export_price_forecast
-
-    - name: 'AI MPC Price Forecast Status'
-      state: >
-        {%- set import_forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-        {%- set export_forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-        {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
-        {%- set last = as_datetime(import_forecast[167].datetime) if import_forecast | count >= 168 else none %}
-        {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
-        {%- set fresh = first != none and first <= utcnow() + timedelta(minutes=10) %}
-        {%- set horizon_ok = last != none and last >= utcnow() + timedelta(hours=13, minutes=30) %}
-        {%- set aligned = first != none and export_first != none and first == export_first %}
-        {%- set import_source = state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default('', true) %}
-        {%- set export_source = state_attr('sensor.ai_mpc_export_price_forecast', 'tier2_source') | default('', true) %}
-        {%- set source_ok = import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] %}
-        {%- if import_forecast | count >= 168 and export_forecast | count >= 168 and fresh and horizon_ok and aligned and source_ok %}
-          ready
-        {%- else %}
-          not_ready
-        {%- endif %}
-      attributes:
-        expected_count: 168
-        interval_minutes: 5
-        import_count: >
-          {{ state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) | count }}
-        export_count: >
-          {{ state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) | count }}
-        tier2_source_import: >
-          {{ state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default(none, true) }}
-        tier2_source_export: >
-          {{ state_attr('sensor.ai_mpc_export_price_forecast', 'tier2_source') | default(none, true) }}
-        import_first_value: >
-          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].native_value if forecast | count > 0 else none }}
-        export_first_value: >
-          {%- set forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].native_value if forecast | count > 0 else none }}
-        import_first_datetime: >
-          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].datetime if forecast | count > 0 else none }}
-        export_first_datetime: >
-          {%- set forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].datetime if forecast | count > 0 else none }}
-        import_last_datetime: >
-          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[167].datetime if forecast | count >= 168 else none }}
-        first_offset_minutes: >
-          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
-          {{ ((first - utcnow()).total_seconds() / 60) | round(1) if first != none else none }}
-        horizon_remaining_hours: >
-          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set last = as_datetime(forecast[167].datetime) if forecast | count >= 168 else none %}
-          {{ ((last - utcnow()).total_seconds() / 3600) | round(2) if last != none else none }}
-        freshness_guard: >
-          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
-          {{ first != none and first <= utcnow() + timedelta(minutes=10) }}
-        horizon_guard: >
-          {%- set forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set last = as_datetime(forecast[167].datetime) if forecast | count >= 168 else none %}
-          {{ last != none and last >= utcnow() + timedelta(hours=13, minutes=30) }}
-        alignment_guard: >
-          {%- set import_forecast = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set export_forecast = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-          {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
-          {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
-          {{ first != none and export_first != none and first == export_first }}
-        source_guard: >
-          {%- set import_source = state_attr('sensor.ai_mpc_import_price_forecast', 'tier2_source') | default('', true) %}
-          {%- set export_source = state_attr('sensor.ai_mpc_export_price_forecast', 'tier2_source') | default('', true) %}
-          {{ import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] }}
-        convention: haeo_positive_import_export
-        timestamp_convention: utc_iso8601
-
-    - name: 'AI DH Price Forecast Status'
-      state: >
-        {%- set import_forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-        {%- set export_forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-        {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
-        {%- set last = as_datetime(import_forecast[143].datetime) if import_forecast | count >= 144 else none %}
-        {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
-        {%- set fresh = first != none and first <= utcnow() + timedelta(minutes=35) %}
-        {%- set horizon_ok = last != none and last >= utcnow() + timedelta(hours=70) %}
-        {%- set aligned = first != none and export_first != none and first == export_first %}
-        {%- set import_source = state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default('', true) %}
-        {%- set export_source = state_attr('sensor.ai_dh_export_price_forecast', 'tier2_source') | default('', true) %}
-        {%- set source_ok = import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] %}
-        {%- if import_forecast | count >= 144 and export_forecast | count >= 144 and fresh and horizon_ok and aligned and source_ok %}
-          ready
-        {%- else %}
-          not_ready
-        {%- endif %}
-      attributes:
-        expected_count: 144
-        interval_minutes: 30
-        import_count: >
-          {{ state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) | count }}
-        export_count: >
-          {{ state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) | count }}
-        tier2_source_import: >
-          {{ state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default(none, true) }}
-        tier2_source_export: >
-          {{ state_attr('sensor.ai_dh_export_price_forecast', 'tier2_source') | default(none, true) }}
-        import_first_value: >
-          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].native_value if forecast | count > 0 else none }}
-        export_first_value: >
-          {%- set forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].native_value if forecast | count > 0 else none }}
-        import_first_datetime: >
-          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].datetime if forecast | count > 0 else none }}
-        export_first_datetime: >
-          {%- set forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[0].datetime if forecast | count > 0 else none }}
-        import_last_datetime: >
-          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {{ forecast[143].datetime if forecast | count >= 144 else none }}
-        first_offset_minutes: >
-          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
-          {{ ((first - utcnow()).total_seconds() / 60) | round(1) if first != none else none }}
-        horizon_remaining_hours: >
-          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set last = as_datetime(forecast[143].datetime) if forecast | count >= 144 else none %}
-          {{ ((last - utcnow()).total_seconds() / 3600) | round(2) if last != none else none }}
-        freshness_guard: >
-          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set first = as_datetime(forecast[0].datetime) if forecast | count > 0 else none %}
-          {{ first != none and first <= utcnow() + timedelta(minutes=35) }}
-        horizon_guard: >
-          {%- set forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set last = as_datetime(forecast[143].datetime) if forecast | count >= 144 else none %}
-          {{ last != none and last >= utcnow() + timedelta(hours=70) }}
-        alignment_guard: >
-          {%- set import_forecast = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set export_forecast = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-          {%- set first = as_datetime(import_forecast[0].datetime) if import_forecast | count > 0 else none %}
-          {%- set export_first = as_datetime(export_forecast[0].datetime) if export_forecast | count > 0 else none %}
-          {{ first != none and export_first != none and first == export_first }}
-        source_guard: >
-          {%- set import_source = state_attr('sensor.ai_dh_import_price_forecast', 'tier2_source') | default('', true) %}
-          {%- set export_source = state_attr('sensor.ai_dh_export_price_forecast', 'tier2_source') | default('', true) %}
-          {{ import_source == export_source and import_source in ['PD-direct', 'cached PD-direct'] }}
-        convention: haeo_positive_import_export
-        timestamp_convention: utc_iso8601
-
-    - name: 'AI Spot Price Forecast Low'
-      unit_of_measurement: "$/kWh"
-      device_class: monetary
-      availability: >
-        {{ not is_state('sensor.ai_pd_direct_price_forecast_low', 'unavailable') }}
-      state: >
-        {%- set p5min = state_attr('sensor.ai_p5min_price_forecast_low', 'forecasts') | default([], true) %}
-        {%- if p5min | count > 0 %}
-          {{ (p5min[0].wholesale_price | default(p5min[0].aemo_price_sa1, true)) | round(4) }}
-        {%- else %}
-          {%- set fc = state_attr('sensor.ai_pd_direct_price_forecast_low', 'forecasts') | default([], true) %}
-          {{ fc[0].wholesale_price | round(4) if fc | count > 0 else 'unknown' }}
-        {%- endif %}
-      attributes:
-        recommended_use: graph_only_raw_wholesale_comparison
-        unit_convention: positive_wholesale_price_per_kwh
-        timestamp_convention: utc_iso8601
-        source_5min_entity: sensor.ai_p5min_price_forecast_low
-        source_30min_entity: sensor.ai_pd_direct_price_forecast_low
-        p5min_count: >
-          {{ state_attr('sensor.ai_p5min_price_forecast_low', 'forecasts') | default([], true) | count }}
-        p30min_count: >
-          {{ state_attr('sensor.ai_pd_direct_price_forecast_low', 'forecasts') | default([], true) | count }}
-        forecasts: >
-          {%- set p5min = state_attr('sensor.ai_p5min_price_forecast_low', 'forecasts') | default([], true) %}
-          {%- set p30min = state_attr('sensor.ai_pd_direct_price_forecast_low', 'forecasts') | default([], true) %}
-          {%- set ns = namespace(result=[]) %}
-          {%- for item in p5min %}
-            {%- set price = item.wholesale_price | default(item.aemo_price_sa1, true) %}
-            {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': price}] %}
-          {%- endfor %}
-          {%- set cutoff = (p5min | last).timestamp if p5min | count > 0 else '' %}
-          {%- for item in p30min %}
-            {%- if item.timestamp > cutoff %}
-              {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': item.wholesale_price}] %}
-            {%- endif %}
-          {%- endfor %}
-          {{ ns.result | tojson }}
-
-    - name: 'AI Spot Price Forecast'
-      unit_of_measurement: "$/kWh"
-      device_class: monetary
-      availability: >
-        {{ not is_state('sensor.ai_pd_direct_price_forecast', 'unavailable') }}
-      state: >
-        {%- set p5min = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
-        {%- if p5min | count > 0 %}
-          {{ (p5min[0].wholesale_price | default(p5min[0].aemo_price_sa1, true)) | round(4) }}
-        {%- else %}
-          {%- set fc = state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) %}
-          {{ fc[0].wholesale_price | round(4) if fc | count > 0 else 'unknown' }}
-        {%- endif %}
-      attributes:
-        recommended_use: graph_only_raw_wholesale_comparison
-        unit_convention: positive_wholesale_price_per_kwh
-        timestamp_convention: utc_iso8601
-        source_5min_entity: sensor.ai_p5min_price_forecast
-        source_30min_entity: sensor.ai_pd_direct_price_forecast
-        p5min_count: >
-          {{ state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) | count }}
-        p30min_count: >
-          {{ state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) | count }}
-        forecasts: >
-          {%- set p5min = state_attr('sensor.ai_p5min_price_forecast', 'forecasts') | default([], true) %}
-          {%- set p30min = state_attr('sensor.ai_pd_direct_price_forecast', 'forecasts') | default([], true) %}
-          {%- set ns = namespace(result=[]) %}
-          {%- for item in p5min %}
-            {%- set price = item.wholesale_price | default(item.aemo_price_sa1, true) %}
-            {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': price}] %}
-          {%- endfor %}
-          {%- set cutoff = (p5min | last).timestamp if p5min | count > 0 else '' %}
-          {%- for item in p30min %}
-            {%- if item.timestamp > cutoff %}
-              {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': item.wholesale_price}] %}
-            {%- endif %}
-          {%- endfor %}
-          {{ ns.result | tojson }}
-
-    - name: 'AI Spot Price Forecast High'
-      unit_of_measurement: "$/kWh"
-      device_class: monetary
-      availability: >
-        {{ not is_state('sensor.ai_pd_direct_price_forecast_high', 'unavailable') }}
-      state: >
-        {%- set p5min = state_attr('sensor.ai_p5min_price_forecast_high', 'forecasts') | default([], true) %}
-        {%- if p5min | count > 0 %}
-          {{ (p5min[0].wholesale_price | default(p5min[0].aemo_price_sa1, true)) | round(4) }}
-        {%- else %}
-          {%- set fc = state_attr('sensor.ai_pd_direct_price_forecast_high', 'forecasts') | default([], true) %}
-          {{ fc[0].wholesale_price | round(4) if fc | count > 0 else 'unknown' }}
-        {%- endif %}
-      attributes:
-        recommended_use: graph_only_raw_wholesale_comparison
-        unit_convention: positive_wholesale_price_per_kwh
-        timestamp_convention: utc_iso8601
-        source_5min_entity: sensor.ai_p5min_price_forecast_high
-        source_30min_entity: sensor.ai_pd_direct_price_forecast_high
-        p5min_count: >
-          {{ state_attr('sensor.ai_p5min_price_forecast_high', 'forecasts') | default([], true) | count }}
-        p30min_count: >
-          {{ state_attr('sensor.ai_pd_direct_price_forecast_high', 'forecasts') | default([], true) | count }}
-        forecasts: >
-          {%- set p5min = state_attr('sensor.ai_p5min_price_forecast_high', 'forecasts') | default([], true) %}
-          {%- set p30min = state_attr('sensor.ai_pd_direct_price_forecast_high', 'forecasts') | default([], true) %}
-          {%- set ns = namespace(result=[]) %}
-          {%- for item in p5min %}
-            {%- set price = item.wholesale_price | default(item.aemo_price_sa1, true) %}
-            {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': price}] %}
-          {%- endfor %}
-          {%- set cutoff = (p5min | last).timestamp if p5min | count > 0 else '' %}
-          {%- for item in p30min %}
-            {%- if item.timestamp > cutoff %}
-              {%- set ns.result = ns.result + [{'timestamp': item.timestamp, 'wholesale_price': item.wholesale_price}] %}
-            {%- endif %}
-          {%- endfor %}
-          {{ ns.result | tojson }}
-
-    - name: 'EMHASS MPC Price Diagnostic'
-      state: "{{ states('input_select.emhass_mpc_price_source') }}"
-      attributes:
-        ai_ready: >
-          {%- set imp = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set exp = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-          {{ imp | count >= 168 and exp | count >= 168 }}
-        amber_import_first: >
-          {%- set fc = state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') | default([], true) %}
-          {%- set future = fc | selectattr('start_time', 'defined') | list %}
-          {%- set item = future | selectattr('start_time', 'ne', none) | first | default(none) %}
-          {{ item.advanced_price_predicted if item else none }}
-        amber_export_first: >
-          {%- set fc = state_attr('sensor.amber_5min_forecasts_extended_feed_in_price', 'Forecasts') | default([], true) %}
-          {%- set item = fc | first | default(none) %}
-          {{ (-item.advanced_price_predicted) if item else none }}
-        ai_import_first: >
-          {%- set fc = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set item = fc | selectattr('datetime', 'defined') | first | default(none) %}
-          {{ item.native_value if item else none }}
-        ai_export_first: >
-          {%- set fc = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-          {%- set item = fc | selectattr('datetime', 'defined') | first | default(none) %}
-          {{ item.native_value if item else none }}
-        ai_import_mean_1h: >
-          {%- set fc = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set vals = fc[:12] | map(attribute='native_value') | list %}
-          {{ (vals | sum / vals | count) | round(4) if vals | count > 0 else none }}
-        ai_export_mean_1h: >
-          {%- set fc = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-          {%- set vals = fc[:12] | map(attribute='native_value') | list %}
-          {{ (vals | sum / vals | count) | round(4) if vals | count > 0 else none }}
-        amber_import_mean_1h: >
-          {%- set fc = state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') | default([], true) %}
-          {%- set vals = fc[:12] | map(attribute='advanced_price_predicted') | list %}
-          {{ (vals | sum / vals | count) | round(4) if vals | count > 0 else none }}
-
-    - name: 'EMHASS DH Price Diagnostic'
-      state: "{{ states('input_select.emhass_dh_price_source') }}"
-      attributes:
-        ai_ready: >
-          {%- set imp = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set exp = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-          {{ imp | count >= 144 and exp | count >= 144 }}
-        amber_import_first: >
-          {%- set fc = state_attr('sensor.amber_billing_interval_forecasts_general_price', 'Forecasts') | default([], true) %}
-          {%- set item = fc | first | default(none) %}
-          {{ item.advanced_price_predicted if item else none }}
-        amber_export_first: >
-          {%- set fc = state_attr('sensor.amber_billing_interval_forecasts_feed_in_price', 'Forecasts') | default([], true) %}
-          {%- set item = fc | first | default(none) %}
-          {{ (-item.advanced_price_predicted) if item else none }}
-        ai_import_first: >
-          {%- set fc = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set item = fc | first | default(none) %}
-          {{ item.native_value if item else none }}
-        ai_export_first: >
-          {%- set fc = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-          {%- set item = fc | first | default(none) %}
-          {{ item.native_value if item else none }}
-        ai_import_mean_24h: >
-          {%- set fc = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-          {%- set vals = fc[:48] | map(attribute='native_value') | list %}
-          {{ (vals | sum / vals | count) | round(4) if vals | count > 0 else none }}
-        ai_export_mean_24h: >
-          {%- set fc = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-          {%- set vals = fc[:48] | map(attribute='native_value') | list %}
-          {{ (vals | sum / vals | count) | round(4) if vals | count > 0 else none }}
-        amber_import_mean_24h: >
-          {%- set fc = state_attr('sensor.amber_billing_interval_forecasts_general_price', 'Forecasts') | default([], true) %}
-          {%- set vals = fc[:48] | map(attribute='advanced_price_predicted') | list %}
-          {{ (vals | sum / vals | count) | round(4) if vals | count > 0 else none }}
+        effective_source: amber_lgbm_extrapolated
+        fallback_reason: none
+        archived_sources: "ai_shadow / Tier 1 / PD-direct disabled 2026-06-15"
 
 rest_command:
   emhass_dayahead_optim:
@@ -687,103 +314,66 @@ rest_command:
         {%- set charge_ramp_step_min = [state_attr('sensor.emhass_charge_ramp_config', 'step_minutes') | int(5), 1] | max %}
         {%- set charge_ramp_step_weight = state_attr('sensor.emhass_charge_ramp_config', 'step_weight') | float(0) %}
 
-        {%- set ai_load_forecasts = state_attr('sensor.ai_dh_import_price_forecast', 'forecast') | default([], true) %}
-        {%- set ai_prod_forecasts = state_attr('sensor.ai_dh_export_price_forecast', 'forecast') | default([], true) %}
-        {%- set use_ai_dh_prices = is_state('input_select.emhass_dh_price_source', 'ai_shadow') and is_state('sensor.ai_dh_price_forecast_status', 'ready') and ai_load_forecasts | count >= 144 and ai_prod_forecasts | count >= 144 %}
+        {#- APF-backed source: APF-derived p50/low/high forecasts with user quantile knobs. #}
+        {%- set p50_forecasts = state_attr('sensor.ai_price_forecast', 'forecasts') %}
+        {%- set low_forecasts = state_attr('sensor.ai_price_forecast_low', 'forecasts') %}
+        {%- set high_forecasts = state_attr('sensor.ai_price_forecast_high', 'forecasts') %}
 
-        {%- if use_ai_dh_prices %}
-          {#- Canonical AI source: positive import cost, positive export revenue, UTC timestamps. #}
-          {%- set loop_len = [ai_load_forecasts | count, ai_prod_forecasts | count, 144] | min %}
-          {%- for i in range(loop_len) %}
-            {%- set buy_price = ai_load_forecasts[i].native_value | float(0) %}
-            {%- set sell_price = ai_prod_forecasts[i].native_value | float(0) %}
-            {%- set forecast_time_local = as_local(as_datetime(ai_load_forecasts[i].datetime)) %}
+        {#- Loop through the forecasts by index to process them in parallel. #}
+        {%- for i in range(p50_forecasts | length) %}
 
-            {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
-              {%- set final_sell_price = sell_price + 0.01 %}
-            {%- else %}
-              {%- set final_sell_price = sell_price %}
-            {%- endif %}
+          {#- --- Process BUY Price (load_cost) --- #}
+          {%- set p50_buy = p50_forecasts[i].general_price %}
+          {%- set high_buy = high_forecasts[i].general_price %}
+          {%- set low_buy = low_forecasts[i].general_price %}
 
-            {%- set data.load_cost_list = data.load_cost_list + [buy_price | round(4)] %}
-            {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
+          {%- if k_buy > 0 %}
+            {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
+          {%- else %}
+            {%- set adjusted_buy_price = p50_buy - (p50_buy - low_buy) * (k_buy | abs) %}
+          {%- endif %}
+          {%- set data.load_cost_list = data.load_cost_list + [adjusted_buy_price | round(4)] %}
 
-            {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
-            {#- Use END of period time. Add 30 minutes to start time. #}
-            {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
-            {%- set m = end_time.hour * 60 + end_time.minute %}
+          {#- --- Process SELL Price (prod_price) --- #}
+          {%- set p50_sell = p50_forecasts[i].feed_in_price %}
+          {%- set high_sell = high_forecasts[i].feed_in_price %}
+          {%- set low_sell = low_forecasts[i].feed_in_price %}
 
-            {%- if charge_ramp_start_min < m <= charge_ramp_stop_min %}
-               {%- set charge_ramp_steps = (m - charge_ramp_start_min) / charge_ramp_step_min %}
-               {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
-            {%- else %}
-               {%- set w_charge = 0.0 %}
-            {%- endif %}
-            {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
-          {%- endfor %}
-        {%- else %}
-          {#- Legacy source: APF-derived p50/low/high forecasts with user quantile knobs. #}
-          {%- set p50_forecasts = state_attr('sensor.ai_price_forecast', 'forecasts') %}
-          {%- set low_forecasts = state_attr('sensor.ai_price_forecast_low', 'forecasts') %}
-          {%- set high_forecasts = state_attr('sensor.ai_price_forecast_high', 'forecasts') %}
+          {%- if k_sell > 0 %}
+            {#- Positive weight blends towards optimistic (higher) feed-in price #}
+            {%- set adjusted_sell_price = p50_sell + (high_sell - p50_sell) * k_sell %}
+          {%- else %}
+            {#- Negative weight blends towards pessimistic (lower) feed-in price #}
+            {%- set adjusted_sell_price = p50_sell - (p50_sell - low_sell) * (k_sell | abs) %}
+          {%- endif %}
 
-          {#- Loop through the forecasts by index to process them in parallel. #}
-          {%- for i in range(p50_forecasts | length) %}
+          {#- Adjust for DNSP free tier #}
+          {%- set forecast_time_local = as_local(as_datetime(p50_forecasts[i].timestamp)) %}
+          {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
+            {%- set final_sell_price = adjusted_sell_price + 0.01 %}
+          {%- else %}
+            {%- set final_sell_price = adjusted_sell_price %}
+          {%- endif %}
 
-            {#- --- Process BUY Price (load_cost) --- #}
-            {%- set p50_buy = p50_forecasts[i].general_price %}
-            {%- set high_buy = high_forecasts[i].general_price %}
-            {%- set low_buy = low_forecasts[i].general_price %}
-            
-            {%- if k_buy > 0 %}
-              {%- set adjusted_buy_price = p50_buy + (high_buy - p50_buy) * k_buy %}
-            {%- else %}
-              {%- set adjusted_buy_price = p50_buy - (p50_buy - low_buy) * (k_buy | abs) %}
-            {%- endif %}
-            {%- set data.load_cost_list = data.load_cost_list + [adjusted_buy_price | round(4)] %}
+          {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
 
-            {#- --- Process SELL Price (prod_price) --- #}
-            {%- set p50_sell = p50_forecasts[i].feed_in_price %}
-            {%- set high_sell = high_forecasts[i].feed_in_price %}
-            {%- set low_sell = low_forecasts[i].feed_in_price %}
+          {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
+          {#- 00:00-ramp start = 0.0 | ramp window = +0.0002 per 5 mins | after ramp stop = 0.0 #}
+          {#- Use END of period time. Add 30 minutes to start time. #}
+          {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
+          {%- set m = end_time.hour * 60 + end_time.minute %}
 
-            {%- if k_sell > 0 %}
-              {#- Positive weight blends towards optimistic (higher) feed-in price #}
-              {%- set adjusted_sell_price = p50_sell + (high_sell - p50_sell) * k_sell %}
-            {%- else %}
-              {#- Negative weight blends towards pessimistic (lower) feed-in price #}
-              {%- set adjusted_sell_price = p50_sell - (p50_sell - low_sell) * (k_sell | abs) %}
-            {%- endif %}
-            
-            {#- Adjust for DNSP free tier #}
-            {%- set forecast_time_local = as_local(as_datetime(p50_forecasts[i].timestamp)) %}
-            {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
-              {%- set final_sell_price = adjusted_sell_price + 0.01 %}
-            {%- else %}
-              {%- set final_sell_price = adjusted_sell_price %}
-            {%- endif %}
+          {#- Use > start so the first period ending after ramp start picks up an initial weight. #}
+          {#- Use <= stop because the exact stop time is the peak of the ramp. #}
+          {%- if charge_ramp_start_min < m <= charge_ramp_stop_min %}
+             {%- set charge_ramp_steps = (m - charge_ramp_start_min) / charge_ramp_step_min %}
+             {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
+          {%- else %}
+             {%- set w_charge = 0.0 %}
+          {%- endif %}
+          {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
 
-            {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
-
-            {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
-            {#- 00:00-ramp start = 0.0 | ramp window = +0.0002 per 5 mins | after ramp stop = 0.0 #}
-            {#- Use END of period time. Add 30 minutes to start time. #}
-            {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
-            {%- set m = end_time.hour * 60 + end_time.minute %}
-
-            {#- Use > start so the first period ending after ramp start picks up an initial weight. #}
-            {#- Use <= stop because the exact stop time is the peak of the ramp. #}
-            {%- if charge_ramp_start_min < m <= charge_ramp_stop_min %}
-               {%- set charge_ramp_steps = (m - charge_ramp_start_min) / charge_ramp_step_min %}
-               {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
-            {%- else %}
-               {%- set w_charge = 0.0 %}
-            {%- endif %}
-            {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
-
-          {%- endfor %}
-        {%- endif %}
-
+        {%- endfor %}
         "load_cost_forecast": {{ data.load_cost_list | tojson }},
         "prod_price_forecast": {{ data.prod_price_list | tojson }},
         "weight_battery_discharge": {{ discharge_weight }},
@@ -977,113 +567,73 @@ rest_command:
         {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0) %}
         {%- set k_sell = states('input_number.emhass_weight_sell_forecast') | float(0) %}
 
-        {%- set ai_mpc_import_forecasts = state_attr('sensor.ai_mpc_import_price_forecast', 'forecast') | default([], true) %}
-        {%- set ai_mpc_export_forecasts = state_attr('sensor.ai_mpc_export_price_forecast', 'forecast') | default([], true) %}
-        {%- set use_ai_mpc_prices = is_state('input_select.emhass_mpc_price_source', 'ai_shadow') and is_state('sensor.ai_mpc_price_forecast_status', 'ready') and ai_mpc_import_forecasts | count >= 168 and ai_mpc_export_forecasts | count >= 168 %}
-
         {#- Loop for BUY price forecast #}
-        {%- if use_ai_mpc_prices %}
-          {#- Canonical AI source: positive import cost, UTC datetime field. No APF blending — AI
-              provides its own optimised price. Current interval stays from the confirmed Amber price. #}
-          {%- for item in ai_mpc_import_forecasts %}
-            {%- if as_datetime(item.datetime) > utcnow() %}
-              {%- set data.load_cost_list = data.load_cost_list + [item.native_value | float(0) | round(4)] %}
-              {%- set forecast_start = as_local(as_datetime(item.datetime)) %}
-              {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
-              {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
-              {%- if ramp_start < m <= charge_ramp_stop_min %}
-                {%- set charge_ramp_steps = (m - ramp_start) / charge_ramp_step_min %}
-                {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
-              {%- else %}
-                {%- set w_charge = 0.0 %}
-              {%- endif %}
-              {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+        {#- Amber APF source: p50/high/low with user quantile knobs. #}
+        {%- for item in state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') %}
+          {%- if as_datetime(item.start_time) > utcnow() %}
+            {%- set p50 = item.advanced_price_predicted %}
+            {%- set high = item.advanced_price_high %}
+            {%- set low = item.advanced_price_low %}
+
+            {%- if k_buy > 0 %}
+              {%- set adjusted_buy_price = p50 + (high - p50) * k_buy %}
+            {%- else %}
+              {%- set adjusted_buy_price = p50 - (p50 - low) * (k_buy | abs) %}
             {%- endif %}
-          {%- endfor %}
-        {%- else %}
-          {#- Legacy Amber source: APF p50/high/low with user quantile knobs. #}
-          {%- for item in state_attr('sensor.amber_5min_forecasts_extended_general_price', 'Forecasts') %}
-            {%- if as_datetime(item.start_time) > utcnow() %}
-              {%- set p50 = item.advanced_price_predicted %}
-              {%- set high = item.advanced_price_high %}
-              {%- set low = item.advanced_price_low %}
 
-              {%- if k_buy > 0 %}
-                {%- set adjusted_buy_price = p50 + (high - p50) * k_buy %}
-              {%- else %}
-                {%- set adjusted_buy_price = p50 - (p50 - low) * (k_buy | abs) %}
-              {%- endif %}
-
-              {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
-                {%- set final_buy_price = [adjusted_buy_price, item.per_kwh] | max %}
-              {%- else %}
-                {%- set final_buy_price = adjusted_buy_price %}
-              {%- endif %}
-
-              {%- set data.load_cost_list = data.load_cost_list + [final_buy_price | round(4)] %}
-
-              {%- set forecast_start = as_local(as_datetime(item.start_time)) %}
-              {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
-              {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
-              {%- if ramp_start < m <= charge_ramp_stop_min %}
-                {%- set charge_ramp_steps = (m - ramp_start) / charge_ramp_step_min %}
-                {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
-              {%- else %}
-                {%- set w_charge = 0.0 %}
-              {%- endif %}
-              {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+            {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
+              {%- set final_buy_price = [adjusted_buy_price, item.per_kwh] | max %}
+            {%- else %}
+              {%- set final_buy_price = adjusted_buy_price %}
             {%- endif %}
-          {%- endfor %}
-        {%- endif %}
+
+            {%- set data.load_cost_list = data.load_cost_list + [final_buy_price | round(4)] %}
+
+            {%- set forecast_start = as_local(as_datetime(item.start_time)) %}
+            {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
+            {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
+            {%- if ramp_start < m <= charge_ramp_stop_min %}
+              {%- set charge_ramp_steps = (m - ramp_start) / charge_ramp_step_min %}
+              {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
+            {%- else %}
+              {%- set w_charge = 0.0 %}
+            {%- endif %}
+            {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
+          {%- endif %}
+        {%- endfor %}
 
         {#- Loop for SELL price forecast #}
         {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
-        {%- if use_ai_mpc_prices %}
-          {#- Canonical AI source: positive export revenue. Apply DNSP free tier only. #}
-          {%- for item in ai_mpc_export_forecasts %}
-            {%- if as_datetime(item.datetime) > utcnow() %}
-              {%- set sell_price = item.native_value | float(0) %}
-              {%- set forecast_time_local = as_local(as_datetime(item.datetime)) %}
-              {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
-                {%- set final_sell_price = sell_price + 0.01 %}
-              {%- else %}
-                {%- set final_sell_price = sell_price %}
-              {%- endif %}
-              {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
+        {#- Amber APF source: APF-derived p50/high/low with user quantile knobs. #}
+        {%- for item in state_attr('sensor.amber_5min_forecasts_extended_feed_in_price', 'Forecasts') %}
+          {%- if as_datetime(item.start_time) > utcnow() %}
+            {%- set p50  = -item.advanced_price_predicted %}
+            {%- set high = -item.advanced_price_high %}
+            {%- set low  = -item.advanced_price_low %}
+
+            {%- if k_sell > 0 %}
+              {%- set adjusted_sell_price = p50 + (high - p50) * k_sell %}
+            {%- else %}
+              {%- set adjusted_sell_price = p50 - (p50 - low) * (k_sell | abs) %}
             {%- endif %}
-          {%- endfor %}
-        {%- else %}
-          {#- Legacy Amber source: APF-derived p50/high/low with user quantile knobs. #}
-          {%- for item in state_attr('sensor.amber_5min_forecasts_extended_feed_in_price', 'Forecasts') %}
-            {%- if as_datetime(item.start_time) > utcnow() %}
-              {%- set p50  = -item.advanced_price_predicted %}
-              {%- set high = -item.advanced_price_high %}
-              {%- set low  = -item.advanced_price_low %}
 
-              {%- if k_sell > 0 %}
-                {%- set adjusted_sell_price = p50 + (high - p50) * k_sell %}
-              {%- else %}
-                {%- set adjusted_sell_price = p50 - (p50 - low) * (k_sell | abs) %}
-              {%- endif %}
-
-              {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
-                {%- set final_sell_price_before_dnsp = [adjusted_sell_price, -item.per_kwh] | min %}
-              {%- else %}
-                {%- set final_sell_price_before_dnsp = adjusted_sell_price %}
-              {%- endif %}
-
-              {%- set forecast_time_local = as_local(as_datetime(item.start_time)) %}
-              {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
-                {%- set final_sell_price = final_sell_price_before_dnsp + 0.01 %}
-              {%- else %}
-                {%- set final_sell_price = final_sell_price_before_dnsp %}
-              {%- endif %}
-
-              {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
+            {%- if (as_datetime(item.start_time) - utcnow()) < timedelta(minutes=5) %}
+              {%- set final_sell_price_before_dnsp = [adjusted_sell_price, -item.per_kwh] | min %}
+            {%- else %}
+              {%- set final_sell_price_before_dnsp = adjusted_sell_price %}
             {%- endif %}
-          {%- endfor %}
-        {%- endif %}
-        
+
+            {%- set forecast_time_local = as_local(as_datetime(item.start_time)) %}
+            {%- if 10 <= forecast_time_local.hour < 16 and current_allowance > 0 %}
+              {%- set final_sell_price = final_sell_price_before_dnsp + 0.01 %}
+            {%- else %}
+              {%- set final_sell_price = final_sell_price_before_dnsp %}
+            {%- endif %}
+
+            {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
+          {%- endif %}
+        {%- endfor %}
+
         "load_cost_forecast": {{ data.load_cost_list[:168] | tojson }},
         "prod_price_forecast": {{ data.prod_price_list[:168] | tojson }},
         "weight_battery_charge": {{ data.weight_charge_list[:168] | tojson }},

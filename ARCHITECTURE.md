@@ -25,14 +25,13 @@ AEMO NEMweb (direct scraping):
 HA → InfluxDB CQs (load, PV, weather):  ─────────────────────────┘
                                                         │
                          ┌──────────────────────────────┤
-                         │                              │
-                  every 5 min (Tier 1)          every 30 min (Tier 2)
-                         │                              │
-                         ▼                              ▼
-                  Tactical LightGBM           APF/LightGBM price (incumbent)
-                  (0–60 min q05/50/95)        PD-direct price (suspended APF-free Tier 2)
-                         │                    TFT load / LightGBM load
-                         └──────────┬─────────────────┘
+                         │
+                         ▼
+                  APF/LightGBM price (incumbent)
+                  LightGBM load forecast
+                  (suspended/archived: tactical Tier 1,
+                   PD-direct, TFT price, TFT load shadow)
+                         │
                                     │ ◄── HA future covariates (Solcast,
                                     │     BOM weather, Amber dynamic handoff)
                                     │
@@ -40,12 +39,9 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
              │                      │
              ▼                      ▼
      predictions.json       HA sensor entities:
-     *_forecast_log.csv     sensor.ai_p5min_price_forecast  (tactical, 5-min)
-                            sensor.ai_price_forecast        (APF/LightGBM p50, incumbent)
+     *_forecast_log.csv     sensor.ai_price_forecast        (APF/LightGBM p50, incumbent)
                             sensor.ai_price_forecast_low/high
-                            sensor.ai_pd_direct_price_forecast (suspended APF-free Tier 2)
                             sensor.ai_load_forecast
-                            sensor.ai_combined_*_price_forecast  (TFT-based, shadow)
                                     │
                                     ▼
                              EMHASS optimiser
@@ -93,9 +89,9 @@ Seven pairs of `.service` + `.timer` units plus one event-driven daemon drive th
 | Timer | Schedule | What it runs |
 |---|---|---|
 | `ai-energy-pd7day.timer` | 3×/day (07:20, 12:55, 18:05 AEST) | `ingest/ingest-pd7day.py --fetch` |
-| `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch && forecast.py publish-pd-direct --publish-hass` — chained so Tier 2 PD-direct refreshes within ~1 min of each AEMO PREDISPATCH publish (added 2026-05-13) |
+| `ai-energy-predispatch.timer` | Every 30 min (`:12` and `:42`) | `ingest/ingest-predispatch.py --fetch` — AEMO PREDISPATCH ingest only; PD-direct publish archived 2026-06-15 |
 | `ai-energy-sevendayoutlook.timer` | Every 30 min (`:15` and `:45`) | `ingest/ingest-sevendayoutlook.py --fetch` |
-| `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch && forecast.py publish-tactical --publish-hass` — Tier 1 refresh + Tier 2 cache republish |
+| `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch` — AEMO P5MIN ingest only; tactical Tier 1 publish archived 2026-06-15 |
 
 All units run as systemd user units (`systemctl --user`), `WorkingDirectory=~/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority). Linger is enabled so units run without an active login session.
 
@@ -112,8 +108,8 @@ The core script. All behaviour is driven by subcommands:
 | `train-price` | Weekly | Trains price quantile models on 2 years of 30-min InfluxDB data |
 | `train-load` | Weekly | Trains load quantile models |
 | `predict-all` | (manual) | Fetches covariates, runs both price+load models, applies tariffs/GST, saves JSON, publishes to HA. Production splits this into event-driven `predict-price` (via `ai-energy-listener.service`) and timer-driven `predict-load`. |
-| `publish-tactical` | Every 5 min | Cheap Tier 1 LGBM refresh; reuses cached Tier 2 PD-direct; updates stitched/canonical AI sensors |
-| `publish-pd-direct` | Every 30 min (after PREDISPATCH ingest) | Refreshes Tier 2 PD-direct + AI MPC/DH bundle + raw AEMO stitched. PD-direct is currently a suspended APF-free price path retained for reference/revival work, not the trusted production incumbent. Cheap: skips TFT/load/Solcast/weather. Wall-clock ≈ 30s. |
+| `publish-tactical` | Archived | Former Tier 1 LGBM refresh; now a no-op after the 2026-06-15 soft archive. |
+| `publish-pd-direct` | Archived | Former PD-direct + canonical AI shadow publisher; now a no-op after the 2026-06-15 soft archive. |
 | `predict-price` | (manual) | Price only |
 | `predict-load` | (manual) | Load only |
 | `update-tariffs` | Daily midnight | Fetches 24h+ Amber tariff data, builds smoothed 48-slot profile |
@@ -132,7 +128,7 @@ The file contains ~28 functions that fall naturally into these logical groups:
 | **HA API** | `call_ha_api`, `get_entity_state` | Generic HA HTTP wrappers |
 | **Data fetching** | `get_amber_spot_price_forecast`, `get_amber_advanced_forecast`, `get_solcast_forecast`, `get_weather_forecast`, `get_aemo_forecast`, `_get_aemo_short_term_forecast`, `_get_aemo_short_term_price_sa1`, `_get_aemo_7_day_outlook_forecast` | Future covariate data from external sources |
 | **Training** | `train_single_model`, `train_models` | Model fitting and serialisation |
-| **Prediction** | `_predict_simple`, `_predict_with_dynamic_handoff`, `_execute_quantile_prediction`, `_execute_single_prediction`, `_execute_tactical_prediction` (Tier 1 LightGBM, 0–60 min), `_execute_pd_direct_prediction` (canonical Tier 2 price), `_execute_tft_load_prediction` (TFT load). `_execute_tft_prediction` still importable but no longer invoked by `predict-all` (disabled 2026-05-13). | Inference |
+| **Prediction** | `_predict_simple`, `_predict_with_dynamic_handoff`, `_execute_quantile_prediction`, `_execute_single_prediction`. Archived inference helpers remain for tactical Tier 1, PD-direct, TFT price, and TFT load, but normal `predict-price` / `predict-load` no longer invoke them after the 2026-06-15 soft archive. | Inference |
 | **Tariffs** | `get_amber_api_scaling_factor`, `get_network_loss_factor`, `_get_tariff_data`, `_create_complete_profile`, `_calculate_amber_api_scaling_factor`, `_calculate_forecasted_network_loss_factor`, `update_tariffs`, `apply_tariffs_to_forecast` | Tariff profile construction and application |
 | **Adjusters** | `update_adjusters`, `apply_covariate_adjustments` | Weather covariate bias correction |
 | **Logging** | `log_forecast_data`, `backfill_actuals`, `_backfill_single_log` | Forecast log CSVs |
@@ -277,7 +273,15 @@ InfluxDB, thresholds set by Phase 6). **Both must pass before Phase 5 sub-tasks 
 
 ---
 
-### `data/` and `train/` — TFT Price Model (V4, shadow mode)
+### `data/` and `train/` — Archived TFT Price / Tactical Price Tracks
+
+> **2026-06-15 status.** Active work on APF-free price paths is suspended, not
+> fully abandoned. The code and history remain for reference and possible
+> deliberate revival, but normal `predict-price` no longer runs tactical Tier 1,
+> PD-direct, raw AEMO stitched, canonical AI MPC/DH, or TFT price shadow
+> inference. The P5MIN/PREDISPATCH/PD7Day/SevenDayOutlook ingest timers stay
+> active because they are useful historical inputs and may support future APF-tail
+> residual work.
 
 > **2026-05-05 status.** TFT iteration is paused. A live `--debug-tft` run on 2026-05-05
 > showed Run 011b outputting 30–50% below its own debiased PREDISPATCH input even with the
@@ -287,7 +291,15 @@ InfluxDB, thresholds set by Phase 6). **Both must pass before Phase 5 sub-tasks 
 > been measured through the same gates. Full plan in `docs/roadmap.md` (top section,
 > 2026-05-05 Strategic Pivot); structural critique in `docs/tft_price_forecast.md`.
 
-A TFT price model has been trained and published to HA in shadow mode alongside the APF/LightGBM incumbent. The active production checkpoint is Run 011b (+9.7% vs amber_apf_lgbm baseline); Phase 7 decoder expansion attempts (Run 014, Run 015) failed the holistic eval gate and were not promoted; the 2026-05-05 active15 retrain was also rejected. **TFT price inference was disabled in `predict-all` on 2026-05-13** (strategic pivot — PD-direct is canonical Tier 2, TFT price shadow was redundant and burning CPU). The model checkpoint, log, and `_execute_tft_prediction` function are retained for the eval/MPC harness (`model_a_hybrid` source) and to keep the door open for a future revival. The HA shadow entities `sensor.ai_tft_price_forecast(_low/_high)` were removed in the same change. Full design rationale, options considered, literature references, and next steps are documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**. Longer-term speculative ideas (spike-aware dispatch, direct value optimisation, ensemble methods) are captured in **[docs/ideas.md](docs/ideas.md)**.
+The TFT price, tactical Tier 1, and PD-direct tracks have all produced useful
+evidence, but they are no longer active production/shadow publishers. The active
+price path is the APF/LightGBM extrapolation surfaced through
+`sensor.ai_price_forecast(_low/_high)`. The archived checkpoints, logs, eval
+scripts, and helper functions remain for explicit revival/comparison work only;
+normal production runs should not consume `p5min_tactical`, `pd_direct`,
+`model_a_hybrid`, or `lgbm_strategic` when evaluating APF extrapolation. Full
+TFT price rationale is documented in **[docs/tft_price_forecast.md](docs/tft_price_forecast.md)**;
+longer-term speculative ideas are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
 - Encoder: 96 steps (2 days) × 20 features — historical price/demand/load/PV/weather (8) + 5-min volatility aggregates (4: `rrp_5m_max`, `rrp_5m_std`, `rrp_persistence`, `rrp_volatility_30m`) + `rrp_log_momentum` + time encodings (6) + `rrp_5m_missing` flag (1)
@@ -325,9 +337,16 @@ A TFT price model has been trained and published to HA in shadow mode alongside 
 
 ---
 
-### `data/` and `train/` — TFT Load Model (in development)
+### `data/` and `train/` — Archived TFT Load Model
 
-A TFT model for household load prediction, intended to shadow and eventually replace the existing Darts/LightGBM load model. The existing model uses manual lag engineering (t-48, t-96, t-336 etc.) to capture daily/weekly seasonality; TFT replaces this with attention.
+> **2026-06-15 status.** EMHASS still consumes the LightGBM load forecast. TFT
+> load shadow inference is disabled in normal `predict-load` runs and retained
+> only for reference/revival work.
+
+A TFT model for household load prediction, originally intended to shadow and
+eventually replace the existing Darts/LightGBM load model. The existing model
+uses manual lag engineering (t-48, t-96, t-336 etc.) to capture daily/weekly
+seasonality; TFT replaces this with attention.
 
 **Architecture:**
 - Encoder: 96 steps (48h lookback) — `power_load`, `power_pv`, temperature/humidity/wind, time features
@@ -342,9 +361,9 @@ A TFT model for household load prediction, intended to shadow and eventually rep
 1. `data/export_load_dataset.py` → pull `power_load_30m`, `power_pv_30m`, weather from InfluxDB → parquet
 2. `data/build_load_dataset.py` → encoder/decoder numpy arrays, MinMax scalers, train/val split
 3. `train/train_tft_load.py` → TFT checkpoint at `models/tft_load/`
-4. Shadow implementation in `forecast.py` → `_execute_tft_load_prediction()`; publishes to `sensor.ai_tft_load_forecast`
+4. Archived shadow implementation in `forecast.py` → `_execute_tft_load_prediction()`.
 
-**Current production checkpoint:** `models/tft_load/checkpoint_best.pt` (Run 005, epoch 32). Overall MAE 234W.
+**Archived checkpoint:** `models/tft_load/checkpoint_best.pt` (Run 005, epoch 32). Overall MAE 234W.
 
 **Known issue — overnight 48h morning ramp inversion:** Step 72 (6:30am day+2) is predicted lower than step 60 (3:30am day+2), which is physically implausible. Root cause: `HorizonWeightedQuantileLoss` with tau=48 gives step 72 only 22% gradient weight — the model's time-of-day encoding at this horizon is too weak. Run 006 (planned) will add a gradient floor (`--horizon-floor 0.25`) so all steps beyond ~32h retain at least 25% weight. See `docs/tft_load_forecast.md` for full run history and promotion criteria.
 

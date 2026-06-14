@@ -26,3 +26,11 @@ def test_banner_warns_for_suspended_apf_free_source():
     assert "APF-free" in banner
     assert "WARNING" in banner
     assert "suspended" in banner
+
+
+def test_tactical_tier1_contract_is_suspended_apf_free():
+    contract = get_source_contract("p5min_tactical")
+
+    assert contract.apf_backed is False
+    assert "suspended" in contract.status
+    assert "0-60 min" in contract.horizon

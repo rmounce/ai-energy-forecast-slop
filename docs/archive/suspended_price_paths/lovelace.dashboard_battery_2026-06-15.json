@@ -1,0 +1,2918 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "lovelace.dashboard_battery",
+  "data": {
+    "config": {
+      "views": [
+        {
+          "type": "sidebar",
+          "title": "Forecasts",
+          "path": "forecasts",
+          "cards": [
+            {
+              "type": "custom:power-flow-card-plus",
+              "entities": {
+                "grid": {
+                  "entity": "sensor.sigen_plant_grid_active_power",
+                  "secondary_info": {}
+                },
+                "solar": {
+                  "entity": "sensor.sigen_power_pv_gross",
+                  "secondary_info": {}
+                },
+                "battery": {
+                  "entity": "sensor.sigen_plant_battery_power",
+                  "state_of_charge": "sensor.sigen_plant_battery_state_of_charge_derived",
+                  "invert_state": true
+                },
+                "home": {
+                  "secondary_info": {},
+                  "subtract_individual": false,
+                  "entity": "sensor.sigen_plant_consumed_power",
+                  "override_state": true
+                },
+                "individual": [
+                  {
+                    "entity": "sensor.individually_metered_load",
+                    "name": "Known"
+                  },
+                  {
+                    "entity": "sensor.sigen_inverter_conversion_loss",
+                    "secondary_info": {},
+                    "name": "Inverter Loss"
+                  },
+                  {
+                    "entity": "sensor.remaining_power_load",
+                    "secondary_info": {},
+                    "name": "Unknown"
+                  }
+                ]
+              },
+              "clickable_entities": true,
+              "view_layout": {
+                "position": "sidebar"
+              }
+            },
+            {
+              "type": "entities",
+              "entities": [
+                {
+                  "entity": "automation.emhass_trigger_on_5min_price_update"
+                },
+                {
+                  "entity": "automation.emhass_mpc_optim_on_5min_price_update"
+                },
+                {
+                  "entity": "automation.battery_ems_control_based_on_emhass_forecasts"
+                },
+                {
+                  "entity": "input_text.emhass_battery_action"
+                },
+                {
+                  "entity": "switch.sigen_plant_remote_ems_controled_by_home_assistant"
+                },
+                {
+                  "entity": "select.sigen_plant_remote_ems_control_mode"
+                },
+                {
+                  "entity": "sensor.amber_effective_general_price"
+                },
+                {
+                  "entity": "sensor.amber_effective_feed_in_price"
+                },
+                {
+                  "entity": "input_datetime.emhass_charge_ramp_start_time"
+                },
+                {
+                  "entity": "input_number.emhass_weight_battery_discharge"
+                },
+                {
+                  "entity": "input_number.emhass_weight_buy_forecast"
+                },
+                {
+                  "entity": "input_number.emhass_weight_sell_forecast"
+                },
+                {
+                  "entity": "input_number.emhass_weight_pv_forecast"
+                },
+                {
+                  "entity": "input_number.desired_export_limit"
+                },
+                {
+                  "entity": "input_number.flexible_export_limit"
+                },
+                {
+                  "entity": "input_number.desired_import_limit"
+                },
+                {
+                  "entity": "input_number.battery_soc_min_target"
+                },
+                {
+                  "entity": "input_number.battery_soc_min_export"
+                },
+                {
+                  "entity": "input_number.battery_soc_min_buffer"
+                },
+                {
+                  "entity": "input_number.desired_pcs_export_limit"
+                },
+                {
+                  "entity": "input_number.desired_pcs_import_limit"
+                }
+              ],
+              "view_layout": {
+                "position": "sidebar"
+              }
+            },
+            {
+              "type": "custom:apexcharts-card",
+              "apex_config": {
+                "chart": {
+                  "height": "400px"
+                }
+              },
+              "header": {
+                "show": true,
+                "title": "EMHASS 14h Forecast",
+                "show_states": true,
+                "colorize_states": true
+              },
+              "graph_span": "16h",
+              "hours_12": false,
+              "span": {
+                "start": "minute",
+                "offset": "-2h"
+              },
+              "all_series_config": {
+                "stroke_width": 1
+              },
+              "now": {
+                "show": true
+              },
+              "yaxis": [
+                {
+                  "id": "power",
+                  "max": 12000,
+                  "min": -12000,
+                  "decimals": 0,
+                  "apex_config": {
+                    "tickAmount": 10
+                  }
+                },
+                {
+                  "id": "percent",
+                  "decimals": 0,
+                  "max": 100,
+                  "min": 0,
+                  "apex_config": {
+                    "tickAmount": 10
+                  },
+                  "opposite": true
+                },
+                {
+                  "id": "cost",
+                  "min": "~0",
+                  "max": "~1",
+                  "apex_config": {
+                    "tickAmount": 10
+                  },
+                  "decimals": 2,
+                  "opposite": true
+                }
+              ],
+              "series": [
+                {
+                  "name": "Buy",
+                  "entity": "sensor.amber_5min_current_general_price",
+                  "extend_to": "now",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "color": "lightblue"
+                },
+                {
+                  "entity": "sensor.mpc_unit_load_cost",
+                  "name": "Buy forecast",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "type": "line",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "stroke_width": 1,
+                  "color": "lightblue",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.unit_load_cost_forecasts.map((entry) => {\n  return [new Date(entry.date), entry.mpc_unit_load_cost];\n});\n"
+                },
+                {
+                  "name": "Sell",
+                  "entity": "sensor.amber_5min_current_feed_in_price",
+                  "extend_to": "now",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "color": "yellow"
+                },
+                {
+                  "entity": "sensor.mpc_unit_prod_price",
+                  "name": "Sell forecast",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 1,
+                  "color": "yellow",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.unit_prod_price_forecasts.map((entry) => {\n  return [new Date(entry.date), entry.mpc_unit_prod_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.sigen_plant_battery_state_of_charge",
+                  "name": "SOC",
+                  "yaxis_id": "percent",
+                  "type": "line",
+                  "stroke_width": 2,
+                  "color": "red",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  }
+                },
+                {
+                  "entity": "sensor.mpc_soc_batt_forecast",
+                  "name": "SOC Forecast",
+                  "yaxis_id": "percent",
+                  "type": "line",
+                  "stroke_width": 2,
+                  "color": "red",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.battery_scheduled_soc.map((entry) => {\n  return [new Date(new Date(entry.date).getTime() + 5 * 60 * 1000), entry.mpc_soc_batt_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.mpc_p_pv_forecast",
+                  "name": "PV",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 2,
+                  "color": "orange",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  }
+                },
+                {
+                  "entity": "sensor.mpc_p_pv_forecast",
+                  "name": "PV Forecast",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 2,
+                  "color": "orange",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.mpc_p_pv_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.mpc_p_pv_curtailment",
+                  "name": "PV Curtailment",
+                  "invert": true,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "orange",
+                  "type": "area",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                },
+                {
+                  "entity": "sensor.mpc_p_pv_curtailment",
+                  "name": "PV Curtailment Forecast",
+                  "invert": true,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "orange",
+                  "type": "area",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.mpc_p_pv_curtailment];\n});\n"
+                },
+                {
+                  "entity": "sensor.mpc_p_load_forecast",
+                  "name": "Load",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "color": "purple",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                },
+                {
+                  "entity": "sensor.mpc_p_load_forecast",
+                  "name": "Load Forecast",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "color": "purple",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.mpc_p_load_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.mpc_p_batt_forecast",
+                  "name": "Battery",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgreen",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "type": "area"
+                },
+                {
+                  "entity": "sensor.mpc_p_batt_forecast",
+                  "name": "Battery Forecast",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgreen",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "type": "area",
+                  "data_generator": "return entity.attributes.battery_scheduled_power.map((entry) => {\n  return [new Date(entry.date), entry.mpc_p_batt_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.mpc_p_grid_forecast",
+                  "name": "Grid",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgray",
+                  "type": "area",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                },
+                {
+                  "entity": "sensor.mpc_p_grid_forecast",
+                  "name": "Grid Forecast",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgray",
+                  "type": "area",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.mpc_p_grid_forecast];\n});\n"
+                }
+              ],
+              "view_layout": {
+                "position": "main"
+              }
+            },
+            {
+              "type": "custom:apexcharts-card",
+              "apex_config": {
+                "chart": {
+                  "height": "400px"
+                }
+              },
+              "header": {
+                "show": true,
+                "title": "EMHASS 3d Forecast",
+                "show_states": true,
+                "colorize_states": true
+              },
+              "graph_span": "72h",
+              "hours_12": false,
+              "span": {
+                "start": "minute",
+                "offset": "+0h"
+              },
+              "all_series_config": {
+                "stroke_width": 1
+              },
+              "now": {
+                "show": true
+              },
+              "yaxis": [
+                {
+                  "id": "power",
+                  "max": "~12000",
+                  "min": "~-12000",
+                  "decimals": 0,
+                  "apex_config": {
+                    "tickAmount": 8
+                  }
+                },
+                {
+                  "id": "percent",
+                  "decimals": 0,
+                  "max": 100,
+                  "min": 0,
+                  "opposite": true
+                },
+                {
+                  "id": "cost",
+                  "min": "~0",
+                  "max": "~1",
+                  "apex_config": {
+                    "tickAmount": 10
+                  },
+                  "decimals": 2,
+                  "opposite": true
+                }
+              ],
+              "series": [
+                {
+                  "entity": "sensor.dh_unit_load_cost",
+                  "yaxis_id": "cost",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 1,
+                  "float_precision": 4,
+                  "color": "lightblue",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.unit_load_cost_forecasts.map((entry) => {\n  return [new Date(entry.date), entry.dh_unit_load_cost];\n});\n"
+                },
+                {
+                  "entity": "sensor.dh_unit_prod_price",
+                  "yaxis_id": "cost",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 1,
+                  "float_precision": 4,
+                  "color": "yellow",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.unit_prod_price_forecasts.map((entry) => {\n  return [new Date(entry.date), entry.dh_unit_prod_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.dh_soc_batt_forecast",
+                  "yaxis_id": "percent",
+                  "type": "line",
+                  "stroke_width": 2,
+                  "color": "red",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.battery_scheduled_soc.map((entry) => {\n  return [new Date(new Date(entry.date).getTime() + 30 * 60 * 1000), entry.dh_soc_batt_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.dh_p_pv_forecast",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 2,
+                  "color": "orange",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.dh_p_pv_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.dh_p_pv_curtailment",
+                  "invert": true,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "orange",
+                  "type": "area",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.dh_p_pv_curtailment];\n});\n"
+                },
+                {
+                  "entity": "sensor.dh_p_load_forecast",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "color": "purple",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.dh_p_load_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.dh_p_batt_forecast",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgreen",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "type": "area",
+                  "data_generator": "return entity.attributes.battery_scheduled_power.map((entry) => {\n  return [new Date(entry.date), entry.dh_p_batt_forecast];\n});\n"
+                },
+                {
+                  "entity": "sensor.dh_p_grid_forecast",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgray",
+                  "type": "area",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.date), entry.dh_p_grid_forecast];\n});\n"
+                }
+              ],
+              "view_layout": {
+                "position": "main"
+              }
+            },
+            {
+              "type": "custom:apexcharts-card",
+              "apex_config": {
+                "chart": {
+                  "height": "400px"
+                }
+              },
+              "header": {
+                "show": true,
+                "title": "EMHASS 24h History",
+                "show_states": true,
+                "colorize_states": true
+              },
+              "graph_span": "24h",
+              "hours_12": false,
+              "span": {
+                "start": "minute",
+                "offset": "-24h"
+              },
+              "all_series_config": {
+                "stroke_width": 1
+              },
+              "now": {
+                "show": true
+              },
+              "yaxis": [
+                {
+                  "id": "power",
+                  "max": 12000,
+                  "min": -12000,
+                  "decimals": 0,
+                  "apex_config": {
+                    "tickAmount": 10
+                  }
+                },
+                {
+                  "id": "percent",
+                  "decimals": 0,
+                  "max": 100,
+                  "min": 0,
+                  "apex_config": {
+                    "tickAmount": 10
+                  },
+                  "opposite": true
+                },
+                {
+                  "id": "cost",
+                  "min": "~0",
+                  "max": "~1",
+                  "apex_config": {
+                    "tickAmount": 10
+                  },
+                  "decimals": 2,
+                  "opposite": true
+                }
+              ],
+              "series": [
+                {
+                  "name": "Buy",
+                  "entity": "sensor.amber_5min_current_general_price",
+                  "extend_to": "now",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "color": "lightblue"
+                },
+                {
+                  "name": "Sell",
+                  "entity": "sensor.amber_5min_current_feed_in_price",
+                  "extend_to": "now",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "color": "yellow"
+                },
+                {
+                  "entity": "sensor.sigen_plant_battery_state_of_charge",
+                  "name": "SOC",
+                  "yaxis_id": "percent",
+                  "type": "line",
+                  "stroke_width": 2,
+                  "color": "red",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  }
+                },
+                {
+                  "entity": "sensor.mpc_p_pv_forecast",
+                  "name": "PV",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 2,
+                  "color": "orange",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  }
+                },
+                {
+                  "entity": "sensor.mpc_p_pv_curtailment",
+                  "name": "PV Curtailment",
+                  "invert": true,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "orange",
+                  "type": "area",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                },
+                {
+                  "entity": "sensor.mpc_p_load_forecast",
+                  "name": "Load",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "color": "purple",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                },
+                {
+                  "entity": "sensor.mpc_p_batt_forecast",
+                  "name": "Battery",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgreen",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "type": "area"
+                },
+                {
+                  "entity": "sensor.mpc_p_grid_forecast",
+                  "name": "Grid",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgray",
+                  "type": "area",
+                  "extend_to": "now",
+                  "show": {
+                    "in_header": true,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                }
+              ],
+              "view_layout": {
+                "position": "main"
+              }
+            },
+            {
+              "type": "custom:apexcharts-card",
+              "apex_config": {
+                "chart": {
+                  "height": "350px"
+                }
+              },
+              "all_series_config": {
+                "unit": " kWh"
+              },
+              "header": {
+                "title": "Solar forecast",
+                "show": true,
+                "standard_format": true,
+                "show_states": true,
+                "colorize_states": true
+              },
+              "graph_span": "2d",
+              "span": {
+                "start": "day",
+                "offset": "-0h"
+              },
+              "now": {
+                "show": true,
+                "label": "Now"
+              },
+              "yaxis": [
+                {
+                  "id": "kwh",
+                  "min": 0,
+                  "apex_config": {
+                    "tickAmount": 5
+                  }
+                },
+                {
+                  "id": "header_only",
+                  "show": false
+                }
+              ],
+              "series": [
+                {
+                  "entity": "sensor.mpc_p_pv_forecast",
+                  "name": "Actual",
+                  "yaxis_id": "kwh",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 1,
+                  "color": "green",
+                  "extend_to": "now",
+                  "group_by": {
+                    "func": "avg",
+                    "duration": "30m"
+                  },
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  }
+                },
+                {
+                  "entity": "sensor.solcast_pv_forecast_forecast_tomorrow",
+                  "yaxis_id": "kwh",
+                  "type": "line",
+                  "curve": "stepline",
+                  "name": "P10",
+                  "color": "red",
+                  "data_generator": "var today = hass.states['sensor.solcast_pv_forecast_forecast_today'].attributes.detailedForecast.map((entry) => {\n  return [new Date(entry.period_start).getTime(), entry.pv_estimate10*1000];\n});\nvar tomorrow = hass.states['sensor.solcast_pv_forecast_forecast_tomorrow'].attributes.detailedForecast.map((entry) => {\n  return [new Date(entry.period_start).getTime(), entry.pv_estimate10*1000];\n});\nreturn today.concat(tomorrow);\n",
+                  "show": {
+                    "legend_value": false,
+                    "in_header": false
+                  },
+                  "stroke_width": 1,
+                  "float_precision": 3,
+                  "extend_to": false
+                },
+                {
+                  "entity": "sensor.solcast_pv_forecast_forecast_today",
+                  "yaxis_id": "kwh",
+                  "type": "line",
+                  "curve": "stepline",
+                  "name": "P50",
+                  "color": "yellow",
+                  "data_generator": "var today = hass.states['sensor.solcast_pv_forecast_forecast_today'].attributes.detailedForecast.map((entry) => {\n  return [new Date(entry.period_start).getTime(), entry.pv_estimate*1000];\n});\nvar tomorrow = hass.states['sensor.solcast_pv_forecast_forecast_tomorrow'].attributes.detailedForecast.map((entry) => {\n  return [new Date(entry.period_start).getTime(), entry.pv_estimate*1000];\n});\nreturn today.concat(tomorrow);\n",
+                  "show": {
+                    "legend_value": false,
+                    "in_header": false
+                  },
+                  "stroke_width": 2,
+                  "float_precision": 3,
+                  "extend_to": false
+                },
+                {
+                  "entity": "sensor.solcast_pv_forecast_forecast_tomorrow",
+                  "yaxis_id": "kwh",
+                  "type": "line",
+                  "curve": "stepline",
+                  "name": "P90",
+                  "color": "blue",
+                  "data_generator": "var today = hass.states['sensor.solcast_pv_forecast_forecast_today'].attributes.detailedForecast.map((entry) => {\n  return [new Date(entry.period_start).getTime(), entry.pv_estimate90*1000];\n});\nvar tomorrow = hass.states['sensor.solcast_pv_forecast_forecast_tomorrow'].attributes.detailedForecast.map((entry) => {\n  return [new Date(entry.period_start).getTime(), entry.pv_estimate90*1000];\n});\nreturn today.concat(tomorrow);\n",
+                  "show": {
+                    "legend_value": false,
+                    "in_header": false
+                  },
+                  "stroke_width": 1,
+                  "float_precision": 3,
+                  "extend_to": false
+                },
+                {
+                  "entity": "sensor.solcast_pv_forecast_forecast_today",
+                  "yaxis_id": "header_only",
+                  "name": "Today",
+                  "color": "orange",
+                  "show": {
+                    "legend_value": true,
+                    "in_header": true,
+                    "in_chart": false
+                  }
+                },
+                {
+                  "entity": "sensor.solcast_pv_forecast_forecast_remaining_today",
+                  "yaxis_id": "header_only",
+                  "name": "Remaining",
+                  "color": "orange",
+                  "show": {
+                    "legend_value": true,
+                    "in_header": true,
+                    "in_chart": false
+                  }
+                },
+                {
+                  "entity": "sensor.solcast_pv_forecast_forecast_tomorrow",
+                  "yaxis_id": "header_only",
+                  "name": "Tomorrow",
+                  "color": "grey",
+                  "show": {
+                    "legend_value": true,
+                    "in_header": true,
+                    "in_chart": false
+                  }
+                },
+                {
+                  "entity": "sensor.solcast_pv_forecast_api_last_polled",
+                  "yaxis_id": "header_only",
+                  "name": "Last update",
+                  "unit": " min.",
+                  "transform": "return ((Date.now()) - (new Date(x).getTime())) / 60 / 60 / 24",
+                  "show": {
+                    "legend_value": true,
+                    "in_header": true,
+                    "in_chart": false
+                  }
+                }
+              ]
+            },
+            {
+              "type": "vertical-stack",
+              "cards": [
+                {
+                  "type": "horizontal-stack",
+                  "cards": [
+                    {
+                      "type": "entities",
+                      "title": "Price Source Selectors",
+                      "entities": [
+                        {
+                          "entity": "input_select.emhass_mpc_price_source",
+                          "name": "MPC source"
+                        },
+                        {
+                          "entity": "input_select.emhass_dh_price_source",
+                          "name": "DH source"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "entities",
+                      "title": "MPC Diagnostic",
+                      "entities": [
+                        {
+                          "entity": "sensor.emhass_mpc_price_diagnostic",
+                          "name": "Selected source"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_mpc_price_diagnostic",
+                          "attribute": "ai_ready",
+                          "name": "AI ready"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_mpc_price_diagnostic",
+                          "attribute": "amber_import_first",
+                          "name": "Amber import (next)"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_mpc_price_diagnostic",
+                          "attribute": "ai_import_first",
+                          "name": "AI import (next)"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_mpc_price_diagnostic",
+                          "attribute": "ai_import_mean_1h",
+                          "name": "AI import mean (1h)"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "entities",
+                      "title": "DH Diagnostic",
+                      "entities": [
+                        {
+                          "entity": "sensor.emhass_dh_price_diagnostic",
+                          "name": "Selected source"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_dh_price_diagnostic",
+                          "attribute": "ai_ready",
+                          "name": "AI ready"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_dh_price_diagnostic",
+                          "attribute": "amber_import_first",
+                          "name": "Amber import (next)"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_dh_price_diagnostic",
+                          "attribute": "ai_import_first",
+                          "name": "AI import (next)"
+                        },
+                        {
+                          "type": "attribute",
+                          "entity": "sensor.emhass_dh_price_diagnostic",
+                          "attribute": "ai_import_mean_24h",
+                          "name": "AI import mean (24h)"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "custom:apexcharts-card",
+              "experimental": {
+                "color_threshold": true
+              },
+              "graph_span": "72h",
+              "span": {
+                "start": "minute"
+              },
+              "header": {
+                "show": true,
+                "title": "Spot Price Comparison"
+              },
+              "yaxis": [
+                {
+                  "id": "first",
+                  "decimals": 1,
+                  "max": 0.5,
+                  "apex_config": {
+                    "tickAmount": 4,
+                    "logarithmic": false
+                  }
+                }
+              ],
+              "view_layout": {
+                "position": "main"
+              },
+              "series": [
+                {
+                  "entity": "sensor.amber_billing_interval_forecasts_general_price",
+                  "name": "Amber/AEMO Spot",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "#F44336",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 2,
+                  "data_generator": "return entity.attributes.Forecasts.map((entry) => {\n  return[new Date(entry.start_time), entry.spot_per_kwh/1.1];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_price_forecast_low",
+                  "name": "APF/LGBM low",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "rgba(33,150,243,0.35)",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return[new Date(entry.timestamp), entry.wholesale_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_price_forecast",
+                  "name": "APF/LGBM p50",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "#2196F3",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 2,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return[new Date(entry.timestamp), entry.wholesale_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_price_forecast_high",
+                  "name": "APF/LGBM high",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "rgba(33,150,243,0.35)",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return[new Date(entry.timestamp), entry.wholesale_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_spot_price_forecast_low",
+                  "name": "Shadow low",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "rgba(255,152,0,0.35)",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return[new Date(entry.timestamp), entry.wholesale_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_spot_price_forecast",
+                  "name": "Shadow p50",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "#FF9800",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 2,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.wholesale_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_spot_price_forecast_high",
+                  "name": "Shadow high",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "rgba(255,152,0,0.35)",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return[new Date(entry.timestamp), entry.wholesale_price];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_aemo_price_forecast",
+                  "name": "AEMO raw input",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "first",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "color": "#4CAF50",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 2,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return[new Date(entry.timestamp), entry.wholesale_price];\n});\n"
+                }
+              ]
+            },
+            {
+              "type": "custom:apexcharts-card",
+              "apex_config": {
+                "chart": {
+                  "height": "400px"
+                }
+              },
+              "header": {
+                "show": true,
+                "title": "EMHASS 3d Forecast",
+                "show_states": true,
+                "colorize_states": true
+              },
+              "graph_span": "72h",
+              "hours_12": false,
+              "span": {
+                "start": "minute",
+                "offset": "+0h"
+              },
+              "all_series_config": {
+                "stroke_width": 1
+              },
+              "now": {
+                "show": true
+              },
+              "yaxis": [
+                {
+                  "id": "power",
+                  "max": "~1000",
+                  "min": 0,
+                  "decimals": 0,
+                  "apex_config": {
+                    "tickAmount": 8
+                  }
+                },
+                {
+                  "id": "percent",
+                  "decimals": 0,
+                  "max": 100,
+                  "min": 0,
+                  "opposite": true
+                },
+                {
+                  "id": "temp",
+                  "decimals": 2,
+                  "opposite": true
+                }
+              ],
+              "series": [
+                {
+                  "entity": "sensor.ai_temperature_forecast",
+                  "name": "AI temperature forecast",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "temp",
+                  "curve": "stepline",
+                  "unit": "C",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.temperature_adelaide];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_load_forecast",
+                  "name": "AI load P50",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "unit": "W",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.power_load];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_load_forecast_high",
+                  "name": "AI load high",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "unit": "W",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.power_load];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_load_forecast_p75",
+                  "name": "AI load P75",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "unit": "W",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.power_load];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_tft_load_forecast",
+                  "name": "AI TFT load P50",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "unit": "W",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.power_load];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_tft_load_forecast_high",
+                  "name": "AI TFT load high",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "unit": "W",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.power_load];\n});\n"
+                },
+                {
+                  "entity": "sensor.ai_tft_load_forecast_low",
+                  "name": "AI TFT load low",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "unit": "W",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecasts.map((entry) => {\n  return [new Date(entry.timestamp), entry.power_load];\n});\n"
+                }
+              ],
+              "view_layout": {
+                "position": "main"
+              }
+            },
+            {
+              "type": "custom:apexcharts-card",
+              "experimental": {
+                "color_threshold": true
+              },
+              "graph_span": "28h",
+              "span": {
+                "start": "minute",
+                "offset": "-2h"
+              },
+              "header": {
+                "show": true,
+                "title": "Amber Price Detail",
+                "show_states": true,
+                "colorize_states": true
+              },
+              "now": {
+                "show": true
+              },
+              "yaxis": [
+                {
+                  "id": "cost",
+                  "min": "~0",
+                  "max": "~1",
+                  "apex_config": {
+                    "tickAmount": 10
+                  },
+                  "decimals": 2
+                }
+              ],
+              "view_layout": {
+                "position": "main"
+              },
+              "series": [
+                {
+                  "name": "Actual import",
+                  "entity": "sensor.amber_5min_current_general_price",
+                  "extend_to": "now",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": "raw",
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                },
+                {
+                  "entity": "sensor.amber_billing_interval_forecasts_general_price",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.Forecasts.map((entry) => {\n  return [new Date(entry.start_time), entry.per_kwh];\n});\n",
+                  "name": "Pre-dispatch import"
+                },
+                {
+                  "name": "APF import",
+                  "entity": "sensor.amber_billing_interval_forecasts_general_price",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.Forecasts.map((entry) => {\n  return [new Date(entry.start_time), entry.advanced_price_predicted];\n});\n"
+                },
+                {
+                  "name": "Actual export",
+                  "entity": "sensor.amber_5min_current_feed_in_price",
+                  "extend_to": "now",
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": "raw",
+                    "legend_value": false
+                  },
+                  "stroke_width": 1
+                },
+                {
+                  "entity": "sensor.amber_billing_interval_forecasts_feed_in_price",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "name": "Pre-dispatch export",
+                  "data_generator": "return entity.attributes.Forecasts.map((entry) => {\n  return [new Date(entry.start_time), -entry.per_kwh];\n});\n"
+                },
+                {
+                  "name": "APF export",
+                  "entity": "sensor.amber_billing_interval_forecasts_feed_in_price",
+                  "extend_to": false,
+                  "float_precision": 4,
+                  "yaxis_id": "cost",
+                  "curve": "stepline",
+                  "unit": "$/kWh",
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.Forecasts.map((entry) => {\n  return [new Date(entry.start_time), -entry.advanced_price_predicted];\n});\n"
+                }
+              ]
+            }
+          ],
+          "badges": [
+            {
+              "type": "entity",
+              "show_name": true,
+              "show_state": true,
+              "show_icon": true,
+              "entity": "sensor.amber_5min_current_general_price",
+              "name": "Confirmed Buy"
+            },
+            {
+              "type": "entity",
+              "show_name": true,
+              "show_state": true,
+              "show_icon": true,
+              "entity": "sensor.amber_effective_general_price",
+              "name": "Effective Buy"
+            },
+            {
+              "type": "entity",
+              "show_name": true,
+              "show_state": true,
+              "show_icon": true,
+              "entity": "sensor.amber_5min_current_feed_in_price",
+              "name": "Confirmed Sell"
+            },
+            {
+              "type": "entity",
+              "show_name": true,
+              "show_state": true,
+              "show_icon": true,
+              "entity": "sensor.amber_effective_feed_in_price",
+              "name": "Effective Sell"
+            },
+            {
+              "type": "entity",
+              "show_name": true,
+              "show_state": true,
+              "show_icon": true,
+              "entity": "sensor.sigen_inverter_active_power",
+              "name": "Inverter Power"
+            }
+          ]
+        },
+        {
+          "type": "sections",
+          "max_columns": 4,
+          "title": "HWC",
+          "path": "hwc",
+          "sections": [
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "thermostat",
+                  "entity": "water_heater.aquatech"
+                },
+                {
+                  "type": "history-graph",
+                  "entities": [
+                    {
+                      "entity": "sensor.aquatech_exhaust_temperature",
+                      "name": "Tank condenser"
+                    },
+                    {
+                      "entity": "sensor.aquatech_return_air_temperature",
+                      "name": "Air evaporator"
+                    },
+                    {
+                      "entity": "sensor.aquatech_temperature",
+                      "name": "Ambient"
+                    },
+                    {
+                      "entity": "binary_sensor.aquatech_compressor"
+                    },
+                    {
+                      "entity": "sensor.aquatech_current_temperature_local",
+                      "name": "Water"
+                    },
+                    {
+                      "entity": "sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2"
+                    }
+                  ],
+                  "hours_to_show": 4
+                }
+              ]
+            },
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:apexcharts-card",
+                  "header": {
+                    "show": true,
+                    "title": "Hot water plan",
+                    "show_states": false,
+                    "colorize_states": true
+                  },
+                  "graph_span": "36h",
+                  "span": {
+                    "start": "minute",
+                    "offset": "-12h"
+                  },
+                  "now": {
+                    "show": true,
+                    "label": "",
+                    "color": "#90a4ae"
+                  },
+                  "yaxis": [
+                    {
+                      "id": "temp",
+                      "decimals": 0,
+                      "apex_config": {
+                        "title": {
+                          "text": "°C"
+                        },
+                        "tickAmount": 5
+                      }
+                    },
+                    {
+                      "id": "price",
+                      "opposite": true,
+                      "decimals": 2,
+                      "apex_config": {
+                        "show": false
+                      }
+                    },
+                    {
+                      "id": "ambient",
+                      "opposite": true,
+                      "decimals": 0,
+                      "apex_config": {
+                        "show": false
+                      }
+                    },
+                    {
+                      "id": "power",
+                      "opposite": true,
+                      "decimals": 0,
+                      "apex_config": {
+                        "show": false
+                      }
+                    }
+                  ],
+                  "series": [
+                    {
+                      "entity": "sensor.aquatech_current_temperature_local",
+                      "name": "Tank temp (measured)",
+                      "extend_to": "now",
+                      "type": "line",
+                      "curve": "smooth",
+                      "stroke_width": 2,
+                      "color": "#1e88e5",
+                      "yaxis_id": "temp",
+                      "group_by": {
+                        "duration": "15min",
+                        "func": "avg",
+                        "fill": "last"
+                      }
+                    },
+                    {
+                      "entity": "sensor.hwc_predicted_temp",
+                      "name": "Tank temp (executor)",
+                      "extend_to": false,
+                      "type": "line",
+                      "curve": "smooth",
+                      "stroke_width": 2,
+                      "color": "#1e88e5",
+                      "yaxis_id": "temp",
+                      "data_generator": "return (entity.attributes.predicted_temperatures || []).map(p => {\n  return [new Date(p.date).getTime(), parseFloat(p.hwc_predicted_temp)];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.hwc_wet_bulb_forecast",
+                      "name": "Wet bulb (measured)",
+                      "extend_to": "now",
+                      "type": "line",
+                      "curve": "smooth",
+                      "stroke_width": 1,
+                      "opacity": 0.45,
+                      "color": "#0097a7",
+                      "yaxis_id": "ambient"
+                    },
+                    {
+                      "entity": "sensor.hwc_wet_bulb_forecast",
+                      "name": "Wet bulb (forecast)",
+                      "extend_to": false,
+                      "type": "line",
+                      "curve": "smooth",
+                      "stroke_width": 1,
+                      "opacity": 0.45,
+                      "color": "#0097a7",
+                      "yaxis_id": "ambient",
+                      "data_generator": "return (entity.attributes.wet_bulb_forecasts || []).map(p => {\n  return [new Date(p.date).getTime(), parseFloat(p.hwc_wet_bulb_forecast)];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.amber_5min_current_general_price",
+                      "name": "Import price (actual)",
+                      "extend_to": "now",
+                      "type": "line",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "opacity": 0.25,
+                      "color": "#fb8c00",
+                      "yaxis_id": "price",
+                      "group_by": {
+                        "duration": "5min",
+                        "func": "last",
+                        "fill": "last"
+                      }
+                    },
+                    {
+                      "entity": "sensor.hwc_unit_load_cost",
+                      "name": "Import price (forecast)",
+                      "extend_to": false,
+                      "type": "line",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "opacity": 0.35,
+                      "color": "#fb8c00",
+                      "yaxis_id": "price",
+                      "data_generator": "return (entity.attributes.unit_load_cost_forecasts || []).map(p => {\n  return [new Date(p.date).getTime(), parseFloat(p.hwc_unit_load_cost)];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2",
+                      "name": "Heat pump (measured)",
+                      "extend_to": "now",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "opacity": 0.22,
+                      "color": "#43a047",
+                      "yaxis_id": "power"
+                    },
+                    {
+                      "entity": "sensor.hwc_power_plan",
+                      "name": "Planned heat pump",
+                      "extend_to": false,
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "opacity": 0.16,
+                      "color": "#43a047",
+                      "yaxis_id": "power",
+                      "data_generator": "return (entity.attributes.deferrables_schedule || []).map(p => {\n  return [new Date(p.date).getTime(), parseFloat(p.hwc_power_plan)];\n});\n"
+                    }
+                  ],
+                  "apex_config": {
+                    "chart": {
+                      "height": 320
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "sections",
+          "max_columns": 4,
+          "path": "",
+          "icon": "",
+          "sections": [
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "entities",
+                  "entities": [
+                    {
+                      "entity": "fan.awdc001ha_02"
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:auto-entities",
+                  "card": {
+                    "type": "entities"
+                  },
+                  "filter": {
+                    "include": [
+                      {
+                        "options": {},
+                        "entity_id": "fan.curtain_fans"
+                      },
+                      {
+                        "options": {},
+                        "entity_id": "climate.sigfan_*"
+                      },
+                      {
+                        "options": {},
+                        "entity_id": "sensor.sigfan_*"
+                      },
+                      {
+                        "options": {},
+                        "entity_id": "number.sigfan_*"
+                      }
+                    ]
+                  },
+                  "sort": {
+                    "method": "name"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "vertical-stack",
+                  "cards": [
+                    {
+                      "type": "custom:auto-entities",
+                      "card": {
+                        "type": "history-graph",
+                        "refresh_interval": 10,
+                        "hours_to_show": 2
+                      },
+                      "filter": {
+                        "include": [
+                          {
+                            "options": {},
+                            "entity_id": "sensor.sigfan_sigen_*_temp",
+                            "sort": {
+                              "method": "name"
+                            }
+                          },
+                          {
+                            "options": {},
+                            "entity_id": "sensor.sigen_inverter_battery_max*_temperature"
+                          },
+                          {
+                            "options": {},
+                            "entity_id": "sensor.sigfan_garage_*_temp"
+                          },
+                          {
+                            "options": {},
+                            "entity_id": "sensor.ble_temperature_a4c138be52ce"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "custom:auto-entities",
+                      "card": {
+                        "type": "history-graph",
+                        "refresh_interval": 10,
+                        "hours_to_show": 2
+                      },
+                      "filter": {
+                        "include": [
+                          {
+                            "options": {},
+                            "entity_id": "sensor.sigfan_*_pwm",
+                            "sort": {
+                              "method": "name"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "custom:auto-entities",
+                      "card": {
+                        "type": "history-graph",
+                        "refresh_interval": 10,
+                        "hours_to_show": 2
+                      },
+                      "filter": {
+                        "include": [
+                          {
+                            "options": {},
+                            "entity_id": "sensor.sigfan_*_rpm",
+                            "sort": {
+                              "method": "name"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "title": "Garage Thermal",
+          "cards": []
+        },
+        {
+          "title": "TypQxQ",
+          "sections": [
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:auto-entities",
+                  "card": {
+                    "type": "entities"
+                  },
+                  "filter": {
+                    "include": [
+                      {
+                        "entity_id": "*.sigen_plant_*"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:auto-entities",
+                  "card": {
+                    "type": "entities"
+                  },
+                  "filter": {
+                    "include": [
+                      {
+                        "entity_id": "*.sigen_inverter_*"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "type": "sections",
+          "cards": [],
+          "max_columns": 4
+        },
+        {
+          "type": "sections",
+          "max_columns": 4,
+          "title": "sigenergy2mqtt",
+          "path": "sigenergy2mqtt",
+          "sections": [
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:auto-entities",
+                  "card": {
+                    "type": "entities"
+                  },
+                  "filter": {
+                    "include": [
+                      {
+                        "options": {},
+                        "entity_id": "*.sigen_0_grid_*"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "custom:auto-entities",
+                  "card": {
+                    "type": "entities"
+                  },
+                  "filter": {
+                    "include": [
+                      {
+                        "options": {},
+                        "entity_id": "*.sigen_0_si_*"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:auto-entities",
+                  "card": {
+                    "type": "entities"
+                  },
+                  "filter": {
+                    "include": [
+                      {
+                        "options": {},
+                        "entity_id": "*.sigen_0_plant_*"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:auto-entities",
+                  "card": {
+                    "type": "entities"
+                  },
+                  "filter": {
+                    "include": [
+                      {
+                        "options": {},
+                        "entity_id": "*.sigen_0_inverter_*"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "dense_section_placement": true,
+          "cards": []
+        },
+        {
+          "type": "sections",
+          "max_columns": 4,
+          "title": "Statoptim",
+          "path": "statoptim",
+          "sections": [
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:apexcharts-card",
+                  "header": {
+                    "show": true,
+                    "title": "HVAC 24h Cooling Forecast",
+                    "show_states": true,
+                    "colorize_states": true
+                  },
+                  "graph_span": "24h",
+                  "span": {
+                    "start": "minute",
+                    "offset": "-30m"
+                  },
+                  "all_series_config": {
+                    "stroke_width": 2,
+                    "extend_to": false,
+                    "fill_raw": "last",
+                    "show": {
+                      "in_header": false,
+                      "legend_value": false
+                    }
+                  },
+                  "now": {
+                    "show": true
+                  },
+                  "yaxis": [
+                    {
+                      "id": "temperature",
+                      "decimals": 1,
+                      "apex_config": {
+                        "tickAmount": 5
+                      }
+                    },
+                    {
+                      "id": "percent",
+                      "opposite": true,
+                      "min": 0,
+                      "max": 100,
+                      "decimals": 0,
+                      "apex_config": {
+                        "tickAmount": 5
+                      }
+                    }
+                  ],
+                  "series": [
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_kitchen_cool",
+                      "name": "Kitchen Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#3498db",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_kitchen_cool",
+                      "name": "Kitchen Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#3498db",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_study_cool",
+                      "name": "Study Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#2ecc71",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_study_cool",
+                      "name": "Study Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#2ecc71",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_bed_1_cool",
+                      "name": "Bed 1 Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#9b59b6",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_bed_1_cool",
+                      "name": "Bed 1 Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#9b59b6",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_bed_2_cool",
+                      "name": "Bed 2 Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#1abc9c",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_bed_2_cool",
+                      "name": "Bed 2 Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#1abc9c",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_bed_3_cool",
+                      "name": "Bed 3 Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#e67e22",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_bed_3_cool",
+                      "name": "Bed 3 Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#e67e22",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    }
+                  ],
+                  "view_layout": {
+                    "position": "main"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:apexcharts-card",
+                  "header": {
+                    "show": true,
+                    "title": "HVAC 24h Heating Forecast",
+                    "show_states": true,
+                    "colorize_states": true
+                  },
+                  "graph_span": "24h",
+                  "span": {
+                    "start": "minute",
+                    "offset": "-30m"
+                  },
+                  "all_series_config": {
+                    "stroke_width": 2,
+                    "extend_to": false,
+                    "fill_raw": "last",
+                    "show": {
+                      "in_header": false,
+                      "legend_value": false
+                    }
+                  },
+                  "now": {
+                    "show": true
+                  },
+                  "yaxis": [
+                    {
+                      "id": "temperature",
+                      "decimals": 1,
+                      "apex_config": {
+                        "tickAmount": 5
+                      }
+                    },
+                    {
+                      "id": "percent",
+                      "opposite": true,
+                      "min": 0,
+                      "max": 100,
+                      "decimals": 0,
+                      "apex_config": {
+                        "tickAmount": 5
+                      }
+                    }
+                  ],
+                  "series": [
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_kitchen_heat",
+                      "name": "Kitchen Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#3498db",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_kitchen_heat",
+                      "name": "Kitchen Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#3498db",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_study_heat",
+                      "name": "Study Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#2ecc71",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_study_heat",
+                      "name": "Study Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#2ecc71",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_bed_1_heat",
+                      "name": "Bed 1 Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#9b59b6",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_bed_1_heat",
+                      "name": "Bed 1 Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#9b59b6",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_bed_2_heat",
+                      "name": "Bed 2 Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#1abc9c",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_bed_2_heat",
+                      "name": "Bed 2 Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#1abc9c",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_temp_predicted_bed_3_heat",
+                      "name": "Bed 3 Temp",
+                      "yaxis_id": "temperature",
+                      "curve": "smooth",
+                      "color": "#e67e22",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.predicted_temperatures.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    },
+                    {
+                      "entity": "sensor.statoptim_p_bed_3_heat",
+                      "name": "Bed 3 Power",
+                      "yaxis_id": "percent",
+                      "type": "area",
+                      "curve": "stepline",
+                      "stroke_width": 1,
+                      "color": "#e67e22",
+                      "data_generator": "const key = entity.entity_id.split('.')[1];\nreturn entity.attributes.deferrables_schedule.map((entry) => {\n  return [new Date(entry.date), parseFloat(entry[key])];\n});\n"
+                    }
+                  ],
+                  "view_layout": {
+                    "position": "main"
+                  }
+                }
+              ]
+            }
+          ],
+          "badges": [
+            {
+              "type": "entity",
+              "show_name": false,
+              "show_state": true,
+              "show_icon": true,
+              "entity": "automation.update_emhass_statoptim_forecast"
+            }
+          ]
+        },
+        {
+          "type": "panel",
+          "title": "HAEO",
+          "path": "haeo",
+          "cards": [
+            {
+              "type": "custom:apexcharts-card",
+              "header": {
+                "show": true,
+                "title": "EMHASS 3d Forecast",
+                "show_states": true,
+                "colorize_states": true
+              },
+              "graph_span": "72h",
+              "hours_12": false,
+              "span": {
+                "start": "minute",
+                "offset": "+0h"
+              },
+              "all_series_config": {
+                "stroke_width": 1
+              },
+              "now": {
+                "show": true
+              },
+              "yaxis": [
+                {
+                  "id": "power",
+                  "max": 12,
+                  "min": -12,
+                  "decimals": 0,
+                  "apex_config": {
+                    "tickAmount": 8
+                  }
+                },
+                {
+                  "id": "percent",
+                  "decimals": 0,
+                  "max": 100,
+                  "min": 0,
+                  "opposite": true
+                },
+                {
+                  "id": "cost",
+                  "min": "~0",
+                  "max": "~1",
+                  "apex_config": {
+                    "tickAmount": 10
+                  },
+                  "decimals": 2,
+                  "opposite": true
+                }
+              ],
+              "series": [
+                {
+                  "entity": "sensor.grid_import_price",
+                  "yaxis_id": "cost",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 1,
+                  "float_precision": 4,
+                  "color": "blue",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                },
+                {
+                  "entity": "sensor.grid_export_price",
+                  "yaxis_id": "cost",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 1,
+                  "float_precision": 4,
+                  "color": "yellow",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                },
+                {
+                  "entity": "sensor.battery_state_of_charge",
+                  "yaxis_id": "percent",
+                  "type": "line",
+                  "stroke_width": 2,
+                  "color": "red",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                },
+                {
+                  "entity": "sensor.solar_power_available",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "stroke_width": 2,
+                  "color": "orange",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                },
+                {
+                  "entity": "sensor.solar_power",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "orange",
+                  "type": "area",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                },
+                {
+                  "entity": "sensor.load_power",
+                  "yaxis_id": "power",
+                  "type": "line",
+                  "curve": "stepline",
+                  "color": "purple",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                },
+                {
+                  "entity": "sensor.battery_active_power",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgreen",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "type": "area",
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                },
+                {
+                  "entity": "sensor.grid_active_power",
+                  "yaxis_id": "power",
+                  "curve": "stepline",
+                  "color": "lightgray",
+                  "type": "area",
+                  "extend_to": false,
+                  "show": {
+                    "in_header": false,
+                    "legend_value": false
+                  },
+                  "stroke_width": 1,
+                  "data_generator": "return entity.attributes.forecast.map((entry) => {\n  return [new Date(entry.time), entry.value];\n});\n"
+                }
+              ],
+              "view_layout": {
+                "position": "main"
+              }
+            }
+          ]
+        },
+        {
+          "type": "sections",
+          "max_columns": 4,
+          "title": "Experiments",
+          "path": "experiments",
+          "sections": [
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "custom:sankey-chart",
+                  "show_names": true,
+                  "min_state": 10,
+                  "sections": [
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "sensor.sigen_plant_grid_import_power",
+                          "name": "Grid Import",
+                          "color": "#f44336",
+                          "children": [
+                            "AC_Bus"
+                          ]
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_pv1_power",
+                          "name": "Solar PV1",
+                          "color": "#ff9800",
+                          "children": [
+                            "PV_Combined"
+                          ]
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_pv2_power",
+                          "name": "Solar PV2",
+                          "color": "#ffb300",
+                          "children": [
+                            "PV_Combined"
+                          ]
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_battery_discharge_power",
+                          "name": "Battery Discharge",
+                          "color": "#4caf50",
+                          "children": [
+                            "DC_Bus"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Bus",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "PV_Combined",
+                          "type": "remaining_parent_state",
+                          "name": "Solar PV",
+                          "color": "#ff9800",
+                          "children": [
+                            "DC_Bus"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Bus",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "DC_Bus",
+                          "type": "remaining_parent_state",
+                          "name": "DC Bus",
+                          "color": "#2196f3",
+                          "children": [
+                            "DC_Bus_Agg"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Bus",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_active_input_power",
+                          "name": "Chargeverter",
+                          "color": "#795548",
+                          "children": [
+                            "DC_Bus_Charge"
+                          ]
+                        },
+                        {
+                          "entity_id": "DC_Bus_Agg",
+                          "type": "passthrough"
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Bus",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "DC_Bus_Agg",
+                          "type": "remaining_parent_state",
+                          "name": "DC Bus",
+                          "color": "#2196f3",
+                          "children": [
+                            "sensor.sigen_inverter_active_output_power",
+                            "sensor.sigen_inverter_battery_charge_power",
+                            "Inverter_Loss"
+                          ]
+                        },
+                        {
+                          "entity_id": "DC_Bus_Charge",
+                          "type": "remaining_parent_state",
+                          "name": "DC Bus (Grid)",
+                          "color": "#2196f3",
+                          "children": [
+                            "sensor.sigen_inverter_battery_charge_power",
+                            "Chargeverter_Loss"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Bus",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_active_output_power",
+                          "name": "Inverter",
+                          "color": "#9e9e9e",
+                          "children": [
+                            "AC_Bus_Inv"
+                          ]
+                        },
+                        {
+                          "entity_id": "Inverter_Loss",
+                          "type": "remaining_parent_state",
+                          "name": "Inverter Loss",
+                          "color": "#607d8b"
+                        },
+                        {
+                          "entity_id": "Chargeverter_Loss",
+                          "type": "remaining_parent_state",
+                          "name": "Chargeverter Loss",
+                          "color": "#607d8b"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_battery_charge_power",
+                          "type": "passthrough"
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Bus",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "AC_Bus_Inv",
+                          "type": "remaining_parent_state",
+                          "name": "AC Bus (Inv)",
+                          "color": "#9e9e9e",
+                          "children": [
+                            "AC_Loads"
+                          ]
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_battery_charge_power",
+                          "type": "passthrough"
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Bus",
+                          "type": "remaining_parent_state",
+                          "name": "AC Bus",
+                          "color": "#f44336",
+                          "children": [
+                            "AC_Loads",
+                            "sensor.sigen_plant_grid_export_power",
+                            "sensor.sigen_inverter_active_input_power"
+                          ]
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_battery_charge_power",
+                          "type": "passthrough"
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "AC_Loads",
+                          "type": "remaining_parent_state",
+                          "name": "AC Loads",
+                          "color": "#e91e63",
+                          "children": [
+                            "sensor.shellyem_ec64c9c6932b_channel_1_power",
+                            "sensor.shellyem_ec64c9c6932b_channel_2_power",
+                            "sensor.athom_8647_power",
+                            "sensor.athom_0b3a_power",
+                            "sensor.athom_ab37_power",
+                            "sensor.athom_da19_power",
+                            "sensor.athom_858a_power",
+                            "sensor.athom_8ae0_power",
+                            "sensor.athom_c3_dfb0_power",
+                            "sensor.stair_light_power",
+                            "sensor.shellyswitch25_c45bbe6c2a1b_power",
+                            "sensor.shellyswitch25_c45bbe6b44b3_power",
+                            "sensor.snf23_power",
+                            "remaining_power_load"
+                          ]
+                        },
+                        {
+                          "entity_id": "sensor.sigen_plant_grid_export_power",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_active_input_power",
+                          "type": "passthrough"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_battery_charge_power",
+                          "type": "passthrough"
+                        }
+                      ]
+                    },
+                    {
+                      "entities": [
+                        {
+                          "entity_id": "sensor.shellyem_ec64c9c6932b_channel_1_power",
+                          "name": "AC Out"
+                        },
+                        {
+                          "entity_id": "sensor.shellyem_ec64c9c6932b_channel_2_power",
+                          "name": "AC In"
+                        },
+                        {
+                          "entity_id": "sensor.athom_8647_power",
+                          "name": "Server"
+                        },
+                        {
+                          "entity_id": "sensor.athom_0b3a_power",
+                          "name": "Study"
+                        },
+                        {
+                          "entity_id": "sensor.athom_ab37_power",
+                          "name": "Games"
+                        },
+                        {
+                          "entity_id": "sensor.athom_da19_power",
+                          "name": "TV"
+                        },
+                        {
+                          "entity_id": "sensor.athom_858a_power",
+                          "name": "Washing"
+                        },
+                        {
+                          "entity_id": "sensor.athom_8ae0_power",
+                          "name": "Garden Lights"
+                        },
+                        {
+                          "entity_id": "sensor.athom_c3_dfb0_power",
+                          "name": "Dishwasher"
+                        },
+                        {
+                          "entity_id": "sensor.stair_light_power",
+                          "name": "Stair Lights"
+                        },
+                        {
+                          "entity_id": "sensor.shellyswitch25_c45bbe6c2a1b_power",
+                          "name": "Ryan Shutter"
+                        },
+                        {
+                          "entity_id": "sensor.shellyswitch25_c45bbe6b44b3_power",
+                          "name": "Study Shutter"
+                        },
+                        {
+                          "entity_id": "sensor.snf23_power",
+                          "name": "Fridge"
+                        },
+                        {
+                          "entity_id": "remaining_power_load",
+                          "type": "remaining_parent_state",
+                          "name": "Unknown"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_plant_grid_export_power",
+                          "name": "Grid Export",
+                          "color": "#9c27b0"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_active_input_power",
+                          "name": "Chargeverter Input",
+                          "color": "#795548"
+                        },
+                        {
+                          "entity_id": "sensor.sigen_inverter_battery_charge_power",
+                          "name": "Battery Charge",
+                          "color": "#4caf50"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "grid",
+              "cards": [
+                {
+                  "type": "heading",
+                  "heading": "New section"
+                },
+                {
+                  "cardstyle": "full",
+                  "wide": false,
+                  "large_font": false,
+                  "show_solar": true,
+                  "show_battery": true,
+                  "show_grid": true,
+                  "center_no_grid": false,
+                  "card_height": "100%",
+                  "card_width": "100%",
+                  "decimal_places": 2,
+                  "decimal_places_energy": 1,
+                  "dynamic_line_width": true,
+                  "max_line_width": 4,
+                  "min_line_width": 1,
+                  "inverter": {
+                    "model": "sigenergy",
+                    "modern": false,
+                    "autarky": "no"
+                  },
+                  "battery": {
+                    "show_daily": true,
+                    "invert_power": true,
+                    "soc_decimal_places": 1,
+                    "auto_scale": false,
+                    "energy": "sensor.sigen_plant_rated_energy_capacity",
+                    "linear_gradient": false,
+                    "show_absolute": false,
+                    "shutdown_soc": "number.sigen_plant_ess_backup_state_of_charge"
+                  },
+                  "battery2": {
+                    "energy": 0,
+                    "shutdown_soc": 20,
+                    "soc_end_of_charge": 100,
+                    "invert_power": false,
+                    "hide_soc": false,
+                    "colour": "#ffc0cb",
+                    "show_remaining_energy": true,
+                    "remaining_energy_to_shutdown": false,
+                    "show_absolute": false,
+                    "auto_scale": true,
+                    "dynamic_colour": true,
+                    "linear_gradient": true,
+                    "animate": true,
+                    "path_threshold": 100,
+                    "navigate": "",
+                    "invert_flow": false
+                  },
+                  "solar": {
+                    "show_daily": true,
+                    "display_mode": 2,
+                    "mppts": 2
+                  },
+                  "load": {
+                    "show_daily": true,
+                    "auto_scale": false,
+                    "additional_loads": 6,
+                    "load1_name": "AC Out",
+                    "load2_name": "AC In",
+                    "load3_name": "Server",
+                    "load3_icon": "mdi:server-network",
+                    "load4_name": "Fridge",
+                    "load4_icon": "mdi:fridge",
+                    "load5_name": "TV",
+                    "load6_name": "Unknown",
+                    "load5_icon": "mdi:television",
+                    "load2_icon": "mdi:air-purifier",
+                    "load1_icon": "mdi:air-conditioner",
+                    "load6_icon": "mdi:help"
+                  },
+                  "grid": {
+                    "show_daily_buy": true,
+                    "show_daily_sell": true,
+                    "show_nonessential": false,
+                    "auto_scale": false,
+                    "import_icon": "mdi:transmission-tower-import",
+                    "export_icon": "mdi:transmission-tower-export",
+                    "disconnected_icon": "mdi:transmission-tower-off"
+                  },
+                  "type": "custom:sunsynk-power-flow-card",
+                  "entities": {
+                    "battery_power_190": "sensor.sigen_plant_battery_power",
+                    "battery_soc_184": "sensor.sigen_plant_battery_state_of_charge",
+                    "battery_temp_182": "sensor.sigen_inverter_battery_maximum_temperature",
+                    "battery_voltage_183": "sensor.sigen_inverter_battery_average_cell_voltage",
+                    "day_battery_charge_70": "sensor.sigen_plant_daily_battery_charge_energy",
+                    "day_battery_discharge_71": "sensor.sigen_plant_daily_battery_discharge_energy",
+                    "day_grid_export_77": "sensor.sigen_plant_daily_grid_export_energy",
+                    "day_grid_import_76": "sensor.sigen_plant_daily_grid_import_energy",
+                    "day_load_energy_84": "sensor.sigen_plant_daily_consumed_energy",
+                    "day_pv_energy_108": "sensor.sigen_inverter_daily_pv_energy",
+                    "dc_transformer_temp_90": "sensor.sigen_inverter_pcs_internal_temperature",
+                    "energy_cost_buy": "sensor.amber_effective_general_price",
+                    "energy_cost_sell": "sensor.amber_effective_feed_in_price",
+                    "environment_temp": "sensor.minimum_outside_temp",
+                    "essential_power": "sensor.sigen_plant_consumed_power",
+                    "grid_connected_status_194": "sensor.sigen_plant_grid_connection_status",
+                    "grid_ct_power_172": "sensor.sigen_plant_grid_active_power",
+                    "grid_frequency": "sensor.sigen_inverter_grid_frequency",
+                    "grid_power_169": "sensor.sigen_inverter_conversion_loss",
+                    "grid_voltage": "sensor.sigen_inverter_rated_grid_voltage",
+                    "inverter_current_164": "sensor.sigen_inverter_phase_a_current",
+                    "inverter_power_175": "sensor.sigen_inverter_active_power",
+                    "inverter_status_59": "sensor.sigen_plant_plant_running_state",
+                    "inverter_voltage_154": "sensor.sigen_inverter_phase_a_voltage",
+                    "load_frequency_192": "sensor.sigen_inverter_grid_frequency",
+                    "max_sell_power": "number.sigen_plant_grid_export_limitation",
+                    "pv1_current_110": "sensor.sigen_inverter_pv1_current",
+                    "pv1_power_186": "sensor.sigen_inverter_pv1_power",
+                    "pv1_voltage_109": "sensor.sigen_inverter_pv1_voltage",
+                    "pv2_current_112": "sensor.sigen_inverter_pv2_current",
+                    "pv2_power_187": "sensor.sigen_inverter_pv2_power",
+                    "pv2_voltage_111": "sensor.sigen_inverter_pv2_voltage",
+                    "remaining_solar": "sensor.solcast_pv_forecast_forecast_remaining_today",
+                    "solar_sell_247": "binary_sensor.sigen_plant_exporting_to_grid",
+                    "total_pv_generation": "sensor.sigen_plant_total_pv_energy",
+                    "essential_load1": "sensor.shelly_em_ec64c9c6932b_channel_1_active_power",
+                    "essential_load2": "sensor.shelly_em_ec64c9c6932b_channel_2_active_power",
+                    "essential_load3": "sensor.athom_8647_power",
+                    "essential_load4": "sensor.snf23_power",
+                    "essential_load5": "sensor.athom_da19_power",
+                    "essential_load6": "sensor.remaining_power_load"
+                  },
+                  "view_layout": {
+                    "position": "sidebar"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

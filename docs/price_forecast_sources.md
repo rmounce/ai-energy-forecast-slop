@@ -5,8 +5,8 @@
 - `amber_apf_lgbm` is the current APF-backed production incumbent.
 - It comes from `price_forecast_log.csv` rows with `model_name='price'`.
 - It is the only current source to use for APF extrapolation questions.
-- `pd_direct`, `model_a_hybrid`, and `lgbm_strategic` are APF-free or APF-independent
-  price paths.
+- `p5min_tactical`, `pd_direct`, `model_a_hybrid`, and `lgbm_strategic` are
+  APF-free or APF-independent price paths.
 - Work on those other price paths is suspended, not fully abandoned. They remain
   useful for reference and possible revival, but they are not currently trusted
   replacement paths.
@@ -20,6 +20,7 @@
 | Source label | APF-backed? | Artifact/log | Resolution | Horizon | Current status | Use for | Do not use for |
 |--------------|-------------|--------------|------------|---------|----------------|---------|----------------|
 | `amber_apf_lgbm` | Yes | `price_forecast_log.csv`, `model_name='price'` | 30 min | 0-72h, 144 steps | Production incumbent / active APF extrapolation baseline | Current APF extrapolation, tail residual correction, STPASA feature value | APF-free replacement claims |
+| `p5min_tactical` | No | `p5min_forecast_log.csv`, tactical sensors | 5 min | 0-60 min, 12 steps | Suspended, retained for reference | Explicit tactical-price revival work | Current production APF extrapolation evaluation |
 | `pd_direct` | No | `pd_direct_forecast_log.csv`, PD-direct sensors | 30 min | 0-72h, 144 steps | Suspended, retained for reference | Explicit APF-free revival work | Evidence about APF extrapolation improvements |
 | `model_a_hybrid` | No | `retro_tier1_forecasts.pkl` + `retro_tft_forecasts.pkl` | 5 min tactical prefix plus 30 min tail | 0-72h stitched curve | Suspended, retained for reference | Historical hybrid/TFT comparisons | Evidence about APF extrapolation improvements |
 | `lgbm_strategic` | No | `retro_lgbm_strategic_forecasts.pkl` | 30 min | 0-72h, 144 steps | Suspended APF-free experiment | Explicit APF-free strategic experiments | APF extrapolation evaluation |
@@ -42,11 +43,13 @@ Use this source when the question is:
 
 ### Suspended APF-Free Paths
 
-`pd_direct`, `model_a_hybrid`, and `lgbm_strategic` are not deleted, but active
-work on them is suspended. The common problem was trust: the experiments did not
-show a clear path to a replacement forecast source that could be relied on in
-production. They can still be revived deliberately, but they should not be
-mixed into APF extrapolation work without an explicit comparison design.
+`p5min_tactical`, `pd_direct`, `model_a_hybrid`, and `lgbm_strategic` are not
+deleted, but active work on them is suspended. The common problem was trust and
+scope: the experiments did not show a clear path to a replacement forecast
+source that could be relied on in production, and tactical Tier 1 is not
+currently used by EMHASS. They can still be revived deliberately, but they
+should not be mixed into APF extrapolation work without an explicit comparison
+design.
 
 ## Guardrail
 
@@ -57,6 +60,7 @@ APF-backed. If the experiment is about APF extrapolation, it should either:
 - transform/evaluate an artifact derived directly from that logged APF-backed
   curve.
 
-If the run consumes `pd_direct`, `model_a_hybrid`, `retro_tft_forecasts.pkl`, or
-`retro_lgbm_strategic_forecasts.pkl`, it is not evaluating the APF extrapolation
-model unless the script explicitly compares against `amber_apf_lgbm`.
+If the run consumes `p5min_tactical`, `pd_direct`, `model_a_hybrid`,
+`retro_tft_forecasts.pkl`, or `retro_lgbm_strategic_forecasts.pkl`, it is not
+evaluating the APF extrapolation model unless the script explicitly compares
+against `amber_apf_lgbm`.
