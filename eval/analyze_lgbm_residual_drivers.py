@@ -30,6 +30,7 @@ DEFAULT_LOG = REPO_ROOT / "price_forecast_log.csv"
 DEFAULT_ACTUALS = REPO_ROOT / "data" / "parquet" / "actuals_sa1.parquet"
 DEFAULT_PREDISPATCH = REPO_ROOT / "data" / "parquet" / "aemo_predispatch_sa1.parquet"
 DEFAULT_SDO = REPO_ROOT / "data" / "parquet" / "aemo_sevendayoutlook_sa1.parquet"
+DEFAULT_STPASA = REPO_ROOT / "data" / "parquet" / "aemo_stpasa_regionsolution_sa1.parquet"
 
 LOCAL_TZ = "Australia/Adelaide"
 
@@ -206,6 +207,53 @@ def load_source(path: Path, cols: list[str]) -> pd.DataFrame:
     return df.sort_values(["interval_dt", "run_time"])
 
 
+def validate_source_horizon(
+    source: pd.DataFrame,
+    *,
+    source_name: str,
+    min_horizon_hours: float,
+) -> tuple[float, float]:
+    """Validate that every source run reaches the required target horizon."""
+
+    if source.empty:
+        raise ValueError(f"{source_name} source is empty")
+    horizon = (source["interval_dt"] - source["run_time"]).dt.total_seconds() / 3600.0
+    summary = pd.DataFrame({"run_time": source["run_time"], "horizon_hours": horizon})
+    by_run = summary.groupby("run_time", observed=False)["horizon_hours"].agg(["min", "max"])
+    short = by_run[by_run["max"] < min_horizon_hours]
+    if not short.empty:
+        min_max_horizon = float(short["max"].min())
+        raise ValueError(
+            f"{len(short):,}/{len(by_run):,} {source_name} runs stop before "
+            f"{min_horizon_hours:.1f}h; shortest max horizon is {min_max_horizon:.1f}h"
+        )
+    return float(by_run["min"].min()), float(by_run["max"].max())
+
+
+def validate_join_coverage(
+    df: pd.DataFrame,
+    *,
+    prefix: str,
+    value_col: str,
+    min_horizon_hours: float,
+    max_horizon_hours: float,
+    min_coverage: float,
+) -> float:
+    """Validate joined driver coverage over a forecast-horizon band."""
+
+    mask = (df["horizon_hours"] >= min_horizon_hours) & (df["horizon_hours"] <= max_horizon_hours)
+    if not mask.any():
+        return float("nan")
+    coverage = float(df.loc[mask, f"{prefix}_{value_col}"].notna().mean())
+    if coverage < min_coverage:
+        raise ValueError(
+            f"{prefix} coverage is {coverage:.1%} for "
+            f"{min_horizon_hours:.1f}-{max_horizon_hours:.1f}h; "
+            f"required at least {min_coverage:.1%}"
+        )
+    return coverage
+
+
 def add_driver_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["pred_mwh"] = out["prediction"] * 1000.0
@@ -232,6 +280,11 @@ def add_driver_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["humidity_error"] = out["humidity_adelaide"] - out["humidity_adelaide_actual"]
     out["local_wind_error"] = out["wind_speed_adelaide"] - out["wind_speed_adelaide_actual"]
 
+    if "stpasa_run_time" in out:
+        out["stpasa_source_horizon_hours"] = (
+            out["forecast_target_time"] - out["stpasa_run_time"]
+        ).dt.total_seconds() / 3600.0
+
     out["actual_demand_bucket"] = quantile_bucket(out["actual_total_demand"])
     out["actual_net_interchange_bucket"] = quantile_bucket(
         out["actual_net_interchange"], labels=("net_export_high", "mid", "net_import_high")
@@ -248,6 +301,10 @@ def add_driver_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["actual_pv_bucket"] = quantile_bucket(out["power_pv_actual"])
     out["local_wind_actual_bucket"] = quantile_bucket(out["wind_speed_adelaide_actual"])
     out["local_wind_error_bucket"] = signed_tercile_bucket(out["local_wind_error"], deadband=2.0)
+    if "stpasa_uigf" in out:
+        out["stpasa_uigf_bucket"] = quantile_bucket(out["stpasa_uigf"])
+        out["stpasa_wind_uigf_bucket"] = quantile_bucket(out["stpasa_ss_wind_uigf"])
+        out["stpasa_solar_uigf_bucket"] = quantile_bucket(out["stpasa_ss_solar_uigf"])
     return out
 
 
@@ -272,6 +329,14 @@ def summarize(frame: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
         pv_error_mean=("pv_error", "mean"),
         local_wind_error_mean=("local_wind_error", "mean"),
     )
+    if "stpasa_uigf" in frame:
+        stpasa_metrics = grouped.agg(
+            stpasa_uigf_mean=("stpasa_uigf", "mean"),
+            stpasa_ss_wind_uigf_mean=("stpasa_ss_wind_uigf", "mean"),
+            stpasa_ss_solar_uigf_mean=("stpasa_ss_solar_uigf", "mean"),
+            stpasa_source_horizon_mean=("stpasa_source_horizon_hours", "mean"),
+        )
+        out = out.join(stpasa_metrics)
     return out.reset_index().sort_values(group_cols)
 
 
@@ -310,6 +375,24 @@ def main() -> None:
     parser.add_argument("--actuals-30m", type=Path, default=DEFAULT_ACTUALS)
     parser.add_argument("--predispatch", type=Path, default=DEFAULT_PREDISPATCH)
     parser.add_argument("--sevendayoutlook", type=Path, default=DEFAULT_SDO)
+    parser.add_argument("--stpasa", type=Path, default=DEFAULT_STPASA)
+    parser.add_argument(
+        "--require-stpasa",
+        action="store_true",
+        help="Fail if STPASA parquet is missing or tail coverage is insufficient.",
+    )
+    parser.add_argument(
+        "--stpasa-tail-start-hours",
+        type=float,
+        default=28.5,
+        help="Tail horizon start used for STPASA join coverage validation.",
+    )
+    parser.add_argument(
+        "--min-stpasa-coverage",
+        type=float,
+        default=0.95,
+        help="Minimum joined STPASA coverage over the tail band when STPASA is present.",
+    )
     parser.add_argument("--model-filter", default="price")
     parser.add_argument("--since", default="2026-04-01T00:00:00Z")
     parser.add_argument("--until", default=None)
@@ -381,6 +464,59 @@ def main() -> None:
     )
     print(f"  rows with SDO demand: {df['sdo_scheduled_demand'].notna().sum():,}")
 
+    if args.stpasa.exists():
+        print(f"Joining STPASA REGIONSOLUTION from {args.stpasa}...")
+        stpasa_cols = [
+            "interval_dt",
+            "run_time",
+            "uigf",
+            "total_intermittent_generation",
+            "ss_wind_uigf",
+            "ss_solar_uigf",
+            "ss_wind_capacity",
+            "ss_solar_capacity",
+        ]
+        stpasa_source = load_source(args.stpasa, stpasa_cols)
+        min_src_horizon, max_src_horizon = validate_source_horizon(
+            stpasa_source,
+            source_name="STPASA",
+            min_horizon_hours=args.max_horizon_hours,
+        )
+        print(f"  source horizon: {min_src_horizon:.1f}h -> {max_src_horizon:.1f}h")
+        df = latest_asof_by_target(
+            df,
+            stpasa_source,
+            left_target="forecast_target_time",
+            left_time="forecast_creation_time",
+            right_target="interval_dt",
+            right_time="run_time",
+            value_cols=[
+                "uigf",
+                "total_intermittent_generation",
+                "ss_wind_uigf",
+                "ss_solar_uigf",
+                "ss_wind_capacity",
+                "ss_solar_capacity",
+            ],
+            prefix="stpasa",
+        )
+        coverage = validate_join_coverage(
+            df,
+            prefix="stpasa",
+            value_col="uigf",
+            min_horizon_hours=args.stpasa_tail_start_hours,
+            max_horizon_hours=args.max_horizon_hours,
+            min_coverage=args.min_stpasa_coverage,
+        )
+        print(
+            f"  rows with STPASA UIGF: {df['stpasa_uigf'].notna().sum():,} "
+            f"(tail coverage: {coverage:.1%})"
+        )
+    elif args.require_stpasa:
+        raise FileNotFoundError(f"STPASA parquet not found: {args.stpasa}")
+    else:
+        print(f"STPASA parquet not found; skipping renewable availability join: {args.stpasa}")
+
     df = add_driver_columns(df)
     prefix = args.output_prefix
 
@@ -408,6 +544,12 @@ def main() -> None:
         "local_wind_actual_bucket",
         "local_wind_error_bucket",
     ]
+    if "stpasa_uigf_bucket" in df:
+        bucket_cols += [
+            "stpasa_uigf_bucket",
+            "stpasa_wind_uigf_bucket",
+            "stpasa_solar_uigf_bucket",
+        ]
     for col in bucket_cols:
         write_table(summarize(df[df[col] != "missing"], [col]), prefix.with_name(prefix.name + f"_by_{col}.csv"))
     write_table(driver_rank(df, bucket_cols), prefix.with_name(prefix.name + "_driver_rank.csv"))
@@ -434,6 +576,20 @@ def main() -> None:
             "power_pv_actual",
             "wind_speed_adelaide",
             "wind_speed_adelaide_actual",
+        ]
+        keep_cols += [
+            col
+            for col in [
+                "stpasa_run_time",
+                "stpasa_source_horizon_hours",
+                "stpasa_uigf",
+                "stpasa_total_intermittent_generation",
+                "stpasa_ss_wind_uigf",
+                "stpasa_ss_solar_uigf",
+                "stpasa_ss_wind_capacity",
+                "stpasa_ss_solar_capacity",
+            ]
+            if col in df
         ]
         df[keep_cols].to_parquet(row_path, index=False)
         print(f"  wrote {row_path}")

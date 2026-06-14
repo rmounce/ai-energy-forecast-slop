@@ -20,7 +20,19 @@
 - Archive path:
   `https://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/YYYY/MMSDM_YYYY_MM/MMSDM_Historical_Data_SQLLoader/DATA/`
 - Archive file example:
-  `PUBLIC_ARCHIVE#STPASA_REGIONSOLUTION#FILE01#202604010000.zip`
+  `PUBLIC_ARCHIVE%2523STPASA_REGIONSOLUTION%2523FILE01%2523202604010000.zip`
+- Implemented archive backfill:
+  `ingest/backfill_stpasa_regionsolution.py`
+- Dry-run validation command:
+  `./.venv/bin/python ingest/backfill_stpasa_regionsolution.py --start 2026-04 --end 2026-04 --dry-run`
+- Dry-run result: April 2026 archive produced `207,360` SA1 rows, `720` runs,
+  and source horizons from `16.5h` to `183.0h`, satisfying the 72h requirement.
+- Output parquet target:
+  `data/parquet/aemo_stpasa_regionsolution_sa1.parquet`
+- Residual audit integration:
+  `eval/analyze_lgbm_residual_drivers.py` joins STPASA when that parquet exists,
+  validates source horizon >= requested max horizon, and validates tail join
+  coverage over `28.5-72h`.
 - Useful actual/proxy: `Dispatch_SCADA` current feed and archive `INTERMITTENT_GEN_SCADA`
   / dispatch SCADA unit output, but those are DUID-level and need unit metadata to
   aggregate SA wind/solar cleanly.
@@ -40,7 +52,7 @@ Archive files exist as:
 ```text
 https://nemweb.com.au/Reports/CURRENT/Short_Term_PASA_Reports/
 PUBLIC_STPASA_YYYYMMDDHHMM_*.zip
-PUBLIC_ARCHIVE#STPASA_REGIONSOLUTION#FILE01#YYYYMM010000.zip
+PUBLIC_ARCHIVE%2523STPASA_REGIONSOLUTION%2523FILE01%2523YYYYMM010000.zip
 ```
 
 An April 2026 archive sample contained 207,360 rows. For the latest run in that
@@ -78,6 +90,24 @@ SS_WIND_CLEARED
 This is the source that matches the project reason for adding the data: it covers
 the period after short pre-dispatch/APF usefulness tails off and still includes
 the full 72h horizon.
+
+Implemented parser/backfill:
+
+```bash
+./.venv/bin/python ingest/backfill_stpasa_regionsolution.py --start 2026-04 --end 2026-04 --dry-run
+```
+
+The live dry run against the April 2026 archive returned:
+
+```text
+207,360 SA1 rows
+720 STPASA runs
+horizon range: 16.5h -> 183.0h
+```
+
+Write the parquet by dropping `--dry-run`, then rerun the residual audit. The
+audit now joins STPASA automatically when
+`data/parquet/aemo_stpasa_regionsolution_sa1.parquet` exists.
 
 Current feed note: NEMWeb lists `PUBLIC_STPASA_YYYYMMDDHHMM_*.zip` files under
 `Short_Term_PASA_Reports`. The visible filenames are approximately hourly. Before

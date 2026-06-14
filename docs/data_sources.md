@@ -1,6 +1,6 @@
 # Data Sources & Pipeline Audit
 
-**Last updated: 2026-04-18**
+**Last updated: 2026-06-14**
 
 ---
 
@@ -12,6 +12,7 @@
 | **PREDISPATCH** | `CURRENT/Predispatch_Reports/` | `aemo_predispatch_forecast` | `rp_30m` | `rrp`, `total_demand`, `net_interchange` | `*:12,42` | ~10 min |
 | **PD7Day** | `CURRENT/PD7Day/` | `aemo_pd7day_forecast` | `rp_30m` | `rrp` | 3×/day (07:20, 12:55, 18:05 AEST) | ~10 min |
 | **SevenDayOutlook** | `CURRENT/SEVENDAYOUTLOOK_FULL/` | `aemo_sevendayoutlook` | `rp_30m` | `scheduled_demand`, `scheduled_capacity`, `net_interchange`, `scheduled_reserve` | `*:01,31` | ~5 min |
+| **STPASA REGIONSOLUTION** | `Data_Archive/.../DATA/`, `CURRENT/Short_Term_PASA_Reports/` | parquet only for now | — | `uigf`, `ss_wind_uigf`, `ss_solar_uigf`, wind/solar capacities, demand percentiles | Manual archive backfill | TBD |
 | **Dispatch actuals SA1** | NEMOSIS / NEMweb archive | `aemo_dispatch_sa1_5m`, `aemo_dispatch_sa1_30m` | `rp_5m`, `rp_30m` | `price`, `total_demand`, `net_interchange` | Manual backfill | — |
 | **Dispatch actuals VIC1/NSW1** | NEMOSIS / NEMweb archive | `aemo_dispatch_vic1_30m`, `aemo_dispatch_nsw1_30m` | `rp_30m` | same | Manual backfill | — |
 
@@ -88,6 +89,7 @@ Decoder (next 144 steps = 72h):
 rp_30m.aemo_predispatch_forecast  → pd_rrp, vic1_pd_rrp, nsw1_pd_rrp (steps 0–55, 0.5–28h)
 rp_30m.aemo_pd7day_forecast       → pd_rrp fill (steps 56–143, 28–72h)
 rp_30m.aemo_sevendayoutlook       → sd_demand, sd_net_interchange (all 144 steps)
+data/parquet/aemo_stpasa_regionsolution_sa1.parquet → candidate renewable availability tail features (28.5–72h validation path; not in production model yet)
 combined_covariates_df             → pd_demand, pd_net_interchange, weather, time, horizon_norm
 ```
 
@@ -113,6 +115,7 @@ Decoder: Solcast PV forecast + BOM weather forecast + calendar (72h).
 | P5MIN → Tier 1 | 5 min | Tactical uses wrong dispatch regime |
 | PREDISPATCH → TFT decoder steps 0–55 | 30 min | TFT gets wrong short-horizon signal |
 | SevenDayOutlook → TFT decoder all steps | 30 min | TFT gets wrong demand signal |
+| STPASA → future tail features | TBD; archive backtest first | Do not use live until current feed freshness and 72h horizon are validated |
 | Amber prices → LightGBM handoff | 30 min | Reverts to no-handoff (gracefully degraded) |
 | BOM weather → all decoders | 60 min | Mild degradation |
 | Solcast → load/TFT decoders | 30 min | PV mismatch in load forecast |
