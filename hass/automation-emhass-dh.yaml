@@ -1,12 +1,12 @@
 # EMHASS day-ahead optimisation trigger.
 #
 # Refined 2026-05-27 to align with the event-driven predict-price refresh:
-# - Adds the canonical AI price forecast as a trigger. ai-energy-listener.service
+# - Adds the APF/LightGBM price forecast as a trigger. ai-energy-listener.service
 #   subscribes to Amber APF state changes and runs predict-price, which
 #   publishes the LGBM-extrapolated `sensor.ai_price_forecast` ~7-8s later
-#   (forecast.py startup + data fetch + LGBM inference + publish; the
-#   shadow stack runs afterwards and doesn't block this sensor). So the
-#   DH plan re-runs once per Amber refresh cycle (~every 5 min) instead
+#   (forecast.py startup + data fetch + LGBM inference + publish). The old
+#   shadow stack was disabled on 2026-06-15. So the DH plan re-runs once per
+#   Amber refresh cycle (~every 5 min) instead
 #   of only when the 30-min load forecast updates.
 # - DH needs the LGBM extrapolation — its 72h horizon extends past Amber's
 #   raw 16.5h advanced forecast. The ~7-8s post-Amber latency is intrinsic

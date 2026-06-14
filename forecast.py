@@ -3068,116 +3068,19 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             f"(prod-critical fast path)"
         )
 
-    shadow_stack_start = time.monotonic()
-
-    # 2b. Execute Tier 1/2 parallel models (sandboxed — existing forecasts safe on failure)
+    # 2b. Suspended shadow paths.
+    # 2026-06-15: Tier 1 tactical, PD-direct, raw AEMO stitched, canonical AI
+    # MPC/DH bundle, TFT price, and TFT-load shadow inference are archived.
+    # Keep AEMO ingest jobs running, but do not publish or log stale shadow
+    # forecast surfaces from normal predict-price / predict-load runs.
     if 'price' in models_to_run:
-        tactical_results = {}
-        try:
-            tactical_results = _execute_tactical_prediction()
-            if tactical_results:
-                all_results['p5min_tactical'] = {'forecasts': tactical_results, 'type': 'lgbm_tactical'}
-        except Exception as e:
-            logging.error(f"FATAL ERROR in Tier 1 tactical execution: {e}", exc_info=True)
-
-        # TFT price inference was disabled 2026-05-13 per the strategic pivot
-        # (docs/roadmap.md §4). PD-direct is the canonical Tier 2; TFT price was
-        # only ever a shadow, never a control source, and the readiness hardening
-        # in 4094ced already gated it out of being promotable. Skipping the
-        # ~10-30s inference per cycle. `_execute_tft_prediction` remains importable
-        # if the strategy reverts. The TFT-fallback branch in the canonical AI
-        # publish below was removed in the same change.
-
-        # PD-direct shadow forecast. Built in its own try/except so a failure
-        # here cannot affect the existing TFT publish/log path.
-        try:
-            pd_direct_results = _execute_pd_direct_prediction(
-                historical_df, adjusted_covariates_for_prediction)
-        except Exception as e:
-            logging.error(f"FATAL ERROR in PD-direct execution: {e}", exc_info=True)
-            pd_direct_results = {}
-
-        try:
-            raw_aemo_results = _execute_raw_aemo_stitched_price_forecast(
-                adjusted_covariates_for_prediction)
-        except Exception as e:
-            logging.error(f"FATAL ERROR in raw AEMO stitched execution: {e}", exc_info=True)
-            raw_aemo_results = {}
-
-        if pd_direct_results and 'pd_direct_price' in pd_direct_results:
-            try:
-                _save_canonical_tier2_cache(
-                    pd_direct_results,
-                    tier2_price_key='pd_direct_price',
-                    tier2_label='PD-direct',
-                )
-            except Exception as e:
-                logging.error(f"FATAL ERROR saving canonical Tier 2 cache: {e}", exc_info=True)
-
-        if publish_hass:
-            # TFT-fallback path removed 2026-05-13 alongside the TFT price
-            # inference skip. If PD-direct is unavailable, the canonical AI
-            # bundle is simply not published — `_publish_canonical_ai_price_forecasts`
-            # logs a warning and returns. This is safer than republishing the
-            # readiness-rejected TFT fallback that no consumer could use.
-            try:
-                if pd_direct_results and 'pd_direct_price' in pd_direct_results:
-                    _publish_canonical_ai_price_forecasts(
-                        tactical_results if 'p5min_tactical' in all_results else {},
-                        pd_direct_results,
-                        tier2_price_key='pd_direct_price',
-                        tier2_label='PD-direct',
-                    )
-                else:
-                    logging.warning(
-                        "AI canonical bundle skipped: PD-direct Tier 2 unavailable."
-                    )
-            except Exception as e:
-                logging.error(f"FATAL ERROR in canonical AI forecast publish: {e}", exc_info=True)
-
-        if publish_hass and pd_direct_results:
-            try:
-                _publish_pd_direct_price_forecasts(pd_direct_results)
-            except Exception as e:
-                logging.error(f"FATAL ERROR in PD-direct publish: {e}", exc_info=True)
-
-        if publish_hass and raw_aemo_results and 'aemo_price_forecast' in raw_aemo_results:
-            try:
-                publish_forecast_to_hass(
-                    'aemo_price_forecast',
-                    raw_aemo_results['aemo_price_forecast'].copy(),
-                )
-            except Exception as e:
-                logging.error(f"FATAL ERROR in raw AEMO stitched publish: {e}", exc_info=True)
-
-        # Always log PD-direct q50 forecasts (independent of publish_hass) so the
-        # shadow-and-compare analysis can compute forecast quality + what-if dispatch
-        # against realised prices over time. Mirrors the TFT/Tier-1 forecast logs.
-        if pd_direct_results and 'pd_direct_price' in pd_direct_results:
-            try:
-                # apply_tariffs_to_forecast mutates in place; copy first so the live
-                # publish path's tariff-applied frame isn't double-tariffed by the log.
-                pdd_log_df = pd_direct_results['pd_direct_price'].copy()
-                if 'wholesale_price' not in pdd_log_df.columns:
-                    pdd_log_df.rename(
-                        columns={pdd_log_df.columns[0]: 'wholesale_price'},
-                        inplace=True,
-                    )
-                apply_tariffs_to_forecast(pdd_log_df)
-                log_forecast_data(
-                    'pd_direct_price', 'phase_alpha_prime_step4',
-                    'pd_direct', pdd_log_df, original_covariates_for_log,
-                )
-            except Exception as e:
-                logging.error(f"FATAL ERROR in PD-direct log: {e}", exc_info=True)
+        logging.info(
+            "Price shadow stack disabled: tactical Tier 1, PD-direct, "
+            "canonical AI, raw AEMO stitched, and TFT price are archived."
+        )
 
     if 'load' in models_to_run:
-        try:
-            tft_load_results = _execute_tft_load_prediction(historical_df, adjusted_covariates_for_prediction)
-            if tft_load_results:
-                all_results['tft_load'] = {'forecasts': tft_load_results, 'type': 'tft_pytorch'}
-        except Exception as e:
-            logging.error(f"FATAL ERROR in TFT Load shadow execution: {e}", exc_info=True)
+        logging.info("TFT-load shadow inference disabled; keeping LGBM load only.")
 
     # 3. Process and SAVE all collected results (This part is unchanged)
     try:
@@ -3214,18 +3117,8 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         json.dump(final_output_json, f, indent=4)
     logging.info(f"All forecasts saved to {CONFIG['paths']['prediction_output_file']}.")
 
-    # 4. PUBLISH shadow forecasts to Home Assistant (legacy LGBM models
-    # already went out in step 2a above).
-    if publish_hass:
-        logging.info("--- Publishing shadow forecasts to Home Assistant ---")
-        for base_model_name, result_data in all_results.items():
-            if base_model_name in LEGACY_LGBM_MODELS:
-                continue  # already published in the prod-critical fast path (step 2a)
-            _publish_lgbm_model_to_hass(base_model_name, result_data)
-    logging.info(
-        f"Shadow stack (tactical + PD-direct + canonical AI + AEMO + TFT-load): "
-        f"{time.monotonic() - shadow_stack_start:.1f}s"
-    )
+    # 4. Shadow publish intentionally disabled. Legacy LGBM models already went
+    # out in step 2a above.
 
 
     # 5. LOG forecast surfaces used for diagnostics/backfill.
@@ -3262,7 +3155,15 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
 
 
 def run_tactical_publish(publish_hass, max_tier2_cache_age_minutes):
-    """Cheap 5-minute publisher: recompute Tier 1, reuse cached 30-min PD-direct tail."""
+    """Disabled tactical publisher retained as a no-op after soft archive."""
+    logging.info(
+        "publish-tactical disabled: tactical Tier 1 and canonical AI shadow "
+        "surfaces were archived on 2026-06-15."
+    )
+
+
+def _run_tactical_publish_archived(publish_hass, max_tier2_cache_age_minutes):
+    """Archived implementation: recompute Tier 1, reuse cached PD-direct tail."""
     logging.info("--- Tactical publisher started ---")
     tactical_results = _execute_tactical_prediction()
     if not tactical_results or 'p5min_price' not in tactical_results:
@@ -3315,7 +3216,15 @@ def run_tactical_publish(publish_hass, max_tier2_cache_age_minutes):
 
 
 def run_pd_direct_publish(publish_hass):
-    """Refresh Tier 2 (PD-direct) after a fresh PREDISPATCH ingest.
+    """Disabled PD-direct publisher retained as a no-op after soft archive."""
+    logging.info(
+        "publish-pd-direct disabled: PD-direct and canonical AI shadow surfaces "
+        "were archived on 2026-06-15."
+    )
+
+
+def _run_pd_direct_publish_archived(publish_hass):
+    """Archived implementation: refresh Tier 2 (PD-direct) after PREDISPATCH.
 
     Recomputes Tier 1 (LGBM tactical) and Tier 2 (PD-direct) from current Influx
     data, updates the canonical Tier 2 cache, and republishes:

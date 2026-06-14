@@ -141,10 +141,11 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
 
 **2026-06-15.** Production price source is the APF/LightGBM incumbent
 (`amber_apf_lgbm`, logged in `price_forecast_log.csv` as `model_name='price'`).
-Work on the APF-free replacement paths (`pd_direct`, `model_a_hybrid`,
-`lgbm_strategic`) is suspended, not fully abandoned. They remain in the repo for
-reference and possible deliberate revival, but they are not currently trusted as
-replacement paths and should not be used as evidence about APF extrapolation.
+Work on the other price paths (`p5min_tactical`, `pd_direct`,
+`model_a_hybrid`, `lgbm_strategic`) is suspended, not fully abandoned. They
+remain in the repo for reference and possible deliberate revival, but they are
+not currently trusted as replacement paths and should not be used as evidence
+about APF extrapolation.
 
 The current price-forecast source contract lives in
 `docs/price_forecast_sources.md` and `eval/price_source_contracts.py`.

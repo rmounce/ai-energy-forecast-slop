@@ -111,39 +111,14 @@ Published by `systemd/ai-energy-forecast.{service,timer}` (every 5 min) and
 | `sensor.ai_price_forecast` | **Production incumbent** — APF/LightGBM p50 general import price ($/kWh); Amber APF seeded, LightGBM-extrapolated beyond the ~36h APF horizon | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_price_forecast_high` | APF/LightGBM p70 | 144 | 30-min | 72h | `forecasts` |
 | `sensor.ai_price_forecast_low` | APF/LightGBM p30 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_aemo_price_forecast` | Raw upstream AEMO stitched forecast — P5MIN for the first 60 min, then raw PREDISPATCH, then raw PD7Day where available. Model-free yardstick for graph comparison. | mixed | 5-min then 30-min | ~72h | `forecasts` |
-| `sensor.ai_p5min_price_forecast` | Tactical LightGBM p50 ($/kWh) | 12 | 5-min | 60 min | `forecasts` |
-| `sensor.ai_p5min_price_forecast_high` | Tactical LightGBM p95 | 12 | 5-min | 60 min | `forecasts` |
-| `sensor.ai_p5min_price_forecast_low` | Tactical LightGBM p05 | 12 | 5-min | 60 min | `forecasts` |
-| `sensor.ai_tft_price_forecast` | **Shadow** — TFT Run 011b q50 ($/kWh); published but not currently fed to EMHASS | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_tft_price_forecast_high` | TFT Run 011b q70 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_tft_price_forecast_low` | TFT Run 011b q30 | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_pd_direct_price_forecast` | **Current Amber-independent Tier 2 source** — debiased PREDISPATCH / debiased PD7Day q50 wholesale price ($/kWh), without Tier 1 stitching | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_pd_direct_price_forecast_high` | PD-direct q70-style band / high comparison surface | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_pd_direct_price_forecast_low` | PD-direct q30-style band / low comparison surface | 144 | 30-min | 72h | `forecasts` |
-| `sensor.ai_spot_price_forecast_low` | Graph-friendly stitched low source: Tier 1 p05 5-min wholesale forecast, then PD-direct low 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
-| `sensor.ai_spot_price_forecast` | Graph-friendly stitched spot source: Tier 1 5-min wholesale forecast, then PD-direct 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
-| `sensor.ai_spot_price_forecast_high` | Graph-friendly stitched high source: Tier 1 p95 5-min wholesale forecast, then PD-direct high 30-min wholesale tail | mixed | 5-min then 30-min | 72h | `forecasts` |
 
-`sensor.ai_spot_price_forecast(_low/_high)` is the preferred
-frontend/ApexCharts surface for the current-best Amber-independent raw wholesale
-comparison. The underlying 5-minute Tier 1 publisher now emits
-`wholesale_price`; the HA template keeps a temporary fallback for the older
-`aemo_price_sa1` field. See
-`docs/ha_frontend_entity_cleanup.md` for the production dashboard references.
-
-`sensor.ai_aemo_price_forecast` is intentionally the raw upstream comparison
-surface, not an intermediate model/debug tensor. Its forecast rows include
-`source_layer` (`p5min`, `predispatch`, or `pd7day`) so the frontend can show
-where each segment came from. The PREDISPATCH segment is selected from one
-explicit latest `run_time`; do not use `last(rrp)` across all run tags for this
-entity, because Influx write order can otherwise make a stale run look current.
-The P5MIN segment deliberately covers the first 60 minutes, so it can differ
-from Amber billing forecasts that switch to 30-minute intervals at the next
-billing boundary. AEMO source timestamps are interval-ending; this HA-facing
-comparison entity republishes them as interval starts (`P5MIN - 5 min`,
-`PREDISPATCH/PD7Day - 30 min`) so ApexCharts lines up with Amber start-time
-forecast rows and local HA display.
+Archived/disabled as of 2026-06-15: `sensor.ai_aemo_price_forecast`,
+`sensor.ai_p5min_price_forecast(_low/_high)`,
+`sensor.ai_pd_direct_price_forecast(_low/_high)`,
+`sensor.ai_spot_price_forecast(_low/_high)`,
+`sensor.ai_mpc_*_price_forecast`, and `sensor.ai_dh_*_price_forecast`.
+The archived dashboard snapshot is in
+`docs/archive/suspended_price_paths/lovelace.dashboard_battery_2026-06-15.json`.
 
 **Retired Amber-shaped AI compatibility sensors:**
 
@@ -152,19 +127,6 @@ forecast rows and local HA display.
 2026-05-08. New AI-facing production/shadow surfaces should use canonical positive
 import/export entities or per-model chart triplets, not Amber's feed-in sign convention.
 
-**Canonical HAEO-style sensors** (new, for source-selector switch):
-
-| Entity | Description | Items | Resolution | Horizon | Attribute format |
-|---|---|---|---|---|---|
-| `sensor.ai_mpc_import_price_forecast` | Canonical AI MPC import price (positive $/kWh); Tier 1 + PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 168 | 5-min | 14h | `forecast` (lowercase); items have `datetime` (UTC), `native_value`; source attrs include `tier2_source` |
-| `sensor.ai_mpc_export_price_forecast` | Canonical AI MPC export revenue; Tier 1 + PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 168 | 5-min | 14h | `forecast`; source attrs include `tier2_source` |
-| `sensor.ai_dh_import_price_forecast` | Canonical AI DH import price; PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 144 | 30-min | 72h | `forecast`; source attrs include `tier2_source` |
-| `sensor.ai_dh_export_price_forecast` | Canonical AI DH export revenue; PD-direct tail. TFT fallback may publish for shadow visibility but is not readiness-approved. | 144 | 30-min | 72h | `forecast`; source attrs include `tier2_source` |
-
-Current HA package source selectors deliberately expose only legacy production options.
-These canonical sensors are observable and used by status/diagnostic templates, but are
-not selectable for control until a deliberate promotion step reintroduces an AI option.
-
 ### Load forecasts
 
 | Entity | Description | Items | Resolution |
@@ -172,9 +134,9 @@ not selectable for control until a deliberate promotion step reintroduces an AI 
 | `sensor.ai_load_forecast` | Household load q50 (W) | 144 | 30-min |
 | `sensor.ai_load_forecast_high` | Load q75 (W) | 144 | 30-min |
 | `sensor.ai_load_forecast_p75` | Load p75 variant (W) | 144 | 30-min |
-| `sensor.ai_tft_load_forecast` | TFT load model q50 (W) | 144 | 30-min |
-| `sensor.ai_tft_load_forecast_high` | TFT load q90 (W) | 144 | 30-min |
-| `sensor.ai_tft_load_forecast_low` | TFT load q10 (W) | 144 | 30-min |
+
+Archived/disabled as of 2026-06-15:
+`sensor.ai_tft_load_forecast(_low/_high)`.
 
 ### Weather forecasts
 
@@ -195,10 +157,12 @@ Derived sensors computed by HA template engine. Recalculate on state change.
 | `sensor.emhass_charge_ramp_config` | Parsed battery charge ramp config for DH and MPC EMHASS payloads: start/stop minutes, step minutes, and per-step weight | `input_datetime.emhass_charge_ramp_start_time`, `input_datetime.emhass_charge_ramp_stop_time`, `input_number.emhass_charge_ramp_step_minutes`, `input_number.emhass_charge_ramp_step_weight` |
 | `sensor.amber_effective_general_price` | Two-knob blended import price — blends `advanced_price_predicted/high/low` toward buy weight, then takes max of blended vs `per_kwh`. Used as spot reference for automations. | `sensor.amber_5min_current_general_price`, `sensor.amber_5min_forecasts_general_price`, `input_number.emhass_weight_buy_forecast` |
 | `sensor.amber_effective_feed_in_price` | Two-knob blended export price — same blend logic, then applies SAPN free-export tier (+$0.01/kWh in 10am–4pm window while allowance > 0) | `sensor.amber_5min_current_feed_in_price`, `sensor.amber_5min_forecasts_feed_in_price`, `input_number.emhass_weight_sell_forecast`, `input_number.sapn_free_exports` |
-| `sensor.emhass_selected_mpc_price_source` | Requested MPC selector plus effective source, fallback reason, AI status, Tier 2 source, and AI entity references | `input_select.emhass_mpc_price_source`, `sensor.ai_mpc_price_forecast_status` |
-| `sensor.emhass_selected_dh_price_source` | Requested DH selector plus effective source, fallback reason, AI status, Tier 2 source, and AI entity references | `input_select.emhass_dh_price_source`, `sensor.ai_dh_price_forecast_status` |
-| `sensor.ai_mpc_price_forecast_status` | `ready` / `not_ready` + import/export counts, first/last timestamps, freshness, horizon, alignment, and Tier 2 source guards for MPC canonical sensors | `sensor.ai_mpc_import/export_price_forecast` |
-| `sensor.ai_dh_price_forecast_status` | Same for DH canonical sensors | `sensor.ai_dh_import/export_price_forecast` |
+| `sensor.emhass_selected_mpc_price_source` | Requested MPC selector plus fixed production effective source (`amber`); archived APF-free source paths are documented in attributes only | `input_select.emhass_mpc_price_source` |
+| `sensor.emhass_selected_dh_price_source` | Requested DH selector plus fixed production effective source (`amber_lgbm_extrapolated`); archived APF-free source paths are documented in attributes only | `input_select.emhass_dh_price_source` |
+
+Removed from active templates on 2026-06-15: `sensor.ai_mpc_price_forecast_status`
+and `sensor.ai_dh_price_forecast_status`. They depended on the archived canonical
+AI MPC/DH bundle sensors.
 
 ---
 

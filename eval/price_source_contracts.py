@@ -58,6 +58,20 @@ SOURCE_CONTRACTS: dict[str, PriceSourceContract] = {
         use_for="Historical comparisons or explicit APF-free revival work.",
         avoid_for="Evidence about APF extrapolation improvements.",
     ),
+    "p5min_tactical": PriceSourceContract(
+        label="p5min_tactical",
+        artifact="p5min_forecast_log.csv / sensor.ai_p5min_price_forecast*",
+        resolution="5 min",
+        horizon="0-60 min, 12 steps",
+        apf_backed=False,
+        status=(
+            "suspended tactical Tier 1 experiment; retained for reference, "
+            "but not currently used by production EMHASS"
+        ),
+        lineage="AEMO P5MIN plus recent dispatch-price features into tactical LightGBM.",
+        use_for="Explicit tactical-price revival work only.",
+        avoid_for="Current production APF extrapolation evaluation.",
+    ),
     "model_a_hybrid": PriceSourceContract(
         label="model_a_hybrid",
         artifact="retro_tier1_forecasts.pkl + retro_tft_forecasts.pkl",

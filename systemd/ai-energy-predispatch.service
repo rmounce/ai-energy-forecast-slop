@@ -1,7 +1,7 @@
 [Unit]
-Description=Ingest latest AEMO PREDISPATCH forecast into InfluxDB and refresh PD-direct (Tier 2)
+Description=Ingest latest AEMO PREDISPATCH forecast into InfluxDB
 
 [Service]
 Type=oneshot
 WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
-ExecStart=/bin/bash -c 'source .venv/bin/activate && python ingest/ingest-predispatch.py --fetch && nice -n 19 ./forecast.py publish-pd-direct --publish-hass'
+ExecStart=/bin/bash -c 'source .venv/bin/activate && python ingest/ingest-predispatch.py --fetch'
