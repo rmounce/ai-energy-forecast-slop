@@ -92,11 +92,11 @@ def _time_enc(ts: pd.DatetimeIndex, prefix: str = "") -> dict:
     }
 
 
-def load_models() -> tuple[dict, list[str]]:
+def load_models(model_dir: Path = MODEL_DIR) -> tuple[dict, list[str]]:
     models = {}
     feature_names = None
     for q, fname in [(0.05, "lgbm_q05.pkl"), (0.50, "lgbm_q50.pkl"), (0.95, "lgbm_q95.pkl")]:
-        with open(MODEL_DIR / fname, "rb") as f:
+        with open(model_dir / fname, "rb") as f:
             obj = pickle.load(f)
         models[q] = obj["model"]
         bundle_features = list(obj.get("features", FEATURE_NAMES))
@@ -317,18 +317,25 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--model-dir", type=Path, default=MODEL_DIR,
+                        help=f"Input model directory (default: {MODEL_DIR})")
+    parser.add_argument("--output-file", type=Path, default=OUT_FILE,
+                        help=f"Output pickle path (default: {OUT_FILE})")
+    parser.add_argument("--stpasa-path", type=Path, default=STPASA_FILE,
+                        help=f"STPASA parquet path (default: {STPASA_FILE})")
     args = parser.parse_args()
 
-    if OUT_FILE.exists() and not args.overwrite:
-        print(f"Output exists: {OUT_FILE}")
+    out_file = args.output_file
+    if out_file.exists() and not args.overwrite:
+        print(f"Output exists: {out_file}")
         print("Use --overwrite to regenerate.")
         sys.exit(0)
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
 
     print("Loading models...", flush=True)
-    models, feature_names = load_models()
-    print(f"  Loaded q5/q50/q95 from {MODEL_DIR}", flush=True)
+    models, feature_names = load_models(args.model_dir)
+    print(f"  Loaded q5/q50/q95 from {args.model_dir}", flush=True)
     print(f"  Feature contract: {len(feature_names)} features", flush=True)
 
     print("Loading eval index...", flush=True)
@@ -369,13 +376,13 @@ def main():
 
     stpasa_by_target = None
     if any(name in feature_names for name in STPASA_FEATURE_NAMES):
-        if not STPASA_FILE.exists():
+        if not args.stpasa_path.exists():
             raise FileNotFoundError(
-                f"STPASA parquet not found: {STPASA_FILE}. "
+                f"STPASA parquet not found: {args.stpasa_path}. "
                 "Required by the loaded strategic model feature contract."
             )
         print("Loading STPASA REGIONSOLUTION...", flush=True)
-        stpasa_by_target = load_stpasa_by_target(STPASA_FILE)
+        stpasa_by_target = load_stpasa_by_target(args.stpasa_path)
         print(f"  {len(stpasa_by_target):,} target intervals", flush=True)
 
     # Run inference
@@ -441,9 +448,9 @@ def main():
                         "PREDISPATCH steps 0-55 + time/lags steps 56-143. "
                         f"Spike routing threshold={SPIKE_ROUTE_THRESHOLD}.",
     }
-    with open(OUT_FILE, "wb") as f:
+    with open(out_file, "wb") as f:
         pickle.dump(out, f, protocol=4)
-    print(f"Saved → {OUT_FILE}")
+    print(f"Saved → {out_file}")
 
 
 if __name__ == "__main__":

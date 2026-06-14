@@ -413,13 +413,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true",
                         help="Use first 5k run_times only (fast sanity check)")
+    parser.add_argument("--model-dir", type=Path, default=MODEL_DIR,
+                        help=f"Output model directory (default: {MODEL_DIR})")
     parser.add_argument("--stpasa-tail-features", action="store_true",
                         help="Add experimental STPASA renewable availability tail features")
     parser.add_argument("--stpasa-path", type=Path, default=DEFAULT_STPASA,
                         help=f"STPASA parquet path (default: {DEFAULT_STPASA})")
     args = parser.parse_args()
 
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    model_dir = args.model_dir
+    model_dir.mkdir(parents=True, exist_ok=True)
     feature_names = list(BASE_FEATURE_NAMES)
 
     # Load source data
@@ -480,7 +483,7 @@ def main():
         model = train_quantile(q, X_train, y_train, X_val, y_val, feature_names)
         models[q] = model
 
-        out_path = MODEL_DIR / f"lgbm_q{int(q*100):02d}.pkl"
+        out_path = model_dir / f"lgbm_q{int(q*100):02d}.pkl"
         with open(out_path, "wb") as f:
             pickle.dump({"model": model, "features": feature_names,
                          "quantile": q}, f)
@@ -533,9 +536,9 @@ def main():
         "lgbm_params": LGBM_BASE_PARAMS,
         "top_features": imps.head(10).to_dict(),
     }
-    with open(MODEL_DIR / "training_meta.json", "w") as f:
+    with open(model_dir / "training_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
-    print(f"\nSaved training metadata → {MODEL_DIR / 'training_meta.json'}")
+    print(f"\nSaved training metadata → {model_dir / 'training_meta.json'}")
 
 
 if __name__ == "__main__":
