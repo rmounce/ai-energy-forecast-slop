@@ -10,6 +10,10 @@
 - Why: archive sample covered `28.5-172h`, including the full 72h horizon, and
   carries region-level renewable availability fields such as `UIGF`,
   `SS_SOLAR_UIGF`, `SS_WIND_UIGF`, `SS_SOLAR_CAPACITY`, and `SS_WIND_CAPACITY`.
+- STPASA current path found:
+  `https://nemweb.com.au/Reports/CURRENT/Short_Term_PASA_Reports/`
+- Runtime caveat: current listing has `PUBLIC_STPASA_YYYYMMDDHHMM_*.zip` files
+  but must be checked for freshness before live integration.
 - Useful overlap/short horizon source: `PDPASA_REGIONSOLUTION`.
 - PDPASA current path:
   `https://nemweb.com.au/Reports/Current/PDPASA/`
@@ -34,6 +38,8 @@
 Archive files exist as:
 
 ```text
+https://nemweb.com.au/Reports/CURRENT/Short_Term_PASA_Reports/
+PUBLIC_STPASA_YYYYMMDDHHMM_*.zip
 PUBLIC_ARCHIVE#STPASA_REGIONSOLUTION#FILE01#YYYYMM010000.zip
 ```
 
@@ -73,9 +79,10 @@ This is the source that matches the project reason for adding the data: it cover
 the period after short pre-dispatch/APF usefulness tails off and still includes
 the full 72h horizon.
 
-Open item: locate and validate the current/live STPASA feed path. Archive data
-is enough for backtests and feature ablation, but the runtime pipeline needs the
-current file source.
+Current feed note: NEMWeb lists `PUBLIC_STPASA_YYYYMMDDHHMM_*.zip` files under
+`Short_Term_PASA_Reports`. The visible filenames are approximately hourly. Before
+using it at runtime, validate the listing freshness and the latest file horizon;
+archive data is already enough for backtests and feature ablation.
 
 ### 2. PDPASA_REGIONSOLUTION — short-horizon overlap only
 
@@ -196,11 +203,12 @@ work than PDPASA because it needs DUID metadata and careful type selection.
    - columns: `interval_dt`, `run_time`, `uigf`, `ss_solar_uigf`,
      `ss_wind_uigf`, `ss_solar_capacity`, `ss_wind_capacity`,
      `total_intermittent_generation`, `demand50`
-2. Locate current/live STPASA source:
-   - validate it has the same columns and covers at least `72h`
-   - if no current feed is available under a stable NEMWeb path, use archive data
-     for backtests only and keep runtime integration blocked until the live source
-     is identified
+2. Validate current/live STPASA source:
+   - list `https://nemweb.com.au/Reports/CURRENT/Short_Term_PASA_Reports/`
+   - select the latest `PUBLIC_STPASA_*.zip`
+   - validate it is fresh, has the same columns, and covers at least `72h`
+   - if freshness is unreliable, use archive data for backtests only and keep
+     runtime integration blocked until a fresh live source is identified
 3. Add optional `ingest/ingest-pdpasa.py` for short-horizon overlap:
    - list `https://nemweb.com.au/Reports/Current/PDPASA/`
    - select latest unseen `PUBLIC_PDPASA_*.zip`
