@@ -33,6 +33,12 @@
   `eval/analyze_lgbm_residual_drivers.py` joins STPASA when that parquet exists,
   validates source horizon >= requested max horizon, and validates tail join
   coverage over `28.5-72h`.
+- Offline ablation:
+  `eval/ablate_stpasa_tail_features.py`
+- April 2026 ablation result: on held-out `28.5-72h` tail rows, baseline
+  residual correction reduced MAE by `$12.12/MWh`; baseline+STPASA reduced MAE
+  by `$17.37/MWh` and reduced corrected bias from `+$12.77/MWh` to
+  `+$4.67/MWh`.
 - Useful actual/proxy: `Dispatch_SCADA` current feed and archive `INTERMITTENT_GEN_SCADA`
   / dispatch SCADA unit output, but those are DUID-level and need unit metadata to
   aggregate SA wind/solar cleanly.
@@ -108,6 +114,29 @@ horizon range: 16.5h -> 183.0h
 Write the parquet by dropping `--dry-run`, then rerun the residual audit. The
 audit now joins STPASA automatically when
 `data/parquet/aemo_stpasa_regionsolution_sa1.parquet` exists.
+
+Offline residual-correction ablation:
+
+```bash
+./.venv/bin/python eval/ablate_stpasa_tail_features.py \
+  --since 2026-04-01T00:00:00Z \
+  --until 2026-05-01T00:00:00Z \
+  --output-prefix eval/results/stpasa_tail_ablation_20260615_apr
+```
+
+Held-out validation rows (`28.5-72h`, chronological split):
+
+```text
+baseline original MAE:          $35.51/MWh
+baseline corrected MAE:         $23.39/MWh
+baseline+STPASA corrected MAE:  $18.14/MWh
+baseline corrected bias:        +$12.77/MWh
+baseline+STPASA corrected bias: +$4.67/MWh
+```
+
+Interpretation: STPASA has enough incremental signal to justify a proper
+tail-feature experiment. Do not wire live production use until the current
+`Short_Term_PASA_Reports` feed freshness is validated.
 
 Current feed note: NEMWeb lists `PUBLIC_STPASA_YYYYMMDDHHMM_*.zip` files under
 `Short_Term_PASA_Reports`. The visible filenames are approximately hourly. Before
