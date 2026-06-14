@@ -30,7 +30,7 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
                          │                              │
                          ▼                              ▼
                   Tactical LightGBM           APF/LightGBM price (incumbent)
-                  (0–60 min q05/50/95)        PD-direct price (canonical Tier 2)
+                  (0–60 min q05/50/95)        PD-direct price (suspended APF-free Tier 2)
                          │                    TFT load / LightGBM load
                          └──────────┬─────────────────┘
                                     │ ◄── HA future covariates (Solcast,
@@ -43,7 +43,7 @@ HA → InfluxDB CQs (load, PV, weather):  ────────────�
      *_forecast_log.csv     sensor.ai_p5min_price_forecast  (tactical, 5-min)
                             sensor.ai_price_forecast        (APF/LightGBM p50, incumbent)
                             sensor.ai_price_forecast_low/high
-                            sensor.ai_pd_direct_price_forecast (canonical Tier 2)
+                            sensor.ai_pd_direct_price_forecast (suspended APF-free Tier 2)
                             sensor.ai_load_forecast
                             sensor.ai_combined_*_price_forecast  (TFT-based, shadow)
                                     │
@@ -113,7 +113,7 @@ The core script. All behaviour is driven by subcommands:
 | `train-load` | Weekly | Trains load quantile models |
 | `predict-all` | (manual) | Fetches covariates, runs both price+load models, applies tariffs/GST, saves JSON, publishes to HA. Production splits this into event-driven `predict-price` (via `ai-energy-listener.service`) and timer-driven `predict-load`. |
 | `publish-tactical` | Every 5 min | Cheap Tier 1 LGBM refresh; reuses cached Tier 2 PD-direct; updates stitched/canonical AI sensors |
-| `publish-pd-direct` | Every 30 min (after PREDISPATCH ingest) | Refreshes Tier 2 PD-direct + canonical AI MPC/DH bundle + raw AEMO stitched. Cheap: skips TFT/load/Solcast/weather. Wall-clock ≈ 30s. |
+| `publish-pd-direct` | Every 30 min (after PREDISPATCH ingest) | Refreshes Tier 2 PD-direct + AI MPC/DH bundle + raw AEMO stitched. PD-direct is currently a suspended APF-free price path retained for reference/revival work, not the trusted production incumbent. Cheap: skips TFT/load/Solcast/weather. Wall-clock ≈ 30s. |
 | `predict-price` | (manual) | Price only |
 | `predict-load` | (manual) | Load only |
 | `update-tariffs` | Daily midnight | Fetches 24h+ Amber tariff data, builds smoothed 48-slot profile |

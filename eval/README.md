@@ -1,5 +1,23 @@
 # Evaluation Scripts
 
+## Price Source Contracts
+
+Before interpreting price-model results, check `eval/price_source_contracts.py`
+and `docs/price_forecast_sources.md`.
+
+Current source status:
+
+| Source label | APF-backed? | Status | Use for |
+|--------------|-------------|--------|---------|
+| `amber_apf_lgbm` | Yes | Production incumbent / active APF extrapolation baseline | Current APF extrapolation, tail residual correction, STPASA value |
+| `pd_direct` | No | Suspended, retained for reference | Explicit APF-free revival work only |
+| `model_a_hybrid` | No | Suspended, retained for reference | Historical hybrid/TFT comparisons only |
+| `lgbm_strategic` | No | Suspended APF-free experiment | Explicit APF-free strategic experiments only |
+
+Do not use `pd_direct`, `model_a_hybrid`, or `lgbm_strategic` results as
+evidence about the APF extrapolation model unless the experiment is explicitly a
+comparison against `amber_apf_lgbm`.
+
 ## Existing scripts
 
 | Script | Purpose |

@@ -2,8 +2,8 @@
 
 ## Caveman Summary
 
-- Goal: find a better renewable/wind availability source for LGBM price residual
-  decomposition before adding model features.
+- Goal: find a better renewable/wind availability source for the APF-backed
+  `amber_apf_lgbm` tail residuals before adding any production feature path.
 - Critical horizon check: `PDPASA_REGIONSOLUTION` is not enough for the 72h
   extrapolation target. Latest sampled PDPASA current file covered only `0-29h`.
 - Best first target for the model tail: `STPASA_REGIONSOLUTION`.
@@ -39,10 +39,14 @@
   residual correction reduced MAE by `$12.12/MWh`; baseline+STPASA reduced MAE
   by `$17.37/MWh` and reduced corrected bias from `+$12.77/MWh` to
   `+$4.67/MWh`.
-- Strategic LGBM experiment wiring:
+- Strategic LGBM experiment wiring, now suspended for this question:
   `train/train_lgbm_strategic.py --stpasa-tail-features` trains a wider
   checkpoint, and `eval/retro_lgbm_strategic_inference.py` now reads checkpoint
   feature metadata so old and STPASA checkpoints can both be scored.
+- Do not treat the strategic LGBM result as evidence about APF extrapolation.
+  It is an APF-free experiment. Current APF-tail evidence should come from
+  `price_forecast_log.csv` / `model_name='price'` through
+  `eval/ablate_stpasa_tail_features.py` or a direct derivative.
 - Useful actual/proxy: `Dispatch_SCADA` current feed and archive `INTERMITTENT_GEN_SCADA`
   / dispatch SCADA unit output, but those are DUID-level and need unit metadata to
   aggregate SA wind/solar cleanly.
@@ -136,6 +140,27 @@ baseline corrected MAE:         $23.39/MWh
 baseline+STPASA corrected MAE:  $18.14/MWh
 baseline corrected bias:        +$12.77/MWh
 baseline+STPASA corrected bias: +$4.67/MWh
+```
+
+Full APF-log ablation over the available STPASA backfill:
+
+```bash
+./.venv/bin/python eval/ablate_stpasa_tail_features.py \
+  --since 2025-03-01T00:00:00Z \
+  --until 2026-05-01T00:00:00Z \
+  --output-prefix eval/results/stpasa_tail_ablation_20260615_full_apf
+```
+
+Validation result (`price_forecast_log.csv`, `model_name='price'`,
+`28.5-72h`, chronological split):
+
+```text
+rows:                           967,957
+validation rows:                206,206
+STPASA tail join coverage:      100.0%
+original APF+LGBM tail MAE:     $47.07/MWh
+baseline corrected MAE:         $37.02/MWh
+baseline+STPASA corrected MAE:  $36.19/MWh
 ```
 
 Interpretation: STPASA has enough incremental signal to justify a proper

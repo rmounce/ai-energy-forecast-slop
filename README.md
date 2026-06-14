@@ -139,27 +139,28 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
 
 ## Status and Next Work
 
-**2026-05-05.** Production price source is the APF/LightGBM incumbent. A TFT shadow
-forecast (Run 011b) is published alongside it but is currently **not** the production
-endpoint — diagnostic work shows it systematically compresses peaks, and recent retrain
-attempts (Run 014/015, active15) failed the dispatch-gate eval. The active goal is best
-economic dispatch performance **without** depending on proprietary inputs (Amber APF), with
-"consistently beat Amber APF across scenarios" as the milestone.
+**2026-06-15.** Production price source is the APF/LightGBM incumbent
+(`amber_apf_lgbm`, logged in `price_forecast_log.csv` as `model_name='price'`).
+Work on the APF-free replacement paths (`pd_direct`, `model_a_hybrid`,
+`lgbm_strategic`) is suspended, not fully abandoned. They remain in the repo for
+reference and possible deliberate revival, but they are not currently trusted as
+replacement paths and should not be used as evidence about APF extrapolation.
 
-The full plan and abandonment list live in `docs/roadmap.md` (top section, *2026-05-05
-Strategic Pivot*). Live status is `HANDOVER.md`. Structural critique of the TFT line is in
-`docs/tft_price_forecast.md`.
+The current price-forecast source contract lives in
+`docs/price_forecast_sources.md` and `eval/price_source_contracts.py`.
+Historical APF-free plans and abandonment notes live in `docs/roadmap.md`.
+Structural critique of the TFT line is in `docs/tft_price_forecast.md`.
 
 Near-term work, in order:
 
--   **Phase α — No-ML baseline ("PD-direct"):** Tier 1 LGBM (0–60 min) + debiased
-    PREDISPATCH (60 min – 30h) + smoothed PD7Day (30h–7d), with empirical residual
-    quantile bands. Evaluated through the same Window A/B `netload_tariffed` gates that
-    rejected active15. Decision rule: if it matches Run 011b TFT, ship it.
--   **Phase β — Residual learning** (only if α justifies more ML): retrain with target
-    `actual_RRP − debiased_PD`, PD removed from decoder in absolute form.
--   **Phase γ — Production switchability:** finish the HA `input_select.emhass_mpc_price_source`
-    wiring so any winning forecast can be promoted with one click and rolled back fast.
+-   **APF-tail residual work:** evaluate improvements to the existing
+    APF-backed extrapolation path, currently the STPASA tail residual-correction
+    probe over `28.5-72h`.
+-   **Source-contract hygiene:** keep eval scripts explicit about whether they
+    are scoring `amber_apf_lgbm` or an APF-free suspended path.
+-   **Production switchability:** keep the HA price-source plumbing useful for
+    controlled comparisons, but do not treat suspended paths as promotion
+    candidates without a fresh trust/revival decision.
 
 Older infrastructure work that remains relevant regardless of which forecast wins:
 

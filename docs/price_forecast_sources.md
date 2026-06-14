@@ -1,0 +1,62 @@
+# Price Forecast Sources
+
+## Caveman Summary
+
+- `amber_apf_lgbm` is the current APF-backed production incumbent.
+- It comes from `price_forecast_log.csv` rows with `model_name='price'`.
+- It is the only current source to use for APF extrapolation questions.
+- `pd_direct`, `model_a_hybrid`, and `lgbm_strategic` are APF-free or APF-independent
+  price paths.
+- Work on those other price paths is suspended, not fully abandoned. They remain
+  useful for reference and possible revival, but they are not currently trusted
+  replacement paths.
+- Do not treat APF-free strategic results as evidence that the APF extrapolation
+  path improved.
+- Code registry: `eval/price_source_contracts.py`.
+- Main APF-tail/STPASA probe: `eval/ablate_stpasa_tail_features.py`.
+
+## Source Contracts
+
+| Source label | APF-backed? | Artifact/log | Resolution | Horizon | Current status | Use for | Do not use for |
+|--------------|-------------|--------------|------------|---------|----------------|---------|----------------|
+| `amber_apf_lgbm` | Yes | `price_forecast_log.csv`, `model_name='price'` | 30 min | 0-72h, 144 steps | Production incumbent / active APF extrapolation baseline | Current APF extrapolation, tail residual correction, STPASA feature value | APF-free replacement claims |
+| `pd_direct` | No | `pd_direct_forecast_log.csv`, PD-direct sensors | 30 min | 0-72h, 144 steps | Suspended, retained for reference | Explicit APF-free revival work | Evidence about APF extrapolation improvements |
+| `model_a_hybrid` | No | `retro_tier1_forecasts.pkl` + `retro_tft_forecasts.pkl` | 5 min tactical prefix plus 30 min tail | 0-72h stitched curve | Suspended, retained for reference | Historical hybrid/TFT comparisons | Evidence about APF extrapolation improvements |
+| `lgbm_strategic` | No | `retro_lgbm_strategic_forecasts.pkl` | 30 min | 0-72h, 144 steps | Suspended APF-free experiment | Explicit APF-free strategic experiments | APF extrapolation evaluation |
+
+## Lineage
+
+### `amber_apf_lgbm`
+
+This is the as-run production incumbent. Amber commercial APF provides the
+near-horizon signal, and the incumbent price LightGBM extrapolates the curve to
+the full 72h strategic horizon. In evaluation code, this source is usually named
+`amber_apf_lgbm`; in the raw forecast log, its rows are selected with
+`model_name='price'`.
+
+Use this source when the question is:
+
+- did the APF extrapolation tail improve?
+- can STPASA explain or correct the 28.5-72h residual?
+- what would the current production APF-backed path have done?
+
+### Suspended APF-Free Paths
+
+`pd_direct`, `model_a_hybrid`, and `lgbm_strategic` are not deleted, but active
+work on them is suspended. The common problem was trust: the experiments did not
+show a clear path to a replacement forecast source that could be relied on in
+production. They can still be revived deliberately, but they should not be
+mixed into APF extrapolation work without an explicit comparison design.
+
+## Guardrail
+
+When adding or running an eval, first identify the source label and whether it is
+APF-backed. If the experiment is about APF extrapolation, it should either:
+
+- read `price_forecast_log.csv` with `model_name='price'`, or
+- transform/evaluate an artifact derived directly from that logged APF-backed
+  curve.
+
+If the run consumes `pd_direct`, `model_a_hybrid`, `retro_tft_forecasts.pkl`, or
+`retro_lgbm_strategic_forecasts.pkl`, it is not evaluating the APF extrapolation
+model unless the script explicitly compares against `amber_apf_lgbm`.
