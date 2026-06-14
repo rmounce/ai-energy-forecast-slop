@@ -107,7 +107,7 @@ series:
       return (entity.attributes.unit_load_cost_forecasts || []).map(p => {
         return [new Date(p.date).getTime(), parseFloat(p.hwc_unit_load_cost)];
       });
-  - entity: binary_sensor.aquatech_compressor
+  - entity: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2
     name: Heat pump (measured)
     extend_to: now
     type: area
@@ -116,7 +116,6 @@ series:
     opacity: 0.22
     color: "#43a047"
     yaxis_id: power
-    transform: "return x === 'on' ? 780 : 0;"
   - entity: sensor.hwc_power_plan
     name: Planned heat pump
     extend_to: false
