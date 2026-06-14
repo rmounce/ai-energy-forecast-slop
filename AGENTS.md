@@ -3,6 +3,7 @@
 ## Collaboration
 
 - Keep the repository state clean. Before finishing a task, check `git status` and either commit, ignore, or deliberately remove new files created during the work.
+- If `git status` shows inherited untracked files or dirty changes that the agent did not create, ask the user what to do before continuing substantial work. Do not keep working around inherited unclean state indefinitely.
 - Do not commit local scratch/question files unless the user explicitly asks for them to become durable project documentation.
 - When the user suggests that the agent should do something differently, offer to update this `AGENTS.md` file so the preference is remembered for future sessions.
 - Commit changes regularly, but not excessively.
