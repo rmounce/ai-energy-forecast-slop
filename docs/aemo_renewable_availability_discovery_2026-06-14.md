@@ -145,8 +145,14 @@ tail-feature experiment. Do not wire live production use until the current
 Strategic LGBM tail-feature experiment wiring is now available:
 
 ```bash
-./.venv/bin/python train/train_lgbm_strategic.py --stpasa-tail-features
-./.venv/bin/python eval/retro_lgbm_strategic_inference.py --overwrite
+./.venv/bin/python train/train_lgbm_strategic.py \
+  --stpasa-tail-features \
+  --model-dir models/lgbm_strategic_stpasa_YYYYMMDD
+
+./.venv/bin/python eval/retro_lgbm_strategic_inference.py \
+  --model-dir models/lgbm_strategic_stpasa_YYYYMMDD \
+  --output-file eval/results/retro_lgbm_strategic_stpasa_YYYYMMDD_forecasts.pkl \
+  --overwrite
 ```
 
 The trainer records the expanded feature list in each model bundle. Retro
