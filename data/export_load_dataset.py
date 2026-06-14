@@ -78,6 +78,10 @@ def main():
 
     sensors = {
         "power_load":      (f"{RP}.power_load_30m",      "mean_value"),
+        "power_load_without_deferrable": (
+            f"{RP}.power_load_without_deferrable_30m",
+            "mean_value",
+        ),
         "power_dump_load": (f"{RP}.power_dump_load_30m",  "mean_value"),
         "power_pv":        (f"{RP}.power_pv_30m",         "mean_value"),
         "temp":            (f"{RP}.temperature_adelaide", "mean_value"),
@@ -112,9 +116,19 @@ def main():
     for col, series in dfs.items():
         df[col] = series.reindex(idx)
 
-    # Subtract dump load from load
-    dump = df.pop("power_dump_load").fillna(0.0)
-    df["power_load"] = df["power_load"].fillna(0.0) - dump
+    if "power_load_without_deferrable" in df.columns:
+        dump = (
+            df["power_dump_load"].fillna(0.0)
+            if "power_dump_load" in df.columns
+            else pd.Series(0.0, index=df.index)
+        )
+        fallback_load = (df["power_load"].fillna(0.0) - dump).clip(lower=0.0)
+        df["power_load"] = df["power_load_without_deferrable"].combine_first(fallback_load)
+        df = df.drop(columns=["power_load_without_deferrable", "power_dump_load"], errors="ignore")
+    else:
+        # Subtract dump load from legacy whole-house load.
+        dump = df.pop("power_dump_load").fillna(0.0)
+        df["power_load"] = df["power_load"].fillna(0.0) - dump
 
     # Clip negatives (dump load occasionally over-estimated)
     df["power_load"] = df["power_load"].clip(lower=0.0)

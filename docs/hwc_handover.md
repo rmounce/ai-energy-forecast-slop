@@ -14,22 +14,23 @@ Schedule the HWC unit to minimise cost against the import-price + weather foreca
 actuation). Actuation (via Local Tuya) and a resistive-element "dump load" on negative
 prices are later phases.
 
-## TL;DR state (2026-06-01)
+## TL;DR state (2026-06-14)
 
-A working planner exists and produces sensible plans. It is now **enabled for modelling only**
-(publishes a plan, no actuation). The default engine is a direct fixed-speed block planner;
-EMHASS thermal-battery mode remains as a fallback/comparison path.
+A working daemonised planner is active. The default engine is a direct fixed-speed block
+planner; EMHASS thermal-battery mode remains as a fallback/comparison path. Dedicated
+Athom metering is live for the HWC compressor circuit.
 
 | Thing | State |
 |---|---|
 | `services/hwc_daemon.py` | event-driven planner/executor daemon, **enabled/active** |
 | old `ai-energy-hwc.{service,timer}` | **obsolete/removed**; daemon owns HWC planning now |
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
-| COP characterisation | done & committed `5c1ab55` (measured COP ≈ 2.4) |
+| COP characterisation | updated with clean `2026-06-14` Athom-metered cycle (measured COP ≈ 2.6) |
 | Engine decision (EMHASS vs custom) | custom block planner is now default; EMHASS kept as fallback |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
+| EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
 
 ## What's committed
 
@@ -52,6 +53,12 @@ leave them alone.
   (`sensor.mpc_unit_load_cost` + `sensor.dh_unit_load_cost`), and BOM weather from HA;
   builds clock-aligned `draw_off`/temperature arrays; creates a 48h fixed-speed block plan;
   and publishes the plan sensors directly to HA.
+- Published HWC planned power is modelled compressor watts, not a flat nameplate value.
+  `config.json` holds the first pragmatic fit: reference watts plus wet-bulb and
+  tank-temperature slopes, clamped to the observed compressor range.
+- Battery EMHASS still receives the household load forecast through HA Jinja. That forecast
+  is now base load with deferrable loads excluded; `hass/packages/emhass.yaml` adds
+  `sensor.hwc_power_plan` back into the day-ahead `load_power_forecast` at payload time.
 - EMHASS fallback mode is still available with `hwc.planner: "emhass"`, but the block planner
   is the default because it matches the unit's fixed-speed behavior and avoids fragmented
   compressor starts.
@@ -74,8 +81,10 @@ From `docs/hwc_thermal_characterisation.md` (telemetry analysis; reproduce with
 3. **Real COP ≈ 2.4–3.0 to 60 °C** (datasheet 4.68 is to 55 °C at rating conditions — far
    too optimistic). The **55→60 °C legionella tail alone is COP ~1.75** — the expensive part.
    ⇒ heating to 60 °C should be infrequent (legionella only); routine target lower.
-4. **No onboard power meter.** Power is proxied from `sensor.remaining_power_load` − baseline,
-   valid only on clean windows. **Getting a real circuit meter is the #1 accuracy lever.**
+4. **Dedicated circuit meter added.** Current power input should come from raw Athom
+   channel 2 (`sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2`).
+   Older calibration history used
+   `sensor.remaining_power_load` − baseline, valid only on clean windows.
 
 ## Modelling engine decision
 
@@ -102,18 +111,21 @@ the engine-independent long pole — gather it regardless.
 1. **Review `supply_temperature`** now that `hwc.thermal.carnot_efficiency` is 0.38. The
    cheap optimism fix is applied, but the effective supply temperature may need to be >60 °C
    to approximate the measured condensing-temperature tail.
-2. **Lower the routine target** below 60 °C (e.g. 55) with a separate periodic 60 °C legionella
+2. **Refit the compressor power curve** after a few more Athom-metered cycles. Current
+   fields: `compressor_power_reference_w`, `compressor_power_wet_bulb_slope_w_per_c`,
+   `compressor_power_tank_slope_w_per_c`, min/max clamps.
+3. **Lower the routine target** below 60 °C (e.g. 55) with a separate periodic 60 °C legionella
    reheat — the COP data shows the 55→60 tail is dear. Reconsider `desired/min_temperatures`
    and the once-daily assumption (Aquatech suggest a main 10:00–18:00 window + a morning boost).
-3. **Keep gathering clean COP cycles** (`python hwc_cop_analysis.py`); pursue a dedicated power
+4. **Keep gathering clean COP cycles** (`python hwc_cop_analysis.py`); pursue a dedicated power
    meter; build COP(target, wet-bulb, start) — then make the engine decision (A/B/C) on evidence.
-4. **Regenerate `data/hwc_cop_cycles.csv`** with `hwc_cop_analysis.py` once InfluxDB access is
+5. **Regenerate `data/hwc_cop_cycles.csv`** with `hwc_cop_analysis.py` once InfluxDB access is
    available; the humidity query now reads aggregate `rp_30m.humidity_adelaide` without the
    invalid `entity_id` filter.
-5. **Monitor the daemon**: `systemctl --user status ai-energy-hwc-daemon.service`
+6. **Monitor the daemon**: `systemctl --user status ai-energy-hwc-daemon.service`
    and `journalctl --user -u ai-energy-hwc-daemon.service`. The old modelling timer and
    executor timer are obsolete; do not re-enable them.
-6. **Execution dry runs**: `python hwc_executor.py --dry-run` still exercises the standalone
+7. **Execution dry runs**: `python hwc_executor.py --dry-run` still exercises the standalone
    executor helper, but live execution is handled by `services/hwc_daemon.py`.
 
 ## Gotchas / operational notes
@@ -127,7 +139,9 @@ the engine-independent long pole — gather it regardless.
   measurement `sensor__temperature` entity `heat_pump_temperature`; binary sensors log on
   change → query with `fill(previous)`, not `fill(0)`. Useful HWC channels: `aquatech_exhaust_temperature`
   (condenser), `aquatech_compressor`, `aquatech_defrost`, `aquatech_four_way_valve`,
-  `aquatech_element`, `aquatech_temperature` (ambient), `remaining_power_load` (power proxy).
+  `aquatech_element`, `aquatech_temperature` (ambient),
+  `athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2` (Athom channel 2
+  power), `remaining_power_load` (older residual power proxy).
 - **EMHASS double-prefix:** EMHASS prepends `publish_prefix` to your `custom_*_id`, so the
   config uses *bare* names (`sensor.predicted_temp`) → published as `sensor.hwc_predicted_temp`.
   Forecast arrays live in entity *attributes* (values are strings).

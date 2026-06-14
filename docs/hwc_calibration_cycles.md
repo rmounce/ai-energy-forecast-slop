@@ -2,9 +2,9 @@
 
 Curated cycle-level calibration output from `hwc_cop_analysis.py`.
 
-- Source window: existing CSV merged with extracted window (since `2026-06-04`)
-- Rows: 9 total, 7 clean
-- Method: compressor-on windows from HA/InfluxDB; electrical input from baseline-subtracted `sensor.remaining_power_load`; thermal output from tank probe delta plus standing loss.
+- Source window: existing CSV plus the clean Athom-metered `2026-06-14` cycle
+- Rows: 10 total, 8 clean
+- Method: compressor-on windows from HA/InfluxDB; electrical input prefers raw Athom channel 2 (`sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2`), with baseline-subtracted `sensor.remaining_power_load` fallback for older history; thermal output from tank probe delta plus standing loss.
 - Caveat: tank stratification means single-probe thermal output is approximate; use clean flags and cycle context before fitting model parameters.
 
 | start | dur_min | tank_start | tank_end | ambient | wet_bulb | baseline_w | hp_mean_w | hp_p95_w | elec_kwh | therm_kwh | cop | probe_lag_min | probe_rise_10_min | probe_rise_50_min | probe_rise_90_min | exhaust_start | exhaust_max | exhaust_end | element_on | defrost_on | four_way_on | clean |
@@ -18,3 +18,4 @@ Curated cycle-level calibration output from `hwc_cop_analysis.py`.
 | 2026-06-02 10:07 | 63 | 53.9 | 60.0 | 16.5 | 14.7 | 123 | 810 | 901 | 0.85 | 1.72 | 2.02 | 15.5 | 16.0 | 36.0 | 55.5 | 26.9 | 72.0 | 65.3 | False | False | False | True |
 | 2026-06-03 10:24 | 125 | 47.7 | 60.0 | 14.5 | 12.3 | 107 | 738 | 876 | 1.54 | 3.46 | 2.24 | 50.0 | 57.5 | 85.0 | 115.0 | 20.3 | 81.9 | 76.1 | False | False | False | True |
 | 2026-06-04 10:01 | 74 | 52.6 | 60.0 | 13.5 | 10.5 | 126 | 780 | 861 | 0.97 | 2.08 | 2.15 | 13.5 | 17.0 | 45.0 | 67.5 | 21.0 | 78.9 | 74.0 | False | False | False | True |
+| 2026-06-14 14:05 | 167 | 41.1 | 60.0 | 14.2 | 8.6 | 2 | 742 | 853 | 2.06 | 5.28 | 2.57 | 18.0 | 39.0 | 94.5 | 148.5 | 28.1 | 74.0 | 68.4 | False | False | False | True |
