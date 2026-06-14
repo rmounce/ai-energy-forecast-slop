@@ -39,6 +39,10 @@
   residual correction reduced MAE by `$12.12/MWh`; baseline+STPASA reduced MAE
   by `$17.37/MWh` and reduced corrected bias from `+$12.77/MWh` to
   `+$4.67/MWh`.
+- Strategic LGBM experiment wiring:
+  `train/train_lgbm_strategic.py --stpasa-tail-features` trains a wider
+  checkpoint, and `eval/retro_lgbm_strategic_inference.py` now reads checkpoint
+  feature metadata so old and STPASA checkpoints can both be scored.
 - Useful actual/proxy: `Dispatch_SCADA` current feed and archive `INTERMITTENT_GEN_SCADA`
   / dispatch SCADA unit output, but those are DUID-level and need unit metadata to
   aggregate SA wind/solar cleanly.
@@ -137,6 +141,18 @@ baseline+STPASA corrected bias: +$4.67/MWh
 Interpretation: STPASA has enough incremental signal to justify a proper
 tail-feature experiment. Do not wire live production use until the current
 `Short_Term_PASA_Reports` feed freshness is validated.
+
+Strategic LGBM tail-feature experiment wiring is now available:
+
+```bash
+./.venv/bin/python train/train_lgbm_strategic.py --stpasa-tail-features
+./.venv/bin/python eval/retro_lgbm_strategic_inference.py --overwrite
+```
+
+The trainer records the expanded feature list in each model bundle. Retro
+inference reads that feature metadata and loads
+`data/parquet/aemo_stpasa_regionsolution_sa1.parquet` only when the checkpoint
+requires STPASA features, preserving compatibility with older 21-feature models.
 
 Current feed note: NEMWeb lists `PUBLIC_STPASA_YYYYMMDDHHMM_*.zip` files under
 `Short_Term_PASA_Reports`. The visible filenames are approximately hourly. Before

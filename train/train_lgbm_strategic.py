@@ -10,7 +10,7 @@ Architecture: 3 LightGBM quantile regressors (q5, q50, q95) trained in
   step 56 = run_time + 28.5h  (first step beyond PREDISPATCH)
   step 143= run_time + 72h    (last step)
 
-Features (24 total):
+Base features:
   step_idx              [int]   — horizon step 0..143
   has_pd_covariate      [0/1]   — 1 for steps 0..55 where PREDISPATCH exists
   pd_rrp_debiased       [float] — OOF-debiased PREDISPATCH RRP (NaN for steps 56+)
@@ -24,6 +24,10 @@ Features (24 total):
   month_sin/cos         [float] — cyclic month of target interval
   rt_hour_sin/cos       [float] — cyclic hour-of-day of run_time (current context)
   rt_dow_sin/cos        [float] — cyclic day-of-week of run_time
+
+Optional STPASA tail features, enabled with --stpasa-tail-features:
+  stpasa_uigf / wind / solar availability fields joined by latest STPASA
+  run_time <= model run_time for the same target interval.
 
 Target: actual 30-min RRP at the target interval (NaN rows dropped).
 
@@ -40,6 +44,7 @@ Outputs (models/lgbm_strategic/):
 Usage:
   python train/train_lgbm_strategic.py
   python train/train_lgbm_strategic.py --dry-run   # 5k run_times, fast check
+  python train/train_lgbm_strategic.py --stpasa-tail-features
 """
 
 import argparse
@@ -55,6 +60,7 @@ import pandas as pd
 ROOT        = Path(__file__).resolve().parent.parent
 PARQUET_DIR = ROOT / "data" / "parquet"
 MODEL_DIR   = ROOT / "models" / "lgbm_strategic"
+DEFAULT_STPASA = PARQUET_DIR / "aemo_stpasa_regionsolution_sa1.parquet"
 
 WINDOW_STEPS          = 144     # 144 × 30min = 72h
 PD_STEPS              = 56      # steps 0..55 covered by PREDISPATCH
@@ -64,7 +70,7 @@ QUANTILES             = [0.05, 0.50, 0.95]
 BRISBANE_TZ           = "Australia/Brisbane"
 SPIKE_ROUTE_THRESHOLD = 0.65    # matches retro_lgbm_strategic_inference.py
 
-FEATURE_NAMES = (
+BASE_FEATURE_NAMES = (
     ["step_idx", "has_pd_covariate"]
     + ["pd_rrp_debiased", "pd_demand", "pd_net_interchange"]
     + [f"actual_rrp_lag{k}" for k in [1, 2, 4, 8]]
@@ -72,6 +78,20 @@ FEATURE_NAMES = (
     + ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos"]
     + ["rt_hour_sin", "rt_hour_cos", "rt_dow_sin", "rt_dow_cos"]
 )
+
+STPASA_FEATURE_NAMES = [
+    "stpasa_uigf",
+    "stpasa_total_intermittent_generation",
+    "stpasa_ss_wind_uigf",
+    "stpasa_ss_solar_uigf",
+    "stpasa_ss_wind_capacity",
+    "stpasa_ss_solar_capacity",
+    "stpasa_wind_avail_frac",
+    "stpasa_solar_avail_frac",
+    "stpasa_source_horizon_hours",
+]
+
+FEATURE_NAMES = BASE_FEATURE_NAMES
 
 LGBM_BASE_PARAMS = {
     "objective":         "quantile",
@@ -143,6 +163,27 @@ def load_actuals() -> pd.DataFrame:
     return df.dropna(subset=["rrp"]).sort_values("time").reset_index(drop=True)
 
 
+def load_stpasa(path: Path = DEFAULT_STPASA) -> pd.DataFrame:
+    print(f"Loading STPASA REGIONSOLUTION from {path}...", flush=True)
+    df = pd.read_parquet(
+        path,
+        columns=[
+            "interval_dt",
+            "run_time",
+            "uigf",
+            "total_intermittent_generation",
+            "ss_wind_uigf",
+            "ss_solar_uigf",
+            "ss_wind_capacity",
+            "ss_solar_capacity",
+        ],
+    )
+    df["run_time"] = pd.to_datetime(df["run_time"], utc=True)
+    df["interval_dt"] = pd.to_datetime(df["interval_dt"], utc=True)
+    print(f"  {df['run_time'].nunique():,} run_times, {len(df):,} rows", flush=True)
+    return df.sort_values(["interval_dt", "run_time"]).reset_index(drop=True)
+
+
 # ── Feature construction ─────────────────────────────────────────────────────
 
 def _time_enc(ts: pd.DatetimeIndex, prefix: str = "") -> pd.DataFrame:
@@ -162,6 +203,7 @@ def build_dataset(pd_df: pd.DataFrame,
                   oof_df: pd.DataFrame,
                   actuals_df: pd.DataFrame,
                   spike_bypass_rts: set,
+                  stpasa_df: pd.DataFrame | None = None,
                   run_times_subset: np.ndarray | None = None) -> pd.DataFrame:
     """
     Build long-format training table: one row per (run_time, step_idx).
@@ -225,6 +267,9 @@ def build_dataset(pd_df: pd.DataFrame,
         (df["step_idx"].astype(np.int32) + 1) * 30, unit="m"
     )
 
+    if stpasa_df is not None:
+        df = attach_stpasa_features(df, stpasa_df)
+
     # --- Add target: actual RRP at interval_dt ---
     actuals_map = actuals_df.set_index("time")["rrp"]
     df["target"] = df["interval_dt"].map(actuals_map)
@@ -271,6 +316,62 @@ def build_dataset(pd_df: pd.DataFrame,
     return df
 
 
+def attach_stpasa_features(df: pd.DataFrame, stpasa_df: pd.DataFrame) -> pd.DataFrame:
+    """Attach latest STPASA row available at model run_time for each target interval."""
+
+    out = df.copy()
+    value_cols = [
+        "uigf",
+        "total_intermittent_generation",
+        "ss_wind_uigf",
+        "ss_solar_uigf",
+        "ss_wind_capacity",
+        "ss_solar_capacity",
+    ]
+    for col in value_cols:
+        out[f"stpasa_{col}"] = np.nan
+    out["stpasa_run_time"] = pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns, UTC]")
+
+    source_by_target = {
+        target: grp.sort_values("run_time")
+        for target, grp in stpasa_df.groupby("interval_dt", sort=False)
+    }
+
+    for target, idx in out.groupby("interval_dt", sort=False).groups.items():
+        source = source_by_target.get(target)
+        if source is None or source.empty:
+            continue
+        source_run_times = source["run_time"].to_numpy(dtype="datetime64[ns]")
+        left_run_times = out.loc[idx, "run_time"].to_numpy(dtype="datetime64[ns]")
+        positions = np.searchsorted(source_run_times, left_run_times, side="right") - 1
+        valid = positions >= 0
+        if not valid.any():
+            continue
+
+        valid_idx = np.asarray(idx)[valid]
+        source_rows = source.iloc[positions[valid]]
+        for col in value_cols:
+            out.loc[valid_idx, f"stpasa_{col}"] = pd.to_numeric(
+                source_rows[col], errors="coerce"
+            ).to_numpy()
+        out.loc[valid_idx, "stpasa_run_time"] = pd.to_datetime(
+            source_rows["run_time"], utc=True
+        ).array
+
+    out["stpasa_wind_avail_frac"] = (
+        out["stpasa_ss_wind_uigf"] / out["stpasa_ss_wind_capacity"]
+    ).replace([np.inf, -np.inf], np.nan)
+    out["stpasa_solar_avail_frac"] = (
+        out["stpasa_ss_solar_uigf"] / out["stpasa_ss_solar_capacity"]
+    ).replace([np.inf, -np.inf], np.nan)
+    out["stpasa_source_horizon_hours"] = (
+        out["interval_dt"] - out["stpasa_run_time"]
+    ).dt.total_seconds() / 3600.0
+    coverage = out.loc[out["step_idx"] >= PD_STEPS, "stpasa_uigf"].notna().mean()
+    print(f"  STPASA tail coverage: {coverage:.1%} of steps {PD_STEPS + 1}-{WINDOW_STEPS}", flush=True)
+    return out
+
+
 # ── Train/val split ───────────────────────────────────────────────────────────
 
 def make_split(run_times: np.ndarray, val_days: int, gap_h: float
@@ -312,15 +413,29 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true",
                         help="Use first 5k run_times only (fast sanity check)")
+    parser.add_argument("--stpasa-tail-features", action="store_true",
+                        help="Add experimental STPASA renewable availability tail features")
+    parser.add_argument("--stpasa-path", type=Path, default=DEFAULT_STPASA,
+                        help=f"STPASA parquet path (default: {DEFAULT_STPASA})")
     args = parser.parse_args()
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    feature_names = list(BASE_FEATURE_NAMES)
 
     # Load source data
     pd_df          = load_predispatch()
     oof_df         = load_oof()
     actuals_df     = load_actuals()
     spike_bypass_rts = load_spike_routing()
+    stpasa_df = None
+    if args.stpasa_tail_features:
+        if not args.stpasa_path.exists():
+            raise FileNotFoundError(
+                f"STPASA parquet not found: {args.stpasa_path}. "
+                "Run ingest/backfill_stpasa_regionsolution.py first."
+            )
+        stpasa_df = load_stpasa(args.stpasa_path)
+        feature_names += STPASA_FEATURE_NAMES
 
     # Optionally restrict to subset for dry-run
     run_times_subset = None
@@ -330,7 +445,14 @@ def main():
         print(f"DRY RUN: using first {len(run_times_subset):,} run_times", flush=True)
 
     print("\nBuilding long-format dataset...", flush=True)
-    df = build_dataset(pd_df, oof_df, actuals_df, spike_bypass_rts, run_times_subset)
+    df = build_dataset(
+        pd_df,
+        oof_df,
+        actuals_df,
+        spike_bypass_rts,
+        stpasa_df=stpasa_df,
+        run_times_subset=run_times_subset,
+    )
 
     # Train/val split by run_time
     all_run_times = df["run_time"].unique()
@@ -341,7 +463,7 @@ def main():
     train_mask = df["run_time"].isin(train_rts)
     val_mask   = df["run_time"].isin(val_rts)
 
-    X = df[FEATURE_NAMES].values.astype(np.float32)
+    X = df[feature_names].values.astype(np.float32)
     y = df["target"].values.astype(np.float32)
 
     X_train, y_train = X[train_mask], y[train_mask]
@@ -355,18 +477,18 @@ def main():
     models = {}
     for q in QUANTILES:
         print(f"\nTraining q{q:.0%}...", flush=True)
-        model = train_quantile(q, X_train, y_train, X_val, y_val, FEATURE_NAMES)
+        model = train_quantile(q, X_train, y_train, X_val, y_val, feature_names)
         models[q] = model
 
         out_path = MODEL_DIR / f"lgbm_q{int(q*100):02d}.pkl"
         with open(out_path, "wb") as f:
-            pickle.dump({"model": model, "features": FEATURE_NAMES,
+            pickle.dump({"model": model, "features": feature_names,
                          "quantile": q}, f)
         print(f"  Saved {out_path}", flush=True)
 
     # Quick val MAE on q50
     q50 = models[0.50]
-    X_val_df = pd.DataFrame(X_val, columns=FEATURE_NAMES)
+    X_val_df = pd.DataFrame(X_val, columns=feature_names)
     y_pred_val = q50.predict(X_val_df)
     mae_val = float(np.mean(np.abs(y_pred_val - y_val)))
     print(f"\nVal MAE (q50): ${mae_val:.2f}/MWh")
@@ -380,19 +502,21 @@ def main():
         sub = df[val_mask]
         sub_mask = mask_fn(sub)
         if sub_mask.sum() > 0:
-            pred = q50.predict(pd.DataFrame(X_val[sub_mask.values], columns=FEATURE_NAMES))
+            pred = q50.predict(pd.DataFrame(X_val[sub_mask.values], columns=feature_names))
             mae  = float(np.mean(np.abs(pred - y_val[sub_mask.values])))
             print(f"  {stratum_label:6s} MAE: ${mae:.2f}/MWh  (n={sub_mask.sum():,})")
 
     # Feature importances (top 10)
-    imps = pd.Series(q50.feature_importances_, index=FEATURE_NAMES).sort_values(ascending=False)
+    imps = pd.Series(q50.feature_importances_, index=feature_names).sort_values(ascending=False)
     print("\nTop feature importances (q50):")
     print(imps.head(10).to_string())
 
     # Save metadata
     meta = {
-        "features": FEATURE_NAMES,
-        "n_features": len(FEATURE_NAMES),
+        "features": feature_names,
+        "n_features": len(feature_names),
+        "stpasa_tail_features": args.stpasa_tail_features,
+        "stpasa_path": str(args.stpasa_path) if args.stpasa_tail_features else None,
         "window_steps": WINDOW_STEPS,
         "pd_steps": PD_STEPS,
         "quantiles": QUANTILES,

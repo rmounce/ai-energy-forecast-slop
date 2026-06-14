@@ -20,6 +20,8 @@ Data sources (all parquet, no InfluxDB required):
   debiased_pd_rrp_oof.parquet     — OOF-debiased PREDISPATCH RRP for steps 0-55
   spike_clf_predictions.parquet   — prob_spike per run_time for routing
   actuals_sa1.parquet             — 30-min actual RRP for lag features
+  aemo_stpasa_regionsolution_sa1.parquet — required only for checkpoints trained
+                                           with STPASA tail features
 
 Output: eval/results/retro_lgbm_strategic_forecasts.pkl
   {UTC Timestamp (window start_ts) -> np.ndarray shape (144, 3)} in $/MWh
@@ -47,13 +49,14 @@ INDEX_FILE       = RESULTS_DIR / "holistic_eval_index.parquet"
 OUT_FILE         = RESULTS_DIR / "retro_lgbm_strategic_forecasts.pkl"
 MODEL_DIR        = ROOT / "models" / "lgbm_strategic"
 SPIKE_CLF_FILE   = PARQUET_DIR / "spike_clf_predictions.parquet"
+STPASA_FILE      = PARQUET_DIR / "aemo_stpasa_regionsolution_sa1.parquet"
 
 WINDOW_STEPS         = 144
 PD_STEPS             = 56
 BRISBANE_TZ          = "Australia/Brisbane"
 SPIKE_ROUTE_THRESHOLD = 0.65  # prob_spike > this → bypass debiaser; matches TFT routing
 
-FEATURE_NAMES = (
+BASE_FEATURE_NAMES = (
     ["step_idx", "has_pd_covariate"]
     + ["pd_rrp_debiased", "pd_demand", "pd_net_interchange"]
     + [f"actual_rrp_lag{k}" for k in [1, 2, 4, 8]]
@@ -61,6 +64,20 @@ FEATURE_NAMES = (
     + ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos"]
     + ["rt_hour_sin", "rt_hour_cos", "rt_dow_sin", "rt_dow_cos"]
 )
+
+STPASA_FEATURE_NAMES = [
+    "stpasa_uigf",
+    "stpasa_total_intermittent_generation",
+    "stpasa_ss_wind_uigf",
+    "stpasa_ss_solar_uigf",
+    "stpasa_ss_wind_capacity",
+    "stpasa_ss_solar_capacity",
+    "stpasa_wind_avail_frac",
+    "stpasa_solar_avail_frac",
+    "stpasa_source_horizon_hours",
+]
+
+FEATURE_NAMES = BASE_FEATURE_NAMES
 
 
 def _time_enc(ts: pd.DatetimeIndex, prefix: str = "") -> dict:
@@ -75,13 +92,19 @@ def _time_enc(ts: pd.DatetimeIndex, prefix: str = "") -> dict:
     }
 
 
-def load_models() -> dict:
+def load_models() -> tuple[dict, list[str]]:
     models = {}
+    feature_names = None
     for q, fname in [(0.05, "lgbm_q05.pkl"), (0.50, "lgbm_q50.pkl"), (0.95, "lgbm_q95.pkl")]:
         with open(MODEL_DIR / fname, "rb") as f:
             obj = pickle.load(f)
         models[q] = obj["model"]
-    return models
+        bundle_features = list(obj.get("features", FEATURE_NAMES))
+        if feature_names is None:
+            feature_names = bundle_features
+        elif bundle_features != feature_names:
+            raise ValueError(f"Model feature mismatch in {fname}")
+    return models, (feature_names or list(FEATURE_NAMES))
 
 
 def load_predispatch() -> pd.DataFrame:
@@ -110,13 +133,91 @@ def load_actuals() -> pd.Series:
     return df.dropna(subset=["rrp"]).set_index("time")["rrp"].sort_index()
 
 
+def load_stpasa_by_target(path: Path = STPASA_FILE) -> dict[pd.Timestamp, pd.DataFrame]:
+    df = pd.read_parquet(
+        path,
+        columns=[
+            "interval_dt",
+            "run_time",
+            "uigf",
+            "total_intermittent_generation",
+            "ss_wind_uigf",
+            "ss_solar_uigf",
+            "ss_wind_capacity",
+            "ss_solar_capacity",
+        ],
+    )
+    df["run_time"] = pd.to_datetime(df["run_time"], utc=True)
+    df["interval_dt"] = pd.to_datetime(df["interval_dt"], utc=True)
+    return {
+        target: grp.sort_values("run_time")
+        for target, grp in df.groupby("interval_dt", sort=False)
+    }
+
+
+def stpasa_arrays_for_window(
+    run_time: pd.Timestamp,
+    target_dts: pd.DatetimeIndex,
+    stpasa_by_target: dict[pd.Timestamp, pd.DataFrame] | None,
+) -> list[np.ndarray]:
+    values = {
+        "uigf": np.full(WINDOW_STEPS, np.nan, dtype=np.float32),
+        "total_intermittent_generation": np.full(WINDOW_STEPS, np.nan, dtype=np.float32),
+        "ss_wind_uigf": np.full(WINDOW_STEPS, np.nan, dtype=np.float32),
+        "ss_solar_uigf": np.full(WINDOW_STEPS, np.nan, dtype=np.float32),
+        "ss_wind_capacity": np.full(WINDOW_STEPS, np.nan, dtype=np.float32),
+        "ss_solar_capacity": np.full(WINDOW_STEPS, np.nan, dtype=np.float32),
+        "source_horizon_hours": np.full(WINDOW_STEPS, np.nan, dtype=np.float32),
+    }
+    if stpasa_by_target is not None:
+        for step_idx, target_dt in enumerate(target_dts):
+            source = stpasa_by_target.get(target_dt)
+            if source is None or source.empty:
+                continue
+            source_run_times = source["run_time"].to_numpy(dtype="datetime64[ns]")
+            pos = np.searchsorted(source_run_times, run_time.to_datetime64(), side="right") - 1
+            if pos < 0:
+                continue
+            row = source.iloc[pos]
+            for col in [
+                "uigf",
+                "total_intermittent_generation",
+                "ss_wind_uigf",
+                "ss_solar_uigf",
+                "ss_wind_capacity",
+                "ss_solar_capacity",
+            ]:
+                values[col][step_idx] = float(row[col])
+            values["source_horizon_hours"][step_idx] = (
+                target_dt - pd.Timestamp(row["run_time"])
+            ).total_seconds() / 3600.0
+
+    wind_avail = values["ss_wind_uigf"] / values["ss_wind_capacity"]
+    solar_avail = values["ss_solar_uigf"] / values["ss_solar_capacity"]
+    wind_avail[~np.isfinite(wind_avail)] = np.nan
+    solar_avail[~np.isfinite(solar_avail)] = np.nan
+    return [
+        values["uigf"],
+        values["total_intermittent_generation"],
+        values["ss_wind_uigf"],
+        values["ss_solar_uigf"],
+        values["ss_wind_capacity"],
+        values["ss_solar_capacity"],
+        wind_avail.astype(np.float32),
+        solar_avail.astype(np.float32),
+        values["source_horizon_hours"],
+    ]
+
+
 def build_window_features(run_time: pd.Timestamp,
                           pd_by_run: pd.DataFrame,
                           oof_by_run: pd.Series,
                           actuals_ts: pd.Series,
                           roll_6h: pd.Series,
                           roll_24h: pd.Series,
-                          spike_prob_by_run: dict | None = None) -> np.ndarray:
+                          spike_prob_by_run: dict | None = None,
+                          feature_names: list[str] | None = None,
+                          stpasa_by_target: dict[pd.Timestamp, pd.DataFrame] | None = None) -> np.ndarray:
     """
     Build (WINDOW_STEPS, len(FEATURE_NAMES)) feature matrix for one run_time.
     Returns float32 array.
@@ -177,7 +278,8 @@ def build_window_features(run_time: pd.Timestamp,
     tf = _time_enc(target_dts)
     rt_tf = _time_enc(pd.DatetimeIndex([run_time] * WINDOW_STEPS, tz="UTC"), prefix="rt_")
 
-    mat = np.column_stack([
+    requested_features = feature_names or list(FEATURE_NAMES)
+    matrix_parts = [
         step_range.astype(np.float32),                     # step_idx
         has_pd,                                             # has_pd_covariate
         pd_rrp,                                             # pd_rrp_debiased
@@ -199,7 +301,15 @@ def build_window_features(run_time: pd.Timestamp,
         rt_tf["rt_hour_cos"].astype(np.float32),
         rt_tf["rt_dow_sin"].astype(np.float32),
         rt_tf["rt_dow_cos"].astype(np.float32),
-    ])
+    ]
+    if any(name in requested_features for name in STPASA_FEATURE_NAMES):
+        matrix_parts.extend(stpasa_arrays_for_window(run_time, target_dts, stpasa_by_target))
+    mat = np.column_stack(matrix_parts)
+    expected_features = list(BASE_FEATURE_NAMES)
+    if any(name in requested_features for name in STPASA_FEATURE_NAMES):
+        expected_features += STPASA_FEATURE_NAMES
+    if requested_features != expected_features:
+        raise ValueError(f"Unsupported strategic feature contract: {requested_features}")
     return mat.astype(np.float32)
 
 
@@ -217,8 +327,9 @@ def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading models...", flush=True)
-    models = load_models()
+    models, feature_names = load_models()
     print(f"  Loaded q5/q50/q95 from {MODEL_DIR}", flush=True)
+    print(f"  Feature contract: {len(feature_names)} features", flush=True)
 
     print("Loading eval index...", flush=True)
     index = pd.read_parquet(INDEX_FILE)
@@ -256,6 +367,17 @@ def main():
         print("  WARNING: spike_clf_predictions.parquet not found — debiaser applied to all windows",
               flush=True)
 
+    stpasa_by_target = None
+    if any(name in feature_names for name in STPASA_FEATURE_NAMES):
+        if not STPASA_FILE.exists():
+            raise FileNotFoundError(
+                f"STPASA parquet not found: {STPASA_FILE}. "
+                "Required by the loaded strategic model feature contract."
+            )
+        print("Loading STPASA REGIONSOLUTION...", flush=True)
+        stpasa_by_target = load_stpasa_by_target(STPASA_FILE)
+        print(f"  {len(stpasa_by_target):,} target intervals", flush=True)
+
     # Run inference
     forecasts: dict = {}
     n_missing_pd = 0
@@ -275,9 +397,11 @@ def main():
 
         X = build_window_features(run_time, pd_by_run, oof_by_run,
                                   actuals_ts, roll_6h, roll_24h,
-                                  spike_prob_by_run=spike_prob_by_run)
+                                  spike_prob_by_run=spike_prob_by_run,
+                                  feature_names=feature_names,
+                                  stpasa_by_target=stpasa_by_target)
 
-        X_df = pd.DataFrame(X, columns=FEATURE_NAMES)
+        X_df = pd.DataFrame(X, columns=feature_names)
 
         preds = np.column_stack([
             models[0.05].predict(X_df),
@@ -312,6 +436,7 @@ def main():
         "n_steps":     WINDOW_STEPS,
         "n_quantiles": 3,
         "quantiles":   [0.05, 0.50, 0.95],
+        "features":    feature_names,
         "description": "LightGBM strategic q5/q50/q95, 30-min/72-hour, "
                         "PREDISPATCH steps 0-55 + time/lags steps 56-143. "
                         f"Spike routing threshold={SPIKE_ROUTE_THRESHOLD}.",
