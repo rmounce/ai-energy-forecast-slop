@@ -57,6 +57,7 @@ LOW_THRESH   = -50.0
 
 
 from config_utils import load_config
+from eval.price_source_contracts import format_source_banner
 
 
 # ── Bulk InfluxDB fetch ───────────────────────────────────────────────────────
@@ -480,6 +481,14 @@ def main():
         print(f"Fast mode: {len(df_index)} windows ({fast_n}/stratum), {dispatch_mode} dispatch")
     else:
         print(f"Full mode: {len(df_index)} windows, {dispatch_mode} dispatch")
+
+    print(format_source_banner("amber_apf_lgbm", prefix="Baseline source"))
+    if ai_source:
+        print(format_source_banner("model_a_hybrid", prefix="Optional source"))
+    if hybrid_source:
+        print(format_source_banner("model_a_hybrid", prefix="Optional source"))
+    if lgbm_strategic:
+        print(format_source_banner("lgbm_strategic", prefix="Optional source"))
 
     all_strata = ["spike", "low", "normal"]
     if args.strata:

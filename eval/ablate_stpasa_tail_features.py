@@ -42,6 +42,7 @@ from eval.analyze_lgbm_residual_drivers import (
     validate_join_coverage,
     validate_source_horizon,
 )
+from eval.price_source_contracts import format_source_banner, require_apf_backed
 
 RESULTS_DIR = REPO_ROOT / "eval" / "results"
 LOCAL_TZ = "Australia/Brisbane"
@@ -197,6 +198,7 @@ def train_residual_model(
 
 
 def prepare_dataset(args: argparse.Namespace) -> pd.DataFrame:
+    require_apf_backed("amber_apf_lgbm")
     df = load_price_log(args.log_file, model_filter=args.model_filter)
     df = df[df["forecast_creation_time"] >= pd.Timestamp(args.since)]
     if args.until:
@@ -360,6 +362,11 @@ def main() -> None:
         )
 
     print("Preparing tail residual dataset...")
+    print(format_source_banner("amber_apf_lgbm", prefix="Evaluating residuals for"))
+    print(
+        f"  log filter: model_name == {args.model_filter!r}; "
+        "target residual = logged prediction - actual RRP"
+    )
     df = prepare_dataset(args)
     print(
         f"Dataset rows={len(df):,}; creation window="
