@@ -201,6 +201,85 @@ def _heat_rate_c_per_hour(
     return base
 
 
+def _compressor_power_w(
+    th: dict,
+    temp_c: float,
+    wet_bulb_c: float | None = None,
+) -> float:
+    """Return planned compressor electrical power for one active interval.
+
+    This is intentionally modest: the planner still treats the Aquatech as an
+    on/off block heater, but the published power plan should look like measured
+    compressor power rather than a flat nameplate value.
+    """
+    power = float(th.get("compressor_power_reference_w", th.get("nominal_power_w", 0.0)))
+    reference_wb = th.get("compressor_power_reference_wet_bulb_c")
+    wb_slope = th.get("compressor_power_wet_bulb_slope_w_per_c")
+    if wet_bulb_c is not None and reference_wb is not None and wb_slope is not None:
+        power += (float(wet_bulb_c) - float(reference_wb)) * float(wb_slope)
+
+    reference_tank = th.get("compressor_power_reference_tank_c")
+    tank_slope = th.get("compressor_power_tank_slope_w_per_c")
+    if reference_tank is not None and tank_slope is not None:
+        power += (float(temp_c) - float(reference_tank)) * float(tank_slope)
+
+    min_power = th.get("compressor_power_min_w")
+    max_power = th.get("compressor_power_max_w")
+    if min_power is not None:
+        power = max(float(min_power), power)
+    if max_power is not None:
+        power = min(float(max_power), power)
+    return round(power, 1)
+
+
+def _wet_bulb_at(wet_bulb: list[float] | None, idx: int) -> float | None:
+    return None if wet_bulb is None else wet_bulb[idx]
+
+
+def _refresh_planned_power(
+    schedule_w: list[float],
+    *,
+    start_temperature: float,
+    dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
+    draw_off: list[float],
+    cfg: dict,
+) -> list[float]:
+    """Recalculate active schedule watts from the current thermal state."""
+    th = cfg["thermal"]
+    step_h = cfg.get("optimization_time_step", 30) / 60.0
+    cap_kwh_per_c = _thermal_capacity_kwh_per_c(th)
+    ua_kw_per_c = float(th.get("standing_loss_ua_kw_per_c", 0.0025))
+    max_temp = float(th.get("max_temp", 62))
+    temp = float(start_temperature)
+    out: list[float] = []
+    heat_ambient = wet_bulb if wet_bulb is not None else [None] * len(schedule_w)
+    heat_block_start_temp: float | None = None
+
+    for power_w, ambient_c, heat_wb, draw_kwh in zip(
+        schedule_w, dry_bulb, heat_ambient, draw_off, strict=True
+    ):
+        loss_kwh = max(0.0, temp - float(ambient_c)) * ua_kw_per_c * step_h
+        temp -= loss_kwh / cap_kwh_per_c
+        temp -= float(draw_kwh) / cap_kwh_per_c
+        if power_w > 0:
+            if heat_block_start_temp is None:
+                heat_block_start_temp = temp
+            out.append(_compressor_power_w(th, temp, heat_wb))
+            heat_rate_c_per_h = _heat_rate_c_per_hour(
+                th,
+                temp,
+                heat_wb,
+                heat_block_start_temp_c=heat_block_start_temp,
+            )
+            temp += heat_rate_c_per_h * step_h
+        else:
+            heat_block_start_temp = None
+            out.append(0.0)
+        temp = min(max_temp, temp)
+    return out
+
+
 def _parse_hhmm(value: str) -> int:
     h, m = (int(x) for x in value.split(":"))
     return h * 60 + m
@@ -318,7 +397,6 @@ def _add_contiguous_heat(
 ) -> list[float]:
     """Return a copy with one contiguous heater run from start_idx until target is reached."""
     th = cfg["thermal"]
-    power_w = float(th["nominal_power_w"])
     min_steps = _min_block_steps(cfg)
     out = list(schedule_w)
     end_idx = min(end_idx, len(out))
@@ -336,7 +414,7 @@ def _add_contiguous_heat(
         duration_ok = idx - start_idx >= min_steps
         if duration_ok and temps[idx] >= target_temp:
             break
-        out[idx] = power_w
+        out[idx] = _compressor_power_w(th, temps[idx], _wet_bulb_at(wet_bulb, idx))
     return out
 
 
@@ -519,7 +597,11 @@ def _repair_min_temperature(
                 duration_ok = heat_idx - start_idx >= min_steps
                 if duration_ok and ctemps[bad_idx] >= min_temp and ctemps[heat_idx] >= boost_target:
                     break
-                candidate[heat_idx] = float(hwc["thermal"]["nominal_power_w"])
+                candidate[heat_idx] = _compressor_power_w(
+                    hwc["thermal"],
+                    ctemps[heat_idx],
+                    _wet_bulb_at(wet_bulb, heat_idx),
+                )
             ctemps, _ = simulate_block_temperatures(
                 schedule_w=candidate,
                 start_temperature=start_temperature,
@@ -581,7 +663,7 @@ def _repair_terminal_temperature(
     for start_idx in range(lo, len(schedule_w)):
         candidate = list(schedule_w)
         for heat_idx in range(start_idx, len(schedule_w)):
-            _, cterminal = simulate_block_temperatures(
+            temps, cterminal = simulate_block_temperatures(
                 schedule_w=candidate,
                 start_temperature=start_temperature,
                 dry_bulb=dry_bulb,
@@ -592,7 +674,11 @@ def _repair_terminal_temperature(
             duration_ok = heat_idx - start_idx >= min_steps
             if duration_ok and cterminal >= terminal_target:
                 break
-            candidate[heat_idx] = float(hwc["thermal"]["nominal_power_w"])
+            candidate[heat_idx] = _compressor_power_w(
+                hwc["thermal"],
+                temps[heat_idx],
+                _wet_bulb_at(wet_bulb, heat_idx),
+            )
         _, cterminal = simulate_block_temperatures(
             schedule_w=candidate,
             start_temperature=start_temperature,
@@ -653,6 +739,14 @@ def build_block_plan(
         wet_bulb=wet_bulb,
         draw_off=draw_off,
         cfg=cfg,
+    )
+    schedule = _refresh_planned_power(
+        schedule,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
+        draw_off=draw_off,
+        cfg=cfg["hwc"],
     )
     temps, terminal_temp = simulate_block_temperatures(
         schedule_w=schedule,

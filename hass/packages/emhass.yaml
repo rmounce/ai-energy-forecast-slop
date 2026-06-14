@@ -613,10 +613,31 @@ rest_command:
           {%- endif %}
         {%- endfor %}
 
-        {# 2. Get GROSS Load Forecast #}
+        {# 2. Get GROSS base-load forecast and planned HWC compressor power. #}
         {%- set load_forecast_gross = state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list %}
+        {%- set dh_start_30m = utcnow().replace(minute=(utcnow().minute // 30) * 30, second=0, microsecond=0) %}
+        {%- set hwc_5m = namespace(values=[]) %}
+        {%- for item in state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
+          {%- if as_datetime(item.date) >= dh_start_30m %}
+            {%- set hwc_5m.values = hwc_5m.values + [item.hwc_power_plan | float(0)] %}
+          {%- endif %}
+        {%- endfor %}
+        {%- set hwc_tail_24h = hwc_5m.values[-288:] if hwc_5m.values | count >= 288 else hwc_5m.values %}
+        {%- if hwc_5m.values | count < 864 and hwc_tail_24h | count > 0 %}
+          {%- set hwc_5m.values = (hwc_5m.values + hwc_tail_24h)[:864] %}
+        {%- endif %}
+        {%- set hwc_power_30m = namespace(values=[]) %}
+        {%- for i in range(144) %}
+          {%- set start = i * 6 %}
+          {%- set block = hwc_5m.values[start:start + 6] %}
+          {%- if block | count > 0 %}
+            {%- set hwc_power_30m.values = hwc_power_30m.values + [((block | sum) / (block | count)) | round(0) | int] %}
+          {%- else %}
+            {%- set hwc_power_30m.values = hwc_power_30m.values + [0] %}
+          {%- endif %}
+        {%- endfor %}
 
-        {# 3. Apply the "140W Logic" to create NET Forecasts #}
+        {# 3. Apply the "140W Logic" to create NET Forecasts, then add planned HWC power. #}
         {#    PV pays 140W first. If PV < 140, the remainder is added to Load. #}
         {%- set data = namespace(pv_net=[], load_net=[]) %}
         {%- set fixed_loss = 140 %}
@@ -633,7 +654,8 @@ rest_command:
             
             {# Logic: If PV couldn't pay the full tax, add the remainder to Load #}
             {%- set uncovered_loss = [0, fixed_loss - p_gross] | max %}
-            {%- set l_net = l_gross + uncovered_loss %}
+            {%- set hwc_planned = hwc_power_30m.values[i] if i < (hwc_power_30m.values | count) else 0 %}
+            {%- set l_net = l_gross + uncovered_loss + hwc_planned %}
             
             {%- set data.pv_net = data.pv_net + [p_net | int] %}
             {%- set data.load_net = data.load_net + [l_net | int] %}

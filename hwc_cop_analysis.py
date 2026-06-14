@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Measure heat-pump hot water (HWC) per-cycle COP from InfluxDB.
 
-The unit doesn't meter its own power, but `sensor.remaining_power_load` (all
-un-individually-metered house load) is a usable proxy on clean windows: subtract
-the pre/post baseline to isolate the heat pump. This sweeps recent compressor
-cycles and reports, per cycle:
+The preferred electrical input is the dedicated heat-pump circuit meter (raw
+Athom channel 2). Older history can still use `sensor.remaining_power_load` as a
+residual proxy: subtract the pre/post baseline to isolate the heat pump on clean
+windows. This sweeps recent compressor cycles and reports, per cycle:
 
   start/end tank temp, ambient, duration, electrical-in (baseline-subtracted),
   thermal-out (single-probe ΔT + standing loss), apparent COP, and a cleanliness
@@ -41,6 +41,10 @@ STANDING_LOSS_KW = 0.12
 HP_POWER_MAX_W = 1100  # plausible upper bound for this unit; above → contamination
 LOCAL_TZ = "Australia/Adelaide"
 DEFAULT_SINCE = "2026-05-28"  # Aquatech install date; earlier HA history is unrelated.
+HWC_POWER_ENTITY = (
+    "athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2"
+)
+RESIDUAL_POWER_ENTITY = "remaining_power_load"
 
 
 def _client():
@@ -116,6 +120,12 @@ def _state_to_idx(s, idx):
     return s.reindex(idx, method="ffill").fillna(0) > 0.5
 
 
+def _series_has_window(s: pd.Series, start, end) -> bool:
+    if s.empty:
+        return False
+    return not s[(s.index >= start) & (s.index <= end)].dropna().empty
+
+
 def _round_or_nan(value, ndigits=1):
     return round(value, ndigits) if pd.notna(value) else np.nan
 
@@ -146,8 +156,12 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
         c, "binary_sensor__running", "aquatech_compressor",
         days=days, since=since, until=until,
     )
-    pw = _series(
-        c, "sensor__power", "remaining_power_load",
+    hwc_pw = _series(
+        c, "sensor__power", HWC_POWER_ENTITY,
+        days=days, since=since, until=until,
+    )
+    residual_pw = _series(
+        c, "sensor__power", RESIDUAL_POWER_ENTITY,
         days=days, since=since, until=until,
     )
     tank = _series(
@@ -190,11 +204,16 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
         c, "binary_sensor__running", "aquatech_four_way_valve",
         days=days, since=since, until=until,
     )
-    if comp.empty or pw.empty:
-        raise SystemExit("Missing compressor or remaining_power_load data")
+    power_series = [s for s in (hwc_pw, residual_pw) if not s.empty]
+    if comp.empty or not power_series:
+        raise SystemExit(
+            "Missing compressor or HWC power data "
+            f"({HWC_POWER_ENTITY} or {RESIDUAL_POWER_ENTITY})"
+        )
 
-    idx = pd.date_range(pw.index.min(), pw.index.max(), freq="30s", tz="UTC")
-    P = _interp_to_idx(pw, idx)
+    idx_min = min([comp.index.min()] + [s.index.min() for s in power_series])
+    idx_max = max([comp.index.max()] + [s.index.max() for s in power_series])
+    idx = pd.date_range(idx_min, idx_max, freq="30s", tz="UTC")
     on = _state_to_idx(comp, idx)
     T = _interp_to_idx(tank, idx)
     X = _interp_to_idx(exhaust, idx)
@@ -212,6 +231,16 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
             continue
         cs, ce = g.index[0], g.index[-1]
         dur_h = (ce - cs).total_seconds() / 3600
+        window_start = cs - pd.Timedelta("10min")
+        window_end = ce + pd.Timedelta("10min")
+        if _series_has_window(hwc_pw, window_start, window_end):
+            P = _interp_to_idx(hwc_pw, idx)
+            power_source = HWC_POWER_ENTITY
+        elif _series_has_window(residual_pw, window_start, window_end):
+            P = _interp_to_idx(residual_pw, idx)
+            power_source = RESIDUAL_POWER_ENTITY
+        else:
+            continue
         pre = P[(idx >= cs - pd.Timedelta("10min")) & (idx < cs) & (~on)]
         post = P[(idx > ce) & (idx <= ce + pd.Timedelta("10min")) & (~on)]
         if pre.empty or post.empty:
@@ -254,6 +283,7 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
             tank_end=round(t_end, 1), ambient=round(a, 1) if pd.notna(a) else np.nan,
             wet_bulb=round(stull_wet_bulb(a, h), 1), baseline_w=round(baseline),
             hp_mean_w=round(hp.mean()), hp_p95_w=round(hp.quantile(0.95)),
+            power_source=power_source,
             elec_kwh=round(elec, 2), therm_kwh=round(therm, 2),
             cop=round(cop, 2) if pd.notna(cop) else np.nan, clean=clean,
             probe_lag_min=_round_or_nan(probe_lag_min, 1),
@@ -328,7 +358,7 @@ def write_summary_markdown(
         "",
         f"- Source window: {source}",
         f"- Rows: {len(df)} total, {len(clean)} clean",
-        "- Method: compressor-on windows from HA/InfluxDB; electrical input from baseline-subtracted `sensor.remaining_power_load`; thermal output from tank probe delta plus standing loss.",
+        "- Method: compressor-on windows from HA/InfluxDB; electrical input prefers raw Athom channel 2 (`sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2`), with baseline-subtracted `sensor.remaining_power_load` fallback for older history; thermal output from tank probe delta plus standing loss.",
         "- Caveat: tank stratification means single-probe thermal output is approximate; use clean flags and cycle context before fitting model parameters.",
         "",
     ]
@@ -338,11 +368,12 @@ def write_summary_markdown(
         display = format_cycles_for_output(df)
         cols = [
             "start", "dur_min", "tank_start", "tank_end", "ambient", "wet_bulb",
-            "baseline_w", "hp_mean_w", "hp_p95_w", "elec_kwh", "therm_kwh",
+            "baseline_w", "hp_mean_w", "hp_p95_w", "power_source", "elec_kwh", "therm_kwh",
             "cop", "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min",
             "probe_rise_90_min", "exhaust_start", "exhaust_max", "exhaust_end",
             "element_on", "defrost_on", "four_way_on", "clean",
         ]
+        cols = [col for col in cols if col in display.columns]
         table = display[cols].astype(str)
         lines.append("| " + " | ".join(cols) + " |")
         lines.append("| " + " | ".join(["---"] * len(cols)) + " |")

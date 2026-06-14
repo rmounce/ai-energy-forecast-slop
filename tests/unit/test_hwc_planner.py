@@ -308,6 +308,72 @@ def test_simulate_clamps_wet_bulb_heat_rate_adjustment():
     assert terminal == pytest.approx(57.0)
 
 
+def test_compressor_power_defaults_to_nominal_power():
+    assert hp._compressor_power_w({"nominal_power_w": 800}, 50.0, 12.5) == 800.0
+
+
+def test_compressor_power_uses_wet_bulb_and_tank_temperature():
+    power = hp._compressor_power_w(
+        {
+            "nominal_power_w": 780,
+            "compressor_power_reference_w": 780,
+            "compressor_power_reference_wet_bulb_c": 12.5,
+            "compressor_power_wet_bulb_slope_w_per_c": 8.0,
+            "compressor_power_reference_tank_c": 50.0,
+            "compressor_power_tank_slope_w_per_c": 1.5,
+        },
+        temp_c=56.0,
+        wet_bulb_c=8.5,
+    )
+
+    assert power == pytest.approx(757.0)
+
+
+def test_compressor_power_clamps_to_configured_range():
+    assert hp._compressor_power_w(
+        {
+            "nominal_power_w": 780,
+            "compressor_power_reference_w": 780,
+            "compressor_power_reference_tank_c": 50.0,
+            "compressor_power_tank_slope_w_per_c": 50.0,
+            "compressor_power_min_w": 650,
+            "compressor_power_max_w": 870,
+        },
+        temp_c=60.0,
+    ) == 870.0
+
+
+def test_refresh_planned_power_keeps_binary_schedule_shape_with_modelled_watts():
+    refreshed = hp._refresh_planned_power(
+        [0.0, 1.0, 1.0],
+        start_temperature=50.0,
+        dry_bulb=[15.0, 15.0, 15.0],
+        wet_bulb=[8.5, 8.5, 8.5],
+        draw_off=[0.0, 0.0, 0.0],
+        cfg={
+            "optimization_time_step": 30,
+            "thermal": {
+                "volume_l": 225,
+                "density": 997,
+                "heat_capacity": 4.184,
+                "standing_loss_ua_kw_per_c": 0.0,
+                "heat_rate_c_per_hour": 6.0,
+                "max_temp": 60,
+                "nominal_power_w": 780,
+                "compressor_power_reference_w": 780,
+                "compressor_power_reference_wet_bulb_c": 12.5,
+                "compressor_power_wet_bulb_slope_w_per_c": 8.0,
+                "compressor_power_reference_tank_c": 50.0,
+                "compressor_power_tank_slope_w_per_c": 1.5,
+            },
+        },
+    )
+
+    assert refreshed[0] == 0.0
+    assert refreshed[1] == pytest.approx(748.0)
+    assert refreshed[2] > refreshed[1]
+
+
 # ── build_payload ───────────────────────────────────────────────────────────
 
 

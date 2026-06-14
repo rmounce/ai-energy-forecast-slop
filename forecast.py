@@ -183,6 +183,7 @@ def get_historical_data(client, start_time, end_time):
     data_sources = {
         # Core measurements
         'power_load': f'SELECT mean("mean_value") FROM "rp_30m"."power_load_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
+        'power_load_without_deferrable': f'SELECT mean("mean_value") FROM "rp_30m"."power_load_without_deferrable_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'power_pv': f'SELECT mean("mean_value") FROM "rp_30m"."power_pv_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'temperature_adelaide': f'SELECT mean("mean_value") FROM "rp_30m"."temperature_adelaide" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'humidity_adelaide': f'SELECT mean("mean_value") FROM "rp_30m"."humidity_adelaide" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
@@ -229,7 +230,23 @@ def get_historical_data(client, start_time, end_time):
     # The ffill().dropna() in the training function will handle these.
     df_combined = pd.concat(dataframes.values(), axis=1, join='outer')
 
-    if 'power_dump_load' in df_combined.columns:
+    if 'power_load_without_deferrable' in df_combined.columns:
+        fallback_load = (
+            df_combined['power_load']
+            if 'power_load' in df_combined.columns
+            else pd.Series(index=df_combined.index, dtype=float)
+        )
+        if 'power_dump_load' in df_combined.columns:
+            fallback_load = (
+                fallback_load.fillna(0) - df_combined['power_dump_load'].fillna(0)
+            ).clip(lower=0)
+        df_combined['power_load'] = df_combined['power_load_without_deferrable'].combine_first(fallback_load)
+        df_combined.drop(
+            columns=['power_load_without_deferrable', 'power_dump_load'],
+            inplace=True,
+            errors='ignore',
+        )
+    elif 'power_dump_load' in df_combined.columns:
         df_combined['power_load'] = (
             df_combined['power_load'].fillna(0) - df_combined['power_dump_load'].fillna(0)
         ).clip(lower=0)

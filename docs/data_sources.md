@@ -39,14 +39,24 @@
 
 | Source | InfluxDB measurement | RP | Fields | CQ from |
 |--------|---------------------|-----|--------|---------|
-| Household load | `power_load_5m`, `power_load_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQs |
+| Household load | `power_load_5m`, `power_load_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | Gross HA consumed power; retained for history |
+| Household load without deferrable loads | `power_load_without_deferrable_5m`, `power_load_without_deferrable_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA `sensor.power_consumed_without_deferrable_loads` → `rp_raw` → CQs |
 | Solar PV | `power_pv_5m`, `power_pv_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQs |
 | Dump load | `power_dump_load_30m` | `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQ |
 | Temperature | `temperature_adelaide` | `rp_30m` | `mean_value` (°C) | HA sensor → `rp_raw` → CQ |
 | Humidity | `humidity_adelaide` | `rp_30m` | `mean_value` (%) | HA sensor → `rp_raw` → CQ |
 | Wind speed | `wind_speed_adelaide` | `rp_30m` | `mean_value` (m/s) | HA sensor → `rp_raw` → CQ |
 
-Dump load is subtracted from household load in `get_historical_data()` before any model sees it.
+Forecast/export code prefers `power_load_without_deferrable_30m`. Where that newer series is
+missing, it falls back to `power_load_30m` minus `power_dump_load_30m` so older history remains
+usable.
+
+The production load forecast is therefore a **base household load forecast**. The EMHASS
+day-ahead payload reconstructs the expected whole-site load by adding the planned HWC
+compressor block from `sensor.hwc_power_plan` at payload-preparation time. If the 48h HWC
+plan is shorter than the 72h day-ahead horizon, the final 24h of planned HWC power is
+repeated as a plausible anchor. The dump load is not added because it is opportunistic
+negative-price behaviour, not scheduled deferrable demand.
 
 ---
 

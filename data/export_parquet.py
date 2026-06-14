@@ -255,9 +255,11 @@ def export_actuals(client):
     # 2. Local sensors (optional — fill NaN if missing)
     sensors = {
         "power_load": f"{RP}.power_load_30m",
-        "power_pv":   f"{RP}.power_pv_30m",
-        "temp":       f"{RP}.temperature_adelaide",
-        "humidity":   f"{RP}.humidity_adelaide",
+        "power_load_without_deferrable": f"{RP}.power_load_without_deferrable_30m",
+        "power_dump_load": f"{RP}.power_dump_load_30m",
+        "power_pv": f"{RP}.power_pv_30m",
+        "temp": f"{RP}.temperature_adelaide",
+        "humidity": f"{RP}.humidity_adelaide",
         "wind_speed": f"{RP}.wind_speed_adelaide",
     }
     for col_name, measurement in sensors.items():
@@ -276,6 +278,27 @@ def export_actuals(client):
             # Deduplicate (HA can write multiple records per interval)
             df_s = df_s.groupby(level=0).mean()
             dispatch[col_name] = df_s
+
+    if "power_load_without_deferrable" in dispatch.columns:
+        fallback_load = (
+            dispatch["power_load"]
+            if "power_load" in dispatch.columns
+            else pd.Series(index=dispatch.index, dtype=float)
+        )
+        if "power_dump_load" in dispatch.columns:
+            fallback_load = (
+                fallback_load.fillna(0) - dispatch["power_dump_load"].fillna(0)
+            ).clip(lower=0)
+        dispatch["power_load"] = dispatch["power_load_without_deferrable"].combine_first(fallback_load)
+        dispatch = dispatch.drop(
+            columns=["power_load_without_deferrable", "power_dump_load"],
+            errors="ignore",
+        )
+    elif "power_dump_load" in dispatch.columns:
+        dispatch["power_load"] = (
+            dispatch["power_load"].fillna(0) - dispatch["power_dump_load"].fillna(0)
+        ).clip(lower=0)
+        dispatch = dispatch.drop(columns=["power_dump_load"], errors="ignore")
 
     dispatch = dispatch.reset_index()
     if "time" not in dispatch.columns and dispatch.columns[0] != "time":

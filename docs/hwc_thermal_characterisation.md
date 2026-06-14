@@ -17,7 +17,9 @@ Tank/control: `sensor.heat_pump_temperature` (control probe). Refrigerant/air:
 (evaporator/suction side, ~2–4 °C), `sensor.aquatech_temperature` (ambient). State:
 `binary_sensor.aquatech_compressor`, `aquatech_defrost`, `aquatech_four_way_valve`,
 `aquatech_element`. The unit does **not** meter its own power
-(`sensor.aquatech_power`/`_current` barely populate); power is proxied from
+(`sensor.aquatech_power`/`_current` barely populate); current electrical input comes from
+raw Athom channel 2 (`sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2`),
+with older history proxied from
 `sensor.remaining_power_load` (see COP method).
 
 ## Finding 1 — the two-stage condensing-temperature rise = stratified charging
@@ -52,7 +54,9 @@ condensing temperature climbs. So the phase-2 acceleration is the water-side the
 
 ## Finding 3 — measured COP (and it's well below datasheet)
 
-**Method:** electrical-in = `sensor.remaining_power_load` − pre/post baseline, integrated
+**Method:** electrical-in prefers raw Athom channel 2
+(`sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2`), falling back to
+`sensor.remaining_power_load` − pre/post baseline for older history, integrated
 over the compressor-on window; thermal-out = tank ΔT × 225 L × 4.186 kJ/kg·K + standing loss.
 Single-probe ΔT under-counts thermal (stratification), so the **hard ceiling** — elec vs the
 sensible capacity of a 45→60 °C reheat (~3.9 kWh) — is the more robust bound.
@@ -64,6 +68,7 @@ Recent clean full-reheat-to-60 °C cycles (see `data/hwc_cop_cycles.csv`):
 | 13.5 °C | 1.11 | 3.33 | ~3.0 |
 | 15.6 °C | 1.63 | 4.12 | ~2.5 |
 | 17.2 °C | 1.53 | 3.63 | ~2.4 |
+| 14.2 °C / WB 8.6 °C | 2.06 | 5.28 | ~2.6 |
 | 55→60 °C top-up only | 0.73 | 1.27 | **~1.75** |
 
 - **Full reheat to 60 °C: COP ≈ 2.4–3.0** (cooler ambient → higher), vs the datasheet's
@@ -73,8 +78,8 @@ Recent clean full-reheat-to-60 °C cycles (see `data/hwc_cop_cycles.csv`):
 - A single cycle's COP **cannot exceed ~2.6** given the power drawn and the tank's 45→60 °C
   sensible capacity, regardless of probe/stratification uncertainty.
 
-Across the last 12 days the sweep flags **4 of 6 cycles clean** (mean clean COP ≈ **2.4**);
-the two excluded are a contaminated baseline (another load on) and a short partial heat.
+The calibration CSV currently has **8 clean cycles out of 10** (mean clean COP ≈ **2.3**);
+the excluded rows are contaminated/partial windows.
 (`wet_bulb` is populated from `rp_30m.humidity_adelaide`; regenerate the CSV after analyzer
 changes before using it for calibration.) Keep `data/hwc_cop_cycles.csv` as the
 machine-readable cycle table, and write `--summary-md docs/hwc_calibration_cycles.md`
@@ -102,9 +107,13 @@ design (two reheats, not one).
    quantity is *electrical energy + duration as a function of (start temp, target, ambient/
    wet-bulb)* — a low-dimensional empirical curve we can **measure**, rather than the intra-cycle
    trajectory the unit can't be controlled to follow anyway.
-4. **Biggest accuracy lever:** real electrical metering. `remaining_power_load` works only on
-   clean windows; a dedicated circuit meter + the exhaust temperature would let us fit
-   COP(condensing temp / SoC, wet-bulb) directly.
+4. **Biggest accuracy lever landed:** dedicated circuit metering should replace
+   `remaining_power_load` for new cycles; pairing it with exhaust temperature lets us fit
+   COP(condensing temp / SoC, wet-bulb) directly once enough clean cycles are collected.
+5. The block planner now publishes modelled compressor watts rather than a flat nameplate
+   value. The first pragmatic fit uses `compressor_power_reference_w` plus wet-bulb and
+   tank-temperature slopes in `config.json`; it is calibrated to the Athom-metered
+   `2026-06-14` clean run but should be revisited after more metered cycles.
 
 See `docs/hwc_emhass.md` for the open question of whether to enhance EMHASS's COP model or use
 a purpose-built block optimiser.
