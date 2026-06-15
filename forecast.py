@@ -58,6 +58,27 @@ CONFIG = load_config()
 ROOT = Path(__file__).resolve().parent
 GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = load_tariff_profile(CONFIG, ROOT)
 
+STPASA_SOURCE_COLUMNS = [
+    "uigf",
+    "total_intermittent_generation",
+    "ss_wind_uigf",
+    "ss_solar_uigf",
+    "ss_wind_capacity",
+    "ss_solar_capacity",
+]
+STPASA_FEATURE_COLUMNS = [
+    "stpasa_uigf",
+    "stpasa_total_intermittent_generation",
+    "stpasa_ss_wind_uigf",
+    "stpasa_ss_solar_uigf",
+    "stpasa_ss_wind_capacity",
+    "stpasa_ss_solar_capacity",
+    "stpasa_wind_avail_frac",
+    "stpasa_solar_avail_frac",
+    "stpasa_net_load_proxy",
+    "stpasa_source_horizon_hours",
+]
+
 # Shared cached session for all AEMO/NEMWeb HTTP requests
 _aemo_session = make_aemo_session()
 
@@ -116,6 +137,128 @@ def get_network_loss_factor():
             return tariffs.get('network_loss_factor', 1.05)
     except (FileNotFoundError, json.JSONDecodeError):
         return 1.05
+
+
+def _stpasa_regionsolution_path() -> Path:
+    configured = CONFIG.get("paths", {}).get(
+        "stpasa_regionsolution_file",
+        "data/parquet/aemo_stpasa_regionsolution_sa1.parquet",
+    )
+    path = Path(configured)
+    return path if path.is_absolute() else ROOT / path
+
+
+def _stpasa_features_requested() -> bool:
+    for model_config in CONFIG.get("models", {}).values():
+        feature_cols = set(model_config.get("feature_cols", []))
+        if feature_cols.intersection(STPASA_FEATURE_COLUMNS):
+            return True
+    return False
+
+
+def _load_stpasa_regionsolution(path: Path | None = None) -> pd.DataFrame:
+    """Load local SA1 STPASA REGIONSOLUTION parquet for price covariates."""
+
+    source_path = path or _stpasa_regionsolution_path()
+    if not source_path.exists():
+        logging.warning("STPASA REGIONSOLUTION parquet not found: %s", source_path)
+        return pd.DataFrame()
+    cols = ["interval_dt", "run_time", *STPASA_SOURCE_COLUMNS]
+    try:
+        df = pd.read_parquet(source_path, columns=cols)
+    except Exception as e:
+        logging.warning("Failed to read STPASA REGIONSOLUTION parquet %s: %s", source_path, e)
+        return pd.DataFrame()
+    df["interval_dt"] = pd.to_datetime(df["interval_dt"], utc=True)
+    df["run_time"] = pd.to_datetime(df["run_time"], utc=True)
+    return df.sort_values(["interval_dt", "run_time"])
+
+
+def _empty_stpasa_feature_frame(index: pd.DatetimeIndex) -> pd.DataFrame:
+    return pd.DataFrame({col: np.nan for col in STPASA_FEATURE_COLUMNS}, index=index)
+
+
+def _attach_stpasa_features_for_targets(
+    base_df: pd.DataFrame,
+    stpasa_df: pd.DataFrame,
+    *,
+    asof_times: pd.Series | pd.DatetimeIndex | pd.Timestamp,
+) -> pd.DataFrame:
+    """Attach latest STPASA row available at each model/as-of time.
+
+    The returned columns are indexed like `base_df`. For every target interval
+    (`base_df.index`), the join selects the newest STPASA `run_time` that is not
+    later than that row's as-of time. Historical training passes each target time
+    as its own as-of time; live prediction passes the forecast creation time.
+    """
+
+    out = _empty_stpasa_feature_frame(base_df.index)
+    if base_df.empty or stpasa_df.empty:
+        return out
+
+    left = pd.DataFrame(index=base_df.index.copy())
+    left["target_time"] = pd.to_datetime(left.index, utc=True)
+    if isinstance(asof_times, pd.Timestamp):
+        left["asof_time"] = _as_utc_timestamp(asof_times)
+    else:
+        asof_index = pd.to_datetime(asof_times, utc=True)
+        if len(asof_index) != len(left):
+            raise ValueError("asof_times must be scalar or match base_df length")
+        left["asof_time"] = pd.DatetimeIndex(asof_index).to_numpy()
+
+    source_by_target = {
+        target: grp.sort_values("run_time")
+        for target, grp in stpasa_df.groupby("interval_dt", sort=False)
+    }
+
+    for target, row_positions in left.groupby("target_time", sort=False).groups.items():
+        source = source_by_target.get(target)
+        if source is None or source.empty:
+            continue
+        source_run_times = source["run_time"].to_numpy(dtype="datetime64[ns]")
+        left_asof_times = left.loc[row_positions, "asof_time"].to_numpy(dtype="datetime64[ns]")
+        positions = np.searchsorted(source_run_times, left_asof_times, side="right") - 1
+        valid = positions >= 0
+        if not valid.any():
+            continue
+
+        valid_idx = np.asarray(row_positions)[valid]
+        source_rows = source.iloc[positions[valid]]
+        for col in STPASA_SOURCE_COLUMNS:
+            out.loc[valid_idx, f"stpasa_{col}"] = pd.to_numeric(
+                source_rows[col], errors="coerce"
+            ).to_numpy()
+        stpasa_run_time = pd.to_datetime(source_rows["run_time"], utc=True)
+        out.loc[valid_idx, "stpasa_source_horizon_hours"] = (
+            left.loc[valid_idx, "target_time"].reset_index(drop=True) - stpasa_run_time.reset_index(drop=True)
+        ).dt.total_seconds().to_numpy(dtype=float) / 3600.0
+
+    out["stpasa_wind_avail_frac"] = (
+        out["stpasa_ss_wind_uigf"] / out["stpasa_ss_wind_capacity"]
+    ).replace([np.inf, -np.inf], np.nan)
+    out["stpasa_solar_avail_frac"] = (
+        out["stpasa_ss_solar_uigf"] / out["stpasa_ss_solar_capacity"]
+    ).replace([np.inf, -np.inf], np.nan)
+    if "total_demand_sa1" in base_df.columns:
+        out["stpasa_net_load_proxy"] = base_df["total_demand_sa1"] - out["stpasa_uigf"]
+    return out[STPASA_FEATURE_COLUMNS]
+
+
+def _get_historical_stpasa_features(index: pd.DatetimeIndex, base_df: pd.DataFrame) -> pd.DataFrame:
+    stpasa_df = _load_stpasa_regionsolution()
+    features = _attach_stpasa_features_for_targets(
+        base_df.reindex(index),
+        stpasa_df,
+        asof_times=pd.DatetimeIndex(index),
+    )
+    coverage = features["stpasa_uigf"].notna().mean() if len(features) else 0.0
+    logging.info("Historical STPASA feature coverage: %.1f%%", coverage * 100.0)
+    return features
+
+
+def _get_stpasa_forecast_features(base_df: pd.DataFrame, asof_time: pd.Timestamp) -> pd.DataFrame:
+    stpasa_df = _load_stpasa_regionsolution()
+    return _attach_stpasa_features_for_targets(base_df, stpasa_df, asof_times=asof_time)
 
 def _get_historical_pd7day_prices(client, start_time, end_time, region='SA1',
                                    batch_months=3):
@@ -255,6 +398,10 @@ def get_historical_data(client, start_time, end_time):
     pd7_df = _get_historical_pd7day_prices(client, start_time, end_time)
     if not pd7_df.empty:
         df_combined = df_combined.join(pd7_df, how='left')
+
+    if _stpasa_features_requested():
+        stpasa_features = _get_historical_stpasa_features(df_combined.index, df_combined)
+        df_combined = df_combined.join(stpasa_features, how='left')
 
     return add_time_features(df_combined)
 
@@ -596,6 +743,10 @@ def get_aemo_forecast():
     # Ensure the data is continuous and sorted
     final_df = combined_df.resample('30min').mean().ffill().bfill()
     final_df.sort_index(inplace=True)
+    if _stpasa_features_requested():
+        asof_time = pd.Timestamp.now(tz="UTC")
+        stpasa_features = _get_stpasa_forecast_features(final_df, asof_time)
+        final_df = final_df.join(stpasa_features, how='left')
 
     logging.info(f"Successfully combined short and long-term AEMO forecasts into {len(final_df)} intervals.")
     return final_df
@@ -2998,6 +3149,10 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
 
     # Combine history and future
     combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
+    for col in sorted(all_feature_cols):
+        if col not in combined_covariates_df.columns:
+            logging.warning("Requested feature column '%s' is missing; filling with NaN before adjustment.", col)
+            combined_covariates_df[col] = np.nan
 
     # ----------------------------------------------------------------------- #
     # --- DST FIX START ----------------------------------------------------- #

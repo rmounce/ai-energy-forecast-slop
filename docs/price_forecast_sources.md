@@ -16,6 +16,9 @@
 - Main APF-tail/STPASA probe: `eval/ablate_stpasa_tail_features.py`.
 - Dispatch probe artifact generator: `eval/build_stpasa_residual_price_log.py`
   adjusts only the incumbent APF tail residuals.
+- Production-shaped STPASA path: optional `stpasa_*` future covariates in
+  `forecast.py` for the incumbent `price` model. This has only been tested in an
+  ignored experiment config so far; live `config.json` is not promoted.
 
 ## Source Contracts
 
@@ -41,6 +44,8 @@ Use this source when the question is:
 
 - did the APF extrapolation tail improve?
 - can STPASA explain or correct the 28.5-72h residual?
+- does a single-stage STPASA covariate retrain improve the incumbent APF-backed
+  extrapolator?
 - what would the current production APF-backed path have done?
 
 ### Suspended APF-Free Paths
