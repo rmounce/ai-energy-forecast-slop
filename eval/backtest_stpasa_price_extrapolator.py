@@ -27,6 +27,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytz
+import pyarrow.parquet as pq
 from influxdb import InfluxDBClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -126,10 +127,21 @@ def train_price_model(config: dict, *, train_until: pd.Timestamp):
 
 def load_predispatch_by_region(path_template: Path) -> dict[str, pd.DataFrame]:
     out: dict[str, pd.DataFrame] = {}
+    required = {"interval_dt", "run_time", "total_demand", "net_interchange"}
     for region in REGIONS:
         path = Path(str(path_template).replace("sa1", region.lower()))
         if not path.exists():
             logging.warning("Missing PREDISPATCH parquet for %s: %s", region, path)
+            continue
+        available = set(pq.read_schema(path).names)
+        missing = required - available
+        if missing:
+            logging.warning(
+                "Skipping PREDISPATCH parquet for %s because it lacks %s: %s",
+                region,
+                sorted(missing),
+                path,
+            )
             continue
         source = load_source(path, ["interval_dt", "run_time", "total_demand", "net_interchange"])
         out[region] = source
@@ -332,6 +344,14 @@ def main() -> None:
     model, params, historical_df = train_price_model(config, train_until=args.train_until)
     joblib.dump(model, model_path)
     params_path.write_text(json.dumps(params, indent=2))
+    write_progress(
+        progress_path,
+        {
+            "stage": "loading_eval_data",
+            "model": str(model_path),
+            "params": str(params_path),
+        },
+    )
 
     eval_rows = load_eval_rows(args)
     pred_by_region = load_predispatch_by_region(args.predispatch_template)
