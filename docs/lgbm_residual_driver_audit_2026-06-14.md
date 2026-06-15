@@ -38,6 +38,14 @@
   handoff on) was directionally positive but tiny: `+$0.018` total P&L /
   `+$0.002/day`, with full coverage. Treat this as a plumbing sanity check,
   not promotion evidence.
+- Single-stage APF extrapolator probe: `forecast.py train-price` was run with
+  STPASA as normal future covariates in the incumbent price model shape, not as
+  an APF-free path. Training used `22,114` rows after STPASA feature availability
+  (`64.5%` historical coverage). Feature importance was promising: all STPASA
+  lag-expanded features summed to `1,740.9` / `7,475.6` total importance
+  (`23.3%`), with `stpasa_ss_wind_uigf`, `stpasa_net_load_proxy`, and
+  `stpasa_uigf` appearing in the top raw entries. This supports a real
+  backtest, but it is not dispatch promotion evidence.
 
 ## Method
 
@@ -204,6 +212,73 @@ strategic handoff, but not evidence that the residual overlay is production
 valuable. If the direction remains interesting, the better production-shaped
 next step is a single-stage APF extrapolator retrain with STPASA features.
 
+## Single-Stage APF Extrapolator Probe — 2026-06-15
+
+An isolated experiment folded STPASA into the incumbent APF-backed price model
+as ordinary future covariates. This was run through `forecast.py train-price`
+with an experiment config under ignored `eval/results/stpasa_price_experiment/`;
+live `config.json` was not promoted.
+
+Important implementation details:
+
+- STPASA features are optional and only loaded when a configured model requests
+  one of the `stpasa_*` feature columns.
+- Historical rows join the latest local STPASA REGIONSOLUTION row for the target
+  interval.
+- Live forecast rows join the latest STPASA row available at forecast creation
+  time and derive `stpasa_net_load_proxy` from AEMO forecast demand minus STPASA
+  UIGF.
+- Missing optional feature columns are filled as `NaN` before the existing
+  covariate adjustment/fill path, so non-STPASA models do not get a hidden
+  `KeyError`.
+
+Training result:
+
+- Command shape:
+  `./.venv/bin/python forecast.py train-price --config eval/results/stpasa_price_experiment/config_stpasa_price_experiment.json`
+- Model: incumbent `price` p50 only, APF-backed production-shaped extrapolator.
+- Historical STPASA coverage: `64.5%`.
+- Training rows after feature availability: `22,114`.
+- Used features after lag expansion: `215`.
+- Artifacts: ignored experiment files under `eval/results/stpasa_price_experiment/`.
+
+Top raw feature importances included:
+
+| importance | feature |
+|---:|---|
+| 137.9 | `aemo_price_sa1_target_lag-24` |
+| 121.3 | `aemo_price_sa1_target_lag-12` |
+| 104.2 | `temperature_adelaide_futcov_lag4` |
+| 87.5 | `stpasa_ss_wind_uigf_futcov_lag4` |
+| 86.8 | `stpasa_net_load_proxy_futcov_lag4` |
+| 75.8 | `stpasa_uigf_futcov_lag4` |
+| 64.2 | `stpasa_ss_wind_capacity_futcov_lag4` |
+| 56.0 | `stpasa_wind_avail_frac_futcov_lag4` |
+
+Aggregated by source family:
+
+| family | summed importance |
+|---|---:|
+| calendar encoders | 1,838.8 |
+| all STPASA features | 1,740.9 |
+| APF/price target lags | 1,072.4 |
+| `temperature_adelaide` | 441.7 |
+| `humidity_adelaide` | 399.5 |
+| `net_interchange_sa1` | 327.9 |
+| `net_interchange_vic1` | 308.3 |
+| `net_interchange_nsw1` | 291.8 |
+| `total_demand_vic1` | 286.5 |
+| `total_demand_nsw1` | 269.7 |
+
+Interpretation: STPASA is not just decorative in the single-stage model. The
+feature family has material split importance and the strongest rows are
+renewable/UIGF and net-load related, which matches the residual audit. The main
+production caveat is coverage: with the current local STPASA backfill, adding
+these features drops older non-STPASA training rows. Before enabling this in
+live retraining, run a proper historical prediction/backtest and compare
+forecast error by horizon and Adelaide bucket against the incumbent APF
+extrapolator.
+
 ## Data Gap Status
 
 Local parquet inventory has:
@@ -222,11 +297,13 @@ we need explanatory diagnostics rather than forecast-only features.
 
 ## Next Steps
 
-1. Add a renewable-availability data source if practical:
-   AEMO wind/solar/renewable forecast, semi-scheduled availability, or a suitable
-   regional UIGF/availability feed.
-2. Rerun `analyze_lgbm_residual_drivers.py` with renewable actual/forecast buckets.
-3. If interchange and renewable buckets remain strong, build a feature ablation
-   backtest before retraining production LGBM.
-4. Only after that, test a conservative horizon x Adelaide-bucket calibration as
-   a separate dispatch ablation, not as a substitute for understanding the driver.
+1. Build a production-shaped historical prediction/backtest for the
+   STPASA-enabled APF extrapolator, using `amber_apf_lgbm`/`price` as the
+   incumbent comparison.
+2. Report forecast MAE/bias by horizon and Adelaide time bucket, especially
+   `28.5-72h`, before any dispatch replay.
+3. If the forecast backtest is positive, generate an APF-log-shaped candidate and
+   rerun dispatch over the full available actuals window.
+4. Do not enable STPASA in live `config.json` until the backtest and dispatch
+   gates both clear; the importance result is only a signal that the backtest is
+   worth running.
