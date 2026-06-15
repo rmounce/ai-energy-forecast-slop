@@ -14,6 +14,8 @@
   path improved.
 - Code registry: `eval/price_source_contracts.py`.
 - Main APF-tail/STPASA probe: `eval/ablate_stpasa_tail_features.py`.
+- Dispatch probe artifact generator: `eval/build_stpasa_residual_price_log.py`
+  adjusts only the incumbent APF tail residuals.
 
 ## Source Contracts
 
@@ -59,6 +61,11 @@ APF-backed. If the experiment is about APF extrapolation, it should either:
 - read `price_forecast_log.csv` with `model_name='price'`, or
 - transform/evaluate an artifact derived directly from that logged APF-backed
   curve.
+
+`eval/build_stpasa_residual_price_log.py` is in the second category: it keeps
+the logged `amber_apf_lgbm` curve as the base and adjusts only validation-window
+`28.5-72h` rows using a learned residual correction. It is a dispatch-eval
+probe, not a separate APF-free forecast family.
 
 If the run consumes `p5min_tactical`, `pd_direct`, `model_a_hybrid`,
 `retro_tft_forecasts.pkl`, or `retro_lgbm_strategic_forecasts.pkl`, it is not

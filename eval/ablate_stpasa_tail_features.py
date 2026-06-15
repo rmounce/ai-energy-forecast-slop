@@ -45,7 +45,7 @@ from eval.analyze_lgbm_residual_drivers import (
 from eval.price_source_contracts import format_source_banner, require_apf_backed
 
 RESULTS_DIR = REPO_ROOT / "eval" / "results"
-LOCAL_TZ = "Australia/Brisbane"
+LOCAL_TZ = "Australia/Adelaide"
 
 BASELINE_FEATURES = [
     "pred_mwh",
