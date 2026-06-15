@@ -30,6 +30,14 @@
   05:00Z`, STPASA tail join coverage was `100.0%` for `28.5-72h`; validation
   MAE improved from original `$61.09/MWh` to baseline residual-corrected
   `$31.16/MWh`, and to STPASA residual-corrected `$20.97/MWh`.
+- Dispatch pilot: `eval/build_stpasa_residual_price_log.py` writes an
+  APF-log-shaped candidate by correcting only validation-window `28.5-72h`
+  tail rows, then `eval/rolling_mpc_eval.py` can consume it via
+  `AI_ENERGY_PRICE_FORECAST_LOG`. Net-load tariffed dispatch replay over the
+  full local actuals window (`2026-05-03 -> 2026-05-12 22:00`, strategic SoC
+  handoff on) was directionally positive but tiny: `+$0.018` total P&L /
+  `+$0.002/day`, with full coverage. Treat this as a plumbing sanity check,
+  not promotion evidence.
 
 ## Method
 
@@ -148,6 +156,9 @@ Backfill commands used:
 ```bash
 ./.venv/bin/python ingest/backfill_stpasa_regionsolution.py --source current --start 2026-05 --end 2026-06 --min-horizon-hours 72.0
 ./.venv/bin/python eval/ablate_stpasa_tail_features.py --since 2026-04-01T00:00:00Z --tail-start-hours 28.5 --max-horizon-hours 72.0 --output-prefix eval/results/stpasa_tail_ablation_apf_202604_to_latest
+./.venv/bin/python eval/build_stpasa_residual_price_log.py --since 2026-04-01T00:00:00Z --until 2026-05-13T00:00:00Z --tail-start-hours 28.5 --max-horizon-hours 72.0 --output-file eval/results/amber_apf_lgbm_stpasa_residual_price_forecast_log_20260401_20260513.csv --output-baseline-file eval/results/amber_apf_lgbm_baseline_price_forecast_log_20260502_20260513.csv
+AI_ENERGY_PRICE_FORECAST_LOG=eval/results/amber_apf_lgbm_stpasa_residual_price_forecast_log_20260401_20260513.csv ./.venv/bin/python eval/rolling_mpc_eval.py --start 2026-05-03T00:00:00Z --end 2026-05-05T00:00:00Z --sources amber_apf_lgbm --economic-mode netload_tariffed --strategic-soc-handoff --strategic-target-mode exact --load-forecast-source actual --workers 1 --output-prefix stpasa_tail_dispatch_candidate_apf_residual_20260503_20260505
+AI_ENERGY_PRICE_FORECAST_LOG=eval/results/amber_apf_lgbm_stpasa_residual_price_forecast_log_20260401_20260513.csv ./.venv/bin/python eval/rolling_mpc_eval.py --start 2026-05-03T00:00:00Z --end 2026-05-12T22:00:00Z --sources amber_apf_lgbm --economic-mode netload_tariffed --strategic-soc-handoff --strategic-target-mode exact --load-forecast-source actual --workers 1 --output-prefix stpasa_tail_dispatch_candidate_apf_residual_20260503_20260512
 ```
 
 Current validation result:
@@ -161,6 +172,37 @@ Interpretation: STPASA adds about `$10.19/MWh` incremental validation MAE
 improvement over the non-STPASA residual corrector on this split. This is still
 a residual-correction probe; it is not yet a production retrain or dispatch
 financial gate.
+
+Dispatch pilot result (`2026-05-03 -> 2026-05-05`, 576 5-minute steps, full
+coverage, net-load tariffed economics, realised load/PV, strategic SoC handoff):
+
+| source artifact | total P&L | mean/day | final SoC | delta vs APF baseline |
+|---|---:|---:|---:|---:|
+| APF baseline log | -2.416 | -1.210 | 31.281 kWh | n/a |
+| STPASA residual-corrected APF log | -2.405 | -1.205 | 31.322 kWh | +0.010 total |
+
+Behaviour changed despite the small P&L delta: strategic SoC target changed on
+329/576 steps, charge action on 20 steps, discharge action on 2 steps, and SoC
+differed on 437 steps. This confirms the tail correction reaches the intended
+72h strategic handoff, but the pilot was too short and too financially small to
+justify promotion.
+
+Full available local-actuals replay (`2026-05-03 -> 2026-05-12 22:00`, 2,856
+5-minute steps, full coverage):
+
+| source artifact | total P&L | mean/day | final SoC | delta vs APF baseline |
+|---|---:|---:|---:|---:|
+| APF baseline log | -1.392 | -0.140 | 5.276 kWh | n/a |
+| STPASA residual-corrected APF log | -1.374 | -0.139 | 4.587 kWh | +0.018 total |
+
+The full replay is also directionally positive but economically negligible.
+Daily deltas swing both ways (`-1.254` worst day, `+1.490` best day). Strategic
+SoC target changed on 1,666/2,856 steps, charge action on 111 steps, discharge
+action on 69 steps, and SoC differed on 1,930 steps. This is useful evidence
+that STPASA tail information affects the controller through the intended
+strategic handoff, but not evidence that the residual overlay is production
+valuable. If the direction remains interesting, the better production-shaped
+next step is a single-stage APF extrapolator retrain with STPASA features.
 
 ## Data Gap Status
 
