@@ -82,11 +82,7 @@ def train_price_model(config: dict, *, train_until: pd.Timestamp):
 
     logging.info("Training cutoff: %s", train_until)
     logging.info("Training history start: %s", start_time)
-    client = InfluxDBClient(**config["influxdb"])
-    try:
-        historical_df = fc.get_historical_data(client, start_time.to_pydatetime(), train_until.to_pydatetime())
-    finally:
-        client.close()
+    historical_df = load_historical_training_frame(config, start_time=start_time, train_until=train_until)
     if historical_df.empty:
         raise SystemExit("No historical data available for training")
 
@@ -125,6 +121,20 @@ def train_price_model(config: dict, *, train_until: pd.Timestamp):
     return model, {"shift_value": shift_value}, historical_df
 
 
+def load_historical_training_frame(
+    config: dict,
+    *,
+    start_time: pd.Timestamp,
+    train_until: pd.Timestamp,
+) -> pd.DataFrame:
+    fc.CONFIG = config
+    client = InfluxDBClient(**config["influxdb"])
+    try:
+        return fc.get_historical_data(client, start_time.to_pydatetime(), train_until.to_pydatetime())
+    finally:
+        client.close()
+
+
 def load_predispatch_by_region(path_template: Path) -> dict[str, pd.DataFrame]:
     out: dict[str, pd.DataFrame] = {}
     required = {"interval_dt", "run_time", "total_demand", "net_interchange"}
@@ -155,16 +165,26 @@ def load_sdo_from_influx(config: dict, *, start: pd.Timestamp, end: pd.Timestamp
         'SELECT "scheduled_demand", "net_interchange" '
         'FROM "rp_30m"."aemo_sevendayoutlook" '
         f"WHERE time >= '{start_str}' AND time <= '{end_str}'"
+        ' GROUP BY "region", "run_time"'
     )
     client = InfluxDBClient(**config["influxdb"])
     try:
-        points = list(client.query(query).get_points())
+        result = client.query(query)
     finally:
         client.close()
-    if not points:
+    rows = []
+    for series in result.raw.get("series", []):
+        tags = series.get("tags", {})
+        columns = series.get("columns", [])
+        for values in series.get("values", []):
+            row = dict(zip(columns, values))
+            row["region"] = tags.get("region")
+            row["run_time"] = tags.get("run_time")
+            rows.append(row)
+    if not rows:
         logging.warning("No SevenDayOutlook rows returned from InfluxDB")
         return pd.DataFrame(columns=["interval_dt", "run_time", "region", "scheduled_demand", "net_interchange"])
-    df = pd.DataFrame(points)
+    df = pd.DataFrame(rows)
     df["interval_dt"] = pd.to_datetime(df["time"], utc=True)
     df["run_time"] = pd.to_datetime(df["run_time"], utc=True)
     df = df[df["region"].isin(REGIONS)].copy()
@@ -305,6 +325,11 @@ def main() -> None:
     parser.add_argument("--max-horizon-hours", type=float, default=72.0)
     parser.add_argument("--run-stride", type=int, default=1)
     parser.add_argument("--max-runs", type=int, default=None)
+    parser.add_argument(
+        "--reuse-trained-model",
+        action="store_true",
+        help="Load existing output-prefix model/params and only rebuild historical context.",
+    )
     parser.add_argument("--output-prefix", default="stpasa_price_extrapolator_backtest")
     args = parser.parse_args()
 
@@ -340,10 +365,24 @@ def main() -> None:
         )
     )
 
-    write_progress(progress_path, {"stage": "training"})
-    model, params, historical_df = train_price_model(config, train_until=args.train_until)
-    joblib.dump(model, model_path)
-    params_path.write_text(json.dumps(params, indent=2))
+    if args.reuse_trained_model and model_path.exists() and params_path.exists():
+        write_progress(progress_path, {"stage": "loading_existing_model"})
+        logging.info("Reusing trained model from %s", model_path)
+        model = joblib.load(model_path)
+        params = json.loads(params_path.read_text())
+        model_config = config["models"]["price"]
+        training_days = model_config.get("training_history_days", config["training_history_days"])
+        start_time = args.train_until - pd.Timedelta(days=training_days)
+        historical_df = load_historical_training_frame(
+            config,
+            start_time=start_time,
+            train_until=args.train_until,
+        )
+    else:
+        write_progress(progress_path, {"stage": "training"})
+        model, params, historical_df = train_price_model(config, train_until=args.train_until)
+        joblib.dump(model, model_path)
+        params_path.write_text(json.dumps(params, indent=2))
     write_progress(
         progress_path,
         {
