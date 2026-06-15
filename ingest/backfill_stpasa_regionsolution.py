@@ -3,7 +3,8 @@
 
 STPASA is useful for the price-model tail because it starts after the
 PREDISPATCH horizon and extends well beyond 72h. This script reads monthly
-NEMWeb archive ZIPs and writes a compact region-level parquet.
+NEMWeb archive ZIPs or current hourly PUBLIC_STPASA files and writes a compact
+region-level parquet.
 
 Output schema:
   interval_dt, run_time, demand10, demand50, demand90,
@@ -21,8 +22,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+from html.parser import HTMLParser
 import io
+import re
 import sys
+import time
 import zipfile
 from datetime import timedelta
 from pathlib import Path
@@ -35,6 +39,8 @@ CACHE_DIR = ROOT / "data" / "nemseer_cache" / "stpasa_regionsolution"
 DEFAULT_OUT = ROOT / "data" / "parquet" / "aemo_stpasa_regionsolution_sa1.parquet"
 
 NEM_TZ_OFFSET = timedelta(hours=10)
+CURRENT_STPASA_DIR = "https://www.nemweb.com.au/Reports/CURRENT/Short_Term_PASA_Reports/"
+CURRENT_ZIP_RE = re.compile(r"PUBLIC_STPASA_(\d{10})\d{2}_\d+\.zip$", re.IGNORECASE)
 
 NEMWEB_ARCHIVE_BASE = (
     "https://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM"
@@ -75,19 +81,46 @@ def archive_url(year: int, month: int) -> str:
     return NEMWEB_ARCHIVE_BASE.format(year=year, month=month)
 
 
-def _parse_aemo_csv(fileobj) -> pd.DataFrame:
-    """Parse AEMO I/D/C row CSV format."""
+class _HrefParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hrefs: list[str] = []
 
-    cols = None
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        for key, value in attrs:
+            if key.lower() == "href" and value:
+                self.hrefs.append(value)
+
+
+def _parse_aemo_csv(fileobj, *, table_name: str | None = None) -> pd.DataFrame:
+    """Parse AEMO I/D/C row CSV format.
+
+    Current STPASA ZIPs contain several tables in one CSV. ``table_name`` keeps
+    parsing scoped to REGIONSOLUTION instead of accidentally mixing rows from
+    CASESOLUTION, INTERCONNECTORSOLN, or CONSTRAINTSOLUTION.
+    """
+
+    cols_by_table: dict[str, list[str]] = {}
     rows = []
     reader = csv.reader(io.TextIOWrapper(fileobj, encoding="utf-8", errors="replace"))
     for row in reader:
-        if not row:
+        if len(row) <= 4:
             continue
-        if row[0] == "I" and len(row) > 4:
-            cols = row[4:]
-        elif row[0] == "D" and len(row) > 4:
+        table = row[2] if len(row) > 2 else ""
+        if table_name is not None and table != table_name:
+            continue
+        if row[0] == "I":
+            cols_by_table[table] = row[4:]
+        elif row[0] == "D":
             rows.append(row[4:])
+    if table_name is not None:
+        cols = cols_by_table.get(table_name)
+    elif len(cols_by_table) == 1:
+        cols = next(iter(cols_by_table.values()))
+    else:
+        cols = next(reversed(cols_by_table.values()), None)
     if not cols or not rows:
         return pd.DataFrame()
     ncols = len(cols)
@@ -98,10 +131,51 @@ def _parse_aemo_csv(fileobj) -> pd.DataFrame:
 def _download_zip(url: str, cache_path: Path) -> bytes:
     if cache_path.exists():
         return cache_path.read_bytes()
-    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=180)
+    response = None
+    for attempt in range(5):
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=180)
+        if response.status_code not in {403, 429, 500, 502, 503, 504}:
+            break
+        time.sleep(2 * (attempt + 1))
+    assert response is not None
     response.raise_for_status()
     cache_path.write_bytes(response.content)
     return response.content
+
+
+def _current_month_bounds(start: tuple[int, int], end: tuple[int, int]) -> tuple[str, str]:
+    start_year, start_month = start
+    end_year, end_month = end
+    next_year, next_month = end_year, end_month + 1
+    if next_month > 12:
+        next_year, next_month = next_year + 1, 1
+    return f"{start_year:04d}{start_month:02d}0100", f"{next_year:04d}{next_month:02d}0100"
+
+
+def list_current_stpasa_files(
+    *,
+    start: tuple[int, int],
+    end: tuple[int, int],
+) -> list[tuple[str, str]]:
+    """List current hourly PUBLIC_STPASA ZIPs for an inclusive month range."""
+
+    response = requests.get(CURRENT_STPASA_DIR, headers={"User-Agent": "Mozilla/5.0"}, timeout=180)
+    response.raise_for_status()
+    parser = _HrefParser()
+    parser.feed(response.text)
+
+    start_key, end_key = _current_month_bounds(start, end)
+    out = []
+    for href in parser.hrefs:
+        filename = href.rstrip("/").split("/")[-1]
+        match = CURRENT_ZIP_RE.match(filename)
+        if not match:
+            continue
+        run_key = match.group(1)
+        if start_key <= run_key < end_key:
+            url = href if href.startswith("http") else f"https://www.nemweb.com.au{href}"
+            out.append((run_key, url))
+    return sorted(out)
 
 
 def normalise_regionsolution(raw: pd.DataFrame, region_id: str = "SA1") -> pd.DataFrame:
@@ -154,7 +228,24 @@ def fetch_month(year: int, month: int, region_id: str = "SA1") -> pd.DataFrame:
         if not csv_names:
             raise ValueError(f"No CSV member found in {url}")
         with zf.open(csv_names[0]) as f:
-            raw = _parse_aemo_csv(f)
+            raw = _parse_aemo_csv(f, table_name="REGIONSOLUTION")
+    return normalise_regionsolution(raw, region_id=region_id)
+
+
+def fetch_current_file(run_key: str, url: str, region_id: str = "SA1") -> pd.DataFrame:
+    """Download and parse one current hourly PUBLIC_STPASA archive."""
+
+    current_cache = CACHE_DIR / "current"
+    current_cache.mkdir(parents=True, exist_ok=True)
+    cache_path = current_cache / f"stpasa_{run_key}.zip"
+    raw_zip = _download_zip(url, cache_path)
+
+    with zipfile.ZipFile(io.BytesIO(raw_zip)) as zf:
+        csv_names = [name for name in zf.namelist() if name.lower().endswith(".csv")]
+        if not csv_names:
+            raise ValueError(f"No CSV member found in {url}")
+        with zf.open(csv_names[0]) as f:
+            raw = _parse_aemo_csv(f, table_name="REGIONSOLUTION")
     return normalise_regionsolution(raw, region_id=region_id)
 
 
@@ -210,6 +301,15 @@ def month_arg(value: str) -> tuple[int, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill AEMO STPASA REGIONSOLUTION to parquet")
+    parser.add_argument(
+        "--source",
+        choices=["archive", "current"],
+        default="archive",
+        help=(
+            "archive reads monthly MMSDM archive ZIPs; current reads hourly "
+            "PUBLIC_STPASA files from NEMWeb CURRENT/Short_Term_PASA_Reports"
+        ),
+    )
     parser.add_argument("--start", default="2026-04", help="First archive month, YYYY-MM")
     parser.add_argument("--end", default="2026-04", help="Last archive month, YYYY-MM")
     parser.add_argument("--region", default="SA1", help="AEMO region, default SA1")
@@ -235,23 +335,47 @@ def main() -> None:
     region_id = args.region.upper()
 
     print("=== AEMO STPASA REGIONSOLUTION Backfill ===")
+    print(f"  Source: {args.source}")
     print(f"  Range: {args.start} -> {args.end}")
     print(f"  Region: {region_id}")
     print(f"  Cache:  {CACHE_DIR}")
     print(f"  Output: {args.output}")
 
     frames = []
-    for i, (year, month) in enumerate(months, 1):
-        print(f"[{i}/{len(months)}] {year}-{month:02d} ...", end=" ", flush=True)
-        try:
-            month_df = fetch_month(year, month, region_id=region_id)
-        except requests.HTTPError as exc:
-            print(f"HTTP {exc.response.status_code}; skipped")
-            continue
-        n_runs = month_df["run_time"].nunique() if not month_df.empty else 0
-        print(f"{len(month_df):,} rows ({n_runs:,} runs)")
-        if not month_df.empty:
-            frames.append(month_df)
+    if args.source == "archive":
+        for i, (year, month) in enumerate(months, 1):
+            print(f"[{i}/{len(months)}] {year}-{month:02d} ...", end=" ", flush=True)
+            try:
+                month_df = fetch_month(year, month, region_id=region_id)
+            except requests.HTTPError as exc:
+                print(f"HTTP {exc.response.status_code}; skipped")
+                continue
+            n_runs = month_df["run_time"].nunique() if not month_df.empty else 0
+            print(f"{len(month_df):,} rows ({n_runs:,} runs)")
+            if not month_df.empty:
+                frames.append(month_df)
+    else:
+        current_files = list_current_stpasa_files(
+            start=(start_year, start_month),
+            end=(end_year, end_month),
+        )
+        if args.dry_run:
+            current_files = current_files[:1]
+        print(f"  Current files: {len(current_files):,}")
+        for i, (run_key, url) in enumerate(current_files, 1):
+            if i == 1 or i == len(current_files) or i % 100 == 0:
+                print(f"[{i}/{len(current_files)}] {run_key} ...", end=" ", flush=True)
+            try:
+                run_df = fetch_current_file(run_key, url, region_id=region_id)
+            except requests.HTTPError as exc:
+                if i == 1 or i == len(current_files) or i % 100 == 0:
+                    print(f"HTTP {exc.response.status_code}; skipped")
+                continue
+            n_runs = run_df["run_time"].nunique() if not run_df.empty else 0
+            if i == 1 or i == len(current_files) or i % 100 == 0:
+                print(f"{len(run_df):,} rows ({n_runs:,} runs)")
+            if not run_df.empty:
+                frames.append(run_df)
 
     if not frames:
         print("No STPASA rows fetched.")

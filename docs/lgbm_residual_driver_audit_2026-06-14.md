@@ -23,6 +23,13 @@
 - Recommendation: investigate/interrogate interchange and renewable availability first;
   do not retrain or add features until this decomposition is repeated with a renewable
   availability source.
+- 2026-06-15 update: AEMO STPASA REGIONSOLUTION now fills the renewable
+  availability gap for tail work. The APF-backed residual ablation
+  `eval/ablate_stpasa_tail_features.py` scored `amber_apf_lgbm` only, not an
+  APF-free replacement path. With current STPASA merged through `2026-06-15
+  05:00Z`, STPASA tail join coverage was `100.0%` for `28.5-72h`; validation
+  MAE improved from original `$61.09/MWh` to baseline residual-corrected
+  `$31.16/MWh`, and to STPASA residual-corrected `$20.97/MWh`.
 
 ## Method
 
@@ -115,7 +122,47 @@ proxy diagnostic only. It is probably standing in for broader renewable output a
 weather systems. The handover recommendation was right: prefer AEMO renewable/wind
 forecast or semi-scheduled availability data, with local station wind as fallback.
 
-## Data Gap
+## STPASA Update — 2026-06-15
+
+The renewable-availability source for this line is now AEMO STPASA
+REGIONSOLUTION, normalised into
+`data/parquet/aemo_stpasa_regionsolution_sa1.parquet`.
+
+Plain-English shape:
+
+- What it provides: SA1 regional short-term PASA forecast rows, including
+  demand bands, aggregate available capacity, total intermittent generation,
+  UIGF, semi-scheduled capacity, and split solar/wind UIGF/capacity.
+- Resolution: 30-minute target intervals.
+- Horizon: local validation showed every merged run reaches at least 72h; source
+  max horizons range roughly `160-183h`.
+- Cadence: hourly current `PUBLIC_STPASA` files from NEMWeb
+  `Reports/CURRENT/Short_Term_PASA_Reports`; monthly MMSDM archive ZIPs remain
+  useful for older history.
+- Pipeline fit: join by exact target interval and latest STPASA `run_time <=
+  forecast_creation_time`, then use the joined fields only as residual-correction
+  features for the incumbent `amber_apf_lgbm` APF tail.
+
+Backfill commands used:
+
+```bash
+./.venv/bin/python ingest/backfill_stpasa_regionsolution.py --source current --start 2026-05 --end 2026-06 --min-horizon-hours 72.0
+./.venv/bin/python eval/ablate_stpasa_tail_features.py --since 2026-04-01T00:00:00Z --tail-start-hours 28.5 --max-horizon-hours 72.0 --output-prefix eval/results/stpasa_tail_ablation_apf_202604_to_latest
+```
+
+Current validation result:
+
+| model | split | n | original MAE | corrected MAE | MAE delta | corrected bias |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline residual corrector | val | 141,532 | 61.09 | 31.16 | -29.93 | +15.68 |
+| baseline + STPASA residual corrector | val | 141,532 | 61.09 | 20.97 | -40.12 | +9.80 |
+
+Interpretation: STPASA adds about `$10.19/MWh` incremental validation MAE
+improvement over the non-STPASA residual corrector on this split. This is still
+a residual-correction probe; it is not yet a production retrain or dispatch
+financial gate.
+
+## Data Gap Status
 
 Local parquet inventory has:
 
@@ -123,11 +170,13 @@ Local parquet inventory has:
 - `aemo_sevendayoutlook_sa1.parquet`: scheduled demand, net interchange.
 - `actuals_sa1.parquet`: actual RRP, total demand, net interchange, site PV/load,
   local BOM weather.
+- `aemo_stpasa_regionsolution_sa1.parquet`: STPASA regional renewable
+  availability and capacity fields for SA1.
 
-It does not currently expose AEMO renewable generation, wind generation, or
-semi-scheduled availability forecast data. Before training new price features, add
-or locate that source and rerun this same decomposition with renewable-availability
-error/regime buckets.
+It still does not expose realised renewable generation by technology as an
+actual-vs-forecast error source. STPASA is suitable as a forward-looking tail
+feature source; a later decomposition can still add realised renewable buckets if
+we need explanatory diagnostics rather than forecast-only features.
 
 ## Next Steps
 
