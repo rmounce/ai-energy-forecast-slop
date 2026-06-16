@@ -281,6 +281,32 @@ def build_future_covariates(
     return out[model_config["feature_cols"]].astype(float).ffill().bfill()
 
 
+def prepend_historical_covariate_context(
+    covariates: pd.DataFrame,
+    historical_df: pd.DataFrame,
+    model_config: dict,
+) -> pd.DataFrame:
+    """Prepend covariate rows required by negative future-covariate lags."""
+
+    lags = model_config.get("future_covariate_lags") or [0]
+    min_lag = min(lags)
+    if min_lag >= 0 or covariates.empty:
+        return covariates
+
+    freq = pd.Timedelta(minutes=30)
+    context_start = covariates.index.min() + min_lag * freq
+    context_end = covariates.index.min() - freq
+    feature_cols = model_config["feature_cols"]
+    context = historical_df.reindex(
+        pd.date_range(context_start, context_end, freq="30min", tz="UTC")
+    )
+    for col in feature_cols:
+        if col not in context.columns:
+            context[col] = np.nan
+    context = context[feature_cols].astype(float).ffill().bfill()
+    return pd.concat([context, covariates[feature_cols]], axis=0)
+
+
 def metric_rows(scored: pd.DataFrame) -> list[dict]:
     rows = []
     for label, sub in [
@@ -424,6 +450,8 @@ def main() -> None:
             sdo_df=sdo_df,
             stpasa_df=stpasa_df,
         )
+        hist = historical_df[historical_df.index < creation_time].copy()
+        covariates = prepend_historical_covariate_context(covariates, hist, model_config)
         required_nonnull = covariates[model_config["feature_cols"]].notna().all(axis=1)
         if not required_nonnull.all():
             logging.warning(
@@ -433,7 +461,6 @@ def main() -> None:
                 len(required_nonnull),
             )
 
-        hist = historical_df[historical_df.index < creation_time].copy()
         amber_seed = run_df[run_df["horizon_hours"] <= args.apf_seed_hours].copy()
         amber_seed = amber_seed.set_index("forecast_target_time")[["prediction"]].rename(
             columns={"prediction": model_config["target_column"]}
