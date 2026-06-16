@@ -82,7 +82,7 @@ def train_price_model(config: dict, *, train_until: pd.Timestamp):
 
     logging.info("Training cutoff: %s", train_until)
     logging.info("Training history start: %s", start_time)
-    historical_df = load_historical_training_frame(config, start_time=start_time, train_until=train_until)
+    historical_df = load_historical_training_frame(config, start_time=start_time, end_time=train_until)
     if historical_df.empty:
         raise SystemExit("No historical data available for training")
 
@@ -125,12 +125,12 @@ def load_historical_training_frame(
     config: dict,
     *,
     start_time: pd.Timestamp,
-    train_until: pd.Timestamp,
+    end_time: pd.Timestamp,
 ) -> pd.DataFrame:
     fc.CONFIG = config
     client = InfluxDBClient(**config["influxdb"])
     try:
-        return fc.get_historical_data(client, start_time.to_pydatetime(), train_until.to_pydatetime())
+        return fc.get_historical_data(client, start_time.to_pydatetime(), end_time.to_pydatetime())
     finally:
         client.close()
 
@@ -376,13 +376,21 @@ def main() -> None:
         historical_df = load_historical_training_frame(
             config,
             start_time=start_time,
-            train_until=args.train_until,
+            end_time=args.eval_until,
         )
     else:
         write_progress(progress_path, {"stage": "training"})
         model, params, historical_df = train_price_model(config, train_until=args.train_until)
         joblib.dump(model, model_path)
         params_path.write_text(json.dumps(params, indent=2))
+        model_config = config["models"]["price"]
+        training_days = model_config.get("training_history_days", config["training_history_days"])
+        start_time = args.train_until - pd.Timedelta(days=training_days)
+        historical_df = load_historical_training_frame(
+            config,
+            start_time=start_time,
+            end_time=args.eval_until,
+        )
     write_progress(
         progress_path,
         {
