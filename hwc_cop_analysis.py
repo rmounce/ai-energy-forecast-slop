@@ -374,11 +374,11 @@ def write_summary_markdown(
             "element_on", "defrost_on", "four_way_on", "clean",
         ]
         cols = [col for col in cols if col in display.columns]
-        table = display[cols].astype(str)
+        table = display[cols].fillna("").astype(str)
         lines.append("| " + " | ".join(cols) + " |")
         lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
         for _, row in table.iterrows():
-            lines.append("| " + " | ".join(row[col] for col in cols) + " |")
+            lines.append("| " + " | ".join(str(row[col]) for col in cols) + " |")
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
