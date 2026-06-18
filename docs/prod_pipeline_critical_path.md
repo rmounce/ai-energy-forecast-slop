@@ -9,8 +9,9 @@ for data collection/eval only), the daily housekeeping
 (`update-tariffs`, `update-adjusters`, `backfill-actuals`), and weekly
 model training. Those run but are not load-bearing for dispatch *today*.
 
-Pipeline written as it stands 2026-06-15, after the APF-free price/load shadow
-surfaces were soft-archived.
+Pipeline written as it stands 2026-06-18, after the APF-free price/load shadow
+surfaces were soft-archived and STPASA covariates were promoted into the
+production APF extrapolator.
 
 ## MPC tier — 14h horizon
 
@@ -56,8 +57,8 @@ EMHASS day-ahead optimises 72 hours ahead and needs both:
    subscriber) receives the `state_changed` event, debounces 1s, spawns
    `forecast.py predict-price --dynamic-handoff --publish-hass`.
 4. `forecast.py`: startup + data fetch (Solcast, weather, AEMO 5MIN
-   future-covariate API, InfluxDB price history, Amber) → LGBM quantile
-   inference → tariff application.
+   future-covariate API, local STPASA parquet, InfluxDB price history, Amber)
+   → LGBM quantile inference → tariff application.
 5. Publishes `sensor.ai_price_forecast`, `..._low`, `..._high` (the
    "Legacy LGBM publish: …s (prod-critical fast path)" line in the
    journal marks this point).
@@ -68,6 +69,19 @@ data fetch; LGBM inference itself plus the HA publish is <1s.
 
 The old shadow stack (PD-direct + canonical AI bundle + AEMO stitched +
 TFT-load) is disabled; this publish is now the production price surface for DH.
+
+### STPASA covariate refresh (timer-driven, hourly)
+
+1. `ai-energy-stpasa.timer` fires hourly at `:25`.
+2. `ingest/backfill_stpasa_regionsolution.py --source current` refreshes
+   `data/parquet/aemo_stpasa_regionsolution_sa1.parquet` from NEMWeb current
+   `PUBLIC_STPASA` files for the current UTC month.
+3. `forecast.py predict-price` reads this parquet when building future
+   covariates for the production `price`, `price_p30`, and `price_p70` models.
+
+If STPASA is missing or stale, price prediction continues with null STPASA
+features, but tail forecast quality is expected to degrade because the promoted
+models use these covariates materially.
 
 ### Load feed (timer-driven, 30-min cadence)
 
@@ -114,6 +128,7 @@ for diagnostic continuity.
 |---|---|---|---|
 | MPC | 14h | Raw Amber 5-min entity state_changed + every-min `:25` fallback | seconds |
 | DH (price) | 72h | `sensor.ai_price_forecast` state_changed | ~7-8s |
+| DH (price covariates) | 72h | `ai-energy-stpasa.timer` hourly at `:25` | up to 1h |
 | DH (load) | 72h | `sensor.ai_load_forecast` state_changed | up to 30 min (timer-driven) |
 
 ## What's *not* in critical path today
