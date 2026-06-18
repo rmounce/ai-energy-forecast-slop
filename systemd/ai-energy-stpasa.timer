@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh AEMO STPASA REGIONSOLUTION parquet hourly
+
+[Timer]
+# STPASA current reports are published hourly. Refresh after the hour so
+# predict-price can consume current renewable availability covariates.
+OnCalendar=*:25:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh AEMO STPASA REGIONSOLUTION parquet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/saltspork/src/ai-energy-forecast-slop
+ExecStart=/bin/bash -lc 'ym=$(date -u +%%Y-%%m); source .venv/bin/activate && python ingest/backfill_stpasa_regionsolution.py --source current --start "$ym" --end "$ym" --region SA1 --output data/parquet/aemo_stpasa_regionsolution_sa1.parquet'

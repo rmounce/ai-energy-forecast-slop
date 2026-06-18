@@ -16,15 +16,15 @@
 - Main APF-tail/STPASA probe: `eval/ablate_stpasa_tail_features.py`.
 - Dispatch probe artifact generator: `eval/build_stpasa_residual_price_log.py`
   adjusts only the incumbent APF tail residuals.
-- Production-shaped STPASA path: optional `stpasa_*` future covariates in
-  `forecast.py` for the incumbent `price` model. This has only been tested in an
-  ignored experiment config so far; live `config.json` is not promoted.
+- Production-shaped STPASA path: `stpasa_*` future covariates in `forecast.py`
+  for the incumbent `price` model. Live `config.json` is promoted and production
+  model artifacts were retrained with these covariates on 2026-06-16.
 
 ## Source Contracts
 
 | Source label | APF-backed? | Artifact/log | Resolution | Horizon | Current status | Use for | Do not use for |
 |--------------|-------------|--------------|------------|---------|----------------|---------|----------------|
-| `amber_apf_lgbm` | Yes | `price_forecast_log.csv`, `model_name='price'` | 30 min | 0-72h, 144 steps | Production incumbent / active APF extrapolation baseline | Current APF extrapolation, tail residual correction, STPASA feature value | APF-free replacement claims |
+| `amber_apf_lgbm` | Yes | `price_forecast_log.csv`, `model_name='price'` | 30 min | 0-72h, 144 steps | Production incumbent / active APF extrapolation baseline with STPASA covariates | Current APF extrapolation, tail residual correction, STPASA feature value | APF-free replacement claims |
 | `p5min_tactical` | No | `p5min_forecast_log.csv`, tactical sensors | 5 min | 0-60 min, 12 steps | Suspended, retained for reference | Explicit tactical-price revival work | Current production APF extrapolation evaluation |
 | `pd_direct` | No | `pd_direct_forecast_log.csv`, PD-direct sensors | 30 min | 0-72h, 144 steps | Suspended, retained for reference | Explicit APF-free revival work | Evidence about APF extrapolation improvements |
 | `model_a_hybrid` | No | `retro_tier1_forecasts.pkl` + `retro_tft_forecasts.pkl` | 5 min tactical prefix plus 30 min tail | 0-72h stitched curve | Suspended, retained for reference | Historical hybrid/TFT comparisons | Evidence about APF extrapolation improvements |
@@ -36,7 +36,10 @@
 
 This is the as-run production incumbent. Amber commercial APF provides the
 near-horizon signal, and the incumbent price LightGBM extrapolates the curve to
-the full 72h strategic horizon. In evaluation code, this source is usually named
+the full 72h strategic horizon. Since 2026-06-16, the production extrapolator
+also consumes STPASA renewable availability covariates from
+`data/parquet/aemo_stpasa_regionsolution_sa1.parquet`, refreshed by
+`ai-energy-stpasa.timer`. In evaluation code, this source is usually named
 `amber_apf_lgbm`; in the raw forecast log, its rows are selected with
 `model_name='price'`.
 
