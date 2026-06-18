@@ -496,6 +496,73 @@ rest_command:
           {%- endfor %}
           {{- d.final_list | tojson }}
         {%- endmacro -%}
+        {%- macro smooth_thirty_minute_values(thirty_min_values) -%}
+          {%- set d = namespace(initial_smooth_values=[], final_power_list=[]) %}
+          {%- set num_periods = thirty_min_values | length %}
+          {%- if num_periods > 0 -%}
+            {%- for period_idx in range(num_periods) %}
+              {%- set current_power = thirty_min_values[period_idx] | int(0) %}
+              {%- set prev_power = thirty_min_values[period_idx - 1] | int(0) if period_idx > 0 else current_power %}
+              {%- set next_power = thirty_min_values[period_idx + 1] | int(0) if period_idx < (num_periods - 1) else current_power %}
+              {%- set start_value = (prev_power + current_power) / 2.0 %}
+              {%- set end_value = (current_power + next_power) / 2.0 %}
+              {%- for i in range(6) %}
+                {%- set t = (i + 0.5) / 6.0 %}
+                {%- set interpolated_point = start_value + t * (end_value - start_value) %}
+                {%- set d.initial_smooth_values = d.initial_smooth_values + [interpolated_point] %}
+              {%- endfor %}
+            {%- endfor %}
+            {%- for period_idx in range(num_periods) %}
+              {%- set target_average = thirty_min_values[period_idx] | int(0) %}
+              {%- set current_block = d.initial_smooth_values[period_idx*6:(period_idx+1)*6] %}
+              {%- set residual_error = target_average - (current_block | sum / 6.0) %}
+              {%- for value in current_block %}
+                {%- set corrected_value = value + residual_error %}
+                {%- set final_value = [0, corrected_value | round(0)] | max | int %}
+                {%- set d.final_power_list = d.final_power_list + [final_value] %}
+              {%- endfor %}
+            {%- endfor %}
+          {%- endif -%}
+          {{- d.final_power_list | tojson }}
+        {%- endmacro -%}
+        {%- macro native_hwc_power_data(entity_id, start_time) -%}
+          {%- set schedule = state_attr(entity_id, 'deferrables_schedule') | default([], true) %}
+          {%- set d = namespace(final_list=[]) %}
+          {%- for i in range(168) %}
+            {%- set slot_start = start_time + timedelta(minutes=5 * i) %}
+            {%- set slot_end = slot_start + timedelta(minutes=5) %}
+            {%- set slot = namespace(value=0) %}
+            {%- for item in schedule %}
+              {%- set item_time = as_datetime(item.date) %}
+              {%- if item_time >= slot_start and item_time < slot_end %}
+                {%- set slot.value = item.hwc_power_plan | int(0) %}
+              {%- endif %}
+            {%- endfor %}
+            {%- set d.final_list = d.final_list + [slot.value] %}
+          {%- endfor %}
+          {{- d.final_list | tojson }}
+        {%- endmacro -%}
+        {%- macro average_hwc_power_30m(entity_id, start_time) -%}
+          {%- set schedule = state_attr(entity_id, 'deferrables_schedule') | default([], true) %}
+          {%- set d = namespace(averages=[]) %}
+          {%- for i in range(144) %}
+            {%- set block_start = start_time + timedelta(minutes=30 * i) %}
+            {%- set block_end = block_start + timedelta(minutes=30) %}
+            {%- set block = namespace(values=[]) %}
+            {%- for item in schedule %}
+              {%- set item_time = as_datetime(item.date) %}
+              {%- if item_time >= block_start and item_time < block_end %}
+                {%- set block.values = block.values + [item.hwc_power_plan | float(0)] %}
+              {%- endif %}
+            {%- endfor %}
+            {%- if block.values | count > 0 %}
+              {%- set d.averages = d.averages + [((block.values | sum) / (block.values | count)) | round(0) | int] %}
+            {%- else %}
+              {%- set d.averages = d.averages + [0] %}
+            {%- endif %}
+          {%- endfor %}
+          {{- d.averages | tojson }}
+        {%- endmacro -%}
         {%- macro scale_and_clamp_forecast(mpc_list, dh_entity, dh_value_key, periods_passed, start_time) -%}
           {%- set aligned_dh_list = simple_interpolate_power_data(dh_entity, 'forecasts', dh_value_key, start_time, periods_passed) | from_json %}
           {%- set target_total_energy = (aligned_dh_list[:168] | sum) %}
@@ -516,6 +583,30 @@ rest_command:
             {%- set data.adjusted_part = data.adjusted_part + [[0, new_value | int] | max] %}
           {%- endfor %}
           {{ (mpc_list[:2] + data.adjusted_part) | tojson }}
+        {%- endmacro -%}
+        {%- macro scale_base_and_add_fixed_forecast(base_mpc_list, fixed_list, dh_entity, dh_value_key, periods_passed, start_time) -%}
+          {%- set aligned_dh_list = simple_interpolate_power_data(dh_entity, 'forecasts', dh_value_key, start_time, periods_passed) | from_json %}
+          {%- set target_total_energy = (aligned_dh_list[:168] | sum) %}
+          {%- set prefix_energy = (base_mpc_list[:2] | sum) %}
+          {%- set base_forecast_part = base_mpc_list[2:] %}
+          {%- set fixed_forecast_part = fixed_list[2:] %}
+          {%- set current_forecast_energy = (base_forecast_part | sum) + (fixed_forecast_part | sum) %}
+          {%- set energy_error = target_total_energy - prefix_energy - current_forecast_energy %}
+          {%- set base_forecast_energy = (base_forecast_part | sum) %}
+          {%- set data = namespace(adjusted_part=[], rounding_residual=0.0) %}
+          {%- for value in base_forecast_part %}
+            {%- set fixed_value = fixed_forecast_part[loop.index0] | int(0) if loop.index0 < (fixed_forecast_part | count) else 0 %}
+            {%- set new_base = value %}
+            {%- if base_forecast_energy > 0 %}
+              {%- set proportional_adjustment = energy_error * (value / base_forecast_energy) %}
+              {%- set total_adjustment_needed = proportional_adjustment + data.rounding_residual %}
+              {%- set rounded_adjustment = total_adjustment_needed | round(0) | int %}
+              {%- set new_base = value + rounded_adjustment %}
+              {%- set data.rounding_residual = total_adjustment_needed - rounded_adjustment %}
+            {%- endif %}
+            {%- set data.adjusted_part = data.adjusted_part + [[0, (new_base | int) + fixed_value] | max] %}
+          {%- endfor %}
+          {{ (base_mpc_list[:2] + data.adjusted_part) | tojson }}
         {%- endmacro -%}
 
         {# ========================================================================================= #}
@@ -687,24 +778,40 @@ rest_command:
           {%- set net_pv_now =[net_pv_now, solcast_now_net] | max %}
         {%- endif %}
         
-        {# 4. Interpolate the Day-Ahead Forecasts (Which are ALREADY Net) #}
+        {# 4. Interpolate the Day-Ahead Forecasts. DH total energy is the contract; MPC preserves native HWC shape and scales the base-load residual. #}
         {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
         {%- set start_of_this_30min_block = utc_now.replace(minute=(utc_now.minute // 30) * 30, second=0, microsecond=0) %}
+        {%- set start_of_this_5min_block = utc_now.replace(minute=(utc_now.minute // 5) * 5, second=0, microsecond=0) %}
 
-        {%- set dh_net_load_full = interpolate_power_data('sensor.dh_p_load_forecast', 'forecasts', 'dh_p_load_forecast', start_of_this_30min_block) | from_json %}
+        {%- set dh_total_load_30m = namespace(values=[]) %}
+        {%- for item in state_attr('sensor.dh_p_load_forecast', 'forecasts') | default([], true) %}
+          {%- if as_datetime(item.date) >= start_of_this_30min_block %}
+            {%- set dh_total_load_30m.values = dh_total_load_30m.values + [item.dh_p_load_forecast | int(0)] %}
+          {%- endif %}
+        {%- endfor %}
+        {%- set dh_hwc_30m = average_hwc_power_30m('sensor.hwc_power_plan', start_of_this_30min_block) | from_json %}
+        {%- set dh_base_load_30m = namespace(values=[]) %}
+        {%- set base_loop_len = [dh_total_load_30m.values | count, dh_hwc_30m | count] | min %}
+        {%- for i in range(base_loop_len) %}
+          {%- set dh_total = dh_total_load_30m.values[i] | int(0) %}
+          {%- set hwc_avg = dh_hwc_30m[i] | int(0) %}
+          {%- set dh_base_load_30m.values = dh_base_load_30m.values + [[0, dh_total - hwc_avg] | max] %}
+        {%- endfor %}
+
+        {%- set dh_base_load_full = smooth_thirty_minute_values(dh_base_load_30m.values) | from_json %}
+        {%- set native_hwc_future = native_hwc_power_data('sensor.hwc_power_plan', start_of_this_5min_block) | from_json %}
         {%- set dh_net_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
 
         {# Slice to match MPC horizon #}
-        {%- set dh_net_load_future = dh_net_load_full[periods_into_30min:][:168] %}
+        {%- set dh_base_load_future = dh_base_load_full[periods_into_30min:][:168] %}
         {%- set dh_net_pv_future = dh_net_pv_full[periods_into_30min:][:168] %}
 
-        {# 5. Construct the list: [Current Net] + [Future Net] #}
-        {# Note: We duplicate 'now' for the first 2 steps as per your original template logic #}
-        {%- set initial_mpc_load = [net_load_now]*2 + dh_net_load_future[2:] %}
+        {# 5. Construct the list: keep current live load for the first two slots, then base-load forecast plus native HWC. #}
+        {%- set initial_mpc_base_load = [net_load_now]*2 + dh_base_load_future[2:] %}
         {%- set initial_mpc_pv = [net_pv_now]*2 + dh_net_pv_future[2:] %}
 
-        {# 6. Run scaling (Net vs Net) #}
-        {%- set final_load_forecast = scale_and_clamp_forecast(initial_mpc_load, 'sensor.dh_p_load_forecast', 'dh_p_load_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
+        {# 6. Run scaling. Load scaling adjusts only the base-load residual; native 5-minute HWC is fixed, while total MPC energy remains coherent with DH. #}
+        {%- set final_load_forecast = scale_base_and_add_fixed_forecast(initial_mpc_base_load, native_hwc_future, 'sensor.dh_p_load_forecast', 'dh_p_load_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
         {%- set final_pv_forecast = scale_and_clamp_forecast(initial_mpc_pv, 'sensor.dh_p_pv_forecast', 'dh_p_pv_forecast', periods_into_30min, start_of_this_30min_block) | from_json %}
         "load_power_forecast": {{ final_load_forecast | tojson }},
         "pv_power_forecast": {{ final_pv_forecast | tojson }},
