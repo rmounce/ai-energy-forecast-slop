@@ -25,7 +25,7 @@ Athom metering is live for the HWC compressor circuit.
 | `services/hwc_daemon.py` | event-driven planner/executor daemon, **enabled/active** |
 | old `ai-energy-hwc.{service,timer}` | **obsolete/removed**; daemon owns HWC planning now |
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
-| COP characterisation | updated with clean `2026-06-14` Athom-metered cycle (measured COP ≈ 2.6) |
+| COP characterisation | updated through `2026-06-18`; 12/14 clean cycles, five recent Athom-metered cycles |
 | Engine decision (EMHASS vs custom) | custom block planner is now default; EMHASS kept as fallback |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
@@ -54,8 +54,8 @@ leave them alone.
   builds clock-aligned `draw_off`/temperature arrays; creates a 48h fixed-speed block plan;
   and publishes the plan sensors directly to HA.
 - Published HWC planned power is modelled compressor watts, not a flat nameplate value.
-  `config.json` holds the first pragmatic fit: reference watts plus wet-bulb and
-  tank-temperature slopes, clamped to the observed compressor range.
+  `config.json` uses the 2026-06-19 Athom fit: `740 W @ tank 50 °C / wet-bulb 12.5 °C`,
+  `+15 W/°C` tank, `+1.5 W/°C` wet-bulb, clamped `650–930 W`.
 - Battery EMHASS still receives the household load forecast through HA Jinja. That forecast
   is now base load with deferrable loads excluded; `hass/packages/emhass.yaml` adds
   `sensor.hwc_power_plan` back into the day-ahead `load_power_forecast` at payload time.
@@ -111,8 +111,9 @@ the engine-independent long pole — gather it regardless.
 1. **Review `supply_temperature`** now that `hwc.thermal.carnot_efficiency` is 0.38. The
    cheap optimism fix is applied, but the effective supply temperature may need to be >60 °C
    to approximate the measured condensing-temperature tail.
-2. **Refit the compressor power curve** after a few more Athom-metered cycles. Current
-   fields: `compressor_power_reference_w`, `compressor_power_wet_bulb_slope_w_per_c`,
+2. **Revisit the compressor power curve** after more varied Athom-metered cycles, especially
+   colder wet-bulb days and deeper cold starts. Current fields:
+   `compressor_power_reference_w`, `compressor_power_wet_bulb_slope_w_per_c`,
    `compressor_power_tank_slope_w_per_c`, min/max clamps.
 3. **Lower the routine target** below 60 °C (e.g. 55) with a separate periodic 60 °C legionella
    reheat — the COP data shows the 55→60 tail is dear. Reconsider `desired/min_temperatures`
