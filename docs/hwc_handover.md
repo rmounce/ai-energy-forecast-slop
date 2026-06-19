@@ -149,6 +149,13 @@ the engine-independent long pole — gather it regardless.
 - **Battery isolation:** the HWC optim must keep `set_use_battery:false`/`set_use_pv:false`
   (runtime-overridable via EMHASS `associations.csv`). The battery (DH + per-minute MPC) shares
   the EMHASS instance; the now-fixed race was between concurrent `entity_save` publishes.
+- **HWC/DH refresh ordering:** battery DH now includes planned HWC compressor power, while MPC
+  preserves the native 5-minute HWC shape by subtracting HWC from DH load and adding the current
+  HWC plan back. If the HWC plan updates before DH refreshes, MPC may briefly subtract a newer
+  HWC plan from a DH forecast built with an older HWC plan. Total MPC energy is still scaled back
+  to the DH contract, but local load shape can be distorted around moved compressor blocks.
+  Preferred hardening: trigger DH after HWC plan updates, then MPC after DH publishes; longer term,
+  stamp DH with the HWC plan generation time/hash and warn or refresh when stale.
 - **Fan-speed regime:** fan reduced for quiet mode (F30 25→10, F35 55→30). COP calibration is
   specific to this setting — confirm the change date before mixing cycles across regimes.
 - **Sandbox:** `docker exec` and direct InfluxDB/EMHASS network calls need the command sandbox
