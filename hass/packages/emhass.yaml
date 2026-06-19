@@ -263,9 +263,14 @@ rest_command:
         {# 2. Get GROSS base-load forecast and the DH-snapshotted HWC compressor plan. #}
         {%- set load_forecast_gross = state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list %}
         {%- set dh_start_30m = utcnow().replace(minute=(utcnow().minute // 30) * 30, second=0, microsecond=0) %}
-        {%- set hwc_snapshot_json = state_attr('sensor.emhass_dh_hwc_power_plan_snapshot', 'deferrables_schedule_json') | default('', true) %}
-        {%- if hwc_snapshot_json | length > 2 %}
-          {%- set hwc_schedule = hwc_snapshot_json | from_json %}
+        {%- set hwc_snapshot_attr = state_attr('sensor.emhass_dh_hwc_power_plan_snapshot', 'deferrables_schedule_json') | default([], true) %}
+        {%- if hwc_snapshot_attr is string %}
+          {%- set hwc_snapshot_schedule = hwc_snapshot_attr | from_json([]) %}
+        {%- else %}
+          {%- set hwc_snapshot_schedule = hwc_snapshot_attr %}
+        {%- endif %}
+        {%- if hwc_snapshot_schedule | count > 0 %}
+          {%- set hwc_schedule = hwc_snapshot_schedule %}
         {%- else %}
           {%- set hwc_schedule = state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
         {%- endif %}
@@ -806,9 +811,14 @@ rest_command:
         {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
         {%- set start_of_this_30min_block = utc_now.replace(minute=(utc_now.minute // 30) * 30, second=0, microsecond=0) %}
         {%- set start_of_this_5min_block = utc_now.replace(minute=(utc_now.minute // 5) * 5, second=0, microsecond=0) %}
-        {%- set hwc_snapshot_json = state_attr('sensor.emhass_dh_hwc_power_plan_snapshot', 'deferrables_schedule_json') | default('', true) %}
-        {%- if hwc_snapshot_json | length > 2 %}
-          {%- set mpc_hwc_schedule = hwc_snapshot_json | from_json %}
+        {%- set hwc_snapshot_attr = state_attr('sensor.emhass_dh_hwc_power_plan_snapshot', 'deferrables_schedule_json') | default([], true) %}
+        {%- if hwc_snapshot_attr is string %}
+          {%- set hwc_snapshot_schedule = hwc_snapshot_attr | from_json([]) %}
+        {%- else %}
+          {%- set hwc_snapshot_schedule = hwc_snapshot_attr %}
+        {%- endif %}
+        {%- if hwc_snapshot_schedule | count > 0 %}
+          {%- set mpc_hwc_schedule = hwc_snapshot_schedule %}
         {%- else %}
           {%- set mpc_hwc_schedule = state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
         {%- endif %}
