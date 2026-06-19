@@ -82,6 +82,26 @@ input_text:
     icon: mdi:clock-sync
 
 template:
+  - trigger:
+      - platform: event
+        event_type: emhass_dh_hwc_power_plan_snapshot
+    sensor:
+      - name: 'EMHASS DH HWC Power Plan Snapshot'
+        unique_id: emhass_dh_hwc_power_plan_snapshot
+        state: "{{ now().isoformat() }}"
+        attributes:
+          source_entity: sensor.hwc_power_plan
+          source_last_changed: >-
+            {{ states.sensor.hwc_power_plan.last_changed.isoformat() if states('sensor.hwc_power_plan') not in ['unknown', 'unavailable'] else none }}
+          schedule_count: "{{ state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) | count }}"
+          schedule_energy_wh: >-
+            {% set ns = namespace(total=0.0) %}
+            {% for item in state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
+              {% set ns.total = ns.total + ((item.hwc_power_plan | float(0)) * 5.0 / 60.0) %}
+            {% endfor %}
+            {{ ns.total | round(1) }}
+          deferrables_schedule_json: "{{ state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) | tojson }}"
+
   - sensor:
     - name: 'EMHASS Charge Ramp Config'
       state: configured
@@ -240,11 +260,17 @@ rest_command:
           {%- endif %}
         {%- endfor %}
 
-        {# 2. Get GROSS base-load forecast and planned HWC compressor power. #}
+        {# 2. Get GROSS base-load forecast and the DH-snapshotted HWC compressor plan. #}
         {%- set load_forecast_gross = state_attr('sensor.ai_load_forecast_high', 'forecasts')| map(attribute='power_load')|map('multiply', 1.0)|map('round',0)|list %}
         {%- set dh_start_30m = utcnow().replace(minute=(utcnow().minute // 30) * 30, second=0, microsecond=0) %}
+        {%- set hwc_snapshot_json = state_attr('sensor.emhass_dh_hwc_power_plan_snapshot', 'deferrables_schedule_json') | default('', true) %}
+        {%- if hwc_snapshot_json | length > 2 %}
+          {%- set hwc_schedule = hwc_snapshot_json | from_json %}
+        {%- else %}
+          {%- set hwc_schedule = state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
+        {%- endif %}
         {%- set hwc_5m = namespace(values=[]) %}
-        {%- for item in state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
+        {%- for item in hwc_schedule %}
           {%- if as_datetime(item.date) >= dh_start_30m %}
             {%- set hwc_5m.values = hwc_5m.values + [item.hwc_power_plan | float(0)] %}
           {%- endif %}
@@ -525,14 +551,13 @@ rest_command:
           {%- endif -%}
           {{- d.final_power_list | tojson }}
         {%- endmacro -%}
-        {%- macro native_hwc_power_data(entity_id, start_time) -%}
-          {%- set schedule = state_attr(entity_id, 'deferrables_schedule') | default([], true) %}
+        {%- macro native_hwc_power_data(hwc_schedule, start_time) -%}
           {%- set d = namespace(final_list=[]) %}
           {%- for i in range(168) %}
             {%- set slot_start = start_time + timedelta(minutes=5 * i) %}
             {%- set slot_end = slot_start + timedelta(minutes=5) %}
             {%- set slot = namespace(value=0) %}
-            {%- for item in schedule %}
+            {%- for item in hwc_schedule | default([], true) %}
               {%- set item_time = as_datetime(item.date) %}
               {%- if item_time >= slot_start and item_time < slot_end %}
                 {%- set slot.value = item.hwc_power_plan | int(0) %}
@@ -542,14 +567,13 @@ rest_command:
           {%- endfor %}
           {{- d.final_list | tojson }}
         {%- endmacro -%}
-        {%- macro average_hwc_power_30m(entity_id, start_time) -%}
-          {%- set schedule = state_attr(entity_id, 'deferrables_schedule') | default([], true) %}
+        {%- macro average_hwc_power_30m(hwc_schedule, start_time) -%}
           {%- set d = namespace(averages=[]) %}
           {%- for i in range(144) %}
             {%- set block_start = start_time + timedelta(minutes=30 * i) %}
             {%- set block_end = block_start + timedelta(minutes=30) %}
             {%- set block = namespace(values=[]) %}
-            {%- for item in schedule %}
+            {%- for item in hwc_schedule | default([], true) %}
               {%- set item_time = as_datetime(item.date) %}
               {%- if item_time >= block_start and item_time < block_end %}
                 {%- set block.values = block.values + [item.hwc_power_plan | float(0)] %}
@@ -782,6 +806,12 @@ rest_command:
         {%- set periods_into_30min = (utc_now.minute % 30)//5 %}
         {%- set start_of_this_30min_block = utc_now.replace(minute=(utc_now.minute // 30) * 30, second=0, microsecond=0) %}
         {%- set start_of_this_5min_block = utc_now.replace(minute=(utc_now.minute // 5) * 5, second=0, microsecond=0) %}
+        {%- set hwc_snapshot_json = state_attr('sensor.emhass_dh_hwc_power_plan_snapshot', 'deferrables_schedule_json') | default('', true) %}
+        {%- if hwc_snapshot_json | length > 2 %}
+          {%- set mpc_hwc_schedule = hwc_snapshot_json | from_json %}
+        {%- else %}
+          {%- set mpc_hwc_schedule = state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
+        {%- endif %}
 
         {%- set dh_total_load_30m = namespace(values=[]) %}
         {%- for item in state_attr('sensor.dh_p_load_forecast', 'forecasts') | default([], true) %}
@@ -789,7 +819,7 @@ rest_command:
             {%- set dh_total_load_30m.values = dh_total_load_30m.values + [item.dh_p_load_forecast | int(0)] %}
           {%- endif %}
         {%- endfor %}
-        {%- set dh_hwc_30m = average_hwc_power_30m('sensor.hwc_power_plan', start_of_this_30min_block) | from_json %}
+        {%- set dh_hwc_30m = average_hwc_power_30m(mpc_hwc_schedule, start_of_this_30min_block) | from_json %}
         {%- set dh_base_load_30m = namespace(values=[]) %}
         {%- set base_loop_len = [dh_total_load_30m.values | count, dh_hwc_30m | count] | min %}
         {%- for i in range(base_loop_len) %}
@@ -799,7 +829,7 @@ rest_command:
         {%- endfor %}
 
         {%- set dh_base_load_full = smooth_thirty_minute_values(dh_base_load_30m.values) | from_json %}
-        {%- set native_hwc_future = native_hwc_power_data('sensor.hwc_power_plan', start_of_this_5min_block) | from_json %}
+        {%- set native_hwc_future = native_hwc_power_data(mpc_hwc_schedule, start_of_this_5min_block) | from_json %}
         {%- set dh_net_pv_full = interpolate_power_data('sensor.dh_p_pv_forecast', 'forecasts', 'dh_p_pv_forecast', start_of_this_30min_block) | from_json %}
 
         {# Slice to match MPC horizon #}
@@ -995,6 +1025,10 @@ script:
               entity_id: input_text.dh_last_reground_block
             data:
               value: "{{ current_reground_block }}"
+      - event: emhass_dh_hwc_power_plan_snapshot
+        event_data:
+          source: script.emhass_dayahead_optim
+      - delay: "00:00:01"
       - service: rest_command.emhass_dayahead_optim
         data:
           soc_init_pct: "{{ soc_init_pct }}"
