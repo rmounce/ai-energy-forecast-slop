@@ -378,7 +378,7 @@
             "overnight_window_end": "06:00",
             "min_block_lift_c": 3.0,
             "min_block_duration_minutes": 0,
-            "main_end_reserve_penalty_aud_per_c2": 0.01,
+            "main_end_reserve_penalty_aud_per_c2": 0.005,
             "boost_target_temp": 50,
             "terminal_lookback_hours": 24
         },
