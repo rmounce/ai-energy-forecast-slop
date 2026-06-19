@@ -274,22 +274,22 @@ rest_command:
         {%- else %}
           {%- set hwc_schedule = state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) %}
         {%- endif %}
-        {%- set hwc_5m = namespace(values=[]) %}
-        {%- for item in hwc_schedule %}
-          {%- if as_datetime(item.date) >= dh_start_30m %}
-            {%- set hwc_5m.values = hwc_5m.values + [item.hwc_power_plan | float(0)] %}
-          {%- endif %}
-        {%- endfor %}
-        {%- set hwc_tail_24h = hwc_5m.values[-288:] if hwc_5m.values | count >= 288 else hwc_5m.values %}
-        {%- if hwc_5m.values | count < 864 and hwc_tail_24h | count > 0 %}
-          {%- set hwc_5m.values = (hwc_5m.values + hwc_tail_24h)[:864] %}
-        {%- endif %}
         {%- set hwc_power_30m = namespace(values=[]) %}
         {%- for i in range(144) %}
-          {%- set start = i * 6 %}
-          {%- set block = hwc_5m.values[start:start + 6] %}
-          {%- if block | count > 0 %}
-            {%- set hwc_power_30m.values = hwc_power_30m.values + [((block | sum) / (block | count)) | round(0) | int] %}
+          {%- set block_start = dh_start_30m + timedelta(minutes=30 * i) %}
+          {%- set block_end = block_start + timedelta(minutes=30) %}
+          {%- set block = namespace(values=[]) %}
+          {%- for item in hwc_schedule %}
+            {%- set item_time = as_datetime(item.date) %}
+            {%- if item_time >= block_start and item_time < block_end %}
+              {%- set block.values = block.values + [item.hwc_power_plan | float(0)] %}
+            {%- endif %}
+          {%- endfor %}
+          {# HWC horizon is 48h; repeat the final 24h into DH hours 48-72. #}
+          {%- if block.values | count == 0 and i >= 96 and (hwc_power_30m.values | count) > (i - 48) %}
+            {%- set hwc_power_30m.values = hwc_power_30m.values + [hwc_power_30m.values[i - 48]] %}
+          {%- elif block.values | count > 0 %}
+            {%- set hwc_power_30m.values = hwc_power_30m.values + [((block.values | sum) / (block.values | count)) | round(0) | int] %}
           {%- else %}
             {%- set hwc_power_30m.values = hwc_power_30m.values + [0] %}
           {%- endif %}
