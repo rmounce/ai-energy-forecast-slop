@@ -697,6 +697,33 @@ def _repair_terminal_temperature(
     return best
 
 
+def _running_compressor_locked_schedule(
+    *,
+    grid_times_utc: list[datetime],
+    start_temperature: float,
+    dry_bulb: list[float],
+    wet_bulb: list[float] | None,
+    draw_off: list[float],
+    cfg: dict,
+) -> list[float]:
+    """Return a seed schedule for a compressor run already in progress."""
+    schedule = [0.0] * len(grid_times_utc)
+    if not schedule:
+        return schedule
+    target = float(cfg["hwc"]["thermal"].get("desired_temp", 60))
+    return _add_contiguous_heat(
+        schedule,
+        start_idx=0,
+        end_idx=len(schedule),
+        target_temp=target,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
+        draw_off=draw_off,
+        cfg=cfg["hwc"],
+    )
+
+
 def build_block_plan(
     *,
     grid_times_utc: list[datetime],
@@ -706,10 +733,13 @@ def build_block_plan(
     draw_off: list[float],
     start_temperature: float,
     cfg: dict,
+    locked_schedule_w: list[float] | None = None,
 ) -> dict:
     """Build a fixed-speed HWC block plan and HA-compatible published attributes."""
     n = len(grid_times_utc)
-    schedule = [0.0] * n
+    if locked_schedule_w is not None and len(locked_schedule_w) != n:
+        raise ValueError("locked_schedule_w length must match grid_times_utc")
+    schedule = list(locked_schedule_w) if locked_schedule_w is not None else [0.0] * n
     schedule = _choose_daily_main_blocks(
         schedule,
         grid_times_utc=grid_times_utc,
@@ -887,6 +917,14 @@ def _ha_set_state(cfg: dict, entity_id: str, state, attributes: dict):
 def get_tank_temperature(cfg: dict) -> float:
     state = _ha_call(cfg, "GET", f"states/{cfg['hwc']['tank_temp_entity']}")
     return float(state["state"])
+
+
+def compressor_is_on(cfg: dict) -> bool:
+    entity = cfg["hwc"].get("actuation", {}).get("compressor_entity")
+    if not entity:
+        return False
+    state = _ha_call(cfg, "GET", f"states/{entity}")
+    return state.get("state") == "on"
 
 
 def get_import_price_grid(cfg: dict, horizon_steps: int):
@@ -1135,6 +1173,34 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         )
 
     start_temp = get_tank_temperature(cfg)
+    locked_schedule = None
+    if (
+        cfg["hwc"].get("actuation", {}).get("lock_running_compressor_in_plan", True)
+        and cfg["hwc"].get("planner", "block") == "block"
+    ):
+        try:
+            is_running = compressor_is_on(cfg)
+        except Exception:
+            logging.exception("Could not read HWC compressor state for plan lock-in")
+            is_running = False
+        if is_running:
+            locked_schedule = _running_compressor_locked_schedule(
+                grid_times_utc=grid_times,
+                start_temperature=start_temp,
+                dry_bulb=dry_bulb,
+                wet_bulb=wet_bulb,
+                draw_off=draw_off,
+                cfg=cfg,
+            )
+            locked_kwh = (
+                sum(locked_schedule)
+                / 1000.0
+                * (cfg["hwc"].get("optimization_time_step", 30) / 60.0)
+            )
+            logging.info(
+                "HWC compressor is already running; locked %.2f kWh into current plan",
+                locked_kwh,
+            )
 
     logging.info(
         "HWC plan: horizon=%d steps, start_temp=%.1f°C, wet-bulb %.1f→%.1f°C, "
@@ -1167,6 +1233,7 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         draw_off=draw_off,
         start_temperature=start_temp,
         cfg=cfg,
+        locked_schedule_w=locked_schedule,
     )
     starts = sum(
         1
