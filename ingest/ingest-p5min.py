@@ -242,7 +242,7 @@ def main():
     )
     parser.add_argument("--fetch", action="store_true", required=True,
                         help="Download + ingest the latest P5MIN file from CURRENT")
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--regions", nargs="+", default=sorted(DEFAULT_REGIONS),
                         metavar="REGION",
                         help=f"Regions to ingest (default: {' '.join(sorted(DEFAULT_REGIONS))})")

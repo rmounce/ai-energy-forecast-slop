@@ -3889,7 +3889,7 @@ def update_adjusters():
     """
     logging.info("--- Running in UPDATE-ADJUSTERS mode ---")
     if 'adjusters' not in CONFIG:
-        logging.warning("No 'adjusters' section in config.json. Nothing to do.")
+        logging.warning("No 'adjusters' section in config.yaml. Nothing to do.")
         return
 
     # We can use either log file, as the covariate data is identical.
@@ -4070,7 +4070,7 @@ def main():
     parser.add_argument('--debug-tft', action='store_true', help="Print TFT encoder/decoder inputs and output side-by-side (for diagnosing underestimation).")
     parser.add_argument('--max-tier2-cache-age-minutes', type=float, default=180.0,
                         help="Maximum age for cached Tier 2 curve used by publish-tactical.")
-    parser.add_argument('--config', default='config.json', help="Path to the configuration file.")
+    parser.add_argument('--config', default='config.yaml', help="Path to the configuration file.")
     args = parser.parse_args()
 
     global CONFIG, _DEBUG_TFT

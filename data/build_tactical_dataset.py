@@ -62,7 +62,7 @@ VAL_DAYS     = 60   # last N days of run_times → validation split
 TRAIN_GAP_H  = 1    # hours gap between train and val to avoid leakage
 
 from config_utils import load_config
-CONFIG = load_config(ROOT / "config.json")
+CONFIG = load_config(ROOT / "config.yaml")
 
 GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR = load_tariff_profile(CONFIG, ROOT)
 

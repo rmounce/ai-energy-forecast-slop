@@ -1,16 +1,17 @@
-import json
 from pathlib import Path
 
+import yaml
 
-def load_config(path="config.json"):
-    """Load config.json and deep-merge config.secrets.json from the same directory if present."""
+
+def load_config(path="config.yaml"):
+    """Load config.yaml and deep-merge config.secrets.yaml from the same directory if present."""
     path = Path(path)
     with open(path) as f:
-        config = json.load(f)
-    secrets_path = path.parent / "config.secrets.json"
+        config = yaml.safe_load(f)
+    secrets_path = path.parent / "config.secrets.yaml"
     if secrets_path.exists():
         with open(secrets_path) as f:
-            _deep_merge(config, json.load(f))
+            _deep_merge(config, yaml.safe_load(f))
     return config
 
 

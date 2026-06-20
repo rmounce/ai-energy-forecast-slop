@@ -298,7 +298,7 @@ def main():
     mode.add_argument("--mmsdm", metavar="ZIP",
                       help="Ingest one AEMO MMSDM PD7DAY_PRICESOLUTION monthly zip "
                            "(cumulative — contains full history)")
-    parser.add_argument("--config", default="config.json", help="Path to config.json")
+    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     parser.add_argument(
         "--regions",
         nargs="+",

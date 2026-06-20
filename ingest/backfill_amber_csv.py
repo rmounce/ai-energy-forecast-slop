@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from config_utils import load_config
 
-CONFIG = load_config(ROOT / "config.json")
+CONFIG = load_config(ROOT / "config.yaml")
 
 INFLUXDB_HOST = CONFIG['influxdb']['host']
 INFLUXDB_PORT = CONFIG['influxdb']['port']

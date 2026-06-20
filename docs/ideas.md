@@ -250,7 +250,7 @@ needed, and Amber Express covers the remaining use cases cleanly.
    template sensors to use Amber Express entities.
 3. `forecast.py`: `get_amber_spot_price_forecast()` and `get_amber_advanced_forecast()` — update
    entity IDs and attribute paths. APF values move from flat to `item.advanced_price_predicted.predicted`.
-4. `config.json`: Update `amber_entity`, `amber_feed_in_entity`, `amber_billing_entity`.
+4. `config.yaml`: Update `amber_entity`, `amber_feed_in_entity`, `amber_billing_entity`.
 5. Delete: amber2mqtt MQTT integration config and the 36 unused `amber_5min_period_N_*` sensors
    will disappear automatically.
 6. Dashboards / ApexCharts configs referencing `amber_5min_*` entity IDs will need updating.

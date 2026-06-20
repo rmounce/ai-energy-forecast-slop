@@ -339,7 +339,7 @@ def write_progress(path: Path, payload: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=REPO_ROOT / "config.json")
+    parser.add_argument("--config", type=Path, default=REPO_ROOT / "config.yaml")
     parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG)
     parser.add_argument("--actuals-30m", type=Path, default=DEFAULT_ACTUALS)
     parser.add_argument("--predispatch-template", type=Path, default=DEFAULT_PREDISPATCH)

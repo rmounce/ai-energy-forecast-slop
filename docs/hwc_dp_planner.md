@@ -45,7 +45,7 @@ Reuses from `thermal`: rate/power model, `min_temp`, `desired_temp`, `max_temp`,
 
 ## How to A/B
 
-- Flip `config.json` `hwc.planner` to `"dp"`, restart `ai-energy-hwc-daemon.service`.
+- Flip `config.yaml` `hwc.planner` to `"dp"`, restart `ai-energy-hwc-daemon.service`.
 - Output entities/attributes are identical (`sensor.hwc_power_plan`,
   `sensor.hwc_predicted_temp`), so executor + EMHASS integration are unchanged.
 

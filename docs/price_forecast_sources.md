@@ -17,7 +17,7 @@
 - Dispatch probe artifact generator: `eval/build_stpasa_residual_price_log.py`
   adjusts only the incumbent APF tail residuals.
 - Production-shaped STPASA path: `stpasa_*` future covariates in `forecast.py`
-  for the incumbent `price` model. Live `config.json` is promoted and production
+  for the incumbent `price` model. Live `config.yaml` is promoted and production
   model artifacts were retrained with these covariates on 2026-06-16.
 
 ## Source Contracts

@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, str(ROOT))
 from config_utils import load_config
 
-cfg = load_config(ROOT / "config.json")
+cfg = load_config(ROOT / "config.yaml")
 ic = cfg["influxdb"]
 
 INFLUXDB_HOST = ic["host"]

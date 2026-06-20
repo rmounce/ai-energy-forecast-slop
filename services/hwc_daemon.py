@@ -5,7 +5,7 @@ This replaces the eventual shape of separate planner/executor timers: it watches
 Assistant for HWC-relevant state changes, replans when inputs change, and runs the
 execution decision loop on both events and a short periodic cadence.
 
-Actuation remains gated by ``hwc.actuation.enabled`` in ``config.json``. With that flag
+Actuation remains gated by ``hwc.actuation.enabled`` in ``config.yaml``. With that flag
 false, the daemon can publish updated plans but the executor will not call water_heater
 services.
 """
@@ -580,14 +580,14 @@ def _install_signal_handlers(daemon: HwcDaemon, loop: asyncio.AbstractEventLoop)
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="HWC event-driven planner/executor daemon")
-    parser.add_argument("--config", default=str(REPO_ROOT / "config.json"))
+    parser.add_argument("--config", default=str(REPO_ROOT / "config.yaml"))
     parser.add_argument("--dry-run", action="store_true", help="Do not publish plans or actuate")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = load_config(args.config)
     if not config["home_assistant"].get("token"):
-        log.error("home_assistant.token missing (config.secrets.json)")
+        log.error("home_assistant.token missing (config.secrets.yaml)")
         return 2
 
     daemon = HwcDaemon(config, dry_run=args.dry_run)

@@ -38,10 +38,11 @@ data/parquet/
 models/
 *.pt
 
+# Private config: config.yaml / config.example.yaml / config.secrets.yaml.example are
+# tracked by default (not matched by *.json/*.csv). Keep the real secrets file untracked:
+config.secrets.yaml
+
 # Explicitly include
-!config.json
-!config.secrets.json.example
-!config.example.json
 !tests/fixtures/*.json
 
 # Local/generated eval and reviewer scratch artifacts. Tracked historical
