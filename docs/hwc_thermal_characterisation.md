@@ -119,5 +119,42 @@ design (two reheats, not one).
    clamped `650–930 W`. This reduced active-sample power MAE from about **63 W** under
    the first-pass config to about **27 W**.
 
+## Actuation semantics (measured 2026-06-20)
+
+Manual `water_heater.aquatech` test from `operation_mode=off`, tank 57 °C, ambient 11 °C
+(daemon stopped):
+
+- **Start above the nominal trigger works.** `set_operation_mode: heat_pump` (setpoint 60)
+  starts a 57→60 top-up from `off` — the unit does not refuse to start because the tank is
+  already above 55 °C. So the executor's 55 °C `setpoint_min_c` is policy, not a device limit
+  (entity setpoint range is 15–75 °C, 1 °C step; `operation_list` = off/heat_pump/eco/
+  high_demand/performance/electric; `supported_features` = 15).
+- **Real device start/stop is fast; the Tuya compressor binary lags ~50 s on *both*
+  edges.** On start, Athom ch2 power rises within a few seconds; on `turn_off`, compressor
+  power drops instantly (fan stops ~30 s later, power → ~0). In both cases
+  `binary_sensor.aquatech_compressor` only flips ~50 s after the real transition — a Local
+  Tuya **polling lag**, not device latency. So **Athom ch2 power is the faster, authoritative
+  compressor-on signal**, leading the Tuya binary by ~50 s in each direction.
+- **Power magnitudes / threshold.** Fan alone ≈ 50 W (possibly low speed); the full unit
+  briefly dipped as low as ~363 W at startup before climbing (running range up to ~930 W; cf.
+  modelled clamp 650–930 W — 363 W is a startup transient). A **~250 W threshold** cleanly
+  separates compressor-running from fan-only/standby for a power-based compressor-on signal.
+- **EEV modulates during the ramp** (`sensor.aquatech_eev_position_local`, from the
+  `water_heater` `eev` attribute) — consistent with EEV superheat control on a fixed-speed
+  compressor.
+
+**Implications:**
+1. Actuation latency is negligible for control — min-runtime is a wear/COP choice, not a
+   command-lag workaround. The executor's "starts/stops promptly" assumption holds at the
+   device.
+2. The ~50 s Tuya binary lag (both edges) justifies the daemon's off-suppression grace
+   (`heat_command_grace_seconds = 600` ≫ 50 s). A future improvement is to treat **Athom ch2
+   power > ~250 W** as the compressor-on signal (leads the Tuya binary in both directions),
+   rather than / in addition to `binary_sensor.aquatech_compressor`.
+3. **Planner direction (2026-06-20 decision):** short-cycle avoidance should *emerge from
+   cost* (a per-start cost term), not from hard minimum-runtime or minimum-temperature-rise
+   rules. The DP objective is therefore monetary; min_temp / 60 °C remain as
+   high-penalty cost terms rather than hard locks.
+
 See `docs/hwc_emhass.md` for the open question of whether to enhance EMHASS's COP model or use
 a purpose-built block optimiser.

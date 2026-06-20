@@ -10,16 +10,6 @@ template:
         availability: >
           {{ state_attr('water_heater.aquatech', 'current_temperature') is number }}
 
-      - name: "Aquatech Inlet Temperature Local"
-        unique_id: aquatech_inlet_temperature_local
-        device_class: temperature
-        state_class: measurement
-        unit_of_measurement: "°C"
-        state: >
-          {{ state_attr('water_heater.aquatech', 'inlet_temp') | float(none) }}
-        availability: >
-          {{ state_attr('water_heater.aquatech', 'inlet_temp') is number }}
-
       - name: "Aquatech EEV Position Local"
         unique_id: aquatech_eev_position_local
         state_class: measurement
