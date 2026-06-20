@@ -527,6 +527,37 @@ def test_block_planner_prefers_contiguous_daytime_runs():
     assert all(power in (0.0, 800.0) for power in plan["schedule_w"])
 
 
+def test_block_planner_preserves_running_compressor_lock():
+    grid = _adelaide_grid(10, 16)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
+    dry_bulb = [15.0] * len(grid)
+    wet_bulb = [12.5] * len(grid)
+    draw_off = [0.0] * len(grid)
+    locked = hp._running_compressor_locked_schedule(
+        grid_times_utc=grid,
+        start_temperature=55.0,
+        dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
+        draw_off=draw_off,
+        cfg=cfg,
+    )
+
+    plan = hp.build_block_plan(
+        grid_times_utc=grid,
+        load_cost=[0.60] * 4 + [0.05] * 12,
+        dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
+        draw_off=draw_off,
+        start_temperature=55.0,
+        cfg=cfg,
+        locked_schedule_w=locked,
+    )
+
+    assert locked[0] > 0
+    assert plan["schedule_w"][0] > 0
+
+
 def test_main_block_skips_tiny_topup_near_target():
     grid = _adelaide_grid(10, 4)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}

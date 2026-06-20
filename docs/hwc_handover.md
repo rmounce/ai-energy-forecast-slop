@@ -149,6 +149,10 @@ the engine-independent long pole — gather it regardless.
 - **Battery isolation:** the HWC optim must keep `set_use_battery:false`/`set_use_pv:false`
   (runtime-overridable via EMHASS `associations.csv`). The battery (DH + per-minute MPC) shares
   the EMHASS instance; the now-fixed race was between concurrent `entity_save` publishes.
+- **Running compressor lock-in:** if `binary_sensor.aquatech_compressor` is already `on` when
+  the HWC planner runs, the current run is locked into the newly published plan from the current
+  planning slot until the model reaches the normal target. This keeps `sensor.hwc_power_plan`
+  coherent with the executor policy of not interrupting a running compressor.
 - **HWC/DH coherence:** battery DH snapshots `sensor.hwc_power_plan` immediately before the
   DH solve (`sensor.emhass_dh_hwc_power_plan_snapshot`) and uses that snapshot when adding
   planned HWC compressor power into DH load. MPC uses the same snapshot when subtracting HWC
