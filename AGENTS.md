@@ -8,6 +8,7 @@
 - Scratch/question files: do not commit unless explicitly requested.
 - User preference change: offer to update `AGENTS.md`.
 - Commit regularly; avoid noisy commits.
+- Rename/refactor own code: migrate all call sites; no back-compat aliases. Don't accrue self-made tech debt.
 
 ## Project Documentation
 

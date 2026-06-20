@@ -446,7 +446,7 @@ def _schedule_objective(
     *,
     load_cost: list[float],
     step_h: float,
-    stop_cost_aud: float,
+    transition_cost_aud: float,
     compressor_initially_on: bool = False,
 ) -> tuple[float, int, float]:
     energy_cost = _schedule_energy_cost(schedule_w, load_cost, step_h)
@@ -454,7 +454,7 @@ def _schedule_objective(
         schedule_w,
         compressor_initially_on=compressor_initially_on,
     )
-    return (energy_cost + stops * stop_cost_aud, stops, energy_cost)
+    return (energy_cost + stops * transition_cost_aud, stops, energy_cost)
 
 
 def _schedule_objective_delta(
@@ -463,21 +463,21 @@ def _schedule_objective_delta(
     *,
     load_cost: list[float],
     step_h: float,
-    stop_cost_aud: float,
+    transition_cost_aud: float,
     compressor_initially_on: bool = False,
 ) -> float:
     before_score = _schedule_objective(
         before,
         load_cost=load_cost,
         step_h=step_h,
-        stop_cost_aud=stop_cost_aud,
+        transition_cost_aud=transition_cost_aud,
         compressor_initially_on=compressor_initially_on,
     )[0]
     after_score = _schedule_objective(
         after,
         load_cost=load_cost,
         step_h=step_h,
-        stop_cost_aud=stop_cost_aud,
+        transition_cost_aud=transition_cost_aud,
         compressor_initially_on=compressor_initially_on,
     )[0]
     return after_score - before_score
@@ -517,7 +517,7 @@ def _choose_daily_main_blocks(
     step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
     reserve_target = float(block_cfg.get("main_end_reserve_target_c", target))
     reserve_penalty_per_c2 = float(block_cfg.get("main_end_reserve_penalty_aud_per_c2", 0.0))
-    stop_cost_aud = float(block_cfg.get("stop_cost_aud", 0.0))
+    transition_cost_aud = float(block_cfg.get("transition_cost_aud", 0.0))
 
     slots_by_day: dict[datetime.date, list[int]] = {}
     for idx, t in enumerate(grid_times_utc):
@@ -580,7 +580,7 @@ def _choose_daily_main_blocks(
                 candidate,
                 load_cost=load_cost,
                 step_h=step_h,
-                stop_cost_aud=stop_cost_aud,
+                transition_cost_aud=transition_cost_aud,
             )
             score = (
                 target_shortfall,
@@ -614,7 +614,7 @@ def _repair_min_temperature(
     overnight_end = _parse_hhmm(block_cfg.get("overnight_window_end", "06:00"))
     min_temp = float(hwc["thermal"].get("min_temp", 45))
     boost_target = float(block_cfg.get("boost_target_temp", min_temp + 5))
-    stop_cost_aud = float(block_cfg.get("stop_cost_aud", 0.0))
+    transition_cost_aud = float(block_cfg.get("transition_cost_aud", 0.0))
     step_h = hwc.get("optimization_time_step", 30) / 60.0
     min_steps = _min_block_steps(hwc)
     lookback = int(round(18 / step_h))
@@ -680,7 +680,7 @@ def _repair_min_temperature(
                 candidate,
                 load_cost=load_cost,
                 step_h=step_h,
-                stop_cost_aud=stop_cost_aud,
+                transition_cost_aud=transition_cost_aud,
             )
             score = (shortfall, cost)
             if score < best_score:
@@ -727,7 +727,7 @@ def _repair_terminal_temperature(
     step_h = hwc.get("optimization_time_step", 30) / 60.0
     min_steps = _min_block_steps(hwc)
     block_cfg = hwc.get("block_planner", {})
-    stop_cost_aud = float(block_cfg.get("stop_cost_aud", 0.0))
+    transition_cost_aud = float(block_cfg.get("transition_cost_aud", 0.0))
     lookback_h = float(block_cfg.get("terminal_lookback_hours", 24))
     lo = max(0, len(schedule_w) - int(round(lookback_h / step_h)))
     best = schedule_w
@@ -766,7 +766,7 @@ def _repair_terminal_temperature(
                 candidate,
                 load_cost=load_cost,
                 step_h=step_h,
-                stop_cost_aud=stop_cost_aud,
+                transition_cost_aud=transition_cost_aud,
             ),
         )
         if score < best_score:
@@ -900,7 +900,7 @@ def build_block_plan(
     n = len(grid_times_utc)
     if locked_schedule_w is not None and len(locked_schedule_w) != n:
         raise ValueError("locked_schedule_w length must match grid_times_utc")
-    stop_cost_aud = float(cfg["hwc"].get("block_planner", {}).get("stop_cost_aud", 0.0))
+    transition_cost_aud = float(cfg["hwc"].get("block_planner", {}).get("transition_cost_aud", 0.0))
     step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
     if locked_schedule_w is not None:
         seed_schedules = [list(locked_schedule_w)]
@@ -933,7 +933,7 @@ def build_block_plan(
             candidate,
             load_cost=load_cost,
             step_h=step_h,
-            stop_cost_aud=stop_cost_aud,
+            transition_cost_aud=transition_cost_aud,
             compressor_initially_on=compressor_initially_on,
         )
         if score < best_score:
