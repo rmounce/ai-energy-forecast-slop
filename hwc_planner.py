@@ -884,6 +884,74 @@ def _complete_block_schedule(
     )
 
 
+def assemble_plan_dict(
+    schedule_w: list[float],
+    *,
+    grid_times_utc: list[datetime],
+    load_cost: list[float],
+    dry_bulb: list[float],
+    wet_bulb: list[float] | None,
+    draw_off: list[float],
+    start_temperature: float,
+    cfg: dict,
+    transition_cost_aud: float,
+    compressor_initially_on: bool = False,
+) -> dict:
+    """Build the published plan dict from a final ``schedule_w`` (modelled watts).
+
+    Shared by the block and DP planners so a plan is identically shaped and scored
+    regardless of which optimiser produced ``schedule_w``. Temperatures, terminal temp and
+    the objective are all derived from the exact thermal model here.
+    """
+    step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
+    temps, terminal_temp = simulate_block_temperatures(
+        schedule_w=schedule_w,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
+        draw_off=draw_off,
+        cfg=cfg["hwc"],
+    )
+    score = _schedule_objective(
+        schedule_w,
+        load_cost=load_cost,
+        step_h=step_h,
+        transition_cost_aud=transition_cost_aud,
+        compressor_initially_on=compressor_initially_on,
+    )
+    prefix = cfg["hwc"].get("publish_prefix", "hwc_")
+    temp_key = _published_entity_id(prefix, cfg["hwc"]["predicted_temp_entity"]).split(".", 1)[1]
+    power_key = _published_entity_id(prefix, cfg["hwc"]["power_plan_entity"]).split(".", 1)[1]
+    cost_key = f"{prefix}unit_load_cost"
+    wet_bulb_key = f"{prefix}wet_bulb_forecast"
+    plan = {
+        "schedule_w": schedule_w,
+        "temperatures": temps,
+        "terminal_temperature": terminal_temp,
+        "objective_cost_aud": round(score[0], 5),
+        "planned_stop_count": score[1],
+        "planned_energy_cost_aud": round(score[2], 5),
+        "predicted_temperatures": [
+            {"date": t.isoformat(), temp_key: f"{temp:.2f}"}
+            for t, temp in zip(grid_times_utc, temps, strict=True)
+        ],
+        "deferrables_schedule": [
+            {"date": t.isoformat(), power_key: f"{power:.1f}"}
+            for t, power in zip(grid_times_utc, schedule_w, strict=True)
+        ],
+        "unit_load_cost_forecasts": [
+            {"date": t.isoformat(), cost_key: f"{cost:.5f}"}
+            for t, cost in zip(grid_times_utc, load_cost, strict=True)
+        ],
+    }
+    if wet_bulb is not None:
+        plan["wet_bulb_forecasts"] = [
+            {"date": t.isoformat(), wet_bulb_key: f"{value:.2f}"}
+            for t, value in zip(grid_times_utc, wet_bulb, strict=True)
+        ]
+    return plan
+
+
 def build_block_plan(
     *,
     grid_times_utc: list[datetime],
@@ -940,45 +1008,18 @@ def build_block_plan(
             best_schedule = candidate
             best_score = score
     schedule = best_schedule or [0.0] * n
-    temps, terminal_temp = simulate_block_temperatures(
-        schedule_w=schedule,
-        start_temperature=start_temperature,
+    return assemble_plan_dict(
+        schedule,
+        grid_times_utc=grid_times_utc,
+        load_cost=load_cost,
         dry_bulb=dry_bulb,
         wet_bulb=wet_bulb,
         draw_off=draw_off,
-        cfg=cfg["hwc"],
+        start_temperature=start_temperature,
+        cfg=cfg,
+        transition_cost_aud=transition_cost_aud,
+        compressor_initially_on=compressor_initially_on,
     )
-    prefix = cfg["hwc"].get("publish_prefix", "hwc_")
-    temp_key = _published_entity_id(prefix, cfg["hwc"]["predicted_temp_entity"]).split(".", 1)[1]
-    power_key = _published_entity_id(prefix, cfg["hwc"]["power_plan_entity"]).split(".", 1)[1]
-    cost_key = f"{prefix}unit_load_cost"
-    wet_bulb_key = f"{prefix}wet_bulb_forecast"
-    plan = {
-        "schedule_w": schedule,
-        "temperatures": temps,
-        "terminal_temperature": terminal_temp,
-        "objective_cost_aud": round(best_score[0], 5),
-        "planned_stop_count": best_score[1],
-        "planned_energy_cost_aud": round(best_score[2], 5),
-        "predicted_temperatures": [
-            {"date": t.isoformat(), temp_key: f"{temp:.2f}"}
-            for t, temp in zip(grid_times_utc, temps, strict=True)
-        ],
-        "deferrables_schedule": [
-            {"date": t.isoformat(), power_key: f"{power:.1f}"}
-            for t, power in zip(grid_times_utc, schedule, strict=True)
-        ],
-        "unit_load_cost_forecasts": [
-            {"date": t.isoformat(), cost_key: f"{cost:.5f}"}
-            for t, cost in zip(grid_times_utc, load_cost, strict=True)
-        ],
-    }
-    if wet_bulb is not None:
-        plan["wet_bulb_forecasts"] = [
-            {"date": t.isoformat(), wet_bulb_key: f"{value:.2f}"}
-            for t, value in zip(grid_times_utc, wet_bulb, strict=True)
-        ]
-    return plan
 
 
 def build_payload(
@@ -1341,12 +1382,13 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         )
 
     start_temp = get_tank_temperature(cfg)
+    planner_kind = cfg["hwc"].get("planner", "block")
     compressor_initially_on = False
-    if cfg["hwc"].get("planner", "block") == "block":
+    if planner_kind in ("block", "dp"):
         try:
             compressor_initially_on = compressor_is_on(cfg)
         except Exception:
-            logging.exception("Could not read HWC compressor state for stop-cost planning")
+            logging.exception("Could not read HWC compressor state for transition-cost planning")
             compressor_initially_on = False
 
     logging.info(
@@ -1362,7 +1404,7 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         compressor_initially_on,
     )
 
-    if cfg["hwc"].get("planner", "block") == "emhass":
+    if planner_kind == "emhass":
         payload = build_payload(
             grid_times_utc=grid_times,
             load_cost=load_cost,
@@ -1373,23 +1415,38 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         )
         return _run_emhass(cfg, payload, dry_run)
 
-    plan = build_block_plan(
-        grid_times_utc=grid_times,
-        load_cost=load_cost,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        start_temperature=start_temp,
-        cfg=cfg,
-        compressor_initially_on=compressor_initially_on,
-    )
+    if planner_kind == "dp":
+        import hwc_dp_planner
+
+        plan = hwc_dp_planner.build_dp_plan(
+            grid_times_utc=grid_times,
+            load_cost=load_cost,
+            dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
+            draw_off=draw_off,
+            start_temperature=start_temp,
+            cfg=cfg,
+            compressor_initially_on=compressor_initially_on,
+        )
+    else:
+        plan = build_block_plan(
+            grid_times_utc=grid_times,
+            load_cost=load_cost,
+            dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
+            draw_off=draw_off,
+            start_temperature=start_temp,
+            cfg=cfg,
+            compressor_initially_on=compressor_initially_on,
+        )
     starts = sum(
         1
         for prev, cur in zip([0.0] + plan["schedule_w"][:-1], plan["schedule_w"], strict=True)
         if prev <= 0 and cur > 0
     )
     logging.info(
-        "Block plan: starts=%d, stops=%d, objective=$%.3f, heat_kwh=%.2f, terminal_temp=%.1f°C, min_pred=%.1f°C",
+        "%s plan: starts=%d, stops=%d, objective=$%.3f, heat_kwh=%.2f, terminal_temp=%.1f°C, min_pred=%.1f°C",
+        planner_kind,
         starts,
         plan["planned_stop_count"],
         plan["objective_cost_aud"],
