@@ -527,7 +527,7 @@ def test_block_planner_prefers_contiguous_daytime_runs():
     assert all(power in (0.0, 800.0) for power in plan["schedule_w"])
 
 
-def test_block_planner_preserves_running_compressor_lock():
+def test_block_planner_accepts_legacy_locked_schedule_seed():
     grid = _adelaide_grid(10, 16)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
     cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
@@ -556,6 +556,47 @@ def test_block_planner_preserves_running_compressor_lock():
 
     assert locked[0] > 0
     assert plan["schedule_w"][0] > 0
+
+
+def test_running_compressor_low_stop_cost_can_defer_to_cheaper_main_block():
+    grid = _adelaide_grid(10, 16)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    cfg["hwc"]["block_planner"]["stop_cost_aud"] = 0.01
+    cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
+    plan = hp.build_block_plan(
+        grid_times_utc=grid,
+        load_cost=[0.80] * 4 + [0.02] * 12,
+        dry_bulb=[15.0] * len(grid),
+        wet_bulb=[12.5] * len(grid),
+        draw_off=[0.0] * len(grid),
+        start_temperature=55.0,
+        cfg=cfg,
+        compressor_initially_on=True,
+    )
+
+    assert plan["schedule_w"][0] == 0.0
+    assert any(power > 0 for power in plan["schedule_w"][4:])
+    assert plan["planned_stop_count"] >= 2
+
+
+def test_running_compressor_high_stop_cost_keeps_current_run():
+    grid = _adelaide_grid(10, 16)
+    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
+    cfg["hwc"]["block_planner"]["stop_cost_aud"] = 1.0
+    cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
+    plan = hp.build_block_plan(
+        grid_times_utc=grid,
+        load_cost=[0.80] * 4 + [0.02] * 12,
+        dry_bulb=[15.0] * len(grid),
+        wet_bulb=[12.5] * len(grid),
+        draw_off=[0.0] * len(grid),
+        start_temperature=55.0,
+        cfg=cfg,
+        compressor_initially_on=True,
+    )
+
+    assert plan["schedule_w"][0] > 0
+    assert plan["planned_stop_count"] == 1
 
 
 def test_main_block_skips_tiny_topup_near_target():

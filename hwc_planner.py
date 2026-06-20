@@ -427,6 +427,45 @@ def _schedule_cost_delta(
     )
 
 
+def _schedule_energy_cost(schedule_w: list[float], load_cost: list[float], step_h: float) -> float:
+    return sum(
+        max(0.0, power) / 1000.0 * float(cost) * step_h
+        for power, cost in zip(schedule_w, load_cost, strict=True)
+    )
+
+
+def _schedule_stop_count(
+    schedule_w: list[float],
+    *,
+    compressor_initially_on: bool = False,
+    threshold_w: float = 0.0,
+) -> int:
+    stops = 0
+    was_on = compressor_initially_on
+    for power in schedule_w:
+        is_on = power > threshold_w
+        if was_on and not is_on:
+            stops += 1
+        was_on = is_on
+    return stops
+
+
+def _schedule_objective(
+    schedule_w: list[float],
+    *,
+    load_cost: list[float],
+    step_h: float,
+    stop_cost_aud: float,
+    compressor_initially_on: bool = False,
+) -> tuple[float, int, float]:
+    energy_cost = _schedule_energy_cost(schedule_w, load_cost, step_h)
+    stops = _schedule_stop_count(
+        schedule_w,
+        compressor_initially_on=compressor_initially_on,
+    )
+    return (energy_cost + stops * stop_cost_aud, stops, energy_cost)
+
+
 def _min_block_lift_c(hwc: dict) -> float:
     block_cfg = hwc.get("block_planner", {})
     return float(block_cfg.get("min_block_lift_c", block_cfg.get("min_main_block_lift_c", 0.0)))
@@ -724,24 +763,50 @@ def _running_compressor_locked_schedule(
     )
 
 
-def build_block_plan(
+def _running_compressor_seed_schedules(
+    *,
+    grid_times_utc: list[datetime],
+    start_temperature: float,
+    dry_bulb: list[float],
+    wet_bulb: list[float] | None,
+    draw_off: list[float],
+    cfg: dict,
+) -> list[list[float]]:
+    """Return seed schedules for possible stop points of a run already in progress."""
+    locked = _running_compressor_locked_schedule(
+        grid_times_utc=grid_times_utc,
+        start_temperature=start_temperature,
+        dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
+        draw_off=draw_off,
+        cfg=cfg,
+    )
+    active_slots = 0
+    for power in locked:
+        if power <= 0:
+            break
+        active_slots += 1
+    seeds = []
+    for stop_after in range(active_slots + 1):
+        seed = [0.0] * len(locked)
+        seed[:stop_after] = locked[:stop_after]
+        seeds.append(seed)
+    return seeds or [[0.0] * len(grid_times_utc)]
+
+
+def _complete_block_schedule(
+    schedule_w: list[float],
     *,
     grid_times_utc: list[datetime],
     load_cost: list[float],
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None = None,
-    draw_off: list[float],
     start_temperature: float,
+    dry_bulb: list[float],
+    wet_bulb: list[float] | None,
+    draw_off: list[float],
     cfg: dict,
-    locked_schedule_w: list[float] | None = None,
-) -> dict:
-    """Build a fixed-speed HWC block plan and HA-compatible published attributes."""
-    n = len(grid_times_utc)
-    if locked_schedule_w is not None and len(locked_schedule_w) != n:
-        raise ValueError("locked_schedule_w length must match grid_times_utc")
-    schedule = list(locked_schedule_w) if locked_schedule_w is not None else [0.0] * n
+) -> list[float]:
     schedule = _choose_daily_main_blocks(
-        schedule,
+        schedule_w,
         grid_times_utc=grid_times_utc,
         load_cost=load_cost,
         start_temperature=start_temperature,
@@ -770,7 +835,7 @@ def build_block_plan(
         draw_off=draw_off,
         cfg=cfg,
     )
-    schedule = _refresh_planned_power(
+    return _refresh_planned_power(
         schedule,
         start_temperature=start_temperature,
         dry_bulb=dry_bulb,
@@ -778,6 +843,64 @@ def build_block_plan(
         draw_off=draw_off,
         cfg=cfg["hwc"],
     )
+
+
+def build_block_plan(
+    *,
+    grid_times_utc: list[datetime],
+    load_cost: list[float],
+    dry_bulb: list[float],
+    wet_bulb: list[float] | None = None,
+    draw_off: list[float],
+    start_temperature: float,
+    cfg: dict,
+    locked_schedule_w: list[float] | None = None,
+    compressor_initially_on: bool = False,
+) -> dict:
+    """Build a fixed-speed HWC block plan and HA-compatible published attributes."""
+    n = len(grid_times_utc)
+    if locked_schedule_w is not None and len(locked_schedule_w) != n:
+        raise ValueError("locked_schedule_w length must match grid_times_utc")
+    stop_cost_aud = float(cfg["hwc"].get("block_planner", {}).get("stop_cost_aud", 0.0))
+    step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
+    if locked_schedule_w is not None:
+        seed_schedules = [list(locked_schedule_w)]
+    elif compressor_initially_on:
+        seed_schedules = _running_compressor_seed_schedules(
+            grid_times_utc=grid_times_utc,
+            start_temperature=start_temperature,
+            dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
+            draw_off=draw_off,
+            cfg=cfg,
+        )
+    else:
+        seed_schedules = [[0.0] * n]
+
+    best_schedule = None
+    best_score = (math.inf, math.inf, math.inf)
+    for seed in seed_schedules:
+        candidate = _complete_block_schedule(
+            seed,
+            grid_times_utc=grid_times_utc,
+            load_cost=load_cost,
+            start_temperature=start_temperature,
+            dry_bulb=dry_bulb,
+            wet_bulb=wet_bulb,
+            draw_off=draw_off,
+            cfg=cfg,
+        )
+        score = _schedule_objective(
+            candidate,
+            load_cost=load_cost,
+            step_h=step_h,
+            stop_cost_aud=stop_cost_aud,
+            compressor_initially_on=compressor_initially_on,
+        )
+        if score < best_score:
+            best_schedule = candidate
+            best_score = score
+    schedule = best_schedule or [0.0] * n
     temps, terminal_temp = simulate_block_temperatures(
         schedule_w=schedule,
         start_temperature=start_temperature,
@@ -795,6 +918,9 @@ def build_block_plan(
         "schedule_w": schedule,
         "temperatures": temps,
         "terminal_temperature": terminal_temp,
+        "objective_cost_aud": round(best_score[0], 5),
+        "planned_stop_count": best_score[1],
+        "planned_energy_cost_aud": round(best_score[2], 5),
         "predicted_temperatures": [
             {"date": t.isoformat(), temp_key: f"{temp:.2f}"}
             for t, temp in zip(grid_times_utc, temps, strict=True)
@@ -1082,6 +1208,9 @@ def _publish_block_plan(cfg: dict, plan: dict):
             "unit_of_measurement": "W",
             "friendly_name": "HWC Planned Power",
             "deferrables_schedule": plan["deferrables_schedule"],
+            "planned_stop_count": plan.get("planned_stop_count"),
+            "objective_cost_aud": plan.get("objective_cost_aud"),
+            "planned_energy_cost_aud": plan.get("planned_energy_cost_aud"),
         },
     )
     _ha_set_state(
@@ -1173,38 +1302,17 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         )
 
     start_temp = get_tank_temperature(cfg)
-    locked_schedule = None
-    if (
-        cfg["hwc"].get("actuation", {}).get("lock_running_compressor_in_plan", True)
-        and cfg["hwc"].get("planner", "block") == "block"
-    ):
+    compressor_initially_on = False
+    if cfg["hwc"].get("planner", "block") == "block":
         try:
-            is_running = compressor_is_on(cfg)
+            compressor_initially_on = compressor_is_on(cfg)
         except Exception:
-            logging.exception("Could not read HWC compressor state for plan lock-in")
-            is_running = False
-        if is_running:
-            locked_schedule = _running_compressor_locked_schedule(
-                grid_times_utc=grid_times,
-                start_temperature=start_temp,
-                dry_bulb=dry_bulb,
-                wet_bulb=wet_bulb,
-                draw_off=draw_off,
-                cfg=cfg,
-            )
-            locked_kwh = (
-                sum(locked_schedule)
-                / 1000.0
-                * (cfg["hwc"].get("optimization_time_step", 30) / 60.0)
-            )
-            logging.info(
-                "HWC compressor is already running; locked %.2f kWh into current plan",
-                locked_kwh,
-            )
+            logging.exception("Could not read HWC compressor state for stop-cost planning")
+            compressor_initially_on = False
 
     logging.info(
         "HWC plan: horizon=%d steps, start_temp=%.1f°C, wet-bulb %.1f→%.1f°C, "
-        "import $%.3f→$%.3f/kWh, draw-off total=%.2f kWh",
+        "import $%.3f→$%.3f/kWh, draw-off total=%.2f kWh, compressor_on=%s",
         len(grid_times),
         start_temp,
         min(wet_bulb),
@@ -1212,6 +1320,7 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         min(load_cost),
         max(load_cost),
         sum(draw_off),
+        compressor_initially_on,
     )
 
     if cfg["hwc"].get("planner", "block") == "emhass":
@@ -1233,7 +1342,7 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         draw_off=draw_off,
         start_temperature=start_temp,
         cfg=cfg,
-        locked_schedule_w=locked_schedule,
+        compressor_initially_on=compressor_initially_on,
     )
     starts = sum(
         1
@@ -1241,8 +1350,10 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         if prev <= 0 and cur > 0
     )
     logging.info(
-        "Block plan: starts=%d, heat_kwh=%.2f, terminal_temp=%.1f°C, min_pred=%.1f°C",
+        "Block plan: starts=%d, stops=%d, objective=$%.3f, heat_kwh=%.2f, terminal_temp=%.1f°C, min_pred=%.1f°C",
         starts,
+        plan["planned_stop_count"],
+        plan["objective_cost_aud"],
         sum(plan["schedule_w"]) / 1000.0 * (cfg["hwc"].get("optimization_time_step", 30) / 60.0),
         plan["terminal_temperature"],
         min(plan["temperatures"]),

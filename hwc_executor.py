@@ -11,8 +11,8 @@ The logic is deliberately simple:
   predicted temperature as setpoint;
 - just after a block, while the compressor is still running: keep the same mode/setpoint so
   the unit can finish naturally;
-- outside a block, once the compressor is off: turn the water heater off, allowing the tank
-  to drift below the unit's normal reheat trigger.
+- outside a block: turn the water heater off, allowing the planner's stop-cost decision to
+  interrupt or suppress compressor operation.
 """
 
 from __future__ import annotations
@@ -157,6 +157,8 @@ def decide(
 ) -> Decision:
     idx = _current_index(points, now)
     if idx is None:
+        if compressor_on:
+            return Decision(action="off", reason="outside published plan; stopping running compressor")
         return Decision(action="idle", reason="outside published plan")
 
     if points[idx].power_w > threshold_w:
@@ -182,9 +184,12 @@ def decide(
                 block_end=block_end,
             )
 
-    if compressor_on:
-        return Decision(action="wait", reason="outside block but compressor is running")
-    return Decision(action="off", reason="outside planned block and compressor is off")
+    reason = (
+        "outside planned block; stopping running compressor"
+        if compressor_on
+        else "outside planned block and compressor is off"
+    )
+    return Decision(action="off", reason=reason)
 
 
 def apply_decision(cfg: dict, decision: Decision):
