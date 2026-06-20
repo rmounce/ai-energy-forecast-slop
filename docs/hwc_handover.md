@@ -14,7 +14,7 @@ Schedule the HWC unit to minimise cost against the import-price + weather foreca
 actuation). Actuation (via Local Tuya) and a resistive-element "dump load" on negative
 prices are later phases.
 
-## TL;DR state (2026-06-14)
+## TL;DR state (2026-06-20)
 
 A working daemonised planner is active. The default engine is a direct fixed-speed block
 planner; EMHASS thermal-battery mode remains as a fallback/comparison path. Dedicated
@@ -31,6 +31,7 @@ Athom metering is live for the HWC compressor circuit.
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
+| Running compressor policy | planner scores stop/continue candidates using `block_planner.stop_cost_aud`; no unconditional run lock |
 
 ## What's committed
 
@@ -149,10 +150,10 @@ the engine-independent long pole — gather it regardless.
 - **Battery isolation:** the HWC optim must keep `set_use_battery:false`/`set_use_pv:false`
   (runtime-overridable via EMHASS `associations.csv`). The battery (DH + per-minute MPC) shares
   the EMHASS instance; the now-fixed race was between concurrent `entity_save` publishes.
-- **Running compressor lock-in:** if `binary_sensor.aquatech_compressor` is already `on` when
-  the HWC planner runs, the current run is locked into the newly published plan from the current
-  planning slot until the model reaches the normal target. This keeps `sensor.hwc_power_plan`
-  coherent with the executor policy of not interrupting a running compressor.
+- **Running compressor stop cost:** if `binary_sensor.aquatech_compressor` is already `on`,
+  the block planner now compares stop/continue candidates. Objective =
+  energy cost + `block_planner.stop_cost_aud` per compressor stop. This allows interrupting
+  a current run only when a later valid plan beats the configured stop cost.
 - **HWC/DH coherence:** battery DH snapshots `sensor.hwc_power_plan` immediately before the
   DH solve (`sensor.emhass_dh_hwc_power_plan_snapshot`) and uses that snapshot when adding
   planned HWC compressor power into DH load. MPC uses the same snapshot when subtracting HWC
