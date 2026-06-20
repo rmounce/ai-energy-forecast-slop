@@ -561,7 +561,7 @@ def test_block_planner_accepts_legacy_locked_schedule_seed():
 def test_running_compressor_low_stop_cost_can_defer_to_cheaper_main_block():
     grid = _adelaide_grid(10, 16)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["stop_cost_aud"] = 0.01
+    cfg["hwc"]["block_planner"]["transition_cost_aud"] = 0.01
     cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
     plan = hp.build_block_plan(
         grid_times_utc=grid,
@@ -582,7 +582,7 @@ def test_running_compressor_low_stop_cost_can_defer_to_cheaper_main_block():
 def test_running_compressor_high_stop_cost_keeps_current_run():
     grid = _adelaide_grid(10, 16)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["stop_cost_aud"] = 1.0
+    cfg["hwc"]["block_planner"]["transition_cost_aud"] = 1.0
     cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
     plan = hp.build_block_plan(
         grid_times_utc=grid,
@@ -611,14 +611,14 @@ def test_schedule_objective_delta_prices_added_stops():
         split,
         load_cost=load_cost,
         step_h=step_h,
-        stop_cost_aud=0.05,
+        transition_cost_aud=0.05,
     )
     merged_delta = hp._schedule_objective_delta(
         before,
         merged,
         load_cost=load_cost,
         step_h=step_h,
-        stop_cost_aud=0.05,
+        transition_cost_aud=0.05,
     )
 
     assert hp._schedule_stop_count(split) == 2

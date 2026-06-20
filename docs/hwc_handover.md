@@ -31,8 +31,8 @@ Athom metering is live for the HWC compressor circuit.
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
-| Running compressor policy | planner scores stop/continue candidates; temporary experiment uses `stop_cost_aud = $0.02` |
-| Temporary short-cycle experiment | **active 2026-06-20**: `thermal.min_temp = 50`, restore to `45`; `stop_cost_aud = 0.02`, restore to `0.05` |
+| Running compressor policy | planner scores stop/continue candidates; cost = energy + `transition_cost_aud` per stop |
+| Short-cycle experiment | **concluded 2026-06-20**: config restored (`79f4bbb`); cost key renamed `stop_cost_aud`→`transition_cost_aud` (`0.05`) |
 
 ## What's committed
 
@@ -151,16 +151,14 @@ the engine-independent long pole — gather it regardless.
 - **Battery isolation:** the HWC optim must keep `set_use_battery:false`/`set_use_pv:false`
   (runtime-overridable via EMHASS `associations.csv`). The battery (DH + per-minute MPC) shares
   the EMHASS instance; the now-fixed race was between concurrent `entity_save` publishes.
-- **Running compressor stop cost:** if `binary_sensor.aquatech_compressor` is already `on`,
-  the block planner now compares stop/continue candidates. Objective =
-  energy cost + `block_planner.stop_cost_aud` per compressor stop. This allows interrupting
-  a current run only when a later valid plan beats the configured stop cost.
-- **Aquatech actuation assumption (2026-06-20):** assume `off` → `heat_pump` starts promptly
-  and `water_heater.turn_off` stops promptly. Executor logs each command; verify against
-  `binary_sensor.aquatech_compressor` and Athom channel 2 after a few short-cycle chances.
-- **Temporary short-cycle experiment (2026-06-20):** `thermal.min_temp = 50` and
-  `block_planner.stop_cost_aud = 0.02` to force likely top-up chances and observe Aquatech
-  start/stop behaviour. Restore to `min_temp = 45` and `stop_cost_aud = 0.05` after review.
+- **Running compressor transition cost:** if `binary_sensor.aquatech_compressor` is already
+  `on`, the block planner compares stop/continue candidates. Objective =
+  energy cost + `block_planner.transition_cost_aud` per compressor stop. This allows
+  interrupting a current run only when a later valid plan beats the configured transition cost.
+- **Aquatech actuation (measured 2026-06-20):** `off`→`heat_pump` starts in ~seconds and
+  `turn_off` stops promptly (compressor); `binary_sensor.aquatech_compressor` lags the real
+  transition ~50 s on *both* edges (Local Tuya poll), so Athom ch2 power (>~250 W) is the
+  faster, authoritative compressor signal. See `docs/hwc_thermal_characterisation.md`.
 - **HWC/DH coherence:** battery DH snapshots `sensor.hwc_power_plan` immediately before the
   DH solve (`sensor.emhass_dh_hwc_power_plan_snapshot`) and uses that snapshot when adding
   planned HWC compressor power into DH load. MPC uses the same snapshot when subtracting HWC
