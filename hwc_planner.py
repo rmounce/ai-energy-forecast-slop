@@ -1315,7 +1315,7 @@ def _publish_block_plan(cfg: dict, plan: dict):
             },
         )
     logging.info(
-        "Published HWC block plan to HA (%s, %s, %s, %s)",
+        "Published HWC plan to HA (%s, %s, %s, %s)",
         temp_entity,
         power_entity,
         cost_entity,
