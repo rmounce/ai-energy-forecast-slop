@@ -78,7 +78,7 @@ def main():
     print(f"Eval period: {start_iso} → {end_iso}")
 
     from config_utils import load_config
-    config = load_config(ROOT / "config.json")
+    config = load_config(ROOT / "config.yaml")
 
     from influxdb import InfluxDBClient
     client = InfluxDBClient(**config["influxdb"])

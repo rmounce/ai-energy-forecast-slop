@@ -142,15 +142,15 @@ Dead code removed: `_publish_covariates_helper` (never called) and `model/` (01�
 
 - **Framework:** Darts (time series library) + LightGBM quantile regression
 - **Horizon:** 144 steps = 72 hours at 30-minute resolution
-- **Active price quantiles:** p30, p50 (median), p70 — configured in `config.json`
-- **Active load quantiles:** p50, p65, p75 — configured in `config.json`
+- **Active price quantiles:** p30, p50 (median), p70 — configured in `config.yaml`
+- **Active load quantiles:** p50, p65, p75 — configured in `config.yaml`
 - **Target lags:** 1–6, 12, 24, 48–49, 96–97, 336–337 (1h to 14 days)
 - **Future covariate window:** ±4 lags around each step
 - **Recency weighting:** exponential decay (price: 180-day half-life; load: 90-day half-life)
 - **Log transform:** applied to price targets to handle negative/volatile prices
 - **Anti-crossing:** quantile outputs are sorted to prevent p30 > p50
 
-Several older model files exist on disk (price: p10, p20, p50, p80, p90; load: p60) from past experiments — these are not referenced by the current `config.json` and can be deleted.
+Several older model files exist on disk (price: p10, p20, p50, p80, p90; load: p60) from past experiments — these are not referenced by the current `config.yaml` and can be deleted.
 
 #### Dynamic Handoff (price only)
 
@@ -173,7 +173,7 @@ At prediction time, `apply_tariffs_to_forecast()` adds network loss factor and c
 
 ### `ingest/` — Data Ingestion Scripts
 
-**Active automated scripts** (have systemd timers, use `config.json`):
+**Active automated scripts** (have systemd timers, use `config.yaml`):
 
 | Script | Schedule | Source | InfluxDB destination |
 |---|---|---|---|
@@ -467,7 +467,7 @@ Note: several older model files exist (`price_p10`, `price_p20`, `price_p50`, `p
 
 ## Configuration
 
-`config.json` (from `config.example.json`) holds all credentials and settings:
+`config.yaml` (from `config.example.yaml`) holds all credentials and settings:
 - InfluxDB host/port/db/credentials
 - Home Assistant URL + long-lived token
 - Entity IDs for all HA sensors
@@ -475,7 +475,7 @@ Note: several older model files exist (`price_p10`, `price_p20`, `price_p50`, `p
 - Per-model hyperparameters (n\_estimators, lags, horizon, quantiles, recency weighting)
 - Adjuster settings
 
-**Credential management:** `config.json` is committed with secrets stripped (`influxdb.password` and `home_assistant.token` are empty strings). Real secrets live in `config.secrets.json` (git-ignored), which `config_utils.load_config()` deep-merges at runtime. See `config.secrets.json.example` for the required structure. The HA YAML files need URL redaction before committing.
+**Credential management:** `config.yaml` is committed with secrets stripped (`influxdb.password` and `home_assistant.token` are empty strings). Real secrets live in `config.secrets.yaml` (git-ignored), which `config_utils.load_config()` deep-merges at runtime. See `config.secrets.yaml.example` for the required structure. The HA YAML files need URL redaction before committing.
 
 The systemd services load secrets from `.env` in the repo root (git-ignored). This file must be created manually:
 
@@ -506,7 +506,7 @@ open issues.
 
 5. **Forecast log CSVs are very large.** `price_forecast_log.csv` and `load_forecast_log.csv` are each ~330–340MB and growing. They live outside the repo (git-ignored) but are depended on by `backfill-actuals` and `update-adjusters`.
 
-6. **Stale model files on disk.** Experimental quantile variants (price: p10, p20, p50, p80, p90; load: p60) are no longer referenced by `config.json` and consume ~1.3GB.
+6. **Stale model files on disk.** Experimental quantile variants (price: p10, p20, p50, p80, p90; load: p60) are no longer referenced by `config.yaml` and consume ~1.3GB.
 
 7. **`analyse.ipynb`** is a 36MB notebook with embedded output data committed to the repo. Should either have outputs stripped or be moved outside the repo.
 

@@ -1472,14 +1472,14 @@ def main():
         help="Scenario-only extra draw-off event, repeated by local day across the horizon",
     )
     parser.add_argument("--horizon", type=int, default=None, help="Override horizon (timesteps)")
-    parser.add_argument("--config", default="config.json", help="Path to config.json")
+    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
-    # load_config deep-merges the untracked config.secrets.json (HA token, EMHASS URL)
-    # over config.json — same practice as forecast.py.
+    # load_config deep-merges the untracked config.secrets.yaml (HA token, EMHASS URL)
+    # over config.yaml — same practice as forecast.py.
     cfg = load_config(args.config)
     horizon = args.horizon or cfg["hwc"].get("horizon_steps", 72)
     try:

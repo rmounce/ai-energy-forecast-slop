@@ -43,9 +43,9 @@ Sign convention: feed-in prices are **negative** (Amber convention: cost of expo
 | `sensor.amber_5min_forecasts_feed_in_price` | ~10 | 5-min | ~50 min | ✓ | `emhass.yaml` (effective feed-in blending) |
 | `sensor.amber_5min_forecasts_extended_general_price` | 288 | 5-min | ~24h | ✓ | `emhass.yaml` (MPC REST payload) |
 | `sensor.amber_5min_forecasts_extended_feed_in_price` | 288 | 5-min | ~24h | ✓ | `emhass.yaml` (MPC REST payload) |
-| `sensor.amber_30min_forecasts_general_price` | 74 | 30-min | ~37h | ✓ | `config.json` as `amber_entity`; `forecast.py` LightGBM seed |
-| `sensor.amber_30min_forecasts_feed_in_price` | 74 | 30-min | ~37h | ✓ | `config.json` as `amber_feed_in_entity` |
-| `sensor.amber_billing_interval_forecasts_general_price` | ~56 | mixed 5+30-min | ~24h | ✓ | `config.json` as `amber_billing_entity`; `forecast.py` APF-seeded LightGBM quantiles |
+| `sensor.amber_30min_forecasts_general_price` | 74 | 30-min | ~37h | ✓ | `config.yaml` as `amber_entity`; `forecast.py` LightGBM seed |
+| `sensor.amber_30min_forecasts_feed_in_price` | 74 | 30-min | ~37h | ✓ | `config.yaml` as `amber_feed_in_entity` |
+| `sensor.amber_billing_interval_forecasts_general_price` | ~56 | mixed 5+30-min | ~24h | ✓ | `config.yaml` as `amber_billing_entity`; `forecast.py` APF-seeded LightGBM quantiles |
 | `sensor.amber_billing_interval_forecasts_feed_in_price` | ~56 | mixed 5+30-min | ~24h | ✓ | — |
 | `sensor.amber_5min_forecasts_aemo_price` | ~10 | 5-min | ~50 min | — | — |
 | `sensor.amber_30min_forecasts_aemo_price` | 74 | 30-min | ~37h | — | — |

@@ -37,7 +37,7 @@ Athom metering is live for the HWC compressor circuit.
 
 ## What's committed
 
-- `d9f171f` — HWC planner v1 (`hwc_planner.py`), `config.json` `hwc` block, systemd units,
+- `d9f171f` — HWC planner v1 (`hwc_planner.py`), `config.yaml` `hwc` block, systemd units,
   unit tests, ApexCharts card, spec doc.
 - `c61520e` — paused the planner; documented the EMHASS shared-state race.
 - `5c1ab55` — `hwc_cop_analysis.py` (reusable COP sweep), `data/hwc_cop_cycles.csv`,
@@ -57,7 +57,7 @@ leave them alone.
   builds clock-aligned `draw_off`/temperature arrays; creates a 48h fixed-speed block plan;
   and publishes the plan sensors directly to HA.
 - Published HWC planned power is modelled compressor watts, not a flat nameplate value.
-  `config.json` uses the 2026-06-19 Athom fit: `740 W @ tank 50 °C / wet-bulb 12.5 °C`,
+  `config.yaml` uses the 2026-06-19 Athom fit: `740 W @ tank 50 °C / wet-bulb 12.5 °C`,
   `+15 W/°C` tank, `+1.5 W/°C` wet-bulb, clamped `650–930 W`.
 - Battery EMHASS still receives the household load forecast through HA Jinja. That forecast
   is now base load with deferrable loads excluded; `hass/packages/emhass.yaml` adds
@@ -65,7 +65,7 @@ leave them alone.
 - EMHASS fallback mode is still available with `hwc.planner: "emhass"`, but the block planner
   is the default because it matches the unit's fixed-speed behavior and avoids fragmented
   compressor starts.
-- Loads config via `config_utils.load_config()` (merges untracked `config.secrets.json`).
+- Loads config via `config_utils.load_config()` (merges untracked `config.secrets.yaml`).
 - Pure helpers are unit-tested: `tests/unit/test_hwc_planner.py` (`.venv/bin/python -m pytest`).
 
 ## Measured findings that MUST shape the model (the important part)
@@ -134,11 +134,11 @@ the engine-independent long pole — gather it regardless.
 
 ## Gotchas / operational notes
 
-- **Secrets:** never put secrets — *including internal hostnames* — in tracked `config.json`.
-  The EMHASS URL lives in untracked `config.secrets.json` (`hwc.emhass_base_url`), merged by
-  `config_utils.load_config`; placeholder in `config.secrets.json.example`. (We leaked the
+- **Secrets:** never put secrets — *including internal hostnames* — in tracked `config.yaml`.
+  The EMHASS URL lives in untracked `config.secrets.yaml` (`hwc.emhass_base_url`), merged by
+  `config_utils.load_config`; placeholder in `config.secrets.yaml.example`. (We leaked the
   internal domain once — don't repeat.)
-- **InfluxDB:** no sudo; `docker exec influxdb influx -username user -password <see config.secrets.json>
+- **InfluxDB:** no sudo; `docker exec influxdb influx -username user -password <see config.secrets.yaml>
   -database hass -execute "..."`, or use `InfluxDBClient` via `load_config()`. Tank temp =
   measurement `sensor__temperature` entity `heat_pump_temperature`; binary sensors log on
   change → query with `fill(previous)`, not `fill(0)`. Useful HWC channels: `aquatech_exhaust_temperature`

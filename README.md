@@ -16,7 +16,7 @@ This project provides a comprehensive forecasting pipeline for home energy manag
         *   **Amber Electric** for real-time and forecast price data.
 *   **Automated Tariff Calculation:** Automatically updates and applies complex network tariffs and GST to wholesale price forecasts, providing an accurate final cost.
 *   **Command-Line Interface:** A single, robust script (`forecast.py`) with clear modes for training, prediction, and updating tariffs.
-*   **External Configuration:** All settings, keys, and paths are managed in an external `config.json` file, keeping secrets out of the main script.
+*   **External Configuration:** All settings, keys, and paths are managed in an external `config.yaml` file, keeping secrets out of the main script.
 
 ## How It Works
 
@@ -59,8 +59,8 @@ The system operates in a cyclical fashion:
 5.  **Create Configuration:**
     Copy the example configuration file and edit it with your own details.
     ```bash
-    cp config.example.json config.json
-    nano config.json
+    cp config.example.yaml config.yaml
+    nano config.yaml
     ```
     *   Fill in your InfluxDB and Home Assistant credentials.
     *   Ensure all `entity_id`s match your Home Assistant setup.
@@ -100,7 +100,7 @@ python3 forecast.py predict-price --publish-hass --dynamic-handoff
 python3 forecast.py predict-load --publish-hass
 ```
 *Omit `--publish-hass` to run locally without writing to HA.*
-*Use `--config /path/to/config.json` for a non-default config.*
+*Use `--config /path/to/config.yaml` for a non-default config.*
 
 ## Data Pipeline Configuration
 

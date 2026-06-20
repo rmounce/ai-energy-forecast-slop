@@ -252,7 +252,7 @@ def main():
                       help="Stream all weekly archive ZIPs from NEMweb")
     mode.add_argument("--fetch", action="store_true",
                       help="Download + ingest the latest from CURRENT")
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--regions", nargs="+", default=sorted(DEFAULT_REGIONS),
                         metavar="REGION")
     parser.add_argument("--all-regions", action="store_true")

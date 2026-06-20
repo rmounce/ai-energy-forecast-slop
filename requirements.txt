@@ -1,6 +1,7 @@
 pandas
 numpy
 requests
+pyyaml
 pytz
 influxdb
 u8darts[notorch]

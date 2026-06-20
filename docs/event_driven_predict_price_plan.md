@@ -47,7 +47,7 @@ Async Python using the `websockets` package (new dependency, ~250 kB).
 Responsibilities:
 
 1. **Auth**: connect to `ws://<ha_host>:8123/api/websocket`; send
-   long-lived token from `config.secrets.json` (same token used by the
+   long-lived token from `config.secrets.yaml` (same token used by the
    existing `get_entity_state()` REST calls).
 2. **Subscribe**: `subscribe_events` with `event_type=state_changed`,
    filtered application-side to

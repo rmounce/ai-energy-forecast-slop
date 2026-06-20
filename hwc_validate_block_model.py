@@ -220,7 +220,7 @@ def write_markdown(report: pd.DataFrame, path: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cycles-csv", default=DEFAULT_CYCLES_CSV)
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--target-c", type=float, default=60.0)
     parser.add_argument("--step-min", type=float, default=5.0)
     parser.add_argument("--max-duration-min", type=float, default=240.0)

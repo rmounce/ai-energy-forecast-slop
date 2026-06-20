@@ -266,9 +266,9 @@ def _install_signal_handlers(listener: Listener, loop: asyncio.AbstractEventLoop
 
 
 def main() -> int:
-    config = load_config(str(REPO_ROOT / "config.json"))
+    config = load_config(str(REPO_ROOT / "config.yaml"))
     if not config["home_assistant"].get("token"):
-        log.error("home_assistant.token missing (config.secrets.json)")
+        log.error("home_assistant.token missing (config.secrets.yaml)")
         return 2
     listener = Listener(config)
     loop = asyncio.new_event_loop()

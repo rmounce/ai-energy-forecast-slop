@@ -162,11 +162,11 @@ complexity" is a noted project pain point. Python keeps it testable. A thin
 
 ### Configuration & secrets
 
-Non-secret settings live under the `hwc` key in the tracked `config.json` (entities,
+Non-secret settings live under the `hwc` key in the tracked `config.yaml` (entities,
 thermal params, draw-off window, horizon). **Secrets — including the internal EMHASS
-hostname — go in the untracked `config.secrets.json`** (`hwc.emhass_base_url`), which
-`config_utils.load_config()` deep-merges over `config.json`; a placeholder is in the
-tracked `config.secrets.json.example`. Never put hostnames/domains/tokens in `config.json`.
+hostname — go in the untracked `config.secrets.yaml`** (`hwc.emhass_base_url`), which
+`config_utils.load_config()` deep-merges over `config.yaml`; a placeholder is in the
+tracked `config.secrets.yaml.example`. Never put hostnames/domains/tokens in `config.yaml`.
 Run with `python hwc_planner.py --dry-run` to build + log the payload without POSTing.
 
 ### Published entities & visualisation

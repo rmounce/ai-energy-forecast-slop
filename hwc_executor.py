@@ -277,7 +277,7 @@ def run(cfg: dict, *, dry_run: bool = False, force: bool = False) -> Decision:
 
 def main():
     parser = argparse.ArgumentParser(description="HWC plan executor")
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true", help="Actuate even if hwc.actuation.enabled is false")
     args = parser.parse_args()
