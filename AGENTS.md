@@ -2,17 +2,19 @@
 
 ## Collaboration
 
-- Keep the repository state clean. Before finishing a task, check `git status` and either commit, ignore, or deliberately remove new files created during the work.
-- If `git status` shows inherited untracked files or dirty changes that the agent did not create, ask the user what to do before continuing substantial work. Do not keep working around inherited unclean state indefinitely.
-- Do not commit local scratch/question files unless the user explicitly asks for them to become durable project documentation.
-- When the user suggests that the agent should do something differently, offer to update this `AGENTS.md` file so the preference is remembered for future sessions.
-- Commit changes regularly, but not excessively.
+- Keep worktree clean: check `git status` before finishing.
+- Own your files: commit, ignore, or remove generated files.
+- Inherited dirty/untracked state: ask before substantial work.
+- Scratch/question files: do not commit unless explicitly requested.
+- User preference change: offer to update `AGENTS.md`.
+- Commit regularly; avoid noisy commits.
 
 ## Project Documentation
 
-- Be aware of `docs/`, `README.md`, and `ARCHITECTURE.md`, updating them as you go when changes affect documented behaviour.
-- For repository material likely to be referenced often, apply "Caveman compression": add or maintain a concise, low-prose summary with short bullets, concrete facts, decisions, commands, file paths, and current status. Prefer this as a companion summary or top section rather than deleting useful detail from the source document.
-- When updating frequently referenced docs, keep the compressed summary current in the same change.
+- Keep `docs/`, `README.md`, `ARCHITECTURE.md` current.
+- Behaviour change affecting docs: update docs in same work.
+- Caveman compression: short bullets, concrete facts, decisions, commands, paths, status.
+- Frequently referenced docs: keep compressed summary current.
 
 ## External Systems
 
@@ -22,21 +24,21 @@
 
 ## Plans And Memory
 
-- At the start of each session, if a plan file exists alongside memory files, explicitly check them for contradictions before acting.
-- Memory takes precedence over plan files when they conflict. Update the plan file immediately to reflect the current decision.
-- When the user overrides or rejects a planned approach mid-session, update the plan file in that same response. Do not defer it.
+- Session start: check plan files against memory files.
+- Conflict: memory wins.
+- Plan changed or rejected: update plan file immediately.
 
 ## Infrastructure Notes
 
-- InfluxDB data directory: `/opt/dockerfiles/influxdb/` (requires sudo to inspect).
-- InfluxDB runs as a Docker container; config is in `/opt/dockerfiles/`.
+- InfluxDB data: `/opt/dockerfiles/influxdb/` (sudo required).
+- InfluxDB Docker/config: `/opt/dockerfiles/`.
 
 ## Python Environment
 
-- Use `uv` for package management rather than `pip`.
-- The venv was created with `uv`; `.venv/pyvenv.cfg` contains `uv = ...`.
-- `README.md` may still mention `pip`; prefer `uv pip` in practice.
-- Install with CPU-only torch to avoid large CUDA wheels:
+- Package manager: `uv`, not raw `pip`.
+- Venv: uv-created; see `.venv/pyvenv.cfg`.
+- README may say `pip`; prefer `uv pip`.
+- CPU-only torch install:
 
 ```bash
 uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
