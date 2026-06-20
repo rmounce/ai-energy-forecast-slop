@@ -335,7 +335,7 @@
         "predicted_temp_entity": "sensor.predicted_temp",
         "power_plan_entity": "sensor.power_plan",
         "publish_prefix": "hwc_",
-        "planner": "block",
+        "planner": "dp",
         "horizon_steps": 576,
         "optimization_time_step": 5,
         "weather": {
