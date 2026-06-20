@@ -599,6 +599,33 @@ def test_running_compressor_high_stop_cost_keeps_current_run():
     assert plan["planned_stop_count"] == 1
 
 
+def test_schedule_objective_delta_prices_added_stops():
+    before = [800.0, 0.0, 0.0, 0.0]
+    split = [800.0, 0.0, 800.0, 0.0]
+    merged = [800.0, 800.0, 800.0, 0.0]
+    load_cost = [0.10, 0.10, 0.10, 0.10]
+    step_h = 0.5
+
+    split_delta = hp._schedule_objective_delta(
+        before,
+        split,
+        load_cost=load_cost,
+        step_h=step_h,
+        stop_cost_aud=0.05,
+    )
+    merged_delta = hp._schedule_objective_delta(
+        before,
+        merged,
+        load_cost=load_cost,
+        step_h=step_h,
+        stop_cost_aud=0.05,
+    )
+
+    assert hp._schedule_stop_count(split) == 2
+    assert hp._schedule_stop_count(merged) == 1
+    assert merged_delta < split_delta
+
+
 def test_main_block_skips_tiny_topup_near_target():
     grid = _adelaide_grid(10, 4)
     cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
