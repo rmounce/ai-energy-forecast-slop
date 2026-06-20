@@ -418,15 +418,6 @@ def _add_contiguous_heat(
     return out
 
 
-def _schedule_cost_delta(
-    before: list[float], after: list[float], load_cost: list[float], step_h: float
-) -> float:
-    return sum(
-        max(0.0, new - old) / 1000.0 * float(cost) * step_h
-        for old, new, cost in zip(before, after, load_cost, strict=True)
-    )
-
-
 def _schedule_energy_cost(schedule_w: list[float], load_cost: list[float], step_h: float) -> float:
     return sum(
         max(0.0, power) / 1000.0 * float(cost) * step_h
@@ -466,6 +457,32 @@ def _schedule_objective(
     return (energy_cost + stops * stop_cost_aud, stops, energy_cost)
 
 
+def _schedule_objective_delta(
+    before: list[float],
+    after: list[float],
+    *,
+    load_cost: list[float],
+    step_h: float,
+    stop_cost_aud: float,
+    compressor_initially_on: bool = False,
+) -> float:
+    before_score = _schedule_objective(
+        before,
+        load_cost=load_cost,
+        step_h=step_h,
+        stop_cost_aud=stop_cost_aud,
+        compressor_initially_on=compressor_initially_on,
+    )[0]
+    after_score = _schedule_objective(
+        after,
+        load_cost=load_cost,
+        step_h=step_h,
+        stop_cost_aud=stop_cost_aud,
+        compressor_initially_on=compressor_initially_on,
+    )[0]
+    return after_score - before_score
+
+
 def _min_block_lift_c(hwc: dict) -> float:
     block_cfg = hwc.get("block_planner", {})
     return float(block_cfg.get("min_block_lift_c", block_cfg.get("min_main_block_lift_c", 0.0)))
@@ -500,6 +517,7 @@ def _choose_daily_main_blocks(
     step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
     reserve_target = float(block_cfg.get("main_end_reserve_target_c", target))
     reserve_penalty_per_c2 = float(block_cfg.get("main_end_reserve_penalty_aud_per_c2", 0.0))
+    stop_cost_aud = float(block_cfg.get("stop_cost_aud", 0.0))
 
     slots_by_day: dict[datetime.date, list[int]] = {}
     for idx, t in enumerate(grid_times_utc):
@@ -557,7 +575,13 @@ def _choose_daily_main_blocks(
                 1 for old, new in zip(out, candidate, strict=True) if new > old
             )
             duration_shortfall = max(0, min_steps - added_slots) if added_slots else 0
-            cost = _schedule_cost_delta(out, candidate, load_cost, step_h)
+            cost = _schedule_objective_delta(
+                out,
+                candidate,
+                load_cost=load_cost,
+                step_h=step_h,
+                stop_cost_aud=stop_cost_aud,
+            )
             score = (
                 target_shortfall,
                 window_shortfall,
@@ -590,6 +614,7 @@ def _repair_min_temperature(
     overnight_end = _parse_hhmm(block_cfg.get("overnight_window_end", "06:00"))
     min_temp = float(hwc["thermal"].get("min_temp", 45))
     boost_target = float(block_cfg.get("boost_target_temp", min_temp + 5))
+    stop_cost_aud = float(block_cfg.get("stop_cost_aud", 0.0))
     step_h = hwc.get("optimization_time_step", 30) / 60.0
     min_steps = _min_block_steps(hwc)
     lookback = int(round(18 / step_h))
@@ -650,7 +675,13 @@ def _repair_min_temperature(
                 cfg=hwc,
             )
             shortfall = max(0.0, min_temp - ctemps[bad_idx])
-            cost = _schedule_cost_delta(out, candidate, load_cost, step_h)
+            cost = _schedule_objective_delta(
+                out,
+                candidate,
+                load_cost=load_cost,
+                step_h=step_h,
+                stop_cost_aud=stop_cost_aud,
+            )
             score = (shortfall, cost)
             if score < best_score:
                 best = candidate
@@ -695,7 +726,9 @@ def _repair_terminal_temperature(
 
     step_h = hwc.get("optimization_time_step", 30) / 60.0
     min_steps = _min_block_steps(hwc)
-    lookback_h = float(hwc.get("block_planner", {}).get("terminal_lookback_hours", 24))
+    block_cfg = hwc.get("block_planner", {})
+    stop_cost_aud = float(block_cfg.get("stop_cost_aud", 0.0))
+    lookback_h = float(block_cfg.get("terminal_lookback_hours", 24))
     lo = max(0, len(schedule_w) - int(round(lookback_h / step_h)))
     best = schedule_w
     best_score = (max(0.0, terminal_target - terminal), math.inf)
@@ -728,7 +761,13 @@ def _repair_terminal_temperature(
         )
         score = (
             max(0.0, terminal_target - cterminal),
-            _schedule_cost_delta(schedule_w, candidate, load_cost, step_h),
+            _schedule_objective_delta(
+                schedule_w,
+                candidate,
+                load_cost=load_cost,
+                step_h=step_h,
+                stop_cost_aud=stop_cost_aud,
+            ),
         )
         if score < best_score:
             best = candidate
