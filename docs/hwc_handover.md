@@ -27,6 +27,7 @@ Athom metering is live for the HWC compressor circuit.
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
 | COP characterisation | updated through `2026-06-18`; 12/14 clean cycles, five recent Athom-metered cycles |
 | Engine decision (EMHASS vs custom) | custom block planner is now default; EMHASS kept as fallback |
+| DP planner | **implemented, opt-in** (`hwc.planner = "dp"`); ~350 ms vs block 12 s/225 s; see `docs/hwc_dp_planner.md` |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
