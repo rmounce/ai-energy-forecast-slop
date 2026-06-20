@@ -139,6 +139,25 @@ def test_suppresses_off_inside_heat_command_grace():
     )
 
 
+def test_command_key_dedups_identical_commands_and_ignores_noops():
+    import services.hwc_daemon as hd
+    import hwc_executor as he
+
+    off = he.Decision(action="off", reason="r")
+    heat60 = he.Decision(action="heat", reason="r", setpoint_c=60.0)
+    heat60b = he.Decision(action="heat", reason="other", setpoint_c=60.04)  # rounds to 60.0
+    heat58 = he.Decision(action="heat", reason="r", setpoint_c=58.0)
+
+    # Identical actuation => equal key (skipped); setpoint rounds to 0.1.
+    assert hd.command_key(off) == hd.command_key(he.Decision(action="off", reason="x"))
+    assert hd.command_key(heat60) == hd.command_key(heat60b)
+    assert hd.command_key(heat60) != hd.command_key(heat58)
+    assert hd.command_key(off) != hd.command_key(heat60)
+    # No-op actions are never dedup-keyed (and never actuated).
+    assert hd.command_key(he.Decision(action="idle", reason="r")) is None
+    assert hd.command_key(he.Decision(action="wait", reason="r")) is None
+
+
 def test_does_not_suppress_heat_or_expired_grace():
     assert not hd.should_suppress_off_after_heat(
         decision_action="heat",

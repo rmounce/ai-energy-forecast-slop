@@ -154,6 +154,19 @@ def classify_state_change(config: dict, entity_id: str, old_state: dict | None, 
     return TriggerDecision(False, False, "not watched")
 
 
+def command_key(decision: hwc_executor.Decision):
+    """Identity of an actuation command; equal keys => a redundant re-command.
+
+    ``None`` for no-op actions (idle/wait), which are never actuated and never dedup-skipped.
+    Used to avoid re-issuing an identical water_heater command every periodic tick; the
+    daemon invalidates its cached key on equipment state changes so real drift re-asserts.
+    """
+    if decision.action not in ("off", "heat"):
+        return None
+    setpoint = round(decision.setpoint_c, 1) if decision.setpoint_c is not None else None
+    return (decision.action, setpoint)
+
+
 def should_suppress_off_after_heat(
     *,
     decision_action: str,
@@ -243,6 +256,7 @@ class HwcDaemon:
         self.started_at = time.monotonic()
         self.last_plan_at = 0.0
         self.last_heat_command_at = 0.0
+        self.last_applied_command = None
         self.compressor_seen_on_since_heat = False
         self.last_reached_target_at = self._load_state()
         self._next_msg_id = 1
@@ -314,6 +328,7 @@ class HwcDaemon:
             if entity_id not in self.entities:
                 continue
             event_time = _parse_event_time_utc(event.get("time_fired"))
+            self._invalidate_command_cache_on_equipment_change(entity_id)
             self._track_compressor_latch_event(entity_id, data)
             self._track_target_temperature_event(entity_id, data, event_time)
             decision = classify_state_change(
@@ -445,14 +460,25 @@ class HwcDaemon:
                 return
 
             act = self.config["hwc"].get("actuation", {})
+            key = command_key(decision)
             if self.dry_run or not act.get("enabled", False):
                 log.info("Dry/config-disabled run; not calling water_heater services")
+            elif key is None:
+                log.info("HWC executor no-op (%s); no command issued", decision.action)
+            elif key == self.last_applied_command:
+                log.info(
+                    "HWC command unchanged (%s, setpoint=%s); skipping re-command",
+                    decision.action,
+                    decision.setpoint_c,
+                )
             else:
                 try:
                     await asyncio.to_thread(hwc_executor.apply_decision, self.config, decision)
                 except Exception:
+                    # Leave last_applied_command unchanged so the next tick retries.
                     log.exception("HWC executor apply failed")
                     return
+                self.last_applied_command = key
                 if decision.action == "heat":
                     self.last_heat_command_at = time.monotonic()
                     self.compressor_seen_on_since_heat = False
@@ -484,6 +510,13 @@ class HwcDaemon:
             grace_seconds=grace,
             compressor_seen_on_since_heat=self.compressor_seen_on_since_heat,
         )
+
+    def _invalidate_command_cache_on_equipment_change(self, entity_id: str) -> None:
+        # Any change to the heater/compressor means our cached command may no longer reflect
+        # reality (e.g. a manual mode change), so force the next executor pass to re-assert.
+        act = self.config["hwc"].get("actuation", {})
+        if entity_id in (act.get("water_heater_entity"), act.get("compressor_entity")):
+            self.last_applied_command = None
 
     def _track_compressor_latch_event(self, entity_id: str, data: dict) -> None:
         if entity_id != self.config["hwc"].get("actuation", {}).get("compressor_entity"):
