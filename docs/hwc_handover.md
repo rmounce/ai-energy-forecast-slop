@@ -31,7 +31,7 @@ Athom metering is live for the HWC compressor circuit.
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
-| Running compressor policy | planner scores stop/continue candidates using `block_planner.stop_cost_aud`; no unconditional run lock |
+| Running compressor policy | planner scores stop/continue candidates using `block_planner.stop_cost_aud = $0.05`; no unconditional run lock |
 
 ## What's committed
 
@@ -154,6 +154,9 @@ the engine-independent long pole — gather it regardless.
   the block planner now compares stop/continue candidates. Objective =
   energy cost + `block_planner.stop_cost_aud` per compressor stop. This allows interrupting
   a current run only when a later valid plan beats the configured stop cost.
+- **Aquatech actuation assumption (2026-06-20):** assume `off` → `heat_pump` starts promptly
+  and `water_heater.turn_off` stops promptly. Executor logs each command; verify against
+  `binary_sensor.aquatech_compressor` and Athom channel 2 after a few short-cycle chances.
 - **HWC/DH coherence:** battery DH snapshots `sensor.hwc_power_plan` immediately before the
   DH solve (`sensor.emhass_dh_hwc_power_plan_snapshot`) and uses that snapshot when adding
   planned HWC compressor power into DH load. MPC uses the same snapshot when subtracting HWC
