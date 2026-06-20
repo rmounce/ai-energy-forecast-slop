@@ -14,6 +14,12 @@
 - For repository material likely to be referenced often, apply "Caveman compression": add or maintain a concise, low-prose summary with short bullets, concrete facts, decisions, commands, file paths, and current status. Prefer this as a companion summary or top section rather than deleting useful detail from the source document.
 - When updating frequently referenced docs, keep the compressed summary current in the same change.
 
+## External Systems
+
+- Document confirmed black-box behaviour promptly.
+- Cover device/API quirks, HA entity lifecycle, mode/setpoint semantics, operational limits.
+- Record concrete facts: date/context, command/service, observed state, remaining uncertainty.
+
 ## Plans And Memory
 
 - At the start of each session, if a plan file exists alongside memory files, explicitly check them for contradictions before acting.
