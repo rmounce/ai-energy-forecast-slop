@@ -376,7 +376,7 @@
             "main_window_end": "18:00",
             "overnight_window_start": "00:00",
             "overnight_window_end": "06:00",
-            "stop_cost_aud": 0.1,
+            "stop_cost_aud": 0.05,
             "min_block_lift_c": 3.0,
             "min_block_duration_minutes": 0,
             "main_end_reserve_penalty_aud_per_c2": 0.005,

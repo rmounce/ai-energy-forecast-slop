@@ -196,12 +196,19 @@ def apply_decision(cfg: dict, decision: Decision):
     act = cfg["hwc"]["actuation"]
     entity = act["water_heater_entity"]
     if decision.action == "heat":
+        mode = act.get("operation_mode", "heat_pump")
+        logging.info(
+            "HWC command: set %s mode=%s setpoint=%sC (assuming off->heat starts promptly)",
+            entity,
+            mode,
+            f"{decision.setpoint_c:.1f}" if decision.setpoint_c is not None else "unknown",
+        )
         _service_call(
             cfg,
             "set_operation_mode",
             {
                 "entity_id": entity,
-                "operation_mode": act.get("operation_mode", "heat_pump"),
+                "operation_mode": mode,
             },
         )
         _service_call(
@@ -210,10 +217,14 @@ def apply_decision(cfg: dict, decision: Decision):
             {
                 "entity_id": entity,
                 "temperature": decision.setpoint_c,
-                "operation_mode": act.get("operation_mode", "heat_pump"),
+                "operation_mode": mode,
             },
         )
     elif decision.action == "off":
+        logging.info(
+            "HWC command: turn off %s (assuming turn_off stops promptly)",
+            entity,
+        )
         _service_call(cfg, "turn_off", {"entity_id": entity})
 
 
