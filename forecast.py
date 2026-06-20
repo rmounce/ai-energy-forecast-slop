@@ -2118,7 +2118,7 @@ def _execute_tft_prediction(historical_df, future_covariates_df):
         _fut_raw_diag = None
 
     DEC_CONT = ["pd_rrp", "pd_demand", "pd_net_interchange", "vic1_pd_rrp", "nsw1_pd_rrp",
-                "pd7_rrp", "sd_demand", "sd_net_interchange"]
+                "sd_demand", "sd_net_interchange"]
     # Apply dec scalers
     for feat in DEC_CONT:
         fut[feat] = transform_val(fut[feat], feat)
