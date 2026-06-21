@@ -254,6 +254,59 @@ def test_dp_cold_start_degrades_gracefully():
     assert plan["terminal_temperature"] > 38.0
 
 
+def test_dp_two_survivors_produces_valid_plan():
+    # survivors_per_state=2 is an opt-in "compromise" path (not objectively helpful; kept by
+    # owner request). It must still yield a structurally valid, exactly-replayed plan.
+    grid = _grid(0, 40)
+    cfg = _cfg()
+    cfg["hwc"].setdefault("dp_planner", {})["survivors_per_state"] = 2
+    kwargs = dict(
+        grid_times_utc=grid,
+        load_cost=[0.20] * 20 + [0.60] * 20,
+        dry_bulb=[15.0] * 40,
+        wet_bulb=[12.5] * 40,
+        draw_off=[0.0] * 40,
+        start_temperature=50.0,
+        cfg=cfg,
+    )
+    plan = dp.build_dp_plan(**kwargs)
+    assert len(plan["schedule_w"]) == 40
+    for p in plan["schedule_w"]:
+        assert p == 0.0 or 650.0 <= p <= 930.0
+    # Published temps still come from the exact replay, not the binned DP estimate.
+    temps, terminal = hp.simulate_block_temperatures(
+        schedule_w=plan["schedule_w"],
+        start_temperature=50.0,
+        dry_bulb=[15.0] * 40,
+        wet_bulb=[12.5] * 40,
+        draw_off=[0.0] * 40,
+        cfg=cfg["hwc"],
+    )
+    assert plan["temperatures"] == temps
+    assert plan["terminal_temperature"] == terminal
+
+
+def test_dp_survivors_default_is_one():
+    # Absent config => single survivor (the evidence-based default); identical to omitting
+    # the dp_planner block entirely.
+    grid = _grid(0, 32)
+    base = _cfg()
+    explicit = _cfg()
+    explicit["hwc"].setdefault("dp_planner", {})["survivors_per_state"] = 1
+    common = dict(
+        grid_times_utc=grid,
+        load_cost=[0.20] * 16 + [0.55] * 16,
+        dry_bulb=[14.0] * 32,
+        wet_bulb=[11.5] * 32,
+        draw_off=[0.0] * 32,
+        start_temperature=49.0,
+    )
+    assert (
+        dp.build_dp_plan(cfg=base, **common)["schedule_w"]
+        == dp.build_dp_plan(cfg=explicit, **common)["schedule_w"]
+    )
+
+
 def test_dp_empty_horizon_returns_empty_plan():
     cfg = _cfg()
     plan = dp.build_dp_plan(

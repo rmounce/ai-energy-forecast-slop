@@ -38,6 +38,28 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 - `min_temp_penalty_aud_per_c` 5.0
 - `desired_penalty_aud_per_c` 1.0
 - `terminal_penalty_aud_per_c` 0.05
+- `survivors_per_state` 1 — DP survivors kept per binned state. **Leave at 1.** `2` also keeps
+  the highest-temp ("run a bit longer") path; present only by owner request and **not
+  objectively helpful** — see "Multi-survivor" below.
+
+## Multi-survivor (off by default — kept by request)
+
+Default keeps **one** survivor per state (min-cost). Two alternatives were tried 2026-06-21:
+
+- **Full Pareto frontier (cost↓, temp↑):** unbounded survivors → **7.5 h CPU** on one
+  576×5min horizon. Infeasible; not shipped.
+- **Bounded 2-survivor (min-cost + max-temp), `survivors_per_state: 2`:** swept start-temp
+  44–61 °C × compressor on/off on a real horizon with a $2.87/kWh price spike. Changed
+  decisions in **37/70** scenarios but was **net-negative on `objective_cost_aud`**
+  (~1 c/plan, mixed sign; worse ~26, better ~11). It errs warmer/safer, never risks an
+  obligation, runs ~2× (still sub-second) — so harmless, just not helpful.
+
+Why "more states → worse" isn't a paradox: the DP minimises `J = energy + transition +
+soft penalties`; the superset guarantee improves *that*. The reported `objective_cost_aud`
+excludes the penalties, so the extra freedom "buys" obligation margin the money metric
+prices at zero. If sub-bin precision ever matters, shrink `temp_bin_c` (symmetric), don't
+add survivors. The `survivors_per_state: 2` path is retained only because the owner wanted
+it available; safe to delete if never enabled.
 
 Reuses from `block_planner`: `transition_cost_aud`, `main_window_end`, `main_satisfied_dates`.
 Reuses from `thermal`: rate/power model, `min_temp`, `desired_temp`, `max_temp`,

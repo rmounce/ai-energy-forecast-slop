@@ -330,6 +330,11 @@ hwc:
     main_end_reserve_penalty_aud_per_c2: 0.005
     boost_target_temp: 50
     terminal_lookback_hours: 24
+  dp_planner:
+    # survivors_per_state: 2 keeps the max-temp ("run a bit longer") path as well as the
+    # min-cost one. Enabled at owner's request; measured net-negative (~1c/plan) and NOT
+    # objectively helpful (errs warmer/safer). See docs/hwc_dp_planner.md. Revert to 1 anytime.
+    survivors_per_state: 2
   actuation:
     enabled: true
     water_heater_entity: water_heater.aquatech

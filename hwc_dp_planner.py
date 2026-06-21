@@ -101,6 +101,13 @@ def build_dp_plan(
     terminal_pen = float(dp_cfg.get("terminal_penalty_aud_per_c", 0.05))
     bin_c = float(dp_cfg.get("temp_bin_c", 0.25))
 
+    # Survivors kept per binned state. 1 = min-cost only — objectively optimal here. 2 also
+    # keeps the max-temp ("run a bit longer") path. NOTE: survivors_per_state=2 is present
+    # ONLY because the owner wanted it kept; the 2026-06-21 sweep measured it net-negative
+    # (~1c/plan, mixed sign) on objective_cost_aud — i.e. NOT objectively helpful, just
+    # warmer/safer. See docs/hwc_dp_planner.md. Safe to delete this knob if never enabled.
+    survivors = 2 if int(dp_cfg.get("survivors_per_state", 1)) >= 2 else 1
+
     terminal_setting = th.get("terminal_target", "current")
     terminal_target = (
         float(start_temperature) if terminal_setting == "current" else float(terminal_setting)
@@ -133,18 +140,30 @@ def build_dp_plan(
         if local_dates[p].isoformat() not in satisfied_dates:
             obligation_due_at[p] = True
 
-    # Forward DP. State key -> (cost, exact_temp, prev_key, action_on). history[p] is the
-    # state map *before* interval p; history[n] is the terminal map.
+    # Forward DP. State key -> list of records, each (cost, exact_temp, prev_key, prev_idx,
+    # action_on). At most `survivors` records are kept per key. history[p] is the state map
+    # *before* interval p; history[n] is the terminal map.
     init_on = bool(compressor_initially_on)
     init_regime = regime_for_start(start_temperature) if init_on else _OFF
     init_sat = start_temperature >= desired
     init_key = (tbin(start_temperature), init_on, init_regime, init_sat)
-    states: dict[tuple, tuple] = {init_key: (0.0, float(start_temperature), None, None)}
+    states: dict[tuple, list] = {init_key: [(0.0, float(start_temperature), None, None, None)]}
     history: list[dict] = []
+
+    def _collapse(recs: list) -> list:
+        # survivors==1: min-cost only (first on ties, matching strict-< accumulation).
+        # survivors==2: also keep the highest exact-temp record.
+        if len(recs) <= 1:
+            return recs
+        best_cost = min(recs, key=lambda r: r[0])
+        if survivors == 1:
+            return [best_cost]
+        best_temp = max(recs, key=lambda r: r[1])
+        return [best_cost] if best_cost is best_temp else [best_cost, best_temp]
 
     for p in range(n):
         history.append(states)
-        nxt: dict[tuple, tuple] = {}
+        nxt: dict[tuple, list] = {}
         lc = float(load_cost[p])
         amb = float(dry_bulb[p])
         wbp = wb[p]
@@ -154,59 +173,59 @@ def build_dp_plan(
         arr_min_temp = arr < n  # penalise future reported temps, not the fixed start/terminal
         arr_oblig = arr < n and obligation_due_at[arr]
 
-        for key, (cost, temp, _prev, _act) in states.items():
+        for key, recs in states.items():
             _, on_prev, regime_prev, sat_prev = key
-            t1 = temp - max(0.0, temp - amb) * ua * step_h / cap - draw_p / cap
-            for action_on in (False, True):
-                if action_on:
-                    if on_prev and regime_prev != _OFF:
-                        regime = regime_prev
+            for idx, (cost, temp, _pk, _pi, _act) in enumerate(recs):
+                t1 = temp - max(0.0, temp - amb) * ua * step_h / cap - draw_p / cap
+                for action_on in (False, True):
+                    if action_on:
+                        if on_prev and regime_prev != _OFF:
+                            regime = regime_prev
+                        else:
+                            regime = regime_for_start(t1)
+                        rate = _rate_for_regime(th, regime, wbp, t1)
+                        t_next = min(max_temp, t1 + rate * step_h)
+                        power = hp._compressor_power_w(th, t1, wbp)
+                        energy = max(0.0, power) / 1000.0 * lc * step_h
+                        trans = 0.0 if on_prev else transition_cost
+                        nregime = regime
                     else:
-                        regime = regime_for_start(t1)
-                    rate = _rate_for_regime(th, regime, wbp, t1)
-                    t_next = min(max_temp, t1 + rate * step_h)
-                    power = hp._compressor_power_w(th, t1, wbp)
-                    energy = max(0.0, power) / 1000.0 * lc * step_h
-                    trans = 0.0 if on_prev else transition_cost
-                    nregime = regime
-                else:
-                    t_next = min(max_temp, t1)
-                    energy = 0.0
-                    trans = 0.0
-                    nregime = _OFF
+                        t_next = min(max_temp, t1)
+                        energy = 0.0
+                        trans = 0.0
+                        nregime = _OFF
 
-                if arr_new_day:
-                    sat = t_next >= desired
-                else:
-                    sat = sat_prev or (t_next >= desired)
+                    if arr_new_day:
+                        sat = t_next >= desired
+                    else:
+                        sat = sat_prev or (t_next >= desired)
 
-                pen = 0.0
-                if arr_min_temp and t_next < min_temp:
-                    pen += (min_temp - t_next) * min_temp_pen
-                if arr_oblig and not sat:
-                    pen += max(0.0, desired - t_next) * desired_pen
+                    pen = 0.0
+                    if arr_min_temp and t_next < min_temp:
+                        pen += (min_temp - t_next) * min_temp_pen
+                    if arr_oblig and not sat:
+                        pen += max(0.0, desired - t_next) * desired_pen
 
-                ncost = cost + energy + trans + pen
-                nkey = (tbin(t_next), action_on, nregime, sat)
-                cur = nxt.get(nkey)
-                if cur is None or ncost < cur[0]:
-                    nxt[nkey] = (ncost, t_next, key, action_on)
-        states = nxt
+                    ncost = cost + energy + trans + pen
+                    nkey = (tbin(t_next), action_on, nregime, sat)
+                    nxt.setdefault(nkey, []).append((ncost, t_next, key, idx, action_on))
+        states = {k: _collapse(v) for k, v in nxt.items()}
 
     history.append(states)
 
-    best_key, best_cost = None, math.inf
-    for key, (cost, temp, _prev, _act) in states.items():
-        total = cost + max(0.0, terminal_target - temp) * terminal_pen
-        if total < best_cost:
-            best_cost, best_key = total, key
+    best_key, best_idx, best_cost = None, 0, math.inf
+    for key, recs in states.items():
+        for idx, (cost, temp, _pk, _pi, _act) in enumerate(recs):
+            total = cost + max(0.0, terminal_target - temp) * terminal_pen
+            if total < best_cost:
+                best_cost, best_key, best_idx = total, key, idx
 
     actions = [False] * n
-    key = best_key
+    key, idx = best_key, best_idx
     for p in range(n, 0, -1):
-        _cost, _temp, prev, act = history[p][key]
+        _cost, _temp, pk, pi, act = history[p][key][idx]
         actions[p - 1] = bool(act)
-        key = prev
+        key, idx = pk, pi
 
     binary = [1.0 if a else 0.0 for a in actions]
     schedule_w = hp._refresh_planned_power(
