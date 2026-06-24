@@ -335,6 +335,11 @@ hwc:
     # min-cost one. Enabled at owner's request; measured net-negative (~1c/plan) and NOT
     # objectively helpful (errs warmer/safer). See docs/hwc_dp_planner.md. Revert to 1 anytime.
     survivors_per_state: 2
+    # min_temp floor penalty, AUD/°C charged EACH 5-min step under min_temp. Code default 5.0
+    # makes the floor effectively hard (yields only above ~$47/kWh). 0.1 lets the tank ride
+    # through high prices — yields above ~$0.94/kWh single-step — while the per-step
+    # accumulation still caps how long/deep it sits under-floor. See docs/hwc_dp_planner.md.
+    min_temp_penalty_aud_per_c: 0.1
   actuation:
     enabled: true
     water_heater_entity: water_heater.aquatech

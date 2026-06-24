@@ -35,7 +35,12 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 ## Config (`hwc.dp_planner`, all optional; code defaults shown)
 
 - `temp_bin_c` 0.25 — temperature bin width.
-- `min_temp_penalty_aud_per_c` 5.0
+- `min_temp_penalty_aud_per_c` 5.0 — penalty per °C below `min_temp`, **per step**. The code
+  default 5.0 makes the floor effectively hard (single-step yield price ≈ penalty × heat_rate ÷
+  compressor_power ≈ penalty × 9.4 AUD/kWh → ~$47/kWh). **Production overrides to 0.1**
+  (yields above ~$0.94/kWh single-step) so the tank rides through high prices; the per-step
+  accumulation still limits how long/deep it sits under-floor. Raise toward 0.2–0.3 to make
+  under-floor excursions rarer; keep ≥ ~1.0 to treat the floor as near-hard.
 - `desired_penalty_aud_per_c` 1.0
 - `terminal_penalty_aud_per_c` 0.05
 - `survivors_per_state` 1 — DP survivors kept per binned state. **Leave at 1.** `2` also keeps

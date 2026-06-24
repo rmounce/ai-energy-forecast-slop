@@ -11,6 +11,12 @@ pre-installation Home Assistant history.
 
 ## Telemetry available (Local Tuya → HA → InfluxDB)
 
+> Canonical, empirically-verified entity map: **`docs/hwc_aquatech_entities.md`**. Maps to the
+> manual's T1–T5: `coil`=T1 evaporator coil, `temperature`=T2 ambient, `exhaust`=T3 discharge,
+> `return_air`=**T4 suction line** (refrigerant, not "air"), `inlet` duplicates T1, T5 inlet has
+> no working entity, `outlet` is dead (−50 °C). The ~2–4 °C evaporator figure below only holds in
+> mild weather (coil/suction plunge to −16 °C frosting).
+
 Tank/control: `sensor.heat_pump_temperature` (control probe). Refrigerant/air:
 `sensor.aquatech_exhaust_temperature` (compressor discharge / condensing temp),
 `sensor.aquatech_coil_temperature` + `aquatech_return_air_temperature` + `aquatech_inlet_temperature`
