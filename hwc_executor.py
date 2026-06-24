@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -42,6 +42,10 @@ class Decision:
     setpoint_c: float | None = None
     block_start: datetime | None = None
     block_end: datetime | None = None
+    # Compressor state observed when this decision was made (set by ``decide_current``).
+    # Lets the daemon gate the post-heat off-suppression grace on confirmed-running state
+    # rather than a fragile edge latch.
+    compressor_on: bool = False
 
 
 def _published_entity_id(prefix: str, entity_id: str) -> str:
@@ -129,15 +133,6 @@ def _block_bounds(points: list[PlanPoint], idx: int, threshold_w: float) -> tupl
     return start, end
 
 
-def _previous_block(points: list[PlanPoint], idx: int, threshold_w: float) -> tuple[int, int] | None:
-    cursor = min(idx, len(points) - 1)
-    while cursor >= 0 and points[cursor].power_w <= threshold_w:
-        cursor -= 1
-    if cursor < 0:
-        return None
-    return _block_bounds(points, cursor, threshold_w)
-
-
 def _block_setpoint(points: list[PlanPoint], end_idx: int, setpoint_min: float, setpoint_max: float) -> float:
     # Planner temperatures are interval-start states; after the last heating slot appears at
     # the next point when available.
@@ -153,7 +148,6 @@ def decide(
     threshold_w: float,
     setpoint_min: float,
     setpoint_max: float,
-    post_block_grace: timedelta,
 ) -> Decision:
     idx = _current_index(points, now)
     if idx is None:
@@ -170,19 +164,6 @@ def decide(
             block_start=points[start].at,
             block_end=points[end].at + _step(points),
         )
-
-    prev = _previous_block(points, idx, threshold_w)
-    if prev and compressor_on:
-        start, end = prev
-        block_end = points[end].at + _step(points)
-        if now - block_end <= post_block_grace:
-            return Decision(
-                action="heat",
-                reason="compressor still running after planned block",
-                setpoint_c=_block_setpoint(points, end, setpoint_min, setpoint_max),
-                block_start=points[start].at,
-                block_end=block_end,
-            )
 
     reason = (
         "outside planned block; stopping running compressor"
@@ -228,39 +209,29 @@ def apply_decision(cfg: dict, decision: Decision):
         _service_call(cfg, "turn_off", {"entity_id": entity})
 
 
-def decide_current(cfg: dict) -> Decision:
+def decide_current(cfg: dict, *, effective_compressor_on: bool | None = None) -> Decision:
+    """Decide the current actuation.
+
+    ``effective_compressor_on`` is the daemon's single debounced compressor-running view (see
+    ``hwc_daemon.effective_compressor_running``); when supplied it drives the control logic so the
+    executor and planner share one view. Standalone invocations omit it and fall back to the raw
+    sensor. The *raw* reading is always carried on ``Decision.compressor_on`` for the daemon's
+    off-suppression, which intentionally tracks sensor confirmation rather than the debounced view.
+    """
     act = cfg["hwc"].get("actuation", {})
     points = load_plan(cfg)
     compressor_state = _entity_state(cfg, act["compressor_entity"])
-    compressor_on = compressor_state.get("state") == "on"
+    raw_on = compressor_state.get("state") == "on"
+    control_on = raw_on if effective_compressor_on is None else effective_compressor_on
     decision = decide(
         points,
         now=datetime.now(timezone.utc),
-        compressor_on=compressor_on,
+        compressor_on=control_on,
         threshold_w=float(act.get("power_on_threshold_w", 100)),
         setpoint_min=float(act.get("setpoint_min_c", 55)),
         setpoint_max=float(act.get("setpoint_max_c", 60)),
-        post_block_grace=timedelta(minutes=float(act.get("post_block_grace_minutes", 90))),
     )
-    min_delta = float(act.get("min_heat_start_delta_c", 0.0))
-    if (
-        decision.action == "heat"
-        and not compressor_on
-        and decision.setpoint_c is not None
-        and min_delta > 0
-    ):
-        tank_temp = _tank_temperature(cfg)
-        if tank_temp >= decision.setpoint_c - min_delta:
-            return Decision(
-                action="off",
-                reason=(
-                    f"planned heat suppressed: tank {tank_temp:.1f}C within "
-                    f"{min_delta:.1f}C of setpoint {decision.setpoint_c:.1f}C"
-                ),
-                block_start=decision.block_start,
-                block_end=decision.block_end,
-            )
-    return decision
+    return replace(decision, compressor_on=raw_on)
 
 
 def run(cfg: dict, *, dry_run: bool = False, force: bool = False) -> Decision:

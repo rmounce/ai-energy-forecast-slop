@@ -25,7 +25,6 @@ def _config():
                 "compressor_entity": "binary_sensor.aquatech_compressor",
                 "setpoint_min_c": 55,
                 "setpoint_max_c": 60,
-                "min_heat_start_delta_c": 2.0,
             },
             "daemon": {
                 "tank_temp_replan_delta_c": 0.3,
@@ -135,7 +134,7 @@ def test_suppresses_off_inside_heat_command_grace():
         now=110.0,
         last_heat_command_at=100.0,
         grace_seconds=600,
-        compressor_seen_on_since_heat=False,
+        compressor_on=False,
     )
 
 
@@ -164,22 +163,91 @@ def test_does_not_suppress_heat_or_expired_grace():
         now=110.0,
         last_heat_command_at=100.0,
         grace_seconds=600,
-        compressor_seen_on_since_heat=False,
+        compressor_on=False,
     )
     assert not hd.should_suppress_off_after_heat(
         decision_action="off",
         now=701.0,
         last_heat_command_at=100.0,
         grace_seconds=600,
-        compressor_seen_on_since_heat=False,
+        compressor_on=False,
     )
+    # Compressor confirmed running => the start registered, so an off is a genuine stop
+    # (this is the already-running case the old edge latch missed).
     assert not hd.should_suppress_off_after_heat(
         decision_action="off",
         now=110.0,
         last_heat_command_at=100.0,
         grace_seconds=600,
-        compressor_seen_on_since_heat=True,
+        compressor_on=True,
     )
+
+
+def _eff(**overrides):
+    kw = dict(
+        raw_on=False,
+        last_command_action="heat",
+        tank_at_target=False,
+        now=1000.0,
+        last_heat_command_at=0.0,
+        last_on_at=0.0,
+        start_grace_s=120.0,
+        defrost_grace_s=600.0,
+    )
+    kw.update(overrides)
+    return hd.effective_compressor_running(**kw)
+
+
+def test_effective_running_confirmed_by_raw_sensor():
+    assert _eff(raw_on=True)
+
+
+def test_effective_running_commanded_off_is_immediate():
+    # A commanded stop is taken at face value even while the off-edge sensor lag still reads on,
+    # so the planner won't price a continue->restart spurious cycle.
+    assert not _eff(last_command_action="off", raw_on=True)
+
+
+def test_effective_running_start_lag_after_heat_command():
+    # Compressor started ~instantly; Tuya sensor still reads off inside the start grace.
+    assert _eff(raw_on=False, last_heat_command_at=950.0, now=1000.0)  # 50s < 120s
+    assert not _eff(raw_on=False, last_heat_command_at=800.0, now=1000.0)  # 200s > 120s
+
+
+def test_effective_running_defrost_pause_below_target():
+    # Brief off while below target with heat still commanded => transient defrost pause.
+    assert _eff(raw_on=False, last_on_at=900.0, now=1000.0)  # off 100s < 600s
+    assert not _eff(raw_on=False, last_on_at=300.0, now=1000.0)  # off 700s > 600s
+
+
+def test_effective_running_at_target_is_a_genuine_stop():
+    # At setpoint the unit's own thermostat stops it: not a pause, even within the defrost window.
+    assert not _eff(raw_on=False, tank_at_target=True, last_on_at=950.0, now=1000.0)
+
+
+def test_mark_target_reached_is_level_based(tmp_path):
+    from datetime import datetime, timezone
+
+    cfg = _config()
+    cfg["hwc"]["daemon"]["state_file"] = str(tmp_path / "state.json")
+    d = hd.HwcDaemon.__new__(hd.HwcDaemon)
+    d.config = cfg
+    d.last_reached_target_at = None
+
+    # A single at/above-target observation latches even with no upward-crossing edge — this is
+    # the false-negative fix (daemon restart while hot / dropped crossing event).
+    d._mark_target_reached(61.0, datetime(2026, 6, 24, 4, 0, tzinfo=timezone.utc))
+    first = d.last_reached_target_at
+    assert first is not None
+
+    # Idempotent within the same local day (no re-latch on later readings).
+    d._mark_target_reached(62.0, datetime(2026, 6, 24, 5, 0, tzinfo=timezone.utc))
+    assert d.last_reached_target_at == first
+
+    # Below target does nothing.
+    d.last_reached_target_at = None
+    d._mark_target_reached(59.0, datetime(2026, 6, 24, 6, 0, tzinfo=timezone.utc))
+    assert d.last_reached_target_at is None
 
 
 def test_target_reached_local_date_maps_utc_to_local_date():

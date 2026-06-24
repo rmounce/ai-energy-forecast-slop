@@ -1385,11 +1385,18 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
     planner_kind = cfg["hwc"].get("planner", "block")
     compressor_initially_on = False
     if planner_kind in ("block", "dp"):
-        try:
-            compressor_initially_on = compressor_is_on(cfg)
-        except Exception:
-            logging.exception("Could not read HWC compressor state for transition-cost planning")
-            compressor_initially_on = False
+        # The daemon injects a debounced effective-running signal (handles the Tuya sensor's
+        # ~50-60 s both-edge lag, defrost pauses, and commanded stops). Fall back to a raw read
+        # for standalone invocations where no override is supplied.
+        override = cfg["hwc"].get("compressor_initially_on_override")
+        if override is not None:
+            compressor_initially_on = bool(override)
+        else:
+            try:
+                compressor_initially_on = compressor_is_on(cfg)
+            except Exception:
+                logging.exception("Could not read HWC compressor state for transition-cost planning")
+                compressor_initially_on = False
 
     logging.info(
         "HWC plan: horizon=%d steps, start_temp=%.1f°C, wet-bulb %.1f→%.1f°C, "

@@ -173,15 +173,73 @@ def should_suppress_off_after_heat(
     now: float,
     last_heat_command_at: float,
     grace_seconds: float,
-    compressor_seen_on_since_heat: bool,
+    compressor_on: bool,
 ) -> bool:
+    """Suppress an ``off`` issued shortly after a heat command, while the freshly-commanded
+    start has not yet registered.
+
+    The Tuya ``binary_sensor.aquatech_compressor`` lags the real compressor by ~50 s on both
+    edges (see ``docs/hwc_thermal_characterisation.md``), so right after an off->heat command
+    the sensor still reads "off"; a replan flip to ``off`` in that window would abort the start
+    on a stale reading. We therefore hold the ``off`` until the compressor is *confirmed on*
+    (``compressor_on``) or the grace expires. Gating on the current observed state — rather than
+    an edge latch — means an already-running compressor never blocks a genuine stop, and the
+    guard can't be defeated by an intervening heat re-assertion.
+    """
     if decision_action != "off":
         return False
-    if compressor_seen_on_since_heat:
+    if compressor_on:
         return False
     if last_heat_command_at <= 0:
         return False
     return now - last_heat_command_at < grace_seconds
+
+
+def effective_compressor_running(
+    *,
+    raw_on: bool,
+    last_command_action: str | None,
+    tank_at_target: bool,
+    now: float,
+    last_heat_command_at: float,
+    last_on_at: float,
+    start_grace_s: float,
+    defrost_grace_s: float,
+) -> bool:
+    """Debounced "is the compressor effectively running?" for *planner* transition accounting.
+
+    The raw Tuya ``binary_sensor.aquatech_compressor`` lags the real compressor by ~50-60 s on
+    both edges, and additionally reads "off" during a defrost while the cycle is really still in
+    progress. Feeding the raw reading to the DP as ``compressor_initially_on`` causes phantom
+    transition costs: the planner mis-prices "continue" vs "restart", which can truncate the
+    in-progress block (sensor lag / defrost) or fail to respect a just-issued stop (off lag).
+
+    Our own command is the timeliest, most authoritative signal — the compressor responds
+    near-instantly — so we lead with command intent and use the sensor as confirmation:
+
+    - commanded ``off``    -> not running immediately (don't wait out the off-edge lag, which
+                              would risk planning a continue->restart spurious cycle);
+    - raw sensor on        -> running (confirmed);
+    - tank at/above target -> not running (the unit stopped on its own thermostat: a genuine
+                              finish, not a transient pause);
+    - within ``start_grace_s`` of a heat command -> running (started ~instantly, sensor lagging);
+    - off < ``defrost_grace_s`` while below target -> running (transient pause = defrost);
+    - otherwise            -> not running (genuinely off / fault / thermostat-satisfied).
+
+    This signal is *not* used by the executor's off-suppression, which must stay on the raw
+    sensor to actually bridge the start lag.
+    """
+    if last_command_action == "off":
+        return False
+    if raw_on:
+        return True
+    if tank_at_target:
+        return False
+    if last_heat_command_at > 0 and now - last_heat_command_at < start_grace_s:
+        return True
+    if last_on_at > 0 and now - last_on_at < defrost_grace_s:
+        return True
+    return False
 
 
 def _parse_hhmm_time(value: str) -> dt_time:
@@ -218,8 +276,7 @@ def fallback_decision(
     fallback_setpoint = float(daemon.get("fallback_setpoint_c", th.get("desired_temp", 60)))
     setpoint = min(setpoint_max, max(setpoint_min, fallback_setpoint))
     min_temp = float(daemon.get("fallback_min_temp_c", th.get("min_temp", 45)))
-    min_delta = float(act.get("min_heat_start_delta_c", 0.0))
-    heat_threshold = setpoint - min_delta
+    heat_threshold = setpoint
 
     if tank_temp_c < min_temp:
         return hwc_executor.Decision(
@@ -257,7 +314,11 @@ class HwcDaemon:
         self.last_plan_at = 0.0
         self.last_heat_command_at = 0.0
         self.last_applied_command = None
-        self.compressor_seen_on_since_heat = False
+        # last_command_action persists across cache invalidations (unlike last_applied_command),
+        # so the planner's effective-running signal can tell a commanded stop from a defrost pause.
+        self.last_command_action: str | None = None
+        self.compressor_last_on_at = 0.0
+        self._heat_unconfirmed_warned = False
         self.last_reached_target_at = self._load_state()
         self._next_msg_id = 1
 
@@ -329,7 +390,7 @@ class HwcDaemon:
                 continue
             event_time = _parse_event_time_utc(event.get("time_fired"))
             self._invalidate_command_cache_on_equipment_change(entity_id)
-            self._track_compressor_latch_event(entity_id, data)
+            self._track_compressor_run_event(entity_id, data)
             self._track_target_temperature_event(entity_id, data, event_time)
             decision = classify_state_change(
                 self.config,
@@ -425,6 +486,9 @@ class HwcDaemon:
             planner_config["hwc"].setdefault("block_planner", {})["main_satisfied_dates"] = (
                 [satisfied_date] if satisfied_date else []
             )
+            planner_config["hwc"]["compressor_initially_on_override"] = (
+                await asyncio.to_thread(self._effective_compressor_running)
+            )
             try:
                 await asyncio.to_thread(hwc_planner.run, planner_config, horizon, self.dry_run)
             except Exception:
@@ -437,7 +501,10 @@ class HwcDaemon:
         async with self.run_lock:
             started = time.monotonic()
             try:
-                decision = await asyncio.to_thread(hwc_executor.decide_current, self.config)
+                effective_on = await asyncio.to_thread(self._effective_compressor_running)
+                decision = await asyncio.to_thread(
+                    hwc_executor.decide_current, self.config, effective_compressor_on=effective_on
+                )
             except Exception:
                 log.exception("HWC executor failed")
                 decision = await asyncio.to_thread(self._fallback_decision_current)
@@ -451,6 +518,22 @@ class HwcDaemon:
                 decision.reason,
                 decision.setpoint_c,
             )
+
+            grace = float(self.config["hwc"].get("daemon", {}).get("heat_command_grace_seconds", 120))
+            if (
+                decision.action == "heat"
+                and self.last_command_action == "heat"
+                and self.last_heat_command_at > 0
+                and time.monotonic() - self.last_heat_command_at > grace
+                and not decision.compressor_on
+                and not self._heat_unconfirmed_warned
+            ):
+                log.warning(
+                    "HWC heat commanded %.0fs ago but compressor still reports off; "
+                    "start may not have taken effect",
+                    time.monotonic() - self.last_heat_command_at,
+                )
+                self._heat_unconfirmed_warned = True
 
             if self._should_suppress_off_after_heat(decision):
                 log.warning(
@@ -479,9 +562,10 @@ class HwcDaemon:
                     log.exception("HWC executor apply failed")
                     return
                 self.last_applied_command = key
+                self.last_command_action = decision.action
                 if decision.action == "heat":
                     self.last_heat_command_at = time.monotonic()
-                    self.compressor_seen_on_since_heat = False
+                    self._heat_unconfirmed_warned = False
             log.info("HWC executor completed in %.1fs: %s", time.monotonic() - started, decision.action)
 
     def _fallback_decision_current(self) -> hwc_executor.Decision | None:
@@ -508,7 +592,7 @@ class HwcDaemon:
             now=time.monotonic(),
             last_heat_command_at=self.last_heat_command_at,
             grace_seconds=grace,
-            compressor_seen_on_since_heat=self.compressor_seen_on_since_heat,
+            compressor_on=decision.compressor_on,
         )
 
     def _invalidate_command_cache_on_equipment_change(self, entity_id: str) -> None:
@@ -518,29 +602,69 @@ class HwcDaemon:
         if entity_id in (act.get("water_heater_entity"), act.get("compressor_entity")):
             self.last_applied_command = None
 
-    def _track_compressor_latch_event(self, entity_id: str, data: dict) -> None:
+    def _track_compressor_run_event(self, entity_id: str, data: dict) -> None:
+        # Record when the compressor was last observed on, so the planner's effective-running
+        # signal can bound a defrost pause (off-duration) without an unreliable edge latch.
         if entity_id != self.config["hwc"].get("actuation", {}).get("compressor_entity"):
             return
+        if (data.get("new_state") or {}).get("state") == "on":
+            self.compressor_last_on_at = time.monotonic()
 
-        old_state = (data.get("old_state") or {}).get("state")
-        new_state = (data.get("new_state") or {}).get("state")
-        if new_state == "on" and old_state != "on":
-            self.compressor_seen_on_since_heat = True
+    def _effective_compressor_running(self) -> bool:
+        daemon = self.config["hwc"].get("daemon", {})
+        start_grace = float(daemon.get("heat_command_grace_seconds", 120))
+        defrost_grace = float(daemon.get("compressor_off_debounce_seconds", 600))
+        try:
+            raw_on = hwc_planner.compressor_is_on(self.config)
+        except Exception:
+            log.exception("Could not read compressor state; assuming off for planning")
+            raw_on = False
+        try:
+            tank_at_target = (
+                hwc_planner.get_tank_temperature(self.config) >= _target_temperature_c(self.config)
+            )
+        except Exception:
+            log.exception("Could not read tank temperature; assuming below target for planning")
+            tank_at_target = False
+        return effective_compressor_running(
+            raw_on=raw_on,
+            last_command_action=self.last_command_action,
+            tank_at_target=tank_at_target,
+            now=time.monotonic(),
+            last_heat_command_at=self.last_heat_command_at,
+            last_on_at=self.compressor_last_on_at,
+            start_grace_s=start_grace,
+            defrost_grace_s=defrost_grace,
+        )
+
+    def _mark_target_reached(self, temp: float | None, at_utc: datetime) -> None:
+        # Level-triggered: latch whenever the tank is observed at/above target and we have not
+        # already recorded it for this local day. Edge-triggering on the upward crossing missed
+        # the target whenever the crossing event was absent (daemon restart while already hot, a
+        # dropped websocket event) — a false negative that drops the day's reheat obligation.
+        if temp is None or temp < _target_temperature_c(self.config):
+            return
+        local_date = target_reached_local_date(self.config, at_utc.isoformat())
+        if target_reached_local_date(self.config, self.last_reached_target_at) == local_date:
+            return
+        self.last_reached_target_at = at_utc.isoformat()
+        self._save_state()
+        log.info("HWC target temperature reached: %.1fC at %s", temp, self.last_reached_target_at)
 
     def _track_target_temperature_event(self, entity_id: str, data: dict, at_utc: datetime) -> None:
         if entity_id != self.config["hwc"]["tank_temp_entity"]:
             return
+        self._mark_target_reached(_state_float(data.get("new_state")), at_utc)
 
-        old_temp = _state_float(data.get("old_state"))
-        new_temp = _state_float(data.get("new_state"))
-        target = _target_temperature_c(self.config)
-        if new_temp is None or new_temp < target:
+    async def _seed_target_reached(self) -> None:
+        # Catch the case where the daemon starts while the tank is already at/above target, so no
+        # crossing event will arrive to latch it.
+        try:
+            temp = await asyncio.to_thread(hwc_planner.get_tank_temperature, self.config)
+        except Exception:
+            log.exception("Could not seed HWC target-reached state at startup")
             return
-        if old_temp is not None and old_temp >= target:
-            return
-        self.last_reached_target_at = at_utc.isoformat()
-        self._save_state()
-        log.info("HWC target temperature reached: %.1fC at %s", new_temp, self.last_reached_target_at)
+        self._mark_target_reached(temp, datetime.now(timezone.utc))
 
     def _load_state(self) -> str | None:
         path = _daemon_state_path(self.config)
@@ -560,6 +684,7 @@ class HwcDaemon:
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
     async def run(self) -> None:
+        await self._seed_target_reached()
         self.replan_trigger.set()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.consume_websocket())

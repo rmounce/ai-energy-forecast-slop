@@ -348,8 +348,6 @@ hwc:
     power_on_threshold_w: 100
     setpoint_min_c: 55
     setpoint_max_c: 60
-    min_heat_start_delta_c: 3.0
-    post_block_grace_minutes: 90
   daemon:
     state_file: data/hwc_daemon_state.json
     debounce_seconds: 2
@@ -357,7 +355,12 @@ hwc:
     execution_interval_seconds: 60
     minimum_replan_interval_seconds: 60
     tank_temp_replan_delta_c: 0.3
-    heat_command_grace_seconds: 600
+    # Suppress an off issued right after a heat command until the Tuya compressor sensor
+    # confirms running, bridging its ~60 s LocalTuya poll lag. 120 s = 2 poll cycles.
+    heat_command_grace_seconds: 120
+    # For the planner's effective-running signal: a compressor off (while below target, with
+    # heat still commanded) shorter than this is treated as a defrost pause, not a stop.
+    compressor_off_debounce_seconds: 600
     fallback_enabled: true
     fallback_window_start: '10:00'
     fallback_window_end: '16:00'

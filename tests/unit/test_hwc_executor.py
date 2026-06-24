@@ -21,14 +21,15 @@ def test_decide_heats_inside_block_to_block_end_setpoint():
         threshold_w=100,
         setpoint_min=55,
         setpoint_max=60,
-        post_block_grace=timedelta(minutes=90),
     )
 
     assert decision.action == "heat"
     assert decision.setpoint_c == 58
 
 
-def test_decide_keeps_enabled_after_block_until_compressor_stops():
+def test_decide_turns_off_immediately_after_block():
+    # No post-block grace: the executor follows the plan and stops at the block boundary; the
+    # compressor stops promptly, so there is nothing to let "finish".
     decision = he.decide(
         _points(),
         now=datetime(2026, 6, 1, 2, 40, tzinfo=timezone.utc),
@@ -36,12 +37,10 @@ def test_decide_keeps_enabled_after_block_until_compressor_stops():
         threshold_w=100,
         setpoint_min=55,
         setpoint_max=60,
-        post_block_grace=timedelta(minutes=90),
     )
 
-    assert decision.action == "heat"
-    assert decision.reason == "compressor still running after planned block"
-    assert decision.setpoint_c == 58
+    assert decision.action == "off"
+    assert decision.reason == "outside planned block; stopping running compressor"
 
 
 def test_decide_turns_off_outside_block_when_compressor_off():
@@ -52,7 +51,6 @@ def test_decide_turns_off_outside_block_when_compressor_off():
         threshold_w=100,
         setpoint_min=55,
         setpoint_max=60,
-        post_block_grace=timedelta(minutes=90),
     )
 
     assert decision.action == "off"
@@ -72,7 +70,6 @@ def test_decide_turns_off_running_compressor_outside_planned_block():
         threshold_w=100,
         setpoint_min=55,
         setpoint_max=60,
-        post_block_grace=timedelta(minutes=90),
     )
 
     assert decision.action == "off"
@@ -89,50 +86,6 @@ def test_decide_caps_setpoint():
         threshold_w=100,
         setpoint_min=55,
         setpoint_max=60,
-        post_block_grace=timedelta(minutes=90),
     )
 
     assert decision.setpoint_c == 60
-
-
-def test_decide_current_suppresses_heat_when_tank_near_setpoint(monkeypatch):
-    cfg = {
-        "hwc": {
-            "tank_temp_entity": "sensor.tank",
-            "actuation": {
-                "compressor_entity": "binary_sensor.compressor",
-                "power_on_threshold_w": 100,
-                "setpoint_min_c": 55,
-                "setpoint_max_c": 60,
-                "post_block_grace_minutes": 90,
-                "min_heat_start_delta_c": 2.0,
-            },
-        },
-    }
-
-    monkeypatch.setattr(he, "load_plan", lambda _cfg: _points())
-
-    def fake_state(_cfg, entity_id):
-        if entity_id == "binary_sensor.compressor":
-            return {"state": "off"}
-        if entity_id == "sensor.tank":
-            return {"state": "59.0"}
-        raise AssertionError(entity_id)
-
-    monkeypatch.setattr(he, "_entity_state", fake_state)
-    monkeypatch.setattr(
-        he,
-        "decide",
-        lambda *_args, **_kwargs: he.Decision(
-            action="heat",
-            reason="inside planned block",
-            setpoint_c=60.0,
-            block_start=datetime(2026, 6, 1, 1, 0, tzinfo=timezone.utc),
-            block_end=datetime(2026, 6, 1, 1, 30, tzinfo=timezone.utc),
-        ),
-    )
-
-    decision = he.decide_current(cfg)
-
-    assert decision.action == "off"
-    assert decision.reason.startswith("planned heat suppressed")

@@ -153,11 +153,31 @@ Manual `water_heater.aquatech` test from `operation_mode=off`, tank 57 °C, ambi
 1. Actuation latency is negligible for control — min-runtime is a wear/COP choice, not a
    command-lag workaround. The executor's "starts/stops promptly" assumption holds at the
    device.
-2. The ~50 s Tuya binary lag (both edges) justifies the daemon's off-suppression grace
-   (`heat_command_grace_seconds = 600` ≫ 50 s). A future improvement is to treat **Athom ch2
-   power > ~250 W** as the compressor-on signal (leads the Tuya binary in both directions),
-   rather than / in addition to `binary_sensor.aquatech_compressor`.
-3. **Planner direction (2026-06-20 decision):** short-cycle avoidance should *emerge from
+2. The ~50–60 s Tuya/LocalTuya poll lag (both edges) justifies the daemon's off-suppression
+   grace (`heat_command_grace_seconds = 120`, i.e. ~2 poll cycles). The grace holds an `off`
+   issued just after a heat command until the compressor is *confirmed running* or the grace
+   expires — gated on the **current** observed compressor state (`Decision.compressor_on`), not
+   an edge latch. (The earlier `compressor_seen_on_since_heat` off→on edge latch was unreliable:
+   it missed the already-running case and was reset by the heat re-assertion that the
+   compressor's own turn-on triggered via command-cache invalidation, so the grace degenerated
+   into a blind, repeatedly re-armed 600 s timer — see git history 2026-06-24.)
+3. The same poll lag — plus the sensor reading "off" during a **defrost** — makes the raw
+   compressor sensor a poor `compressor_initially_on` for the *planner's* transition accounting:
+   a stale "off" prices a phantom restart and can truncate the in-progress block, while a stale
+   "on" after a commanded stop can re-price a spurious continue→restart. The daemon therefore
+   feeds the planner a **debounced effective-running signal** (`effective_compressor_running`),
+   led by command intent (commanded `off` ⇒ off immediately; commanded `heat` within the start
+   grace ⇒ on) with the raw sensor as confirmation, a defrost debounce
+   (`compressor_off_debounce_seconds = 600`, below-target only), and tank-at-target as a genuine
+   stop. The daemon computes it once per tick and feeds the *same* value to both the planner
+   (`compressor_initially_on`) and the executor's `decide()` (`effective_compressor_on`), so the
+   two layers share one compressor-running view. It is *not* used by the executor's
+   off-suppression, which must stay on the raw sensor to bridge the start lag — a distinct
+   question ("has the start *confirmed* on the lagging sensor yet", not "is it running"). A
+   future improvement is to treat **Athom ch2 power > ~250 W** as the compressor-on signal (leads
+   the Tuya binary in both directions), rather than / in addition to
+   `binary_sensor.aquatech_compressor`; that would shrink both the grace and the defrost debounce.
+4. **Planner direction (2026-06-20 decision):** short-cycle avoidance should *emerge from
    cost* (a per-start cost term), not from hard minimum-runtime or minimum-temperature-rise
    rules. The DP objective is therefore monetary; min_temp / 60 °C remain as
    high-penalty cost terms rather than hard locks.
