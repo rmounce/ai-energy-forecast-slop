@@ -58,15 +58,14 @@ def build_dp_plan(
     cfg: dict,
     compressor_initially_on: bool = False,
 ) -> dict:
-    """Build a DP-optimised HWC plan in the same shape as ``build_block_plan``."""
+    """Build a DP-optimised HWC plan in the shape published by ``hwc_planner.run``."""
     hwc = cfg["hwc"]
     th = hwc["thermal"]
-    block_cfg = hwc.get("block_planner", {})
     dp_cfg = hwc.get("dp_planner", {})
     tz = pytz.timezone(cfg["timezone"])
     n = len(grid_times_utc)
 
-    transition_cost = float(block_cfg.get("transition_cost_aud", 0.0))
+    transition_cost = float(hwc.get("transition_cost_aud", 0.0))
 
     def _finalize(schedule_w: list[float]) -> dict:
         return hp.assemble_plan_dict(
@@ -126,8 +125,8 @@ def build_dp_plan(
     wb = wet_bulb if wet_bulb is not None else [None] * n
 
     # Per-position local-day bookkeeping for the daily-60 obligation.
-    main_end = hp._parse_hhmm(block_cfg.get("main_window_end", "18:00"))
-    satisfied_dates = set(block_cfg.get("main_satisfied_dates", []))
+    main_end = hp._parse_hhmm(hwc.get("main_window_end", "18:00"))
+    satisfied_dates = set(hwc.get("main_satisfied_dates", []))
     local_dates = [t.astimezone(tz).date() for t in grid_times_utc]
     day_ord = [d.toordinal() for d in local_dates]
     local_minute = [hp._local_minute(t, tz) for t in grid_times_utc]

@@ -1,13 +1,14 @@
 # HWC DP planner
 
-Status: **implemented, opt-in** (`hwc.planner == "dp"`); production default stays `block`.
+Status: **default and only optimiser** (`hwc.planner == "dp"`). The heuristic block planner
+was removed 2026-06-24; EMHASS (`hwc.planner: "emhass"`) is retained as a fallback.
 Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 
-## Why
+## Why (vs. the now-removed block planner)
 
 - Block planner replan: ~12 s (compressor off) / **~225 s (compressor on)** at 576×5 min —
   seed fan-out × repairs re-simulating the full horizon. Too slow for event-driven replan.
-- Heuristic stages (main block → min-temp repair → terminal repair) are greedy, not global;
+- Heuristic stages (main block → min-temp repair → terminal repair) were greedy, not global;
   `min_temp` was a soft repair that could still be violated.
 - DP at 576×5 min: **~350 ms, independent of compressor state**. ~600× faster on the
   compressor-on case. Global optimum within the binned state space.
@@ -15,12 +16,13 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 ## Design (2026-06-20 decisions)
 
 - **Pure monetary objective.** No hard min-runtime, no min-lift. Short cycles discouraged
-  *only* by a per-start `block_planner.transition_cost_aud`. See
+  *only* by a per-start `hwc.transition_cost_aud`. See
   [hwc_thermal_characterisation.md] "Planner direction".
 - **DP picks the binary on/off sequence only.** Published power/temps come from the exact
-  `hwc_planner` model (`_refresh_planned_power` + `simulate_block_temperatures` via
+  shared `hwc_planner` model (`_refresh_planned_power` + `simulate_block_temperatures` via
   `assemble_plan_dict`). Temp binning is an internal cost/feasibility approximation; it never
-  reaches published numbers. A DP plan is byte-for-byte comparable to a block plan.
+  reaches published numbers — the published plan is the exact-model render of the chosen
+  on/off sequence.
 - **State:** `(temp_bin, compressor_on, regime, satisfied_today)`.
   - `regime` (full-reheat vs top-up) carried because the heat-rate model latches on the
     *block-start* temp (cold reheat keeps full rate past `top_up_start_temp_c`).
@@ -66,7 +68,9 @@ prices at zero. If sub-bin precision ever matters, shrink `temp_bin_c` (symmetri
 add survivors. The `survivors_per_state: 2` path is retained only because the owner wanted
 it available; safe to delete if never enabled.
 
-Reuses from `block_planner`: `transition_cost_aud`, `main_window_end`, `main_satisfied_dates`.
+Reads from `hwc` top-level: `transition_cost_aud`, `main_window_end`, `main_satisfied_dates`
+(the last injected at runtime by the daemon). These moved up from the removed `block_planner`
+section on 2026-06-24.
 Reuses from `thermal`: rate/power model, `min_temp`, `desired_temp`, `max_temp`,
 `top_up_start_temp_c`, `terminal_target`.
 

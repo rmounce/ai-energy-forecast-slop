@@ -61,11 +61,8 @@ def _cfg(step_min=30, **thermal_overrides):
             "publish_prefix": "hwc_",
             "optimization_time_step": step_min,
             "thermal": thermal,
-            "block_planner": {
-                "main_window_start": "10:00",
-                "main_window_end": "18:00",
-                "transition_cost_aud": 0.05,
-            },
+            "main_window_end": "18:00",
+            "transition_cost_aud": 0.05,
         },
     }
 
@@ -76,13 +73,13 @@ def _starts(schedule_w):
 
 def _satisfy_all_days(cfg, grid):
     dates = sorted({t.astimezone(TZ).date().isoformat() for t in grid})
-    cfg["hwc"]["block_planner"]["main_satisfied_dates"] = dates
+    cfg["hwc"]["main_satisfied_dates"] = dates
 
 
 # ── structure ───────────────────────────────────────────────────────────────
 
 
-def test_dp_plan_shape_matches_block_planner_contract():
+def test_dp_plan_shape_matches_published_contract():
     grid = _grid(0, 48)
     cfg = _cfg()
     plan = dp.build_dp_plan(
@@ -189,7 +186,7 @@ def _blip_scenario_starts(transition_cost):
     # second start; eating it keeps a single block. The transition cost decides.
     grid = _grid(14, 12)  # deadline 18:00 is index 8
     cfg = _cfg()
-    cfg["hwc"]["block_planner"]["transition_cost_aud"] = transition_cost
+    cfg["hwc"]["transition_cost_aud"] = transition_cost
     load = [5.0] * 12
     load[4], load[5], load[6], load[7] = 0.05, 0.55, 0.05, 0.05  # blip at index 5
     plan = dp.build_dp_plan(

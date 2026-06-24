@@ -177,7 +177,6 @@ def test_main_satisfied_dates_from_state_file(tmp_path):
         "timezone": "Australia/Adelaide",
         "hwc": {
             "daemon": {"state_file": str(state_file)},
-            "block_planner": {},
         },
     }
 
@@ -400,15 +399,8 @@ def _hwc_cfg():
             "heat_rate_c_per_hour": 5.2,
             "terminal_target": "current",
         },
-        "block_planner": {
-            "main_window_start": "10:00",
-            "main_window_end": "18:00",
-            "overnight_window_start": "00:00",
-            "overnight_window_end": "06:00",
-            "min_block_duration_minutes": 60,
-            "boost_target_temp": 50,
-            "terminal_lookback_hours": 24,
-        },
+        "main_window_end": "18:00",
+        "transition_cost_aud": 0.05,
     }
 
 
@@ -450,37 +442,16 @@ def test_build_payload_structure():
     assert payload["custom_predicted_temperature_id"][0]["entity_id"] == "sensor.hwc_predicted_temp"
 
 
-def test_block_planner_builds_long_horizon_with_terminal_target():
-    grid = _adelaide_grid(0, 144)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    plan = hp.build_block_plan(
-        grid_times_utc=grid,
-        load_cost=[0.30] * 20 + [0.08] * 16 + [0.22] * 108,
-        dry_bulb=[15.0] * 144,
-        wet_bulb=[12.5] * 144,
-        draw_off=hp.build_draw_off_profile(
-            grid, "Australia/Adelaide", "09:00", "10:00", total_kwh=1.3
-        ),
-        start_temperature=55.0,
-        cfg=cfg,
-    )
+def test_publish_plan_includes_wet_bulb_forecast(monkeypatch):
+    import hwc_dp_planner
 
-    assert len(plan["predicted_temperatures"]) == 144
-    assert len(plan["deferrables_schedule"]) == 144
-    assert len(plan["wet_bulb_forecasts"]) == 144
-    assert plan["wet_bulb_forecasts"][0]["hwc_wet_bulb_forecast"] == "12.50"
-    assert min(plan["temperatures"]) >= 45
-    assert plan["terminal_temperature"] >= 55.0
-
-
-def test_publish_block_plan_includes_wet_bulb_forecast(monkeypatch):
     grid = _adelaide_grid(8, 3)
     cfg = {
         "timezone": "Australia/Adelaide",
         "home_assistant": {"url": "http://ha", "token": "token"},
         "hwc": _hwc_cfg(),
     }
-    plan = hp.build_block_plan(
+    plan = hwc_dp_planner.build_dp_plan(
         grid_times_utc=grid,
         load_cost=[0.20, 0.10, 0.30],
         dry_bulb=[15.0, 16.0, 17.0],
@@ -504,246 +475,3 @@ def test_publish_block_plan_includes_wet_bulb_forecast(monkeypatch):
     assert wet_bulb["attributes"]["wet_bulb_forecasts"][1]["hwc_wet_bulb_forecast"] == "11.00"
 
 
-def test_block_planner_prefers_contiguous_daytime_runs():
-    grid = _adelaide_grid(0, 96)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    plan = hp.build_block_plan(
-        grid_times_utc=grid,
-        load_cost=[0.30] * 20 + [0.08] * 16 + [0.30] * 28 + [0.08] * 16 + [0.30] * 16,
-        dry_bulb=[15.0] * 96,
-        draw_off=hp.build_draw_off_profile(
-            grid, "Australia/Adelaide", "09:00", "10:00", total_kwh=1.3
-        ),
-        start_temperature=55.0,
-        cfg=cfg,
-    )
-
-    starts = sum(
-        1
-        for prev, cur in zip([0.0] + plan["schedule_w"][:-1], plan["schedule_w"], strict=True)
-        if prev <= 0 and cur > 0
-    )
-    assert starts <= 3
-    assert all(power in (0.0, 800.0) for power in plan["schedule_w"])
-
-
-def test_block_planner_accepts_legacy_locked_schedule_seed():
-    grid = _adelaide_grid(10, 16)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
-    dry_bulb = [15.0] * len(grid)
-    wet_bulb = [12.5] * len(grid)
-    draw_off = [0.0] * len(grid)
-    locked = hp._running_compressor_locked_schedule(
-        grid_times_utc=grid,
-        start_temperature=55.0,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=cfg,
-    )
-
-    plan = hp.build_block_plan(
-        grid_times_utc=grid,
-        load_cost=[0.60] * 4 + [0.05] * 12,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        start_temperature=55.0,
-        cfg=cfg,
-        locked_schedule_w=locked,
-    )
-
-    assert locked[0] > 0
-    assert plan["schedule_w"][0] > 0
-
-
-def test_running_compressor_low_stop_cost_can_defer_to_cheaper_main_block():
-    grid = _adelaide_grid(10, 16)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["transition_cost_aud"] = 0.01
-    cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
-    plan = hp.build_block_plan(
-        grid_times_utc=grid,
-        load_cost=[0.80] * 4 + [0.02] * 12,
-        dry_bulb=[15.0] * len(grid),
-        wet_bulb=[12.5] * len(grid),
-        draw_off=[0.0] * len(grid),
-        start_temperature=55.0,
-        cfg=cfg,
-        compressor_initially_on=True,
-    )
-
-    assert plan["schedule_w"][0] == 0.0
-    assert any(power > 0 for power in plan["schedule_w"][4:])
-    assert plan["planned_stop_count"] >= 2
-
-
-def test_running_compressor_high_stop_cost_keeps_current_run():
-    grid = _adelaide_grid(10, 16)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["transition_cost_aud"] = 1.0
-    cfg["hwc"]["block_planner"]["min_block_duration_minutes"] = 0
-    plan = hp.build_block_plan(
-        grid_times_utc=grid,
-        load_cost=[0.80] * 4 + [0.02] * 12,
-        dry_bulb=[15.0] * len(grid),
-        wet_bulb=[12.5] * len(grid),
-        draw_off=[0.0] * len(grid),
-        start_temperature=55.0,
-        cfg=cfg,
-        compressor_initially_on=True,
-    )
-
-    assert plan["schedule_w"][0] > 0
-    assert plan["planned_stop_count"] == 1
-
-
-def test_schedule_objective_delta_prices_added_stops():
-    before = [800.0, 0.0, 0.0, 0.0]
-    split = [800.0, 0.0, 800.0, 0.0]
-    merged = [800.0, 800.0, 800.0, 0.0]
-    load_cost = [0.10, 0.10, 0.10, 0.10]
-    step_h = 0.5
-
-    split_delta = hp._schedule_objective_delta(
-        before,
-        split,
-        load_cost=load_cost,
-        step_h=step_h,
-        transition_cost_aud=0.05,
-    )
-    merged_delta = hp._schedule_objective_delta(
-        before,
-        merged,
-        load_cost=load_cost,
-        step_h=step_h,
-        transition_cost_aud=0.05,
-    )
-
-    assert hp._schedule_stop_count(split) == 2
-    assert hp._schedule_stop_count(merged) == 1
-    assert merged_delta < split_delta
-
-
-def test_main_block_skips_tiny_topup_near_target():
-    grid = _adelaide_grid(10, 4)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["min_block_lift_c"] = 2.0
-    schedule = hp._choose_daily_main_blocks(
-        [0.0] * len(grid),
-        grid_times_utc=grid,
-        load_cost=[0.05] * len(grid),
-        start_temperature=59.0,
-        dry_bulb=[15.0] * len(grid),
-        draw_off=[0.0] * len(grid),
-        cfg=cfg,
-    )
-
-    assert schedule == [0.0] * len(grid)
-
-
-def test_minimum_block_duration_can_be_disabled():
-    cfg = _hwc_cfg()
-    cfg["block_planner"]["min_block_duration_minutes"] = 0
-
-    assert hp._min_block_steps(cfg) == 1
-
-
-def test_main_block_prioritises_reaching_daily_target_over_low_total_cost():
-    grid = _adelaide_grid(10, 16)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    schedule = hp._choose_daily_main_blocks(
-        [0.0] * len(grid),
-        grid_times_utc=grid,
-        load_cost=[0.08] * 8 + [0.60] * 8,
-        start_temperature=49.0,
-        dry_bulb=[15.0] * len(grid),
-        wet_bulb=[12.5] * len(grid),
-        draw_off=[0.0] * len(grid),
-        cfg=cfg,
-    )
-    temps, _ = hp.simulate_block_temperatures(
-        schedule_w=schedule,
-        start_temperature=49.0,
-        dry_bulb=[15.0] * len(grid),
-        wet_bulb=[12.5] * len(grid),
-        draw_off=[0.0] * len(grid),
-        cfg=cfg["hwc"],
-    )
-
-    assert max(temps) >= 60.0
-    assert sum(1 for power in schedule if power > 0) >= 2
-    assert any(power > 0 for power in schedule[:8])
-
-
-def test_main_block_skips_satisfied_local_date():
-    grid = _adelaide_grid(10, 4)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["main_satisfied_dates"] = ["2026-06-02"]
-    schedule = hp._choose_daily_main_blocks(
-        [0.0] * len(grid),
-        grid_times_utc=grid,
-        load_cost=[0.05] * len(grid),
-        start_temperature=55.0,
-        dry_bulb=[15.0] * len(grid),
-        draw_off=[0.0] * len(grid),
-        cfg=cfg,
-    )
-
-    assert schedule == [0.0] * len(grid)
-
-
-def test_main_block_prefers_later_equal_cost_run_for_end_window_reserve():
-    grid = _adelaide_grid(9, 22)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["main_end_reserve_penalty_aud_per_c2"] = 0.03
-    schedule = hp._choose_daily_main_blocks(
-        [0.0] * len(grid),
-        grid_times_utc=grid,
-        load_cost=[0.10] * len(grid),
-        start_temperature=48.0,
-        dry_bulb=[15.0] * len(grid),
-        wet_bulb=[12.5] * len(grid),
-        draw_off=[0.0] * len(grid),
-        cfg=cfg,
-    )
-
-    first_heat = next(idx for idx, power in enumerate(schedule) if power > 0)
-    first_local = grid[first_heat].astimezone(pytz.timezone("Australia/Adelaide"))
-    assert first_local.hour >= 15
-
-
-def test_terminal_repair_respects_minimum_block_duration():
-    grid = _adelaide_grid(0, 8)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["thermal"]["terminal_target"] = 53.0
-    schedule = hp._repair_terminal_temperature(
-        [0.0] * len(grid),
-        grid_times_utc=grid,
-        load_cost=[0.05] * len(grid),
-        start_temperature=49.0,
-        dry_bulb=[49.0] * len(grid),
-        wet_bulb=[12.5] * len(grid),
-        draw_off=[0.0] * len(grid),
-        cfg=cfg,
-    )
-
-    assert sum(1 for power in schedule if power > 0) >= 2
-
-
-def test_terminal_repair_skips_tiny_shortfall_below_min_lift():
-    grid = _adelaide_grid(0, 4)
-    cfg = {"timezone": "Australia/Adelaide", "hwc": _hwc_cfg()}
-    cfg["hwc"]["block_planner"]["min_block_lift_c"] = 2.0
-    schedule = hp._repair_terminal_temperature(
-        [0.0] * len(grid),
-        grid_times_utc=grid,
-        load_cost=[0.05] * len(grid),
-        start_temperature=60.0,
-        dry_bulb=[15.0] * len(grid),
-        draw_off=[0.0] * len(grid),
-        cfg=cfg,
-    )
-
-    assert schedule == [0.0] * len(grid)

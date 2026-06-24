@@ -288,6 +288,10 @@ hwc:
   planner: dp
   horizon_steps: 576
   optimization_time_step: 5
+  # AUD charged per compressor start; the DP's only short-cycle deterrent.
+  transition_cost_aud: 0.05
+  # Local clock time by which the daily 60 °C (legionella) obligation must be met.
+  main_window_end: '18:00'
   weather:
     wet_bulb_smoothing_minutes: 180
   thermal:
@@ -319,17 +323,6 @@ hwc:
     heat_rate_min_c_per_hour: 4.8
     heat_rate_max_c_per_hour: 7.6
     terminal_target: current
-  block_planner:
-    main_window_start: '10:00'
-    main_window_end: '18:00'
-    overnight_window_start: 00:00
-    overnight_window_end: 06:00
-    transition_cost_aud: 0.05
-    min_block_lift_c: 3.0
-    min_block_duration_minutes: 0
-    main_end_reserve_penalty_aud_per_c2: 0.005
-    boost_target_temp: 50
-    terminal_lookback_hours: 24
   dp_planner:
     # survivors_per_state: 2 keeps the max-temp ("run a bit longer") path as well as the
     # min-cost one. Enabled at owner's request; measured net-negative (~1c/plan) and NOT

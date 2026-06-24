@@ -2,17 +2,18 @@
 """Heat-pump hot water (HWC) scheduling planner — v1 (modelling only).
 
 Optimises a heat-pump hot water unit (Aquatech RAPID X6), *separately* from the home
-battery, against the import-price forecast and weather. The default planner models the
-unit as a fixed-speed block heater and publishes predicted tank temperature + planned
-power directly to Home Assistant. The older EMHASS ``thermal_battery`` planner is still
-available via config for comparison.
+battery, against the import-price forecast and weather. The default planner is the
+dynamic-programming scheduler in ``hwc_dp_planner.py``; this module owns the shared
+thermal/cost core (``simulate_block_temperatures``, ``assemble_plan_dict``,
+``_schedule_objective`` …), the price/weather grid builders, and publishing predicted
+tank temperature + planned power directly to Home Assistant. The older EMHASS
+``thermal_battery`` planner is still available via ``hwc.planner: emhass``.
 
-This is the *modelling* phase: it produces and publishes a plan only — it does NOT
-actuate the unit. See ``docs/hwc_emhass.md`` for the full design, the calibration
-anchors, and the v1/v2/v3 roadmap.
+See ``docs/hwc_dp_planner.md`` for the DP design and ``docs/hwc_emhass.md`` for the
+calibration anchors and history.
 
 Pure helpers (``stull_wet_bulb``, ``interpolate_to_grid``, ``build_draw_off_profile``,
-``build_payload`` and block-planner helpers) are unit-tested in
+``build_payload`` and the thermal-simulation helpers) are unit-tested in
 ``tests/unit/test_hwc_planner.py``.
 """
 
@@ -324,8 +325,7 @@ def _state_file_path(cfg: dict) -> Path:
 
 
 def _main_satisfied_dates_from_state(cfg: dict) -> list[str]:
-    block_cfg = cfg["hwc"].get("block_planner", {})
-    configured = block_cfg.get("main_satisfied_dates")
+    configured = cfg["hwc"].get("main_satisfied_dates")
     if configured:
         return list(configured)
     path = _state_file_path(cfg)
@@ -383,41 +383,6 @@ def simulate_block_temperatures(
     return temps, round(temp, 2)
 
 
-def _add_contiguous_heat(
-    schedule_w: list[float],
-    *,
-    start_idx: int,
-    end_idx: int,
-    target_temp: float,
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None = None,
-    draw_off: list[float],
-    cfg: dict,
-) -> list[float]:
-    """Return a copy with one contiguous heater run from start_idx until target is reached."""
-    th = cfg["thermal"]
-    min_steps = _min_block_steps(cfg)
-    out = list(schedule_w)
-    end_idx = min(end_idx, len(out))
-    if start_idx >= end_idx:
-        return out
-    for idx in range(start_idx, end_idx):
-        temps, _ = simulate_block_temperatures(
-            schedule_w=out,
-            start_temperature=start_temperature,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            cfg=cfg,
-        )
-        duration_ok = idx - start_idx >= min_steps
-        if duration_ok and temps[idx] >= target_temp:
-            break
-        out[idx] = _compressor_power_w(th, temps[idx], _wet_bulb_at(wet_bulb, idx))
-    return out
-
-
 def _schedule_energy_cost(schedule_w: list[float], load_cost: list[float], step_h: float) -> float:
     return sum(
         max(0.0, power) / 1000.0 * float(cost) * step_h
@@ -455,433 +420,6 @@ def _schedule_objective(
         compressor_initially_on=compressor_initially_on,
     )
     return (energy_cost + stops * transition_cost_aud, stops, energy_cost)
-
-
-def _schedule_objective_delta(
-    before: list[float],
-    after: list[float],
-    *,
-    load_cost: list[float],
-    step_h: float,
-    transition_cost_aud: float,
-    compressor_initially_on: bool = False,
-) -> float:
-    before_score = _schedule_objective(
-        before,
-        load_cost=load_cost,
-        step_h=step_h,
-        transition_cost_aud=transition_cost_aud,
-        compressor_initially_on=compressor_initially_on,
-    )[0]
-    after_score = _schedule_objective(
-        after,
-        load_cost=load_cost,
-        step_h=step_h,
-        transition_cost_aud=transition_cost_aud,
-        compressor_initially_on=compressor_initially_on,
-    )[0]
-    return after_score - before_score
-
-
-def _min_block_lift_c(hwc: dict) -> float:
-    block_cfg = hwc.get("block_planner", {})
-    return float(block_cfg.get("min_block_lift_c", block_cfg.get("min_main_block_lift_c", 0.0)))
-
-
-def _min_block_steps(hwc: dict) -> int:
-    block_cfg = hwc.get("block_planner", {})
-    step_min = int(hwc.get("optimization_time_step", 30))
-    duration_min = int(block_cfg.get("min_block_duration_minutes", step_min))
-    return max(1, int(math.ceil(duration_min / step_min)))
-
-
-def _choose_daily_main_blocks(
-    schedule_w: list[float],
-    *,
-    grid_times_utc: list[datetime],
-    load_cost: list[float],
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None = None,
-    draw_off: list[float],
-    cfg: dict,
-) -> list[float]:
-    tz = pytz.timezone(cfg["timezone"])
-    block_cfg = cfg["hwc"].get("block_planner", {})
-    main_start = _parse_hhmm(block_cfg.get("main_window_start", "10:00"))
-    main_end = _parse_hhmm(block_cfg.get("main_window_end", "18:00"))
-    target = float(cfg["hwc"]["thermal"].get("desired_temp", 60))
-    min_temp = float(cfg["hwc"]["thermal"].get("min_temp", 45))
-    min_lift_c = _min_block_lift_c(cfg["hwc"])
-    min_steps = _min_block_steps(cfg["hwc"])
-    step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
-    reserve_target = float(block_cfg.get("main_end_reserve_target_c", target))
-    reserve_penalty_per_c2 = float(block_cfg.get("main_end_reserve_penalty_aud_per_c2", 0.0))
-    transition_cost_aud = float(block_cfg.get("transition_cost_aud", 0.0))
-
-    slots_by_day: dict[datetime.date, list[int]] = {}
-    for idx, t in enumerate(grid_times_utc):
-        minute = _local_minute(t, tz)
-        if _minute_in_window(minute, main_start, main_end):
-            slots_by_day.setdefault(t.astimezone(tz).date(), []).append(idx)
-
-    satisfied_dates = set(block_cfg.get("main_satisfied_dates", []))
-    out = list(schedule_w)
-    for day, slots in slots_by_day.items():
-        if day.isoformat() in satisfied_dates:
-            continue
-        best = out
-        best_score = (math.inf, math.inf, math.inf, math.inf, math.inf)
-        base_temps, _ = simulate_block_temperatures(
-            schedule_w=out,
-            start_temperature=start_temperature,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            cfg=cfg["hwc"],
-        )
-        for start_idx in slots:
-            if base_temps[start_idx] > target - min_lift_c:
-                candidate = out
-            else:
-                candidate = _add_contiguous_heat(
-                    out,
-                    start_idx=start_idx,
-                    end_idx=slots[-1] + 1,
-                    target_temp=target,
-                    start_temperature=start_temperature,
-                    dry_bulb=dry_bulb,
-                    wet_bulb=wet_bulb,
-                    draw_off=draw_off,
-                    cfg=cfg["hwc"],
-                )
-            ctemps, cterminal = simulate_block_temperatures(
-                schedule_w=candidate,
-                start_temperature=start_temperature,
-                dry_bulb=dry_bulb,
-                wet_bulb=wet_bulb,
-                draw_off=draw_off,
-                cfg=cfg["hwc"],
-            )
-            eval_end = min(len(ctemps), slots[-1] + 2)
-            window_temps = ctemps[slots[0] : eval_end]
-            target_shortfall = max(0.0, target - max(window_temps))
-            window_shortfall = max(0.0, min_temp - min(window_temps))
-            end_state_idx = slots[-1] + 1
-            end_state_temp = ctemps[end_state_idx] if end_state_idx < len(ctemps) else cterminal
-            reserve_shortfall = max(0.0, reserve_target - end_state_temp)
-            reserve_penalty = reserve_shortfall * reserve_shortfall * reserve_penalty_per_c2
-            added_slots = sum(
-                1 for old, new in zip(out, candidate, strict=True) if new > old
-            )
-            duration_shortfall = max(0, min_steps - added_slots) if added_slots else 0
-            cost = _schedule_objective_delta(
-                out,
-                candidate,
-                load_cost=load_cost,
-                step_h=step_h,
-                transition_cost_aud=transition_cost_aud,
-            )
-            score = (
-                target_shortfall,
-                window_shortfall,
-                duration_shortfall,
-                cost + reserve_penalty,
-                -float(start_idx),
-            )
-            if score < best_score:
-                best = candidate
-                best_score = score
-        out = best
-    return out
-
-
-def _repair_min_temperature(
-    schedule_w: list[float],
-    *,
-    grid_times_utc: list[datetime],
-    load_cost: list[float],
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None = None,
-    draw_off: list[float],
-    cfg: dict,
-) -> list[float]:
-    tz = pytz.timezone(cfg["timezone"])
-    hwc = cfg["hwc"]
-    block_cfg = hwc.get("block_planner", {})
-    overnight_start = _parse_hhmm(block_cfg.get("overnight_window_start", "00:00"))
-    overnight_end = _parse_hhmm(block_cfg.get("overnight_window_end", "06:00"))
-    min_temp = float(hwc["thermal"].get("min_temp", 45))
-    boost_target = float(block_cfg.get("boost_target_temp", min_temp + 5))
-    transition_cost_aud = float(block_cfg.get("transition_cost_aud", 0.0))
-    step_h = hwc.get("optimization_time_step", 30) / 60.0
-    min_steps = _min_block_steps(hwc)
-    lookback = int(round(18 / step_h))
-
-    out = list(schedule_w)
-    for _ in range(8):
-        temps, _ = simulate_block_temperatures(
-            schedule_w=out,
-            start_temperature=start_temperature,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            cfg=hwc,
-        )
-        bad_idx = next((i for i, temp in enumerate(temps) if temp < min_temp), None)
-        if bad_idx is None:
-            return out
-
-        lo = max(0, bad_idx - lookback)
-        candidate_starts = [
-            i
-            for i in range(lo, bad_idx + 1)
-            if _minute_in_window(_local_minute(grid_times_utc[i], tz), overnight_start, overnight_end)
-        ]
-        if not candidate_starts:
-            candidate_starts = list(range(lo, bad_idx + 1))
-        viable_starts = [i for i in candidate_starts if bad_idx - i + 1 >= min_steps]
-        if viable_starts:
-            candidate_starts = viable_starts
-
-        best = None
-        best_score = (math.inf, math.inf)
-        for start_idx in candidate_starts:
-            candidate = list(out)
-            for heat_idx in range(start_idx, bad_idx + 1):
-                ctemps, _ = simulate_block_temperatures(
-                    schedule_w=candidate,
-                    start_temperature=start_temperature,
-                    dry_bulb=dry_bulb,
-                    wet_bulb=wet_bulb,
-                    draw_off=draw_off,
-                    cfg=hwc,
-                )
-                duration_ok = heat_idx - start_idx >= min_steps
-                if duration_ok and ctemps[bad_idx] >= min_temp and ctemps[heat_idx] >= boost_target:
-                    break
-                candidate[heat_idx] = _compressor_power_w(
-                    hwc["thermal"],
-                    ctemps[heat_idx],
-                    _wet_bulb_at(wet_bulb, heat_idx),
-                )
-            ctemps, _ = simulate_block_temperatures(
-                schedule_w=candidate,
-                start_temperature=start_temperature,
-                dry_bulb=dry_bulb,
-                wet_bulb=wet_bulb,
-                draw_off=draw_off,
-                cfg=hwc,
-            )
-            shortfall = max(0.0, min_temp - ctemps[bad_idx])
-            cost = _schedule_objective_delta(
-                out,
-                candidate,
-                load_cost=load_cost,
-                step_h=step_h,
-                transition_cost_aud=transition_cost_aud,
-            )
-            score = (shortfall, cost)
-            if score < best_score:
-                best = candidate
-                best_score = score
-        if best is None or best == out:
-            return out
-        out = best
-    return out
-
-
-def _repair_terminal_temperature(
-    schedule_w: list[float],
-    *,
-    grid_times_utc: list[datetime],
-    load_cost: list[float],
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None = None,
-    draw_off: list[float],
-    cfg: dict,
-) -> list[float]:
-    hwc = cfg["hwc"]
-    th = hwc["thermal"]
-    target_setting = th.get("terminal_target", "current")
-    if target_setting == "current":
-        terminal_target = float(start_temperature)
-    else:
-        terminal_target = float(target_setting)
-    _, terminal = simulate_block_temperatures(
-        schedule_w=schedule_w,
-        start_temperature=start_temperature,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=hwc,
-    )
-    if terminal >= terminal_target:
-        return schedule_w
-    min_lift_c = _min_block_lift_c(hwc)
-    if terminal_target - terminal < min_lift_c:
-        return schedule_w
-
-    step_h = hwc.get("optimization_time_step", 30) / 60.0
-    min_steps = _min_block_steps(hwc)
-    block_cfg = hwc.get("block_planner", {})
-    transition_cost_aud = float(block_cfg.get("transition_cost_aud", 0.0))
-    lookback_h = float(block_cfg.get("terminal_lookback_hours", 24))
-    lo = max(0, len(schedule_w) - int(round(lookback_h / step_h)))
-    best = schedule_w
-    best_score = (max(0.0, terminal_target - terminal), math.inf)
-    for start_idx in range(lo, len(schedule_w)):
-        candidate = list(schedule_w)
-        for heat_idx in range(start_idx, len(schedule_w)):
-            temps, cterminal = simulate_block_temperatures(
-                schedule_w=candidate,
-                start_temperature=start_temperature,
-                dry_bulb=dry_bulb,
-                wet_bulb=wet_bulb,
-                draw_off=draw_off,
-                cfg=hwc,
-            )
-            duration_ok = heat_idx - start_idx >= min_steps
-            if duration_ok and cterminal >= terminal_target:
-                break
-            candidate[heat_idx] = _compressor_power_w(
-                hwc["thermal"],
-                temps[heat_idx],
-                _wet_bulb_at(wet_bulb, heat_idx),
-            )
-        _, cterminal = simulate_block_temperatures(
-            schedule_w=candidate,
-            start_temperature=start_temperature,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            cfg=hwc,
-        )
-        score = (
-            max(0.0, terminal_target - cterminal),
-            _schedule_objective_delta(
-                schedule_w,
-                candidate,
-                load_cost=load_cost,
-                step_h=step_h,
-                transition_cost_aud=transition_cost_aud,
-            ),
-        )
-        if score < best_score:
-            best = candidate
-            best_score = score
-    return best
-
-
-def _running_compressor_locked_schedule(
-    *,
-    grid_times_utc: list[datetime],
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None,
-    draw_off: list[float],
-    cfg: dict,
-) -> list[float]:
-    """Return a seed schedule for a compressor run already in progress."""
-    schedule = [0.0] * len(grid_times_utc)
-    if not schedule:
-        return schedule
-    target = float(cfg["hwc"]["thermal"].get("desired_temp", 60))
-    return _add_contiguous_heat(
-        schedule,
-        start_idx=0,
-        end_idx=len(schedule),
-        target_temp=target,
-        start_temperature=start_temperature,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=cfg["hwc"],
-    )
-
-
-def _running_compressor_seed_schedules(
-    *,
-    grid_times_utc: list[datetime],
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None,
-    draw_off: list[float],
-    cfg: dict,
-) -> list[list[float]]:
-    """Return seed schedules for possible stop points of a run already in progress."""
-    locked = _running_compressor_locked_schedule(
-        grid_times_utc=grid_times_utc,
-        start_temperature=start_temperature,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=cfg,
-    )
-    active_slots = 0
-    for power in locked:
-        if power <= 0:
-            break
-        active_slots += 1
-    seeds = []
-    for stop_after in range(active_slots + 1):
-        seed = [0.0] * len(locked)
-        seed[:stop_after] = locked[:stop_after]
-        seeds.append(seed)
-    return seeds or [[0.0] * len(grid_times_utc)]
-
-
-def _complete_block_schedule(
-    schedule_w: list[float],
-    *,
-    grid_times_utc: list[datetime],
-    load_cost: list[float],
-    start_temperature: float,
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None,
-    draw_off: list[float],
-    cfg: dict,
-) -> list[float]:
-    schedule = _choose_daily_main_blocks(
-        schedule_w,
-        grid_times_utc=grid_times_utc,
-        load_cost=load_cost,
-        start_temperature=start_temperature,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=cfg,
-    )
-    schedule = _repair_min_temperature(
-        schedule,
-        grid_times_utc=grid_times_utc,
-        load_cost=load_cost,
-        start_temperature=start_temperature,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=cfg,
-    )
-    schedule = _repair_terminal_temperature(
-        schedule,
-        grid_times_utc=grid_times_utc,
-        load_cost=load_cost,
-        start_temperature=start_temperature,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=cfg,
-    )
-    return _refresh_planned_power(
-        schedule,
-        start_temperature=start_temperature,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        cfg=cfg["hwc"],
-    )
 
 
 def assemble_plan_dict(
@@ -950,76 +488,6 @@ def assemble_plan_dict(
             for t, value in zip(grid_times_utc, wet_bulb, strict=True)
         ]
     return plan
-
-
-def build_block_plan(
-    *,
-    grid_times_utc: list[datetime],
-    load_cost: list[float],
-    dry_bulb: list[float],
-    wet_bulb: list[float] | None = None,
-    draw_off: list[float],
-    start_temperature: float,
-    cfg: dict,
-    locked_schedule_w: list[float] | None = None,
-    compressor_initially_on: bool = False,
-) -> dict:
-    """Build a fixed-speed HWC block plan and HA-compatible published attributes."""
-    n = len(grid_times_utc)
-    if locked_schedule_w is not None and len(locked_schedule_w) != n:
-        raise ValueError("locked_schedule_w length must match grid_times_utc")
-    transition_cost_aud = float(cfg["hwc"].get("block_planner", {}).get("transition_cost_aud", 0.0))
-    step_h = cfg["hwc"].get("optimization_time_step", 30) / 60.0
-    if locked_schedule_w is not None:
-        seed_schedules = [list(locked_schedule_w)]
-    elif compressor_initially_on:
-        seed_schedules = _running_compressor_seed_schedules(
-            grid_times_utc=grid_times_utc,
-            start_temperature=start_temperature,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            cfg=cfg,
-        )
-    else:
-        seed_schedules = [[0.0] * n]
-
-    best_schedule = None
-    best_score = (math.inf, math.inf, math.inf)
-    for seed in seed_schedules:
-        candidate = _complete_block_schedule(
-            seed,
-            grid_times_utc=grid_times_utc,
-            load_cost=load_cost,
-            start_temperature=start_temperature,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            cfg=cfg,
-        )
-        score = _schedule_objective(
-            candidate,
-            load_cost=load_cost,
-            step_h=step_h,
-            transition_cost_aud=transition_cost_aud,
-            compressor_initially_on=compressor_initially_on,
-        )
-        if score < best_score:
-            best_schedule = candidate
-            best_score = score
-    schedule = best_schedule or [0.0] * n
-    return assemble_plan_dict(
-        schedule,
-        grid_times_utc=grid_times_utc,
-        load_cost=load_cost,
-        dry_bulb=dry_bulb,
-        wet_bulb=wet_bulb,
-        draw_off=draw_off,
-        start_temperature=start_temperature,
-        cfg=cfg,
-        transition_cost_aud=transition_cost_aud,
-        compressor_initially_on=compressor_initially_on,
-    )
 
 
 def build_payload(
@@ -1347,9 +815,7 @@ def _run_emhass(cfg: dict, payload: dict, dry_run: bool) -> dict:
 
 
 def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] | None = None) -> dict:
-    cfg["hwc"].setdefault("block_planner", {})["main_satisfied_dates"] = (
-        _main_satisfied_dates_from_state(cfg)
-    )
+    cfg["hwc"]["main_satisfied_dates"] = _main_satisfied_dates_from_state(cfg)
     grid_times, load_cost = get_import_price_grid(cfg, horizon_steps)
     dry_bulb, wet_bulb = build_weather_grid(
         cfg,
@@ -1382,9 +848,9 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         )
 
     start_temp = get_tank_temperature(cfg)
-    planner_kind = cfg["hwc"].get("planner", "block")
+    planner_kind = cfg["hwc"].get("planner", "dp")
     compressor_initially_on = False
-    if planner_kind in ("block", "dp"):
+    if planner_kind == "dp":
         # The daemon injects a debounced effective-running signal (handles the Tuya sensor's
         # ~50-60 s both-edge lag, defrost pauses, and commanded stops). Fall back to a raw read
         # for standalone invocations where no override is supplied.
@@ -1422,30 +888,20 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         )
         return _run_emhass(cfg, payload, dry_run)
 
-    if planner_kind == "dp":
-        import hwc_dp_planner
+    if planner_kind != "dp":
+        raise ValueError(f"Unknown hwc.planner {planner_kind!r}; expected 'dp' or 'emhass'")
+    import hwc_dp_planner
 
-        plan = hwc_dp_planner.build_dp_plan(
-            grid_times_utc=grid_times,
-            load_cost=load_cost,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            start_temperature=start_temp,
-            cfg=cfg,
-            compressor_initially_on=compressor_initially_on,
-        )
-    else:
-        plan = build_block_plan(
-            grid_times_utc=grid_times,
-            load_cost=load_cost,
-            dry_bulb=dry_bulb,
-            wet_bulb=wet_bulb,
-            draw_off=draw_off,
-            start_temperature=start_temp,
-            cfg=cfg,
-            compressor_initially_on=compressor_initially_on,
-        )
+    plan = hwc_dp_planner.build_dp_plan(
+        grid_times_utc=grid_times,
+        load_cost=load_cost,
+        dry_bulb=dry_bulb,
+        wet_bulb=wet_bulb,
+        draw_off=draw_off,
+        start_temperature=start_temp,
+        cfg=cfg,
+        compressor_initially_on=compressor_initially_on,
+    )
     starts = sum(
         1
         for prev, cur in zip([0.0] + plan["schedule_w"][:-1], plan["schedule_w"], strict=True)

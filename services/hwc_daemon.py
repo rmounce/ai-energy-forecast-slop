@@ -483,7 +483,7 @@ class HwcDaemon:
             horizon = int(self.config["hwc"].get("horizon_steps", 72))
             planner_config = copy.deepcopy(self.config)
             satisfied_date = target_reached_local_date(self.config, self.last_reached_target_at)
-            planner_config["hwc"].setdefault("block_planner", {})["main_satisfied_dates"] = (
+            planner_config["hwc"]["main_satisfied_dates"] = (
                 [satisfied_date] if satisfied_date else []
             )
             planner_config["hwc"]["compressor_initially_on_override"] = (

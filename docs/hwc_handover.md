@@ -14,11 +14,12 @@ Schedule the HWC unit to minimise cost against the import-price + weather foreca
 actuation). Actuation (via Local Tuya) and a resistive-element "dump load" on negative
 prices are later phases.
 
-## TL;DR state (2026-06-20)
+## TL;DR state (2026-06-24)
 
-A working daemonised planner is active. The default engine is a direct fixed-speed block
-planner; EMHASS thermal-battery mode remains as a fallback/comparison path. Dedicated
-Athom metering is live for the HWC compressor circuit.
+A working daemonised planner is active. The engine is the dynamic-programming planner
+(`hwc_dp_planner.py`); the heuristic block planner it replaced was **removed 2026-06-24**.
+EMHASS thermal-battery mode remains as a fallback/comparison path (`hwc.planner: "emhass"`).
+Dedicated Athom metering is live for the HWC compressor circuit.
 
 | Thing | State |
 |---|---|
@@ -26,13 +27,14 @@ Athom metering is live for the HWC compressor circuit.
 | old `ai-energy-hwc.{service,timer}` | **obsolete/removed**; daemon owns HWC planning now |
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
 | COP characterisation | updated through `2026-06-18`; 12/14 clean cycles, five recent Athom-metered cycles |
-| Engine decision (EMHASS vs custom) | custom block planner is now default; EMHASS kept as fallback |
-| DP planner | **implemented, opt-in** (`hwc.planner = "dp"`); ~350 ms vs block 12 s/225 s; see `docs/hwc_dp_planner.md` |
+| Engine decision (EMHASS vs custom) | custom DP planner is the default; EMHASS kept as fallback |
+| DP planner | **default and only optimiser** (`hwc.planner = "dp"`); ~350 ms vs removed block 12 s/225 s; see `docs/hwc_dp_planner.md` |
+| Block planner | **removed 2026-06-24**; `transition_cost_aud`/`main_window_end` moved to `hwc` top-level |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
-| Running compressor policy | planner scores stop/continue candidates; cost = energy + `transition_cost_aud` per stop |
+| Running compressor policy | compressor-on seeds the DP's initial state; `transition_cost_aud` charged per off→on start (stopping is free) |
 | Short-cycle experiment | **concluded 2026-06-20**: config restored (`79f4bbb`); cost key renamed `stop_cost_aud`→`transition_cost_aud` (`0.05`) |
 
 ## What's committed
@@ -54,15 +56,15 @@ leave them alone.
 - `hwc_planner.py` runs as a Python script under the event-driven HWC daemon, *not* a
   Jinja `rest_command`. It reads tank temp, EMHASS-prepared import-price series
   (`sensor.mpc_unit_load_cost` + `sensor.dh_unit_load_cost`), and BOM weather from HA;
-  builds clock-aligned `draw_off`/temperature arrays; creates a 48h fixed-speed block plan;
-  and publishes the plan sensors directly to HA.
+  builds clock-aligned `draw_off`/temperature arrays; delegates the on/off schedule to the
+  DP planner (`hwc_dp_planner.build_dp_plan`); and publishes the plan sensors directly to HA.
 - Published HWC planned power is modelled compressor watts, not a flat nameplate value.
   `config.yaml` uses the 2026-06-19 Athom fit: `740 W @ tank 50 °C / wet-bulb 12.5 °C`,
   `+15 W/°C` tank, `+1.5 W/°C` wet-bulb, clamped `650–930 W`.
 - Battery EMHASS still receives the household load forecast through HA Jinja. That forecast
   is now base load with deferrable loads excluded; `hass/packages/emhass.yaml` adds
   `sensor.hwc_power_plan` back into the day-ahead `load_power_forecast` at payload time.
-- EMHASS fallback mode is still available with `hwc.planner: "emhass"`, but the block planner
+- EMHASS fallback mode is still available with `hwc.planner: "emhass"`, but the DP planner
   is the default because it matches the unit's fixed-speed behavior and avoids fragmented
   compressor starts.
 - Loads config via `config_utils.load_config()` (merges untracked `config.secrets.yaml`).
@@ -152,10 +154,10 @@ the engine-independent long pole — gather it regardless.
 - **Battery isolation:** the HWC optim must keep `set_use_battery:false`/`set_use_pv:false`
   (runtime-overridable via EMHASS `associations.csv`). The battery (DH + per-minute MPC) shares
   the EMHASS instance; the now-fixed race was between concurrent `entity_save` publishes.
-- **Running compressor transition cost:** if `binary_sensor.aquatech_compressor` is already
-  `on`, the block planner compares stop/continue candidates. Objective =
-  energy cost + `block_planner.transition_cost_aud` per compressor stop. This allows
-  interrupting a current run only when a later valid plan beats the configured transition cost.
+- **Running compressor transition cost:** the debounced compressor-on signal seeds the DP's
+  initial state, and `hwc.transition_cost_aud` is charged on each off→on start (stopping is
+  free). So a current run is interrupted only when a later restart still beats the energy
+  saved — the planner never pays to stop, only to (re)start.
 - **Aquatech actuation (measured 2026-06-20):** `off`→`heat_pump` starts in ~seconds and
   `turn_off` stops promptly (compressor); `binary_sensor.aquatech_compressor` lags the real
   transition ~50 s on *both* edges (Local Tuya poll), so Athom ch2 power (>~250 W) is the

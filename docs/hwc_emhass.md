@@ -1,7 +1,9 @@
 # Heat-Pump Hot Water (HWC) Scheduling
 
 **Status:** v1 = modelling only (no actuation). Timer enabled 2026-06-01. The default planner
-is now a direct fixed-speed block planner that publishes the HA plan sensors itself.
+is now the dynamic-programming scheduler (`hwc_dp_planner.py`), which publishes the HA plan
+sensors itself; the heuristic block planner described below was removed 2026-06-24 (see
+`docs/hwc_dp_planner.md`).
 **Operational guard:** the old EMHASS thermal-battery path remains available with
 `hwc.planner: "emhass"`, but it still uses HWC `entity_save` alongside the battery and must run
 only against an EMHASS build with the shared metadata race fix. See
@@ -64,7 +66,8 @@ block heater, not a continuously variable thermal store:
 - dynamic standing loss: `standing_loss_ua_kw_per_c × (tank_temp - dry_bulb)` rather than
   EMHASS's constant loss term.
 - fixed heat rate (`heat_rate_c_per_hour`) and full-power schedule steps.
-- one main daytime block per local day, chosen inside `block_planner.main_window_*`.
+- one main daytime block per local day, by the `main_window_end` deadline (the removed
+  block planner also used a `main_window_start`; the DP only needs the end-of-window deadline).
 - repair boosts only if the model would breach the minimum temperature floor.
 - terminal inventory contract: default `terminal_target: "current"`, so the end-of-horizon
   tank temperature is at least the current temperature.
@@ -171,7 +174,7 @@ Run with `python hwc_planner.py --dry-run` to build + log the payload without PO
 
 ### Published entities & visualisation
 
-The direct block planner publishes these entities using `publish_prefix` (`hwc_`). The EMHASS
+The direct planner publishes these entities using `publish_prefix` (`hwc_`). The EMHASS
 fallback has the same double-prefix gotcha as before: the prefix is prepended to the
 `custom_*_id` you pass, so the custom IDs must be the *bare* names
 (`sensor.predicted_temp`, `sensor.power_plan`) to avoid `sensor.hwc_hwc_…`. Published entities:
