@@ -103,6 +103,22 @@ def apply_draw(v_hot: float, t_hot: float, draw_frac: float) -> tuple[float, flo
     return max(0.0, v_hot - draw_frac), t_hot
 
 
+def v_hot0_from_blind_energy(blind_kwh: float, t_hot0: float, p: SoCParams) -> float:
+    """Infer the latent start ``V_hot`` from the *measured* blind-phase electrical energy.
+
+    The blind phase delivers ``cop_build · blind_kwh`` of heat to grow the hot zone from ``V_hot0``
+    to 1 at lift ``T_hot0 − T_mains``: ``(1 − V_hot0)·cap·lift = cop_build·blind_kwh``. This is the
+    honest estimator — the probe cannot see ``V_hot``, but the energy delivered while the probe is
+    flat reveals how much cold water was displaced. (Within one reheat ``V_hot0`` and ``cop_build``
+    are degenerate; ``cop_build`` is held at its Finding-1 anchor and only the draw events can break
+    that tie later.) With ``V_hot0`` pinned this way, the *rise* phase + final probe become a
+    prediction, not a fit.
+    """
+    lift = max(t_hot0 - p.t_mains_c, _MIN_LIFT_C)
+    v0 = 1.0 - blind_kwh * p.cop_build / (p.cap_full_kwh_per_k * lift)
+    return min(1.0, max(0.0, v0))
+
+
 def step(
     v_hot: float, t_hot: float, on: bool, dt_s: float, p_elec_w: float, p: SoCParams
 ) -> tuple[float, float]:
@@ -185,7 +201,8 @@ def replay_reheat(run, p: SoCParams, v_hot0: float, t_hot0: float | None = None)
     return list(probe_pred), info
 
 
-def fit_v_hot0(run, p: SoCParams, t_hot0: float | None = None, n: int = 41):
+def fit_v_hot0(run, p: SoCParams, t_hot0: float | None = None,
+               n: int = 41, lo: float = 0.05, hi: float = 0.99):
     """Coarse 1-D search for the latent start ``V_hot`` that minimises probe RMSE on a run.
 
     ``V_hot0`` is the unobservable the whole design hinges on (the probe can't see it). Fitting it
@@ -195,7 +212,7 @@ def fit_v_hot0(run, p: SoCParams, t_hot0: float | None = None, n: int = 41):
     import numpy as np
 
     best = None
-    for v0 in np.linspace(0.05, 0.95, n):
+    for v0 in np.linspace(lo, hi, n):
         _, info = replay_reheat(run, p, v_hot0=float(v0), t_hot0=t_hot0)
         if best is None or info["rmse_c"] < best["rmse_c"]:
             best = info

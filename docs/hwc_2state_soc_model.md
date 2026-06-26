@@ -100,25 +100,41 @@ The structure is settled; parameters are first-cut. Refine via `hwc_soc_extract.
 - `g` crossing height + transition width from more draw events (one deep event so far).
 - `T_mains` seasonal value; standing-loss split between `T_hot` and `V_hot` (needs a no-draw window).
 - The conservative draw prior (magnitude + timing) from the draw history.
+- **The build→rise boundary** (surfaced by the step-1 replay): the sharp all-volume-then-all-temp
+  switch under-reaches 60 °C by ~3 °C. A blended transition region near the thermocline crossing,
+  and/or tracking `T_hot` as the condenser **delivery temperature** rather than the under-reading
+  mid-probe, are the candidate fixes — a model-structure call for the reviewer, not a parameter.
 
 ## Implementation sketch
 
 1. **DONE (2026-06-26)** — Standalone forward model `step(V_hot, T_hot, on, dt) -> (V_hot', T_hot')`
    + `g()` observation map, as a pure module **with no DP wiring**: `hwc_soc_model.py`
    (`SoCParams`, `step`, `probe_temp`, `apply_draw`, `cop_rise`, `replay_reheat`, `fit_v_hot0`).
-   Unit-tested in `tests/unit/test_hwc_soc_model.py` (16 deterministic invariants: finite-width
+   Unit-tested in `tests/unit/test_hwc_soc_model.py` (18 deterministic invariants: finite-width
    smooth `g`, the 0.50 midpoint = ~35 °C cliff anchor, build-before-rise ordering, boundary-split
-   energy conservation, standing-loss rate, draws, clamping, synthetic replay). Validated against
-   real cycles via `hwc_soc_calibrate.py --mode replay` over the metered span — **all 18 reheats**:
-   final-probe |err| **mean 1.2 °C / max 3.7 °C**, probe RMSE mean 0.8 °C, on the first-cut
-   parameters below. The structure reproduces the flat-then-rise shape and lands the final probe
-   to ~1 °C without per-cycle tuning.
-   - **Fit target this exposed:** the model's *build* completes in ~12–14 min while the measured
-     blind phase is 25–77 min, and `fit_v_hot0` pins `V_hot0` at the search ceiling — i.e. with
-     `sensor_height = 0.50` / `g_width = 0.10` the probe saturates too early, so the flat phase is
-     matched by a near-full start rather than a long fill. Reconcile by fitting `sensor_height`,
-     `g_width`, and `cop_build` against the blind-phase *duration* (not just the final probe); the
-     final-probe fit is already good, the build-duration fit is the next lever. Tooling is in place.
+   energy conservation, standing-loss rate, draws, clamping, the `V_hot0`-from-blind-energy
+   estimator, synthetic replay). Validated against real cycles via `hwc_soc_calibrate.py` over the
+   metered span (**all 18 reheats**, first-cut parameters):
+   - **`--mode replay` — the honest, predictive validation.** `V_hot0` is *not* fit to the probe
+     (circular); it is inferred from the **measured blind-phase energy** (`v_hot0_from_blind_energy`:
+     the energy delivered while the probe is flat reveals the cold water displaced), making the
+     build duration match by construction and the rise phase + final probe a genuine **prediction**:
+     final-probe |err| **mean 2.8 °C / max 7.2 °C**, systematically ~3 °C *under* 60. (Fitting
+     `V_hot0` to the probe instead flatters to ~1.2 °C, but that latent then absorbs the error — not
+     a real test.)
+   - **The systematic under-bias is the sharp build→rise boundary.** The first-cut model sends *all*
+     energy to `V_hot` until `V_hot = 1`, then *all* to `T_hot`; pinning `V_hot0` to the blind energy
+     leaves only the rise energy for temperature, while the real tank blends the two near the
+     thermocline crossing (some `T_hot` rise during late build). So the model reaches 60 a little
+     short. **Next levers (deferred — reviewer/data):** soften the build→rise boundary (a blended
+     transition region), and/or carry `T_hot0` as the condenser **delivery temperature** (~53–54 °C)
+     rather than the mid-probe `p0` — the probe under-reads `T_hot` whenever it sits below the
+     thermocline, which inflates the apparent rise the model must produce.
+   - **`--mode fit`** calibrates the probe-map geometry (`sensor_height`, `g_width`) under
+     energy-pinned `V_hot0`; on current data it slides to the bound (`sensor_height → 0.55`), i.e.
+     the ~18 cycles don't yet pin it — only the few deep-draw starts put the probe *in* the
+     transition where height is identifiable. Defaults stay at the physical anchors (0.50 / 0.10 /
+     `cop_build` 2.6); don't bake in the bound-hitting fit.
 2. Swap the DP state `regime → (V_hot_bin, T_hot_bin)`; remove `regime_for_start` / the latch.
 3. `V_hot` tracker (conservative prior + watermark resets) in the daemon.
 4. Executor hardware-60 ceiling (partly present as the existing min-off/grace logic).

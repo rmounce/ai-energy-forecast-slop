@@ -23,7 +23,13 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from hwc_soc_extract import iter_reheats, segment_reheat  # noqa: E402
-from hwc_soc_model import SoCParams, fit_v_hot0, replay_reheat  # noqa: E402
+from dataclasses import replace as _replace  # noqa: E402
+
+from hwc_soc_model import (  # noqa: E402
+    SoCParams,
+    replay_reheat,
+    v_hot0_from_blind_energy,
+)
 
 TANK_L = 222.0
 CAP_KWH_PER_K = TANK_L * 0.997 * 4.186 / 3600.0  # ≈0.257 kWh/K
@@ -119,27 +125,31 @@ def phases(df: pd.DataFrame) -> dict:
     return f
 
 
-def replay(df: pd.DataFrame, p: SoCParams | None = None) -> pd.DataFrame:
-    """Replay every reheat in a window through the standalone (V_hot, T_hot) forward model.
+def _replay_one(run, p: SoCParams) -> dict:
+    """Energy-pinned replay of one reheat: V_hot0 from measured blind energy, then PREDICT."""
+    f = segment_reheat(run)
+    v_hot0 = v_hot0_from_blind_energy(float(f["blind_kwh"]), float(f["p0"]), p)
+    _, info = replay_reheat(run, p, v_hot0=v_hot0, t_hot0=float(f["p0"]))
+    return {**f, "v_hot0": v_hot0, **{f"mdl_{k}": v for k, v in info.items()}}
 
-    For each compressor-on run we fit the single latent ``V_hot0`` (the probe can't observe it) to
-    minimise probe RMSE, holding ``T_hot0`` at the start probe (the flat build-phase plateau), then
-    report how well the model reproduces the run: the build-complete time vs the measured blind
-    phase, and the predicted vs observed final probe. With the *rise* phase predicted from a latent
-    set by the *blind* phase, a low residual is the model's over-identification check. Parameters
-    are first-cut (``docs/hwc_2state_soc_model.md`` "What still needs fitting") — this is the tool
-    that drives their refinement, not a pass/fail gate.
+
+def replay(df: pd.DataFrame, p: SoCParams | None = None) -> pd.DataFrame:
+    """Replay every reheat through the model with V_hot0 PINNED by the measured blind energy.
+
+    This is the honest validation: the probe cannot observe ``V_hot``, so we estimate ``V_hot0``
+    from the energy delivered while the probe is flat (``v_hot0_from_blind_energy``) — *not* by
+    fitting it to the probe. The build duration then matches the data by construction, and the
+    *rise* phase + final probe are a genuine over-identified **prediction**. Residual there tests
+    the rise COP and the probe map ``g``. Parameters are first-cut
+    (``docs/hwc_2state_soc_model.md`` "What still needs fitting"); this drives their refinement.
     """
     p = p or SoCParams()
     rows = []
     for run in iter_reheats(df):
-        f = segment_reheat(run)
-        best = fit_v_hot0(run, p, t_hot0=float(f["p0"]))
+        r = _replay_one(run, p)
         rows.append(dict(
-            start=f["start"], p0=f["p0"], p1_obs=f["p1"], p1_pred=round(best["probe_pred_final"], 1),
-            blind_min_obs=f["blind_min"], build_min_mdl=round(best["build_done_min"], 0)
-            if best["build_done_min"] is not None else None,
-            v_hot0=round(best["v_hot0"], 2), rmse_c=round(best["rmse_c"], 2),
+            start=r["start"], p0=r["p0"], p1_obs=r["p1"], p1_pred=round(r["mdl_probe_pred_final"], 1),
+            blind_kwh=r["blind_kwh"], v_hot0=round(r["v_hot0"], 2), rmse_c=round(r["mdl_rmse_c"], 2),
         ))
     tbl = pd.DataFrame(rows)
     show = tbl.assign(start=tbl["start"].dt.strftime("%m-%d %H:%M"))
@@ -150,10 +160,44 @@ def replay(df: pd.DataFrame, p: SoCParams | None = None) -> pd.DataFrame:
     return tbl
 
 
+def _mean_rmse(runs, p: SoCParams) -> float:
+    return float(np.mean([_replay_one(r, p)["mdl_rmse_c"] for r in runs]))
+
+
+def fit(df: pd.DataFrame, base: SoCParams | None = None) -> SoCParams:
+    """Calibrate the probe-map geometry (sensor_height, g_width) under energy-pinned V_hot0.
+
+    With ``V_hot0`` set from the measured blind energy (not fit to the probe), the build duration is
+    matched by construction, so the remaining probe residual is carried by the observation map
+    ``g``. Only ``sensor_height``/``g_width`` are fit — they're identified by the low-start cycles
+    where the probe sits *in* the transition (a saturated probe says nothing about sensor height).
+    ``cop_build`` (degenerate with ``V_hot0`` within a reheat), ``T_mains``, and the rise-COP anchors
+    are held — over-fitting to ~18 noisy cycles is explicitly avoided (Findings 1/3/5).
+    """
+    from scipy.optimize import minimize
+
+    base = base or SoCParams()
+    runs = list(iter_reheats(df))
+    x0 = [base.sensor_height, base.g_width]
+    bounds = [(0.20, 0.55), (0.05, 0.20)]
+
+    def loss(x):
+        return _mean_rmse(runs, _replace(base, sensor_height=x[0], g_width=x[1]))
+
+    print(f"{len(runs)} reheats. base mean RMSE {loss(x0):.3f} C  "
+          f"(sensor_height={x0[0]:.2f}, g_width={x0[1]:.3f}; cop_build={base.cop_build:.2f} held)")
+    res = minimize(loss, x0, method="Nelder-Mead", bounds=bounds,
+                   options={"xatol": 1e-3, "fatol": 1e-3, "maxiter": 200})
+    fitted = _replace(base, sensor_height=res.x[0], g_width=res.x[1])
+    print(f"fitted mean RMSE {res.fun:.3f} C  "
+          f"(sensor_height={res.x[0]:.3f}, g_width={res.x[1]:.3f})")
+    return fitted
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", type=Path)
-    ap.add_argument("--mode", choices=("traces", "cop", "phases", "replay", "both"), default="traces")
+    ap.add_argument("--mode", choices=("traces", "cop", "phases", "replay", "fit", "both"), default="traces")
     ap.add_argument("--out", type=Path, help="output PNG (traces); defaults next to csv")
     args = ap.parse_args()
     df = load(args.csv)
@@ -166,6 +210,10 @@ def main() -> None:
         phases(df)
     if args.mode == "replay":
         replay(df)
+    if args.mode == "fit":
+        fitted = fit(df)
+        print("\nreplay with fitted params:")
+        replay(df, fitted)
 
 
 if __name__ == "__main__":

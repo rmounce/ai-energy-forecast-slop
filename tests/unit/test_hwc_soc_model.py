@@ -19,6 +19,7 @@ from hwc_soc_model import (
     probe_temp,
     replay_reheat,
     step,
+    v_hot0_from_blind_energy,
 )
 
 P = SoCParams()
@@ -151,6 +152,32 @@ def test_draw_drops_v_hot_holds_t_hot_and_clamps():
     assert t == 55.0
     v2, _ = apply_draw(0.2, 55.0, 0.5)
     assert v2 == 0.0                     # cannot draw below empty
+
+
+# --- V_hot0 from blind energy (the honest, non-circular estimator) -------------------------
+
+def test_v_hot0_from_blind_energy_inverts_the_build():
+    # Energy delivered while the probe is flat reveals the cold water displaced: filling from the
+    # inferred V_hot0 to 1 should consume exactly that blind energy. Round-trips against `step`.
+    p = SoCParams(standing_loss_w=0.0)
+    blind_kwh = 0.5
+    t_hot0 = 53.0
+    v0 = v_hot0_from_blind_energy(blind_kwh, t_hot0, p)
+    assert 0.0 < v0 < 1.0
+    # Drive `step` with exactly blind_kwh of electricity; V_hot should just reach 1.0.
+    v, t = v0, t_hot0
+    p_w = 800.0
+    dt = blind_kwh * 1000.0 / p_w * 3600.0  # seconds to deliver blind_kwh at p_w
+    v, t = step(v, t, on=True, dt_s=dt, p_elec_w=p_w, p=p)
+    assert math.isclose(v, 1.0, abs_tol=1e-6)
+
+
+def test_v_hot0_from_blind_energy_more_energy_means_emptier_start():
+    p = SoCParams()
+    a = v_hot0_from_blind_energy(0.3, 53.0, p)
+    b = v_hot0_from_blind_energy(0.9, 53.0, p)
+    assert b < a              # a longer blind phase ⇒ started with less hot water
+    assert v_hot0_from_blind_energy(5.0, 53.0, p) == 0.0   # clamps (started empty)
 
 
 # --- synthetic replay (the structural reproduction, no real data needed) -------------------
