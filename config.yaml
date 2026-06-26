@@ -333,6 +333,17 @@ hwc:
     # through high prices — yields above ~$0.94/kWh single-step — while the per-step
     # accumulation still caps how long/deep it sits under-floor. See docs/hwc_dp_planner.md.
     min_temp_penalty_aud_per_c: 0.1
+    # Opt-in two-state (V_hot, T_hot) decision model — replaces the FULL/TOP-UP regime latch with
+    # the continuous stratified-tank model (no 53 °C discontinuity). Render + executor/EMHASS
+    # contract unchanged; the daemon tracks (V_hot, T_hot) in data/hwc_daemon_state.json and
+    # publishes sensor.hwc_soc_state for the apexcharts card. See docs/hwc_2state_soc_model.md.
+    # Disabled 2026-06-27 pending analysis of the divergent seed (model-probe vs real probe; the
+    # T_hot-as-delivery-temp / Option 2 question). Flip back to true to resume the live watch.
+    soc_model: false
+    soc:
+      t_mains_c: 18.0              # Adelaide winter mains/inlet (model parameter; tune seasonally)
+      draw_prior_kwh_per_day: 1.2  # conservative draw prior (defaults to draw_off.total_kwh)
+      cliff_probe_c: 39.0          # probe below this snaps V_hot→sensor_height (deep-draw watermark)
   actuation:
     enabled: true
     water_heater_entity: water_heater.aquatech
