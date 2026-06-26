@@ -34,8 +34,9 @@ Dedicated Athom metering is live for the HWC compressor circuit.
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
-| Running compressor policy | compressor-on seeds the DP's initial state; `transition_cost_aud` charged per off→on start (stopping is free) |
+| Running compressor policy | compressor-on seeds the DP's initial state (incl. carried `block_regime_full`); `transition_cost_aud` charged per off→on start (stopping is free) |
 | Short-cycle experiment | **concluded 2026-06-20**: config restored (`79f4bbb`); cost key renamed `stop_cost_aud`→`transition_cost_aud` (`0.05`) |
+| Short-cycle at 53 °C boundary | **fixed 2026-06-26**: regime seed was re-deduced from the probe, flipping FULL/TOP-UP at `top_up_start_temp_c` → cross-replan limit cycle. Fix = daemon carries the in-progress run's regime (`block_regime_full`) + symmetric `min_off_seconds` guard. See `docs/hwc_short_cycle_review_2026-06-26.md` |
 
 ## What's committed
 
@@ -158,6 +159,17 @@ the engine-independent long pole — gather it regardless.
   initial state, and `hwc.transition_cost_aud` is charged on each off→on start (stopping is
   free). So a current run is interrupted only when a later restart still beats the energy
   saved — the planner never pays to stop, only to (re)start.
+- **Carried regime seed (`block_regime_full`, 2026-06-26):** the daemon also seeds the
+  in-progress run's heat-rate regime — FULL iff the run started below `top_up_start_temp_c`,
+  tracked as the coldest probe temp since it began. Without this the DP re-deduced regime from
+  the *current* probe, flipping FULL→TOP-UP at 53 °C and mis-pricing "continue" → a cross-replan
+  short-cycle limit cycle (`docs/hwc_short_cycle_review_2026-06-26.md`). Falls back to the
+  temp-based guess on a daemon restart mid-block.
+- **Executor hardware guards:** `heat_command_grace_seconds` suppresses an `off` right after a
+  heat until the start registers (bridges sensor lag, ≈ min-on); `min_off_seconds` (180 s)
+  symmetrically suppresses a `heat` within the minimum compressor rest after an off (hardware
+  short-cycle protection, independent of the planner). No strict min-*on* — deferring a stop
+  would overshoot the setpoint, whereas deferring a start is always safe.
 - **Aquatech actuation (measured 2026-06-20):** `off`→`heat_pump` starts in ~seconds and
   `turn_off` stops promptly (compressor); `binary_sensor.aquatech_compressor` lags the real
   transition ~50 s on *both* edges (Local Tuya poll), so Athom ch2 power (>~250 W) is the

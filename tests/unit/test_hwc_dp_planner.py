@@ -215,6 +215,36 @@ def test_dp_transition_cost_merges_short_cycle_through_price_blip():
 # ── running compressor + robustness ──────────────────────────────────────────
 
 
+def test_dp_block_regime_full_seed_continues_through_boundary():
+    # A compressor mid cold-reheat carried to exactly top_up_start_temp_c (53 °C) is still in the
+    # FULL regime. Seeding that (block_regime_full=True) keeps it heating; the temp-based fallback
+    # mis-reads 53 °C as TOP-UP and stops — the short-cycle artifact this fix removes
+    # (docs/hwc_short_cycle_review_2026-06-26.md).
+    grid = _grid(15, 48, step_min=5, day=26)  # 18:00 legionella deadline is in-window
+    cfg = _cfg(step_min=5)
+    load = [0.12, 0.12] + [0.4] * 46  # cheap now, dearer after
+    common = dict(
+        grid_times_utc=grid,
+        load_cost=load,
+        dry_bulb=[15.0] * 48,
+        wet_bulb=[12.5] * 48,
+        draw_off=[0.0] * 48,
+        start_temperature=53.0,
+        cfg=cfg,
+        compressor_initially_on=True,
+    )
+    # FULL carried regime: the in-progress run keeps heating.
+    assert dp.build_dp_plan(block_regime_full=True, **common)["schedule_w"][0] > 0
+    # TOP-UP carried regime (genuinely topping up a warm tank): the stop is legitimate.
+    assert dp.build_dp_plan(block_regime_full=False, **common)["schedule_w"][0] == 0.0
+    # None (standalone run / daemon restart mid-block) falls back to the temp-based guess, which
+    # at 53 °C == top_up_start_temp_c is TOP-UP — identical to the explicit TOP-UP seed.
+    assert (
+        dp.build_dp_plan(block_regime_full=None, **common)["schedule_w"]
+        == dp.build_dp_plan(block_regime_full=False, **common)["schedule_w"]
+    )
+
+
 def test_dp_handles_compressor_initially_on():
     grid = _grid(10, 16)
     cfg = _cfg()

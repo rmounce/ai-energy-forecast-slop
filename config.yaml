@@ -351,6 +351,10 @@ hwc:
     # Suppress an off issued right after a heat command until the Tuya compressor sensor
     # confirms running, bridging its ~60 s LocalTuya poll lag. 120 s = 2 poll cycles.
     heat_command_grace_seconds: 120
+    # Symmetric hardware guard: minimum compressor rest after an off command before a restart is
+    # allowed. Bounds the start rate against sensor jitter / model edge-cases regardless of the
+    # planner. 180 s = 3 min, a typical heat-pump anti-short-cycle minimum.
+    min_off_seconds: 180
     # For the planner's effective-running signal: a compressor off (while below target, with
     # heat still commanded) shorter than this is treated as a defrost pause, not a stop.
     compressor_off_debounce_seconds: 600

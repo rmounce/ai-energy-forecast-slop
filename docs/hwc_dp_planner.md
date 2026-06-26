@@ -33,6 +33,11 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
   - daily `desired_temp` (60 C) by `main_window_end`, skipped for `main_satisfied_dates`.
   - terminal: small penalty below `terminal_target`.
 - **Compressor-on = initial state** (regime + `compressor_on` seeded). No seed enumeration.
+  The seed regime is supplied by the daemon via `block_regime_full` (FULL iff the run started
+  below `top_up_start_temp_c`), **not** re-deduced from the current probe temp. Deriving it from
+  the probe flips FULL/TOP-UP at the 53 °C boundary and drove a short-cycle limit cycle; the
+  carried value fixes it. `None` (standalone runs / daemon restart mid-block) falls back to the
+  temp-based guess. See `docs/hwc_short_cycle_review_2026-06-26.md`.
 
 ## Config (`hwc.dp_planner`, all optional; code defaults shown)
 
@@ -68,9 +73,11 @@ prices at zero. If sub-bin precision ever matters, shrink `temp_bin_c` (symmetri
 add survivors. The `survivors_per_state: 2` path is retained only because the owner wanted
 it available; safe to delete if never enabled.
 
-Reads from `hwc` top-level: `transition_cost_aud`, `main_window_end`, `main_satisfied_dates`
-(the last injected at runtime by the daemon). These moved up from the removed `block_planner`
-section on 2026-06-24.
+Reads from `hwc` top-level: `transition_cost_aud`, `main_window_end`, `main_satisfied_dates`,
+`compressor_block_regime_full` (the last two injected at runtime by the daemon;
+`compressor_block_regime_full` seeds the in-progress run's regime — see the design note above).
+`transition_cost_aud`/`main_window_end` moved up from the removed `block_planner` section on
+2026-06-24.
 Reuses from `thermal`: rate/power model, `min_temp`, `desired_temp`, `max_temp`,
 `top_up_start_temp_c`, `terminal_target`.
 

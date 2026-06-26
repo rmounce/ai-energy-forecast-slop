@@ -195,6 +195,30 @@ def should_suppress_off_after_heat(
     return now - last_heat_command_at < grace_seconds
 
 
+def should_suppress_heat_after_off(
+    *,
+    decision_action: str,
+    now: float,
+    last_off_command_at: float,
+    min_off_seconds: float,
+) -> bool:
+    """Inhibit a ``heat`` command issued within ``min_off_seconds`` of an off command.
+
+    Enforces a minimum compressor rest period — symmetric, hardware-protection counterpart to
+    ``should_suppress_off_after_heat``. Unlike that guard this is a *pure time gate* and does not
+    consult the compressor sensor: the whole point is to guarantee the compressor a rest before
+    a restart regardless of what the planner wants, bounding the start rate against sensor
+    jitter or any model edge-case (the 53 °C short-cycle being the motivating one). A min-*on*
+    guard is deliberately not added: forcing a stop to be deferred would push the tank past its
+    setpoint, whereas deferring a *start* is always safe.
+    """
+    if decision_action != "heat":
+        return False
+    if last_off_command_at <= 0:
+        return False
+    return now - last_off_command_at < min_off_seconds
+
+
 def effective_compressor_running(
     *,
     raw_on: bool,
@@ -313,11 +337,17 @@ class HwcDaemon:
         self.started_at = time.monotonic()
         self.last_plan_at = 0.0
         self.last_heat_command_at = 0.0
+        self.last_off_command_at = 0.0
         self.last_applied_command = None
         # last_command_action persists across cache invalidations (unlike last_applied_command),
         # so the planner's effective-running signal can tell a commanded stop from a defrost pause.
         self.last_command_action: str | None = None
         self.compressor_last_on_at = 0.0
+        # Coldest tank temp seen since the in-progress compressor run began, and the regime it
+        # implies (FULL iff below top_up_start_temp_c). Seeds the planner so a cold-started run
+        # carried past 53 °C is not mis-read as TOP-UP. None when off / unknown.
+        self.block_min_temp_c: float | None = None
+        self.block_regime_full: bool | None = None
         self._heat_unconfirmed_warned = False
         self.last_reached_target_at = self._load_state()
         self._next_msg_id = 1
@@ -489,6 +519,8 @@ class HwcDaemon:
             planner_config["hwc"]["compressor_initially_on_override"] = (
                 await asyncio.to_thread(self._effective_compressor_running)
             )
+            # _effective_compressor_running refreshes the carried block regime as a side effect.
+            planner_config["hwc"]["compressor_block_regime_full"] = self.block_regime_full
             try:
                 await asyncio.to_thread(hwc_planner.run, planner_config, horizon, self.dry_run)
             except Exception:
@@ -542,6 +574,13 @@ class HwcDaemon:
                 )
                 return
 
+            if self._should_suppress_heat_after_off(decision):
+                log.warning(
+                    "Suppressing HWC heat command %.1fs after off command (min-off guard)",
+                    time.monotonic() - self.last_off_command_at,
+                )
+                return
+
             act = self.config["hwc"].get("actuation", {})
             key = command_key(decision)
             if self.dry_run or not act.get("enabled", False):
@@ -566,6 +605,8 @@ class HwcDaemon:
                 if decision.action == "heat":
                     self.last_heat_command_at = time.monotonic()
                     self._heat_unconfirmed_warned = False
+                elif decision.action == "off":
+                    self.last_off_command_at = time.monotonic()
             log.info("HWC executor completed in %.1fs: %s", time.monotonic() - started, decision.action)
 
     def _fallback_decision_current(self) -> hwc_executor.Decision | None:
@@ -595,6 +636,15 @@ class HwcDaemon:
             compressor_on=decision.compressor_on,
         )
 
+    def _should_suppress_heat_after_off(self, decision: hwc_executor.Decision) -> bool:
+        min_off = float(self.config["hwc"].get("daemon", {}).get("min_off_seconds", 180))
+        return should_suppress_heat_after_off(
+            decision_action=decision.action,
+            now=time.monotonic(),
+            last_off_command_at=self.last_off_command_at,
+            min_off_seconds=min_off,
+        )
+
     def _invalidate_command_cache_on_equipment_change(self, entity_id: str) -> None:
         # Any change to the heater/compressor means our cached command may no longer reflect
         # reality (e.g. a manual mode change), so force the next executor pass to re-assert.
@@ -620,13 +670,12 @@ class HwcDaemon:
             log.exception("Could not read compressor state; assuming off for planning")
             raw_on = False
         try:
-            tank_at_target = (
-                hwc_planner.get_tank_temperature(self.config) >= _target_temperature_c(self.config)
-            )
+            tank_temp = hwc_planner.get_tank_temperature(self.config)
         except Exception:
             log.exception("Could not read tank temperature; assuming below target for planning")
-            tank_at_target = False
-        return effective_compressor_running(
+            tank_temp = None
+        tank_at_target = tank_temp is not None and tank_temp >= _target_temperature_c(self.config)
+        effective_on = effective_compressor_running(
             raw_on=raw_on,
             last_command_action=self.last_command_action,
             tank_at_target=tank_at_target,
@@ -636,6 +685,39 @@ class HwcDaemon:
             start_grace_s=start_grace,
             defrost_grace_s=defrost_grace,
         )
+        self._update_block_regime(effective_on, tank_temp)
+        return effective_on
+
+    def _update_block_regime(self, effective_on: bool, tank_temp_c: float | None) -> None:
+        """Track the heat-rate regime of the in-progress compressor run for the planner seed.
+
+        The DP must seed the regime (FULL cold-reheat vs TOP-UP) of an already-running
+        compressor. Deriving it from the *current* tank temp is wrong at the top_up_start
+        boundary: a run that started cold and has climbed to 53 °C is still FULL, yet a
+        temp-based guess calls it TOP-UP, mis-pricing "continue" and driving a short-cycle
+        (docs/hwc_short_cycle_review_2026-06-26.md). We carry the coldest tank temp seen since
+        the run began; the block is FULL iff that minimum is below top_up_start_temp_c. Resets
+        when the compressor stops; stays None on a restart mid-run so the planner falls back.
+        """
+        if not effective_on:
+            self.block_min_temp_c = None
+            self.block_regime_full = None
+            return
+        if tank_temp_c is not None:
+            if self.block_min_temp_c is None:
+                self.block_min_temp_c = tank_temp_c
+            else:
+                self.block_min_temp_c = min(self.block_min_temp_c, tank_temp_c)
+        top_up = self.config["hwc"].get("thermal", {}).get("top_up_start_temp_c")
+        if self.block_min_temp_c is None or top_up is None:
+            self.block_regime_full = None
+        else:
+            # `<=`, not `<`: the DP models an off→on start at exactly top_up_start as FULL (the
+            # first step's standing loss drops the post-step temp below the boundary, so
+            # regime_for_start returns FULL). Matching that keeps the carried regime consistent
+            # with the start branch across the off/on seam — a strict `<` would tag a run that
+            # *starts* at 53.0 as TOP-UP and re-open the limit cycle on a restart parked at 53.
+            self.block_regime_full = self.block_min_temp_c <= float(top_up)
 
     def _mark_target_reached(self, temp: float | None, at_utc: datetime) -> None:
         # Level-triggered: latch whenever the tank is observed at/above target and we have not
