@@ -474,8 +474,12 @@ def _build_dp_plan_soc(
         diag_v.append(round(v, 4))
         diag_t.append(round(t, 2))
         diag_probe.append(round(soc.probe_temp(v, t, p), 2))
+    soc_forecast = [
+        {"date": gt.isoformat(), "v_hot": vv, "t_hot": tt, "probe": pr}
+        for gt, vv, tt, pr in zip(grid_times_utc, diag_v, diag_t, diag_probe, strict=True)
+    ]
     diag = {
         "soc_v_hot": diag_v, "soc_t_hot": diag_t, "soc_probe": diag_probe,
-        "soc_state0": [round(v0, 4), round(t0, 2)],
+        "soc_state0": [round(v0, 4), round(t0, 2)], "soc_forecast": soc_forecast,
     }
     return _finalize(schedule_w, diag)

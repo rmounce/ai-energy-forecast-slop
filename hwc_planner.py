@@ -782,6 +782,25 @@ def _publish_block_plan(cfg: dict, plan: dict):
                 "wet_bulb_forecasts": plan["wet_bulb_forecasts"],
             },
         )
+    # Two-state model diagnostics (only present when hwc.dp_planner.soc_model is on). State is the
+    # planned hot-zone fraction now; the full forecast (V_hot/T_hot/probe) rides in attributes for
+    # the apexcharts card (hass/lovelace-hwc-apexcharts.yaml). Visual only — nothing consumes it.
+    if plan.get("soc_forecast"):
+        soc_entity = f"sensor.{prefix}soc_state"
+        head = plan["soc_forecast"][0]
+        _ha_set_state(
+            cfg,
+            soc_entity,
+            round(head["v_hot"], 3),
+            {
+                "unit_of_measurement": "fraction",
+                "friendly_name": "HWC Hot-Zone Fraction (V_hot)",
+                "t_hot": head["t_hot"],
+                "probe": head["probe"],
+                "soc_state0": plan.get("soc_state0"),
+                "soc_forecast": plan["soc_forecast"],
+            },
+        )
     logging.info(
         "Published HWC plan to HA (%s, %s, %s, %s)",
         temp_entity,

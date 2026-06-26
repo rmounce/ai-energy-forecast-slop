@@ -175,8 +175,13 @@ The structure is settled; parameters are first-cut. Refine via `hwc_soc_extract.
      (via `dp_planner._soc_state0`, read by `build_dp_plan`); only runs when `soc_model` is on.
      Draw-prior rate from `hwc.dp_planner.soc.draw_prior_kwh_per_day` (defaults to the planning draw
      total) over the configured draw window. Tests in `tests/unit/test_hwc_daemon.py`.
-   - **Still TODO (small):** publish the `soc_v_hot`/`soc_t_hot`/`soc_probe` diagnostic series (now
-     present in the plan dict) to HA sensors for eyeballing; tune the draw-prior magnitude.
+   - **Diagnostics published (2026-06-26):** `_build_dp_plan_soc` emits a timestamped `soc_forecast`
+     (V_hot/T_hot/probe per grid step); `hwc_planner._publish_block_plan` pushes it to
+     `sensor.hwc_soc_state` (state = current V_hot; the forecast rides in attributes), gated on the
+     series being present (flag-off publishes nothing new). `hass/lovelace-hwc-apexcharts.yaml`
+     gains a 0–1 `V_hot` axis and three model series (T_hot, model-probe, V_hot) to eyeball against
+     the measured/executor tank temp.
+   - **Still TODO (small):** tune the draw-prior magnitude as draw history accumulates.
 4. Executor hardware-60 ceiling (partly present as the existing min-off/grace logic).
 5. Migrate, don't alias: delete FULL/TOP-UP + the legacy DP path once parity is shown on the
    metered reheats and in live shadow.

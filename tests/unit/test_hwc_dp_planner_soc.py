@@ -86,6 +86,11 @@ def test_flag_on_keeps_published_contract_and_adds_diagnostics():
     assert len(plan["soc_v_hot"]) == 48 == len(plan["soc_t_hot"]) == len(plan["soc_probe"])
     assert all(0.0 <= v <= 1.0 for v in plan["soc_v_hot"])
     assert len(plan["soc_state0"]) == 2
+    # timestamped forecast for the apexcharts card: aligned to the grid, all keys present
+    assert len(plan["soc_forecast"]) == 48
+    assert plan["soc_forecast"][0]["date"] == grid[0].isoformat()
+    for row in plan["soc_forecast"]:
+        assert {"date", "v_hot", "t_hot", "probe"} <= row.keys()
 
 
 # ── obligation on the probe ───────────────────────────────────────────────────
