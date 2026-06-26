@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
+from hwc_soc_extract import iter_reheats, segment_reheat  # noqa: E402
+
 TANK_L = 222.0
 CAP_KWH_PER_K = TANK_L * 0.997 * 4.186 / 3600.0  # ≈0.257 kWh/K
 
@@ -93,53 +95,27 @@ def cop_curve(df: pd.DataFrame, out: Path, lo=53.0, hi=60.0, width=0.5) -> pd.Da
     return g
 
 
-def _longest_on_span(df: pd.DataFrame):
-    """Return (start, end) of the longest contiguous compressor-on run."""
-    on = df.get("compressor_on", 0) > 0.5
-    grp = (on != on.shift()).cumsum()
-    runs = [(g.index[0], g.index[-1]) for k, g in on.groupby(grp) if g.iloc[0]]
-    if not runs:
-        raise SystemExit("No compressor-on run in this window")
-    return max(runs, key=lambda se: se[1] - se[0])
-
-
-def phases(df: pd.DataFrame, blind_rise_c=2.0) -> dict:
-    """Split a reheat into the probe-BLIND build phase and the probe-readable RISE phase.
+def phases(df: pd.DataFrame) -> dict:
+    """Pretty-print the BLIND/RISE split for the longest reheat in a single-window CSV.
 
     The decisive (V_hot, T_hot) evidence: from compressor-on the probe stays ~flat for a while
     (the hot zone is growing *above* the sensor — invisible) before it starts climbing. The blind
     phase's duration/energy is NOT a function of the probe (same start probe, very different blind
     work depending on latent V_hot/stratification), so a probe-only heat-rate curve can't model it.
-
-    "Blind" = compressor-on until the probe has risen ``blind_rise_c`` above its on-start value
-    (robust to the probe's 1°C quantisation, unlike a dProbe/dt threshold). Energy is ∫P dt.
+    The split itself lives in ``hwc_soc_extract.segment_reheat`` (shared with ``batch``); use that
+    ``batch`` mode for a many-reheat table.
     """
-    s, e = _longest_on_span(df)
-    run = df.loc[s:e].copy()
-    dt_h = run.index.to_series().diff().dt.total_seconds() / 3600.0
-    run["elec_kwh"] = (run["power_w"].fillna(0) / 1000.0) * dt_h
-    p0 = run["probe_ctrl"].iloc[0]
-    risen = run["probe_ctrl"] >= p0 + blind_rise_c
-    t_rise = run.index[risen][0] if risen.any() else e
-    blind, rise = run.loc[:t_rise], run.loc[t_rise:]
-
-    def summ(seg):
-        mins = (seg.index[-1] - seg.index[0]).total_seconds() / 60
-        pa, pb = seg["probe_ctrl"].iloc[0], seg["probe_ctrl"].iloc[-1]
-        return dict(min=mins, p0=pa, p1=pb, kwh=float(seg["elec_kwh"].sum()),
-                    rate=(pb - pa) / (mins / 60) if mins else 0.0)
-
-    out = dict(start=s, end=e, on_min=(e - s).total_seconds() / 60,
-               on_kwh=float(run["elec_kwh"].sum()), start_probe=p0,
-               blind=summ(blind), rise=summ(rise))
-    b, r = out["blind"], out["rise"]
-    print(f"reheat {s:%Y-%m-%d %H:%M}->{e:%H:%M}  start probe {p0:.1f}C  "
-          f"on {out['on_min']:.0f}min / {out['on_kwh']:.2f}kWh")
-    print(f"  BLIND build : {b['min']:5.0f}min  probe {b['p0']:.1f}->{b['p1']:.1f}  "
-          f"{b['kwh']:.2f}kWh  ({100*b['kwh']/out['on_kwh']:.0f}% of energy, probe ~flat)")
-    print(f"  RISE        : {r['min']:5.0f}min  probe {r['p0']:.1f}->{r['p1']:.1f}  "
-          f"{r['kwh']:.2f}kWh  ({r['rate']:+.1f}C/h mean)")
-    return out
+    runs = list(iter_reheats(df))
+    if not runs:
+        raise SystemExit("No compressor-on run in this window")
+    run = max(runs, key=lambda g: g.index[-1] - g.index[0])
+    f = segment_reheat(run)
+    print(f"reheat {f['start']:%Y-%m-%d %H:%M}->{f['end']:%H:%M}  start probe {f['p0']:.1f}C  "
+          f"on {f['on_min']:.0f}min / {f['on_kwh']:.2f}kWh")
+    print(f"  BLIND build : {f['blind_min']:5.0f}min  {f['blind_kwh']:.2f}kWh  "
+          f"({f['blind_pct']:.0f}% of energy, probe ~flat)")
+    print(f"  RISE        : {f['rise_min']:5.0f}min  {f['rise_Cph']:+.1f}C/h mean")
+    return f
 
 
 def main() -> None:

@@ -96,21 +96,28 @@ when a run should be easy to review in Git.
 
 ## Finding 4 — the probe-blind build phase (decisive 2-state evidence)
 
-Segmenting two clean reheats (`hwc_soc_calibrate.py --mode phases`, on traces from
-`hwc_soc_extract.py`) shows every reheat starts with a **probe-blind build phase**: from
-compressor-on the control probe (mid-tank, ~50 % height) stays roughly flat while a large slug
-of energy goes in — it is heating the hot zone *above* the sensor, which the probe cannot see
-until the thermocline descends to it.
+Segmenting reheats (`hwc_soc_extract.py batch` over the power-metered era, or
+`hwc_soc_calibrate.py --mode phases` for one window; both share `segment_reheat`) shows every
+reheat starts with a **probe-blind build phase**: from compressor-on the control probe (mid-tank,
+~50 % height) stays roughly flat while a large slug of energy goes in — it is heating the hot zone
+*above* the sensor, which the probe cannot see until the thermocline descends to it.
+
+Across the **18 Athom-metered reheats (2026-06-14 → 06-26)** the blind phase averages **~42 % of
+cycle energy** (range 20–72 % over the 16 full reheats). The duration is **not monotone in the
+start probe**:
 
 | reheat | start probe | blind phase | rise phase |
 |---|---|---|---|
-| 2026-06-25 (warm) | 48.6 °C | **63 min / 0.72 kWh** (46 % of energy, probe 48.6→50.6) | 61 min, +9.2 °C/h to 60 |
-| 2026-06-26 (cold, post-draw) | 35.8 °C | **44 min / 0.42 kWh** (33 % of energy, probe 35.8→37.8) | 74 min, +12.4 °C/h to 53 |
+| 2026-06-20 | 52.0 °C (warm) | **77 min / 0.91 kWh (60 %)** | 42 min, +8.3 °C/h |
+| 2026-06-26 pm | 53.6 °C (warmer) | 30 min / 0.41 kWh (43 %) | 38 min, +6.9 °C/h |
+| 2026-06-25 | 48.5 °C | 62 min / 0.72 kWh (46 %) | 61 min, +9.2 °C/h |
+| 2026-06-16 | 49.4 °C | 34 min / 0.40 kWh (31 %) | 64 min, +8.0 °C/h |
 
-The decisive point: the **warm** start (higher probe) had the **larger** blind phase. The blind
-work is set by the latent hot-volume / stratification, **not** by the probe reading — so a
-probe-only heat-rate curve (the rejected "Option A") provably cannot predict reheat time or
-energy. This is the measured justification for the two-state **`(V_hot, T_hot)`** tank model
+The decisive point: 06-20 started **warmer** than 06-25 yet had a far **larger** blind phase, and
+48–49 °C starts span 34–62 min of blind work. The blind work is set by the latent hot-volume /
+stratification, **not** by the probe reading — so a probe-only heat-rate curve (the rejected
+"Option A") provably cannot predict reheat time or energy. This is the measured justification for
+the two-state **`(V_hot, T_hot)`** tank model
 (quantity vs. temperature of the hot zone), where the blind phase = `V_hot` growing at ~constant
 `T_hot` and the rise phase = the thermocline crossing the sensor then `T_hot` climbing 53→60 as
 COP collapses (Finding 3). `T_mains` is a model parameter (no water-side sensor logs).
