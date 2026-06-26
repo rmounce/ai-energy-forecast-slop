@@ -124,6 +124,16 @@ COP collapses (Finding 3). `T_mains` is a model parameter (no water-side sensor 
 The probe's 1 °C source quantisation (Tuya integers; recorder already captures every tick) bounds
 COP-curve resolution — index on the wider-swinging exhaust, or average cycles, not finer logging.
 
+## Finding 5 — standing loss (draw-confounded upper bound)
+
+With no flow/inlet sensor, probe declines during compressor-off mix standing loss with
+unobservable draws. A mid-tank probe stays at 60 °C through small draws (the thermocline only
+reaches it on a large draw), so the **slowest** multi-hour declines from a full 60 °C tank are the
+closest to pure standing loss: these cluster at **0.27–0.40 °C/h**, i.e. standing loss ≈
+**0.3 °C/h (~75 W)** as an upper bound — plausible for a modern HPWH tank. In `(V_hot, T_hot)`
+terms this acts mainly on `T_hot` (cooling the hot zone) plus slow thermocline diffusion eroding
+`V_hot`. A genuine no-draw (away) window would tighten it; don't over-fit this from current data.
+
 ## Fan-speed regime (calibration caveat)
 
 Fan speed was reduced via the back-end menu (F30 25→10, F35 55→30) for quieter operation;
