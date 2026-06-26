@@ -205,58 +205,6 @@ def test_does_not_suppress_off_or_expired_min_off():
     )
 
 
-def _regime_daemon():
-    cfg = _config()
-    cfg["hwc"]["thermal"]["top_up_start_temp_c"] = 53.0
-    d = hd.HwcDaemon.__new__(hd.HwcDaemon)
-    d.config = cfg
-    d.block_min_temp_c = None
-    d.block_regime_full = None
-    return d
-
-
-def test_block_regime_full_carried_past_boundary():
-    # A run that started cold (below 53) and has climbed to the boundary stays FULL — the seed
-    # must reflect block history, not the current probe reading (the short-cycle fix).
-    d = _regime_daemon()
-    d._update_block_regime(True, 48.0)  # rising edge: cold start
-    assert d.block_regime_full is True
-    d._update_block_regime(True, 53.0)  # climbed to the boundary, same run
-    assert d.block_regime_full is True  # carried FULL, not re-deduced to TOP-UP
-
-
-def test_block_regime_full_when_run_starts_at_boundary():
-    # A run that *starts* at exactly top_up_start is FULL — the DP models the off→on start as
-    # FULL (first-step loss drops it below 53). The seam must agree or a restart parked at 53
-    # re-opens the limit cycle.
-    d = _regime_daemon()
-    d._update_block_regime(True, 53.0)
-    assert d.block_regime_full is True
-
-
-def test_block_regime_topup_when_run_started_warm():
-    d = _regime_daemon()
-    d._update_block_regime(True, 54.0)  # started above the boundary: a genuine top-up
-    assert d.block_regime_full is False
-
-
-def test_block_regime_resets_when_off():
-    d = _regime_daemon()
-    d._update_block_regime(True, 48.0)
-    assert d.block_regime_full is True
-    d._update_block_regime(False, 50.0)  # compressor stopped
-    assert d.block_min_temp_c is None
-    assert d.block_regime_full is None
-
-
-def test_block_regime_unknown_on_restart_midrun():
-    # Running but no temp observed yet (daemon restarted mid-block): stay None so the planner
-    # falls back to its temp-based guess rather than asserting a possibly-wrong regime.
-    d = _regime_daemon()
-    d._update_block_regime(True, None)
-    assert d.block_regime_full is None
-
-
 def _eff(**overrides):
     kw = dict(
         raw_on=False,

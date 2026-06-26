@@ -215,14 +215,15 @@ def test_dp_transition_cost_merges_short_cycle_through_price_blip():
 # ── running compressor + robustness ──────────────────────────────────────────
 
 
-def test_dp_block_regime_full_seed_continues_through_boundary():
-    # A compressor mid cold-reheat carried to exactly top_up_start_temp_c (53 °C) is still in the
-    # FULL regime. Seeding that (block_regime_full=True) keeps it heating; the temp-based fallback
-    # mis-reads 53 °C as TOP-UP and stops — the short-cycle artifact this fix removes
-    # (docs/hwc_short_cycle_review_2026-06-26.md).
+def test_dp_no_short_cycle_flip_at_regime_boundary():
+    # Regression for the 53 °C short-cycle: at exactly top_up_start_temp_c the present-slot
+    # decision must not depend on whether the compressor is currently on. The fresh-start regime
+    # is sampled at the same pre-step temp as a continuing run (and the published replay), so the
+    # seeded-on and seeded-off plans agree on the first action (docs/hwc_short_cycle_review_
+    # 2026-06-26.md). With the old post-step (t1) sampling the seeds disagreed → limit cycle.
     grid = _grid(15, 48, step_min=5, day=26)  # 18:00 legionella deadline is in-window
     cfg = _cfg(step_min=5)
-    load = [0.12, 0.12] + [0.4] * 46  # cheap now, dearer after
+    load = [0.12, 0.12] + [0.4] * 46  # the scenario that exposed the flip
     common = dict(
         grid_times_utc=grid,
         load_cost=load,
@@ -231,18 +232,10 @@ def test_dp_block_regime_full_seed_continues_through_boundary():
         draw_off=[0.0] * 48,
         start_temperature=53.0,
         cfg=cfg,
-        compressor_initially_on=True,
     )
-    # FULL carried regime: the in-progress run keeps heating.
-    assert dp.build_dp_plan(block_regime_full=True, **common)["schedule_w"][0] > 0
-    # TOP-UP carried regime (genuinely topping up a warm tank): the stop is legitimate.
-    assert dp.build_dp_plan(block_regime_full=False, **common)["schedule_w"][0] == 0.0
-    # None (standalone run / daemon restart mid-block) falls back to the temp-based guess, which
-    # at 53 °C == top_up_start_temp_c is TOP-UP — identical to the explicit TOP-UP seed.
-    assert (
-        dp.build_dp_plan(block_regime_full=None, **common)["schedule_w"]
-        == dp.build_dp_plan(block_regime_full=False, **common)["schedule_w"]
-    )
+    off0 = dp.build_dp_plan(compressor_initially_on=False, **common)["schedule_w"][0]
+    on0 = dp.build_dp_plan(compressor_initially_on=True, **common)["schedule_w"][0]
+    assert (off0 > 0) == (on0 > 0)
 
 
 def test_dp_handles_compressor_initially_on():

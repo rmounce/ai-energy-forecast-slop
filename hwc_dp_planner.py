@@ -57,17 +57,8 @@ def build_dp_plan(
     start_temperature: float,
     cfg: dict,
     compressor_initially_on: bool = False,
-    block_regime_full: bool | None = None,
 ) -> dict:
-    """Build a DP-optimised HWC plan in the shape published by ``hwc_planner.run``.
-
-    ``block_regime_full`` seeds the heat-rate regime of an *already-running* compressor
-    (``True`` = FULL cold-reheat, ``False`` = TOP-UP). When ``None`` (standalone runs, or a
-    daemon restart mid-block) the regime is guessed from ``start_temperature`` — the seam that
-    caused the short-cycle limit cycle at ``top_up_start_temp_c`` (see
-    ``docs/hwc_short_cycle_review_2026-06-26.md``); the daemon supplies the carried value to
-    avoid it.
-    """
+    """Build a DP-optimised HWC plan in the shape published by ``hwc_planner.run``."""
     hwc = cfg["hwc"]
     th = hwc["thermal"]
     dp_cfg = hwc.get("dp_planner", {})
@@ -152,16 +143,7 @@ def build_dp_plan(
     # action_on). At most `survivors` records are kept per key. history[p] is the state map
     # *before* interval p; history[n] is the terminal map.
     init_on = bool(compressor_initially_on)
-    if not init_on:
-        init_regime = _OFF
-    elif block_regime_full is None:
-        # No carried regime (standalone run or daemon restart mid-block): fall back to the
-        # temp-based guess. This is the seam the short-cycle exploited — at the top_up_start
-        # boundary the guess flips FULL/TOP-UP and the DP's "continue" price flips with it. The
-        # daemon supplies block_regime_full so a cold-started run carried past 53 °C stays FULL.
-        init_regime = regime_for_start(start_temperature)
-    else:
-        init_regime = _FULL if block_regime_full else _TOPUP
+    init_regime = regime_for_start(start_temperature) if init_on else _OFF
     init_sat = start_temperature >= desired
     init_key = (tbin(start_temperature), init_on, init_regime, init_sat)
     states: dict[tuple, list] = {init_key: [(0.0, float(start_temperature), None, None, None)]}
@@ -199,7 +181,13 @@ def build_dp_plan(
                         if on_prev and regime_prev != _OFF:
                             regime = regime_prev
                         else:
-                            regime = regime_for_start(t1)
+                            # Block-start regime from the *pre-step* temp, matching the seed
+                            # (regime_for_start(start_temperature)) and the published replay,
+                            # which latches simulate_block_temperatures on the pre-step block-start
+                            # temp. Sampling post-step t1 here flipped FULL/TOP-UP at exactly
+                            # top_up_start relative to a continuing run — the 53 °C short-cycle
+                            # limit cycle (docs/hwc_short_cycle_review_2026-06-26.md).
+                            regime = regime_for_start(temp)
                         rate = _rate_for_regime(th, regime, wbp, t1)
                         t_next = min(max_temp, t1 + rate * step_h)
                         power = hp._compressor_power_w(th, t1, wbp)

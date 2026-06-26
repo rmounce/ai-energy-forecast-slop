@@ -901,9 +901,6 @@ def run(cfg: dict, horizon_steps: int, dry_run: bool, extra_draw_off: list[str] 
         start_temperature=start_temp,
         cfg=cfg,
         compressor_initially_on=compressor_initially_on,
-        # Daemon-supplied regime of the in-progress run (None for standalone runs → the planner
-        # falls back to a temp-based guess).
-        block_regime_full=cfg["hwc"].get("compressor_block_regime_full"),
     )
     starts = sum(
         1

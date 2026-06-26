@@ -17,29 +17,38 @@ nothing damps the oscillation.
 
 Reviewer and owner converged. **Option A (a probe-only continuous heat-rate curve) was rejected:**
 the measured two-stage rate is stratification/state-of-charge driven, not a function of the
-single mid-tank probe, so a memoryless `f(T_probe)` would discard validated physics. Two changes
-shipped:
+single mid-tank probe, so a memoryless `f(T_probe)` would discard validated physics.
 
-1. **Carried regime seed (the real fix).** The daemon now seeds the in-progress run's regime
-   (`block_regime_full` = FULL iff the run started below `top_up_start_temp_c`, tracked as the
-   coldest probe temp since it began) instead of letting the DP re-deduce it from the current
-   probe. A cold-started run carried past 53 °C stays FULL, so "continue" is priced correctly and
-   the artifact stop disappears. Falls back to the temp-based guess on a daemon restart mid-block.
+**The real bug was narrower than first thought — a pre/post-step inconsistency, not the absence
+of a carried regime.** The DP determined a *fresh* off→on start's regime from the **post-step**
+temp `t1`, while a *continuing* run (and the published replay, `simulate_block_temperatures`)
+used the **pre-step** block-start temp. At exactly `top_up_start_temp_c` those differ by one
+step's standing loss (~0.03 °C), so a fresh start was priced FULL while a continuing run was
+priced TOP-UP — opposite present-slot decisions across replans → the limit cycle.
+
+Two changes shipped:
+
+1. **Pre-step regime sampling (the fix).** The fresh-start branch now uses
+   `regime_for_start(temp)` (pre-step), matching the seed and the replay. One line; the
+   FULL/TOP-UP decision no longer depends on whether the compressor is currently on, so the flip —
+   and the cycle — disappears. Confirmed live: it reaches 60 °C and seeded-on/seeded-off agree.
 2. **Symmetric `min_off_seconds` guard (hardware protection).** A `heat` within the minimum
    compressor rest after an `off` is suppressed — model-agnostic short-cycle protection. No strict
    min-*on*: deferring a stop would overshoot the setpoint, whereas deferring a start is safe.
 
-A reproduction confirmed the seed flips the present-slot decision at the boundary, and the fix is
-covered by unit tests (`test_dp_block_regime_full_seed_continues_through_boundary`,
-`test_block_regime_*`, `test_*_min_off_*`).
+**A carried-regime seed was tried first and reverted.** Having the daemon carry "this run started
+cold ⇒ FULL" fixed the flip but caused a worse failure: it carried FULL into the 53→60 °C tail,
+which is physically the *slow* phase-2 (COP-collapse) region. The DP then over-estimated the heat
+rate, under-provisioned on-slots, and the exact replay fell ~0.5 °C short of the 60 °C legionella
+target on every day. Sampling regime from the current temp (TOP-UP in the tail) is both correct
+and consistent with the replay.
+
+Covered by unit tests (`test_dp_no_short_cycle_flip_at_regime_boundary`, `test_*_min_off_*`).
 
 **Deferred (agreed destination, not built):** a continuous **state-of-charge** tank model (2-node
 or hot-fraction), with condensing/exhaust temperature as a *calibration/observation* signal (it is
 only meaningful while the compressor runs, so it indexes charging, not the discharge/draw problem).
-This dissolves the latent future-block discontinuity entirely; until then it is a logged known
-limitation. The remaining minor inaccuracy: the published-temperature replay
-(`simulate_block_temperatures`) still latches regime on block-start temp, so a carried-FULL run's
-predicted temps are modelled slightly conservatively — pessimistic, not a control problem.
+This dissolves the FULL/TOP-UP discontinuity entirely; until then it is a logged known limitation.
 
 The sections below are the original diagnostic record as sent for review.
 

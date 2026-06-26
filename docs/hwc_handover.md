@@ -34,9 +34,9 @@ Dedicated Athom metering is live for the HWC compressor circuit.
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
 | Execution layer | integrated in `services/hwc_daemon.py`; old executor timer removed |
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
-| Running compressor policy | compressor-on seeds the DP's initial state (incl. carried `block_regime_full`); `transition_cost_aud` charged per off→on start (stopping is free) |
+| Running compressor policy | compressor-on seeds the DP's initial state; `transition_cost_aud` charged per off→on start (stopping is free) |
 | Short-cycle experiment | **concluded 2026-06-20**: config restored (`79f4bbb`); cost key renamed `stop_cost_aud`→`transition_cost_aud` (`0.05`) |
-| Short-cycle at 53 °C boundary | **fixed 2026-06-26**: regime seed was re-deduced from the probe, flipping FULL/TOP-UP at `top_up_start_temp_c` → cross-replan limit cycle. Fix = daemon carries the in-progress run's regime (`block_regime_full`) + symmetric `min_off_seconds` guard. See `docs/hwc_short_cycle_review_2026-06-26.md` |
+| Short-cycle at 53 °C boundary | **fixed 2026-06-26**: a fresh off→on start sampled regime at the post-step temp `t1` while a continuing run used the pre-step start temp, flipping FULL/TOP-UP at `top_up_start_temp_c` → cross-replan limit cycle. Fix = sample the start regime at the pre-step temp (one line, matches the replay) + symmetric `min_off_seconds` guard. See `docs/hwc_short_cycle_review_2026-06-26.md` |
 
 ## What's committed
 
@@ -159,12 +159,14 @@ the engine-independent long pole — gather it regardless.
   initial state, and `hwc.transition_cost_aud` is charged on each off→on start (stopping is
   free). So a current run is interrupted only when a later restart still beats the energy
   saved — the planner never pays to stop, only to (re)start.
-- **Carried regime seed (`block_regime_full`, 2026-06-26):** the daemon also seeds the
-  in-progress run's heat-rate regime — FULL iff the run started below `top_up_start_temp_c`,
-  tracked as the coldest probe temp since it began. Without this the DP re-deduced regime from
-  the *current* probe, flipping FULL→TOP-UP at 53 °C and mis-pricing "continue" → a cross-replan
-  short-cycle limit cycle (`docs/hwc_short_cycle_review_2026-06-26.md`). Falls back to the
-  temp-based guess on a daemon restart mid-block.
+- **Regime-seam consistency (2026-06-26):** the DP samples a fresh off→on start's heat-rate
+  regime at the *pre-step* temp `regime_for_start(temp)`, the same basis the seed
+  (`regime_for_start(start_temperature)`) and the published replay use. Previously a fresh start
+  used the post-step `t1`, so at exactly `top_up_start_temp_c` a continuing run (TOP-UP) and a
+  fresh start (FULL) disagreed → a cross-replan short-cycle limit cycle
+  (`docs/hwc_short_cycle_review_2026-06-26.md`). A carried-regime daemon seed was tried first and
+  reverted — carrying FULL into the slow phase-2 tail made the DP under-provision and under-shoot
+  the 60 °C legionella target.
 - **Executor hardware guards:** `heat_command_grace_seconds` suppresses an `off` right after a
   heat until the start registers (bridges sensor lag, ≈ min-on); `min_off_seconds` (180 s)
   symmetrically suppresses a `heat` within the minimum compressor rest after an off (hardware

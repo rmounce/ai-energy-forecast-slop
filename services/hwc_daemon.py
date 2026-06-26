@@ -343,11 +343,6 @@ class HwcDaemon:
         # so the planner's effective-running signal can tell a commanded stop from a defrost pause.
         self.last_command_action: str | None = None
         self.compressor_last_on_at = 0.0
-        # Coldest tank temp seen since the in-progress compressor run began, and the regime it
-        # implies (FULL iff below top_up_start_temp_c). Seeds the planner so a cold-started run
-        # carried past 53 °C is not mis-read as TOP-UP. None when off / unknown.
-        self.block_min_temp_c: float | None = None
-        self.block_regime_full: bool | None = None
         self._heat_unconfirmed_warned = False
         self.last_reached_target_at = self._load_state()
         self._next_msg_id = 1
@@ -519,8 +514,6 @@ class HwcDaemon:
             planner_config["hwc"]["compressor_initially_on_override"] = (
                 await asyncio.to_thread(self._effective_compressor_running)
             )
-            # _effective_compressor_running refreshes the carried block regime as a side effect.
-            planner_config["hwc"]["compressor_block_regime_full"] = self.block_regime_full
             try:
                 await asyncio.to_thread(hwc_planner.run, planner_config, horizon, self.dry_run)
             except Exception:
@@ -670,12 +663,13 @@ class HwcDaemon:
             log.exception("Could not read compressor state; assuming off for planning")
             raw_on = False
         try:
-            tank_temp = hwc_planner.get_tank_temperature(self.config)
+            tank_at_target = (
+                hwc_planner.get_tank_temperature(self.config) >= _target_temperature_c(self.config)
+            )
         except Exception:
             log.exception("Could not read tank temperature; assuming below target for planning")
-            tank_temp = None
-        tank_at_target = tank_temp is not None and tank_temp >= _target_temperature_c(self.config)
-        effective_on = effective_compressor_running(
+            tank_at_target = False
+        return effective_compressor_running(
             raw_on=raw_on,
             last_command_action=self.last_command_action,
             tank_at_target=tank_at_target,
@@ -685,39 +679,6 @@ class HwcDaemon:
             start_grace_s=start_grace,
             defrost_grace_s=defrost_grace,
         )
-        self._update_block_regime(effective_on, tank_temp)
-        return effective_on
-
-    def _update_block_regime(self, effective_on: bool, tank_temp_c: float | None) -> None:
-        """Track the heat-rate regime of the in-progress compressor run for the planner seed.
-
-        The DP must seed the regime (FULL cold-reheat vs TOP-UP) of an already-running
-        compressor. Deriving it from the *current* tank temp is wrong at the top_up_start
-        boundary: a run that started cold and has climbed to 53 °C is still FULL, yet a
-        temp-based guess calls it TOP-UP, mis-pricing "continue" and driving a short-cycle
-        (docs/hwc_short_cycle_review_2026-06-26.md). We carry the coldest tank temp seen since
-        the run began; the block is FULL iff that minimum is below top_up_start_temp_c. Resets
-        when the compressor stops; stays None on a restart mid-run so the planner falls back.
-        """
-        if not effective_on:
-            self.block_min_temp_c = None
-            self.block_regime_full = None
-            return
-        if tank_temp_c is not None:
-            if self.block_min_temp_c is None:
-                self.block_min_temp_c = tank_temp_c
-            else:
-                self.block_min_temp_c = min(self.block_min_temp_c, tank_temp_c)
-        top_up = self.config["hwc"].get("thermal", {}).get("top_up_start_temp_c")
-        if self.block_min_temp_c is None or top_up is None:
-            self.block_regime_full = None
-        else:
-            # `<=`, not `<`: the DP models an off→on start at exactly top_up_start as FULL (the
-            # first step's standing loss drops the post-step temp below the boundary, so
-            # regime_for_start returns FULL). Matching that keeps the carried regime consistent
-            # with the start branch across the off/on seam — a strict `<` would tag a run that
-            # *starts* at 53.0 as TOP-UP and re-open the limit cycle on a restart parked at 53.
-            self.block_regime_full = self.block_min_temp_c <= float(top_up)
 
     def _mark_target_reached(self, temp: float | None, at_utc: datetime) -> None:
         # Level-triggered: latch whenever the tank is observed at/above target and we have not
