@@ -60,9 +60,12 @@ def cop_curve(df: pd.DataFrame, out: Path, lo=53.0, hi=60.0, width=0.5) -> pd.Da
 
     In phase-2 the tank is destratified so probe ≈ bulk; raising the probe by ``width`` adds
     ``cap·width`` of thermal energy, so COP = cap·width / (∫P over the time the probe spends in
-    that band). Binning by *probe* (monotone in phase-2) sidesteps the sparse-probe dProbe/dt
-    noise. The probe can't give *phase-1* COP (it's flat while the hot zone grows) — that needs an
-    exhaust/power thermal proxy, a separate step.
+    that band). Binning by *probe* (monotone in phase-2) sidesteps dProbe/dt noise from the
+    probe's 1°C source quantisation (Tuya reports integers; band edges = the integer ticks, so
+    band width is the natural resolution — finer bins are not recoverable without averaging many
+    cycles, and indexing on the wider-swinging exhaust gives ~2x the effective bins). The probe
+    can't give *phase-1* COP (it's flat while the hot zone grows) — that needs an exhaust/power
+    thermal proxy, a separate step.
     """
     on = df.get("compressor_on", 0) > 0.5
     sub = df[on & df["exhaust"].notna() & (df["probe_ctrl"] >= lo)].copy()
@@ -90,10 +93,59 @@ def cop_curve(df: pd.DataFrame, out: Path, lo=53.0, hi=60.0, width=0.5) -> pd.Da
     return g
 
 
+def _longest_on_span(df: pd.DataFrame):
+    """Return (start, end) of the longest contiguous compressor-on run."""
+    on = df.get("compressor_on", 0) > 0.5
+    grp = (on != on.shift()).cumsum()
+    runs = [(g.index[0], g.index[-1]) for k, g in on.groupby(grp) if g.iloc[0]]
+    if not runs:
+        raise SystemExit("No compressor-on run in this window")
+    return max(runs, key=lambda se: se[1] - se[0])
+
+
+def phases(df: pd.DataFrame, blind_rise_c=2.0) -> dict:
+    """Split a reheat into the probe-BLIND build phase and the probe-readable RISE phase.
+
+    The decisive (V_hot, T_hot) evidence: from compressor-on the probe stays ~flat for a while
+    (the hot zone is growing *above* the sensor — invisible) before it starts climbing. The blind
+    phase's duration/energy is NOT a function of the probe (same start probe, very different blind
+    work depending on latent V_hot/stratification), so a probe-only heat-rate curve can't model it.
+
+    "Blind" = compressor-on until the probe has risen ``blind_rise_c`` above its on-start value
+    (robust to the probe's 1°C quantisation, unlike a dProbe/dt threshold). Energy is ∫P dt.
+    """
+    s, e = _longest_on_span(df)
+    run = df.loc[s:e].copy()
+    dt_h = run.index.to_series().diff().dt.total_seconds() / 3600.0
+    run["elec_kwh"] = (run["power_w"].fillna(0) / 1000.0) * dt_h
+    p0 = run["probe_ctrl"].iloc[0]
+    risen = run["probe_ctrl"] >= p0 + blind_rise_c
+    t_rise = run.index[risen][0] if risen.any() else e
+    blind, rise = run.loc[:t_rise], run.loc[t_rise:]
+
+    def summ(seg):
+        mins = (seg.index[-1] - seg.index[0]).total_seconds() / 60
+        pa, pb = seg["probe_ctrl"].iloc[0], seg["probe_ctrl"].iloc[-1]
+        return dict(min=mins, p0=pa, p1=pb, kwh=float(seg["elec_kwh"].sum()),
+                    rate=(pb - pa) / (mins / 60) if mins else 0.0)
+
+    out = dict(start=s, end=e, on_min=(e - s).total_seconds() / 60,
+               on_kwh=float(run["elec_kwh"].sum()), start_probe=p0,
+               blind=summ(blind), rise=summ(rise))
+    b, r = out["blind"], out["rise"]
+    print(f"reheat {s:%Y-%m-%d %H:%M}->{e:%H:%M}  start probe {p0:.1f}C  "
+          f"on {out['on_min']:.0f}min / {out['on_kwh']:.2f}kWh")
+    print(f"  BLIND build : {b['min']:5.0f}min  probe {b['p0']:.1f}->{b['p1']:.1f}  "
+          f"{b['kwh']:.2f}kWh  ({100*b['kwh']/out['on_kwh']:.0f}% of energy, probe ~flat)")
+    print(f"  RISE        : {r['min']:5.0f}min  probe {r['p0']:.1f}->{r['p1']:.1f}  "
+          f"{r['kwh']:.2f}kWh  ({r['rate']:+.1f}C/h mean)")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", type=Path)
-    ap.add_argument("--mode", choices=("traces", "cop", "both"), default="traces")
+    ap.add_argument("--mode", choices=("traces", "cop", "phases", "both"), default="traces")
     ap.add_argument("--out", type=Path, help="output PNG (traces); defaults next to csv")
     args = ap.parse_args()
     df = load(args.csv)
@@ -102,6 +154,8 @@ def main() -> None:
         plot_traces(df, args.out or Path(f"{stem}_traces.png"), args.csv.name)
     if args.mode in ("cop", "both"):
         cop_curve(df, Path(f"{stem}_cop.png"))
+    if args.mode == "phases":
+        phases(df)
 
 
 if __name__ == "__main__":

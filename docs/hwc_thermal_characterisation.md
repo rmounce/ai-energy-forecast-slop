@@ -94,6 +94,29 @@ changes before using it for calibration.) Keep `data/hwc_cop_cycles.csv` as the
 machine-readable cycle table, and write `--summary-md docs/hwc_calibration_cycles.md`
 when a run should be easy to review in Git.
 
+## Finding 4 — the probe-blind build phase (decisive 2-state evidence)
+
+Segmenting two clean reheats (`hwc_soc_calibrate.py --mode phases`, on traces from
+`hwc_soc_extract.py`) shows every reheat starts with a **probe-blind build phase**: from
+compressor-on the control probe (mid-tank, ~50 % height) stays roughly flat while a large slug
+of energy goes in — it is heating the hot zone *above* the sensor, which the probe cannot see
+until the thermocline descends to it.
+
+| reheat | start probe | blind phase | rise phase |
+|---|---|---|---|
+| 2026-06-25 (warm) | 48.6 °C | **63 min / 0.72 kWh** (46 % of energy, probe 48.6→50.6) | 61 min, +9.2 °C/h to 60 |
+| 2026-06-26 (cold, post-draw) | 35.8 °C | **44 min / 0.42 kWh** (33 % of energy, probe 35.8→37.8) | 74 min, +12.4 °C/h to 53 |
+
+The decisive point: the **warm** start (higher probe) had the **larger** blind phase. The blind
+work is set by the latent hot-volume / stratification, **not** by the probe reading — so a
+probe-only heat-rate curve (the rejected "Option A") provably cannot predict reheat time or
+energy. This is the measured justification for the two-state **`(V_hot, T_hot)`** tank model
+(quantity vs. temperature of the hot zone), where the blind phase = `V_hot` growing at ~constant
+`T_hot` and the rise phase = the thermocline crossing the sensor then `T_hot` climbing 53→60 as
+COP collapses (Finding 3). `T_mains` is a model parameter (no water-side sensor logs).
+The probe's 1 °C source quantisation (Tuya integers; recorder already captures every tick) bounds
+COP-curve resolution — index on the wider-swinging exhaust, or average cycles, not finer logging.
+
 ## Fan-speed regime (calibration caveat)
 
 Fan speed was reduced via the back-end menu (F30 25→10, F35 55→30) for quieter operation;
