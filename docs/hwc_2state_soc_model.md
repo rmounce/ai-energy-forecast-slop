@@ -91,6 +91,23 @@ stops, and the unused (cheap, contiguous) slots vanish at ≈zero cost. The phys
 run. (≈zero, not exactly: heating to 60 early eats some standing loss before the draw, and slot
 prices aren't perfectly flat — second-order.)
 
+**The bias is economic, not a safety margin (decided 2026-06-26, reviewer sign-off).** The step-1
+replay's ~3 °C-low prediction (the sharp build→rise boundary) is **kept on purpose**. The earlier
+"a 1 °C-optimistic miss lands at 59 °C and fails Legionella" framing is wrong here: the system is
+**closed-loop** — we replan continuously (the next tick sees probe < 60 and books more) and the
+Aquatech forces its own daily probe-60 cycle as a hardware backstop, so health compliance is
+structurally guaranteed regardless of model error. Bias in either direction is therefore an
+**economic** error, not a compliance one. Pessimism remains correct because the asymmetry is
+economic: the hardware-60 ceiling truncates over-provisioning for ≈free, while under-provisioning
+forces make-up heat at a replan-chosen, possibly-adverse time. In the SA duck-curve
+**declining-price-then-spike** case (a hard 16:00 step), a pessimistic DP front-loads extra cheap
+slots — placed optimally by the price-aware DP, truncated by the hardware once the tank hits 60 —
+and is safely full *before* the spike; a centred model gets caught short *into* the spike. So the
+bias is a temporal buffer against price cliffs. Hence: do **not** centre the boundary (Option 1).
+`T_hot0`-as-delivery-temp (Option 2) stays in the back pocket for the one place pessimism could cost
+real money — a deep draw making the DP hallucinate a ~4 h recovery and panic-buy peak — a one-line
+fix to deploy only if that's observed.
+
 ## What still needs fitting (as data accumulates)
 
 The structure is settled; parameters are first-cut. Refine via `hwc_soc_extract.py batch` /
