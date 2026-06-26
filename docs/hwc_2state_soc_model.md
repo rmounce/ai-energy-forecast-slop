@@ -152,9 +152,23 @@ The structure is settled; parameters are first-cut. Refine via `hwc_soc_extract.
      the ~18 cycles don't yet pin it — only the few deep-draw starts put the probe *in* the
      transition where height is identifiable. Defaults stay at the physical anchors (0.50 / 0.10 /
      `cop_build` 2.6); don't bake in the bound-hitting fit.
-2. Swap the DP state `regime → (V_hot_bin, T_hot_bin)`; remove `regime_for_start` / the latch.
-3. `V_hot` tracker (conservative prior + watermark resets) in the daemon.
+2. **IN PROGRESS — DP core done (slice 1, 2026-06-26, flag-gated, off by default).**
+   `hwc.dp_planner.soc_model: true` routes `build_dp_plan` to `_build_dp_plan_soc`: DP state
+   `(v_hot_bin, t_hot_bin, on, sat)` (no `regime`), transitions via `hwc_soc_model.step`,
+   obligations on `probe_temp(V_hot, T_hot)`. The seed `(V_hot0, T_hot0)` is a new `soc_state0`
+   param (the daemon tracker supplies it in slice 2; standalone falls back to probe≈T_hot +
+   a conservative `V_hot`). **Render unchanged** — published power/temps still come from
+   `_refresh_planned_power`/`assemble_plan_dict` off the chosen binary, so the executor/EMHASS
+   contract is identical; the chosen binary is additionally forward-simulated to attach
+   `soc_v_hot`/`soc_t_hot`/`soc_probe` diagnostics (visual only). Flag-off path byte-identical
+   (existing DP suite is the guard). Tests: `tests/unit/test_hwc_dp_planner_soc.py`. The legacy
+   `regime` path stays the default until parity; `_build_dp_plan_soc` duplicates scaffolding for
+   the migration window and folds back when the latch is deleted.
+3. **NEXT (slice 2)** — `V_hot` tracker (conservative prior + watermark resets) in `HwcDaemon`
+   (`services/hwc_daemon.py`, persisted in `data/hwc_daemon_state.json`), feeding `soc_state0` and
+   publishing the `soc_*` diagnostics to HA.
 4. Executor hardware-60 ceiling (partly present as the existing min-off/grace logic).
-5. Migrate, don't alias: delete FULL/TOP-UP once parity is shown on the metered reheats.
+5. Migrate, don't alias: delete FULL/TOP-UP + the legacy DP path once parity is shown on the
+   metered reheats and in live shadow.
 
-Steps 2–5 remain gated on owner go-ahead (don't touch the production DP yet).
+Steps 3–5 still gated on owner go-ahead; slice 1 ships behind an off-by-default flag.

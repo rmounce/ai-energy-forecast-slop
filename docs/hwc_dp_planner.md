@@ -57,6 +57,14 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 - `survivors_per_state` 1 — DP survivors kept per binned state. **Leave at 1.** `2` also keeps
   the highest-temp ("run a bit longer") path; present only by owner request and **not
   objectively helpful** — see "Multi-survivor" below.
+- `soc_model` false — **opt-in** two-state `(V_hot, T_hot)` decision model (migration scaffold,
+  off by default; routes to `_build_dp_plan_soc`). Replaces the `regime` latch with the continuous
+  stratified-tank model — see [hwc_2state_soc_model.md](hwc_2state_soc_model.md). Published render is
+  unchanged; adds `soc_v_hot`/`soc_t_hot`/`soc_probe` diagnostic series. Optional `v_hot_bin` (0.05)
+  and a `soc:` sub-dict override the model params (`t_mains_c`, `cop_build`, `sensor_height`,
+  `g_width`, …); defaults come from the calibrated `hwc_soc_model.SoCParams`. The daemon supplies
+  the seed `(V_hot0, T_hot0)`; **leave `soc_model` off in production until the slice-2 tracker lands
+  and parity is shown.**
 
 ## Multi-survivor (off by default — kept by request)
 
