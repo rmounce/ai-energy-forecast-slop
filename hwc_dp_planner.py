@@ -96,6 +96,10 @@ def build_dp_plan(
     # scaffold: default off keeps the regime path below byte-identical; delete that path once the
     # SoC path reaches parity. The published render is unchanged either way (it is a function of
     # the chosen binary schedule, not the DP's internal temperature).
+    if soc_state0 is None:
+        # The daemon injects the tracked seed here (it calls hwc_planner.run, not build_dp_plan).
+        _seed = dp_cfg.get("_soc_state0")
+        soc_state0 = (float(_seed[0]), float(_seed[1])) if _seed else None
     if dp_cfg.get("soc_model"):
         return _build_dp_plan_soc(
             grid_times_utc=grid_times_utc, load_cost=load_cost, dry_bulb=dry_bulb,

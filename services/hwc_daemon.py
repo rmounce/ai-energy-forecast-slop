@@ -32,8 +32,10 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import hwc_dp_planner  # noqa: E402
 import hwc_executor  # noqa: E402
 import hwc_planner  # noqa: E402
+import hwc_soc_tracker  # noqa: E402
 from config_utils import load_config  # noqa: E402
 
 RECONNECT_BACKOFF_INITIAL = 1
@@ -344,7 +346,10 @@ class HwcDaemon:
         self.last_command_action: str | None = None
         self.compressor_last_on_at = 0.0
         self._heat_unconfirmed_warned = False
-        self.last_reached_target_at = self._load_state()
+        state = self._load_state()
+        self.last_reached_target_at = state.get("last_reached_target_at")
+        # Two-state (V_hot, T_hot) tracker state ({v_hot, t_hot, updated_at}); None until seeded.
+        self.soc: dict | None = state.get("soc")
         self._next_msg_id = 1
 
     def _msg_id(self) -> int:
@@ -514,6 +519,17 @@ class HwcDaemon:
             planner_config["hwc"]["compressor_initially_on_override"] = (
                 await asyncio.to_thread(self._effective_compressor_running)
             )
+            if planner_config["hwc"].get("dp_planner", {}).get("soc_model"):
+                try:
+                    probe = await asyncio.to_thread(hwc_planner.get_tank_temperature, self.config)
+                    seed = self._update_soc_tracker(
+                        probe_c=probe,
+                        heating=planner_config["hwc"]["compressor_initially_on_override"],
+                    )
+                    if seed is not None:
+                        planner_config["hwc"].setdefault("dp_planner", {})["_soc_state0"] = list(seed)
+                except Exception:
+                    log.exception("HWC SoC tracker update failed; planning without a tracked seed")
             try:
                 await asyncio.to_thread(hwc_planner.run, planner_config, horizon, self.dry_run)
             except Exception:
@@ -680,6 +696,60 @@ class HwcDaemon:
             defrost_grace_s=defrost_grace,
         )
 
+    def _soc_draw_rate_kwh_per_s(self) -> float:
+        """Conservative draw-prior rate (kWh/s of hot water) during the configured draw window.
+
+        Pessimistic by design: a draw that stays above the probe fires no watermark, so the prior is
+        the only guard (docs/hwc_2state_soc_model.md). Defaults to the planning draw total spread
+        over the window; tune up via ``hwc.dp_planner.soc.draw_prior_kwh_per_day``.
+        """
+        hwc = self.config["hwc"]
+        soc_cfg = hwc.get("dp_planner", {}).get("soc", {})
+        draw_off = hwc.get("draw_off", {})
+        kwh_per_day = float(soc_cfg.get("draw_prior_kwh_per_day", draw_off.get("total_kwh", 0.0)))
+        if kwh_per_day <= 0:
+            return 0.0
+        start = _parse_hhmm_time(str(draw_off.get("window_start", "06:00")))
+        end = _parse_hhmm_time(str(draw_off.get("window_end", "07:00")))
+        now_local = datetime.now(ZoneInfo(self.config["timezone"])).time()
+        if not _time_in_window(now_local, start, end):
+            return 0.0
+        window_s = ((end.hour * 60 + end.minute) - (start.hour * 60 + start.minute)) * 60
+        return kwh_per_day / (window_s if window_s > 0 else 3600)
+
+    def _update_soc_tracker(self, *, probe_c: float, heating: bool) -> tuple[float, float] | None:
+        """Advance the (V_hot, T_hot) tracker to now and return the planner seed (or None if off).
+
+        Coarse but conservative: the current ``heating`` signal is applied over the whole elapsed
+        interval; the two watermark resets correct any drift (docs/hwc_2state_soc_model.md). Pure
+        math + a local state-file write — no network (probe/heating are passed in).
+        """
+        hwc = self.config["hwc"]
+        dp_cfg = hwc.get("dp_planner", {})
+        if not dp_cfg.get("soc_model"):
+            return None
+        th = hwc["thermal"]
+        p = hwc_dp_planner._soc_params_from_cfg(th, dp_cfg)
+        desired = _target_temperature_c(self.config)
+        cliff = float(dp_cfg.get("soc", {}).get("cliff_probe_c", (p.t_mains_c + desired) / 2.0))
+        now = time.time()
+        if self.soc is None:
+            st = hwc_soc_tracker.seed_state(probe_c, p)
+            reason = "seed"
+        else:
+            dt_s = max(0.0, now - float(self.soc.get("updated_at", now)))
+            prev = hwc_soc_tracker.TrackerState(float(self.soc["v_hot"]), float(self.soc["t_hot"]))
+            power = hwc_planner._compressor_power_w(th, probe_c, None)
+            st, reason = hwc_soc_tracker.advance(
+                prev, dt_s, heating=bool(heating), probe_c=probe_c, modelled_power_w=power,
+                draw_kwh_per_s=self._soc_draw_rate_kwh_per_s(), p=p,
+                desired_c=desired, cliff_probe_c=cliff,
+            )
+        self.soc = {"v_hot": round(st.v_hot, 5), "t_hot": round(st.t_hot, 3), "updated_at": now}
+        self._save_state()
+        log.info("HWC SoC tracker: V_hot=%.2f T_hot=%.1f°C (%s)", st.v_hot, st.t_hot, reason)
+        return (st.v_hot, st.t_hot)
+
     def _mark_target_reached(self, temp: float | None, at_utc: datetime) -> None:
         # Level-triggered: latch whenever the tank is observed at/above target and we have not
         # already recorded it for this local day. Edge-triggering on the upward crossing missed
@@ -709,21 +779,23 @@ class HwcDaemon:
             return
         self._mark_target_reached(temp, datetime.now(timezone.utc))
 
-    def _load_state(self) -> str | None:
+    def _load_state(self) -> dict:
         path = _daemon_state_path(self.config)
         try:
-            data = json.loads(path.read_text())
+            return json.loads(path.read_text())
         except FileNotFoundError:
-            return None
+            return {}
         except Exception:
             log.exception("Failed to load HWC daemon state from %s", path)
-            return None
-        return data.get("last_reached_target_at")
+            return {}
 
     def _save_state(self) -> None:
         path = _daemon_state_path(self.config)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"last_reached_target_at": self.last_reached_target_at}
+        soc = getattr(self, "soc", None)  # getattr: tolerate __new__'d daemons in unit tests
+        if soc is not None:
+            payload["soc"] = soc
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
     async def run(self) -> None:

@@ -164,11 +164,22 @@ The structure is settled; parameters are first-cut. Refine via `hwc_soc_extract.
    (existing DP suite is the guard). Tests: `tests/unit/test_hwc_dp_planner_soc.py`. The legacy
    `regime` path stays the default until parity; `_build_dp_plan_soc` duplicates scaffolding for
    the migration window and folds back when the latch is deleted.
-3. **NEXT (slice 2)** — `V_hot` tracker (conservative prior + watermark resets) in `HwcDaemon`
-   (`services/hwc_daemon.py`, persisted in `data/hwc_daemon_state.json`), feeding `soc_state0` and
-   publishing the `soc_*` diagnostics to HA.
+3. **DONE — `V_hot` tracker (slices 2a + 2b, 2026-06-26).**
+   - **2a** `hwc_soc_tracker.py` (pure): `advance()` applies the conservative draw prior + standing
+     loss + active-heating forward-sim and the **two watermark resets** (`V_hot→1` at probe-target;
+     `V_hot→sensor_height` at the cold-slug cliff); `seed_state()` for cold start. Tests:
+     `tests/unit/test_hwc_soc_tracker.py`.
+   - **2b** wired into `HwcDaemon`: `(V_hot, T_hot, updated_at)` persisted in
+     `data/hwc_daemon_state.json`; `_update_soc_tracker()` advances to wall-clock now from the live
+     probe + effective-compressor signal each replan and injects `soc_state0` into the planner
+     (via `dp_planner._soc_state0`, read by `build_dp_plan`); only runs when `soc_model` is on.
+     Draw-prior rate from `hwc.dp_planner.soc.draw_prior_kwh_per_day` (defaults to the planning draw
+     total) over the configured draw window. Tests in `tests/unit/test_hwc_daemon.py`.
+   - **Still TODO (small):** publish the `soc_v_hot`/`soc_t_hot`/`soc_probe` diagnostic series (now
+     present in the plan dict) to HA sensors for eyeballing; tune the draw-prior magnitude.
 4. Executor hardware-60 ceiling (partly present as the existing min-off/grace logic).
 5. Migrate, don't alias: delete FULL/TOP-UP + the legacy DP path once parity is shown on the
    metered reheats and in live shadow.
 
-Steps 3–5 still gated on owner go-ahead; slice 1 ships behind an off-by-default flag.
+The plumbing is in place behind the off-by-default `soc_model` flag; flipping it live (and steps
+4–5) stays gated on owner go-ahead + a live shadow/parity check.

@@ -272,6 +272,51 @@ def test_mark_target_reached_is_level_based(tmp_path):
     assert d.last_reached_target_at is None
 
 
+def _soc_daemon(tmp_path, soc=None):
+    cfg = _config()
+    cfg["hwc"]["daemon"]["state_file"] = str(tmp_path / "state.json")
+    cfg["hwc"]["dp_planner"] = {"soc_model": True}
+    d = hd.HwcDaemon.__new__(hd.HwcDaemon)
+    d.config = cfg
+    d.last_reached_target_at = None
+    d.soc = soc
+    return d
+
+
+def test_soc_tracker_disabled_returns_none(tmp_path):
+    d = _soc_daemon(tmp_path)
+    d.config["hwc"]["dp_planner"] = {}  # flag off
+    assert d._update_soc_tracker(probe_c=54.0, heating=False) is None
+
+
+def test_soc_tracker_seeds_and_persists(tmp_path):
+    d = _soc_daemon(tmp_path)  # soc=None ⇒ first call seeds
+    seed = d._update_soc_tracker(probe_c=54.0, heating=False)
+    assert seed is not None
+    v, t = seed
+    assert v == 0.5 and t == 54.0          # conservative seed, T_hot≈probe
+    assert d.soc["v_hot"] == 0.5 and "updated_at" in d.soc
+    # persisted and reloadable
+    reloaded = hd.HwcDaemon.__new__(hd.HwcDaemon)
+    reloaded.config = d.config
+    assert reloaded._load_state()["soc"]["v_hot"] == 0.5
+
+
+def test_soc_tracker_top_watermark_snaps_full(tmp_path):
+    import time as _t
+    d = _soc_daemon(tmp_path, soc={"v_hot": 0.3, "t_hot": 55.0, "updated_at": _t.time() - 60})
+    v, t = d._update_soc_tracker(probe_c=60.0, heating=True)  # probe at target ⇒ full
+    assert v == 1.0 and t >= 60.0
+
+
+def test_soc_state_save_preserves_target_reached(tmp_path):
+    # The two persisted facts coexist: writing the SoC state must not drop last_reached_target_at.
+    d = _soc_daemon(tmp_path)
+    d.last_reached_target_at = "2026-06-26T04:00:00+00:00"
+    d._update_soc_tracker(probe_c=54.0, heating=False)
+    assert d._load_state()["last_reached_target_at"] == "2026-06-26T04:00:00+00:00"
+
+
 def test_target_reached_local_date_maps_utc_to_local_date():
     assert hd.target_reached_local_date(
         _config(),
