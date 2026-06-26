@@ -23,6 +23,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from hwc_soc_extract import iter_reheats, segment_reheat  # noqa: E402
+from hwc_soc_model import SoCParams, fit_v_hot0, replay_reheat  # noqa: E402
 
 TANK_L = 222.0
 CAP_KWH_PER_K = TANK_L * 0.997 * 4.186 / 3600.0  # ≈0.257 kWh/K
@@ -118,10 +119,41 @@ def phases(df: pd.DataFrame) -> dict:
     return f
 
 
+def replay(df: pd.DataFrame, p: SoCParams | None = None) -> pd.DataFrame:
+    """Replay every reheat in a window through the standalone (V_hot, T_hot) forward model.
+
+    For each compressor-on run we fit the single latent ``V_hot0`` (the probe can't observe it) to
+    minimise probe RMSE, holding ``T_hot0`` at the start probe (the flat build-phase plateau), then
+    report how well the model reproduces the run: the build-complete time vs the measured blind
+    phase, and the predicted vs observed final probe. With the *rise* phase predicted from a latent
+    set by the *blind* phase, a low residual is the model's over-identification check. Parameters
+    are first-cut (``docs/hwc_2state_soc_model.md`` "What still needs fitting") — this is the tool
+    that drives their refinement, not a pass/fail gate.
+    """
+    p = p or SoCParams()
+    rows = []
+    for run in iter_reheats(df):
+        f = segment_reheat(run)
+        best = fit_v_hot0(run, p, t_hot0=float(f["p0"]))
+        rows.append(dict(
+            start=f["start"], p0=f["p0"], p1_obs=f["p1"], p1_pred=round(best["probe_pred_final"], 1),
+            blind_min_obs=f["blind_min"], build_min_mdl=round(best["build_done_min"], 0)
+            if best["build_done_min"] is not None else None,
+            v_hot0=round(best["v_hot0"], 2), rmse_c=round(best["rmse_c"], 2),
+        ))
+    tbl = pd.DataFrame(rows)
+    show = tbl.assign(start=tbl["start"].dt.strftime("%m-%d %H:%M"))
+    print(show.to_string(index=False))
+    err = (tbl["p1_pred"] - tbl["p1_obs"]).abs()
+    print(f"\n{len(tbl)} reheats. final-probe |err|: mean {err.mean():.1f}C  max {err.max():.1f}C. "
+          f"probe RMSE: mean {tbl['rmse_c'].mean():.1f}C")
+    return tbl
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", type=Path)
-    ap.add_argument("--mode", choices=("traces", "cop", "phases", "both"), default="traces")
+    ap.add_argument("--mode", choices=("traces", "cop", "phases", "replay", "both"), default="traces")
     ap.add_argument("--out", type=Path, help="output PNG (traces); defaults next to csv")
     args = ap.parse_args()
     df = load(args.csv)
@@ -132,6 +164,8 @@ def main() -> None:
         cop_curve(df, Path(f"{stem}_cop.png"))
     if args.mode == "phases":
         phases(df)
+    if args.mode == "replay":
+        replay(df)
 
 
 if __name__ == "__main__":

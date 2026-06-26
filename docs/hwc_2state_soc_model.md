@@ -101,11 +101,27 @@ The structure is settled; parameters are first-cut. Refine via `hwc_soc_extract.
 - `T_mains` seasonal value; standing-loss split between `T_hot` and `V_hot` (needs a no-draw window).
 - The conservative draw prior (magnitude + timing) from the draw history.
 
-## Implementation sketch (not started — pending go-ahead)
+## Implementation sketch
 
-1. Forward model `step(V_hot, T_hot, on, dt) -> (V_hot', T_hot')` + `g()` observation map, unit-tested
-   against the segmented reheats.
+1. **DONE (2026-06-26)** — Standalone forward model `step(V_hot, T_hot, on, dt) -> (V_hot', T_hot')`
+   + `g()` observation map, as a pure module **with no DP wiring**: `hwc_soc_model.py`
+   (`SoCParams`, `step`, `probe_temp`, `apply_draw`, `cop_rise`, `replay_reheat`, `fit_v_hot0`).
+   Unit-tested in `tests/unit/test_hwc_soc_model.py` (16 deterministic invariants: finite-width
+   smooth `g`, the 0.50 midpoint = ~35 °C cliff anchor, build-before-rise ordering, boundary-split
+   energy conservation, standing-loss rate, draws, clamping, synthetic replay). Validated against
+   real cycles via `hwc_soc_calibrate.py --mode replay` over the metered span — **all 18 reheats**:
+   final-probe |err| **mean 1.2 °C / max 3.7 °C**, probe RMSE mean 0.8 °C, on the first-cut
+   parameters below. The structure reproduces the flat-then-rise shape and lands the final probe
+   to ~1 °C without per-cycle tuning.
+   - **Fit target this exposed:** the model's *build* completes in ~12–14 min while the measured
+     blind phase is 25–77 min, and `fit_v_hot0` pins `V_hot0` at the search ceiling — i.e. with
+     `sensor_height = 0.50` / `g_width = 0.10` the probe saturates too early, so the flat phase is
+     matched by a near-full start rather than a long fill. Reconcile by fitting `sensor_height`,
+     `g_width`, and `cop_build` against the blind-phase *duration* (not just the final probe); the
+     final-probe fit is already good, the build-duration fit is the next lever. Tooling is in place.
 2. Swap the DP state `regime → (V_hot_bin, T_hot_bin)`; remove `regime_for_start` / the latch.
 3. `V_hot` tracker (conservative prior + watermark resets) in the daemon.
 4. Executor hardware-60 ceiling (partly present as the existing min-off/grace logic).
 5. Migrate, don't alias: delete FULL/TOP-UP once parity is shown on the metered reheats.
+
+Steps 2–5 remain gated on owner go-ahead (don't touch the production DP yet).
