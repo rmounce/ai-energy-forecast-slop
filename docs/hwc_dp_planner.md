@@ -26,6 +26,9 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 - **State:** `(temp_bin, compressor_on, regime, satisfied_today)`.
   - `regime` (full-reheat vs top-up) carried because the heat-rate model latches on the
     *block-start* temp (cold reheat keeps full rate past `top_up_start_temp_c`).
+    **Planned for removal:** the FULL/TOP-UP latch is to be replaced by the continuous two-state
+    `(V_hot, T_hot)` model — see [hwc_2state_soc_model.md](hwc_2state_soc_model.md) (agreed design,
+    not yet implemented). That removes the 53 °C discontinuity the short-cycle bug arbitraged.
   - `satisfied_today` for the daily 60 C obligation; resets at local midnight.
 - **Costs:** import energy + `transition_cost_aud` on each off→on edge.
 - **Soft high-penalty obligations (not locks; degrade gracefully on cold start):**
