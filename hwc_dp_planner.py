@@ -409,7 +409,7 @@ def _build_dp_plan_soc(
         arr_oblig = arr < n and obligation_due_at[arr]
 
         for key, recs in states.items():
-            _, on_prev, _, sat_prev = key
+            _, _, on_prev, sat_prev = key  # key = (v_hot_bin, t_hot_bin, on, sat)
             for idx, (cost, v, t, _pk, _pi, _act) in enumerate(recs):
                 vc, tc = coast_draw(v, t, draw_p)           # coast/draw before the action
                 probe_c = soc.probe_temp(vc, tc, p)         # power model input = coasted probe

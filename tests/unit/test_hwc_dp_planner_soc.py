@@ -128,6 +128,28 @@ def test_emptier_seed_schedules_more_heating():
     assert _on_steps(empty) > _on_steps(full)
 
 
+def test_transition_cost_suppresses_fragmentation():
+    # Regression: the soc key is (v_hot_bin, t_hot_bin, on, sat); an earlier unpack read t_hot_bin
+    # as the on-state, so off->on was almost never detected and transition_cost did nothing →
+    # the plan fragmented into 1–2 step blips. A higher transition cost must reduce starts.
+    grid = _grid(0, 96)
+    n = len(grid)
+    price = [0.08 if i % 2 else 0.50 for i in range(n)]  # alternating cheap/expensive tempts splits
+
+    def _starts(tc):
+        cfg = _cfg()
+        cfg["hwc"]["transition_cost_aud"] = tc
+        plan = dp.build_dp_plan(
+            grid_times_utc=grid, load_cost=price, dry_bulb=[15.0] * n, wet_bulb=[12.5] * n,
+            draw_off=[0.0] * n, start_temperature=49.0, cfg=cfg, soc_state0=(0.5, 53.0),
+        )
+        return sum(1 for a, b in zip([0.0] + plan["schedule_w"][:-1], plan["schedule_w"])
+                   if a <= 0 and b > 0)
+
+    assert _starts(2.0) < _starts(0.0)   # transition cost actually bites
+    assert _starts(2.0) <= 3             # and yields a contiguous, non-fragmented plan
+
+
 def test_seed_defaults_when_not_supplied():
     # No soc_state0 ⇒ falls back to (conservative V_hot, probe≈T_hot); still produces a valid plan.
     plan = _plan(_cfg(), _grid(6, 24), price=0.15, start=50.0, soc_state0=None)
