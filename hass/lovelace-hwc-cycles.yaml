@@ -18,7 +18,9 @@ content: |
   | Start | Dur | Tank °C | ΔT | kWh | COP | |
   |---|--:|:--|--:|--:|--:|:-:|
   {% for c in cycles %}| {{ c.start }} | {{ c.dur_min }}m | {{ c.tank_start | round(0) | int }}→{{ c.tank_end | round(0) | int }} | {{ (c.tank_end - c.tank_start) | round(1) }} | {{ c.elec_kwh }}{% if c.elec_source and c.elec_source != 'counter' %}*{% endif %} | {{ c.cop if c.cop is not none else '–' }} | {% if c.element_on %}⚡{% endif %}{% if c.defrost_on %}❄{% endif %}{% if c.clean %}✓{% endif %} |
-  {% endfor %}{% else %}
+  {% endfor %}
+  *✓ clean · ⚡ element assist · ❄ defrost · kWh\* = power-integration fallback (otherwise energy meter)*
+  {% else %}
 
   _No completed cycles in the reporting window yet._
   {% endif %}
