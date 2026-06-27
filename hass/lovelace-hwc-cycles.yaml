@@ -1,0 +1,24 @@
+# Recent heat-pump hot-water runs, from sensor.hwc_cycles (published by the HWC daemon's
+# cycle_reporter; see docs/hwc_cycle_reporting.md). Built-in markdown card — no HACS dependency.
+# elec kWh marked '*' when it fell back to power integration (counter reset/gap) instead of the
+# Athom energy_2 meter. Flags: ✓ clean · ⚡ element assist · ❄ defrost.
+type: markdown
+title: Hot water — recent runs
+content: |
+  {% set e = 'sensor.hwc_cycles' %}
+  {% set cur = state_attr(e, 'current') %}
+  {% set cycles = state_attr(e, 'cycles') or [] %}
+  **Last COP:** {{ states(e) }} · **Today:** {{ state_attr(e, 'cycles_today') or 0 }} run(s) · **Last clean COP:** {{ state_attr(e, 'last_clean_cop') or '–' }}
+  {% if cur %}
+
+  🟢 **In progress** ({{ cur.status }}) — {{ cur.dur_min }} min, {{ cur.tank_start | round(1) }}→{{ cur.tank_now | round(1) }} °C{% if cur.elec_kwh is not none %}, {{ cur.elec_kwh }} kWh{% endif %}
+  {% endif %}
+  {% if cycles %}
+
+  | Start | Dur | Tank °C | ΔT | kWh | COP | |
+  |---|--:|:--|--:|--:|--:|:-:|
+  {% for c in cycles %}| {{ c.start }} | {{ c.dur_min }}m | {{ c.tank_start | round(0) | int }}→{{ c.tank_end | round(0) | int }} | {{ (c.tank_end - c.tank_start) | round(1) }} | {{ c.elec_kwh }}{% if c.elec_source and c.elec_source != 'counter' %}*{% endif %} | {{ c.cop if c.cop is not none else '–' }} | {% if c.element_on %}⚡{% endif %}{% if c.defrost_on %}❄{% endif %}{% if c.clean %}✓{% endif %} |
+  {% endfor %}{% else %}
+
+  _No completed cycles in the reporting window yet._
+  {% endif %}
