@@ -355,11 +355,11 @@ hwc:
       draw_prior_kwh_per_day: 1.2  # conservative draw prior (defaults to draw_off.total_kwh)
       cliff_probe_c: 39.0          # probe below this snaps V_hot→sensor_height (deep-draw watermark)
   actuation:
-    # Publish-only watch 2026-06-27: the daemon replans/publishes the new continuous-taper plan and
-    # logs executor decisions, but the gate in services/hwc_daemon.py blocks every water_heater call
-    # (normal + fallback). Heat pump free-runs on its own hardware daily-60 until we review the new
-    # plan on the chart and decide to flip this back to true.
-    enabled: false
+    # Re-enabled 2026-06-27 after the publish-only watch: the continuous-taper plan looked good on
+    # the chart and the 53 °C short-cycle is structurally gone (rate is f(current temp), no carried
+    # regime; only the intentional min-off/debounce hardware hysteresis remains). Executor drives
+    # the heat pump again.
+    enabled: true
     water_heater_entity: water_heater.aquatech
     compressor_entity: binary_sensor.aquatech_compressor
     operation_mode: heat_pump
