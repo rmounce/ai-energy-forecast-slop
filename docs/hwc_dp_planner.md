@@ -23,25 +23,26 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
   `assemble_plan_dict`). Temp binning is an internal cost/feasibility approximation; it never
   reaches published numbers — the published plan is the exact-model render of the chosen
   on/off sequence.
-- **State:** `(temp_bin, compressor_on, regime, satisfied_today)`.
-  - `regime` (full-reheat vs top-up) carried because the heat-rate model latches on the
-    *block-start* temp (cold reheat keeps full rate past `top_up_start_temp_c`).
-    **Planned for removal:** the FULL/TOP-UP latch is to be replaced by the continuous two-state
-    `(V_hot, T_hot)` model — see [hwc_2state_soc_model.md](hwc_2state_soc_model.md) (agreed design,
-    not yet implemented). That removes the 53 °C discontinuity the short-cycle bug arbitraged.
+- **State:** `(temp_bin, compressor_on, satisfied_today)`.
+  - The heat rate is a **continuous function of the current modelled temp** (the
+    `hwc_planner._heat_rate_c_per_hour` taper), so there is **no `regime` dimension to carry**.
+    The former FULL/TOP-UP latch (which carried the block-start regime so a cold reheat kept the
+    fast rate past `top_up_start_temp_c`) was removed 2026-06-27: it existed only to hide a step in
+    the rate, and the step is now a continuous taper (band `top_up_start_temp_c ± heat_rate_taper_width_c/2`,
+    default 50–56 °C). With the rate depending on current temp alone, continuing a run and starting
+    a fresh one at the same temp compute the same rate — the asymmetry the 53 °C short-cycle bug
+    arbitraged no longer exists. (The earlier two-state `(V_hot, T_hot)` model was the other
+    candidate for this; it was shelved — see [hwc_2state_soc_model.md](hwc_2state_soc_model.md).)
   - `satisfied_today` for the daily 60 C obligation; resets at local midnight.
 - **Costs:** import energy + `transition_cost_aud` on each off→on edge.
 - **Soft high-penalty obligations (not locks; degrade gracefully on cold start):**
   - `min_temp` floor — penalty per °C below, each step.
   - daily `desired_temp` (60 C) by `main_window_end`, skipped for `main_satisfied_dates`.
   - terminal: small penalty below `terminal_target`.
-- **Compressor-on = initial state** (regime + `compressor_on` seeded). No seed enumeration.
-  The seed regime is `regime_for_start(start_temperature)` — the *same pre-step basis* a fresh
-  off→on start and the published replay use, so a continuing run and a fresh start agree at the
-  boundary. (A fresh start formerly sampled regime at the *post-step* temp `t1`, flipping
-  FULL/TOP-UP at exactly `top_up_start_temp_c` relative to a continuing run and driving the 53 °C
-  short-cycle limit cycle — fixed 2026-06-26 by sampling at the pre-step temp. See
-  `docs/hwc_short_cycle_review_2026-06-26.md`.)
+- **Compressor-on = initial state** (`compressor_on` seeded). No seed enumeration, and no regime to
+  seed — the rate is read from the current temp, so a continuing run and a fresh off→on start agree
+  at any temp by construction (this is the structural fix for the 53 °C short-cycle limit cycle;
+  background in `docs/hwc_short_cycle_review_2026-06-26.md`).
 
 ## Config (`hwc.dp_planner`, all optional; code defaults shown)
 
@@ -57,14 +58,14 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 - `survivors_per_state` 1 — DP survivors kept per binned state. **Leave at 1.** `2` also keeps
   the highest-temp ("run a bit longer") path; present only by owner request and **not
   objectively helpful** — see "Multi-survivor" below.
-- `soc_model` false — **opt-in** two-state `(V_hot, T_hot)` decision model (migration scaffold,
-  off by default; routes to `_build_dp_plan_soc`). Replaces the `regime` latch with the continuous
-  stratified-tank model — see [hwc_2state_soc_model.md](hwc_2state_soc_model.md). Published render is
-  unchanged; adds `soc_v_hot`/`soc_t_hot`/`soc_probe` diagnostic series. Optional `v_hot_bin` (0.05)
-  and a `soc:` sub-dict override the model params (`t_mains_c`, `cop_build`, `sensor_height`,
-  `g_width`, …); defaults come from the calibrated `hwc_soc_model.SoCParams`. The daemon supplies
-  the seed `(V_hot0, T_hot0)`; **leave `soc_model` off in production until the slice-2 tracker lands
-  and parity is shown.**
+- `soc_model` false — **shelved** opt-in two-state `(V_hot, T_hot)` decision model (routes to
+  `_build_dp_plan_soc`). Kept behind the flag for a possible future revisit but **off in
+  production**: on the live watch its plans were less plausible than the continuous-rate
+  single-temperature path (the build phase flatlines the temperature-driven power model). See
+  [hwc_2state_soc_model.md](hwc_2state_soc_model.md). When on it publishes `soc_v_hot`/`soc_t_hot`/
+  `soc_probe` diagnostics and reads a `soc:` sub-dict of model params; the daemon supplies the seed
+  `(V_hot0, T_hot0)`. The short-cycle discontinuity it was meant to address is instead handled by
+  the continuous `_heat_rate_c_per_hour` taper on the default path.
 
 ## Multi-survivor (off by default — kept by request)
 
@@ -88,8 +89,8 @@ it available; safe to delete if never enabled.
 Reads from `hwc` top-level: `transition_cost_aud`, `main_window_end`, `main_satisfied_dates`
 (the last injected at runtime by the daemon). `transition_cost_aud`/`main_window_end` moved up
 from the removed `block_planner` section on 2026-06-24.
-Reuses from `thermal`: rate/power model, `min_temp`, `desired_temp`, `max_temp`,
-`top_up_start_temp_c`, `terminal_target`.
+Reuses from `thermal`: rate/power model (incl. the `top_up_start_temp_c` /
+`heat_rate_taper_width_c` rate taper), `min_temp`, `desired_temp`, `max_temp`, `terminal_target`.
 
 ## How to A/B
 

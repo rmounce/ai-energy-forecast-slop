@@ -14,9 +14,11 @@ so a DP plan is identically shaped, scored and comparable with a block-planner p
 Temperature binning is therefore an internal approximation of the DP's own cost/feasibility
 estimate only — it never reaches the published numbers.
 
-State per grid position: ``(temp_bin, compressor_on, regime, satisfied_today)``.
-``regime`` (full-reheat vs top-up) is carried because the heat-rate model latches on the
-*block-start* temperature (a cold reheat keeps the full rate even past ``top_up_start_temp_c``).
+State per grid position: ``(temp_bin, compressor_on, satisfied_today)``. The heat rate is a
+*continuous* function of the current modelled temperature (``hwc_planner._heat_rate_c_per_hour``
+taper), so there is no FULL/TOP-UP regime to carry: with no step in the rate, stopping and
+restarting buys nothing, which is what killed the 53 °C short-cycle limit cycle that the old
+carried-regime workaround quarantined.
 
 Design notes live in ``docs/hwc_dp_planner.md``.
 """
@@ -30,11 +32,6 @@ import pytz
 
 import hwc_planner as hp
 import hwc_soc_model as soc
-
-# regime codes
-_OFF = 0
-_FULL = 1
-_TOPUP = 2
 
 
 def _soc_params_from_cfg(th: dict, dp_cfg: dict) -> soc.SoCParams:
@@ -62,17 +59,6 @@ def _soc_params_from_cfg(th: dict, dp_cfg: dict) -> soc.SoCParams:
     )
 
 
-def _rate_for_regime(th: dict, regime: int, wet_bulb, temp: float) -> float:
-    """Heat rate honouring a *carried* regime (not the instantaneous temp).
-
-    ``_heat_rate_c_per_hour`` selects the top-up base when its ``heat_block_start_temp_c``
-    argument is ``>= top_up_start_temp_c``. We pass a sentinel so the regime bit — not the
-    current temp — decides, matching ``simulate_block_temperatures``' block-start latch.
-    """
-    sentinel = 1e9 if regime == _TOPUP else -1e9
-    return hp._heat_rate_c_per_hour(th, temp, wet_bulb, heat_block_start_temp_c=sentinel)
-
-
 def build_dp_plan(
     *,
     grid_times_utc: list[datetime],
@@ -92,10 +78,10 @@ def build_dp_plan(
     tz = pytz.timezone(cfg["timezone"])
     n = len(grid_times_utc)
 
-    # Opt-in two-state (V_hot, T_hot) decision model (docs/hwc_2state_soc_model.md). Migration
-    # scaffold: default off keeps the regime path below byte-identical; delete that path once the
-    # SoC path reaches parity. The published render is unchanged either way (it is a function of
-    # the chosen binary schedule, not the DP's internal temperature).
+    # Opt-in two-state (V_hot, T_hot) decision model (docs/hwc_2state_soc_model.md), shelved and
+    # off in production: kept behind the flag for a possible future revisit. When off, the default
+    # continuous-rate single-temperature path below runs. The published render is unchanged either
+    # way (it is a function of the chosen binary schedule, not the DP's internal temperature).
     if soc_state0 is None:
         # The daemon injects the tracked seed here (it calls hwc_planner.run, not build_dp_plan).
         _seed = dp_cfg.get("_soc_state0")
@@ -132,8 +118,6 @@ def build_dp_plan(
     max_temp = float(th.get("max_temp", 62))
     min_temp = float(th.get("min_temp", 45))
     desired = float(th.get("desired_temp", 60))
-    top_up_start = th.get("top_up_start_temp_c")
-    top_up_start = float(top_up_start) if top_up_start is not None else None
 
     # High penalties so obligations dominate energy when physically achievable, while still
     # degrading gracefully (e.g. cold start) instead of going infeasible.
@@ -159,11 +143,6 @@ def build_dp_plan(
     def tbin(t: float) -> int:
         return int(round((t - lo) / bin_c))
 
-    def regime_for_start(t1: float) -> int:
-        if top_up_start is not None and t1 >= top_up_start:
-            return _TOPUP
-        return _FULL
-
     wb = wet_bulb if wet_bulb is not None else [None] * n
 
     # Per-position local-day bookkeeping for the daily-60 obligation.
@@ -185,9 +164,8 @@ def build_dp_plan(
     # action_on). At most `survivors` records are kept per key. history[p] is the state map
     # *before* interval p; history[n] is the terminal map.
     init_on = bool(compressor_initially_on)
-    init_regime = regime_for_start(start_temperature) if init_on else _OFF
     init_sat = start_temperature >= desired
-    init_key = (tbin(start_temperature), init_on, init_regime, init_sat)
+    init_key = (tbin(start_temperature), init_on, init_sat)
     states: dict[tuple, list] = {init_key: [(0.0, float(start_temperature), None, None, None)]}
     history: list[dict] = []
 
@@ -215,32 +193,22 @@ def build_dp_plan(
         arr_oblig = arr < n and obligation_due_at[arr]
 
         for key, recs in states.items():
-            _, on_prev, regime_prev, sat_prev = key
+            _, on_prev, sat_prev = key
             for idx, (cost, temp, _pk, _pi, _act) in enumerate(recs):
                 t1 = temp - max(0.0, temp - amb) * ua * step_h / cap - draw_p / cap
                 for action_on in (False, True):
                     if action_on:
-                        if on_prev and regime_prev != _OFF:
-                            regime = regime_prev
-                        else:
-                            # Block-start regime from the *pre-step* temp, matching the seed
-                            # (regime_for_start(start_temperature)) and the published replay,
-                            # which latches simulate_block_temperatures on the pre-step block-start
-                            # temp. Sampling post-step t1 here flipped FULL/TOP-UP at exactly
-                            # top_up_start relative to a continuing run — the 53 °C short-cycle
-                            # limit cycle (docs/hwc_short_cycle_review_2026-06-26.md).
-                            regime = regime_for_start(temp)
-                        rate = _rate_for_regime(th, regime, wbp, t1)
+                        # Rate is a continuous function of the current temp (no carried regime);
+                        # the taper has no step for the DP to arbitrage by stopping/restarting.
+                        rate = hp._heat_rate_c_per_hour(th, t1, wbp)
                         t_next = min(max_temp, t1 + rate * step_h)
                         power = hp._compressor_power_w(th, t1, wbp)
                         energy = max(0.0, power) / 1000.0 * lc * step_h
                         trans = 0.0 if on_prev else transition_cost
-                        nregime = regime
                     else:
                         t_next = min(max_temp, t1)
                         energy = 0.0
                         trans = 0.0
-                        nregime = _OFF
 
                     if arr_new_day:
                         sat = t_next >= desired
@@ -254,7 +222,7 @@ def build_dp_plan(
                         pen += max(0.0, desired - t_next) * desired_pen
 
                     ncost = cost + energy + trans + pen
-                    nkey = (tbin(t_next), action_on, nregime, sat)
+                    nkey = (tbin(t_next), action_on, sat)
                     nxt.setdefault(nkey, []).append((ncost, t_next, key, idx, action_on))
         states = {k: _collapse(v) for k, v in nxt.items()}
 
@@ -306,8 +274,8 @@ def _build_dp_plan_soc(
     before. Obligations are evaluated on the *probe* (``probe_temp(V_hot, T_hot)``) since that is
     what the sensor and the unit's own controller see. The chosen binary is additionally forward-
     simulated through the two-state model to attach ``soc_*`` diagnostic series (consumed by nothing
-    — visual only). Scaffolding is duplicated from ``build_dp_plan`` for the migration window; it
-    folds back in when the regime path is deleted.
+    — visual only). Scaffolding is duplicated from ``build_dp_plan``; this whole path is shelved
+    (off in production) and kept only for a possible future revisit.
     """
     hwc = cfg["hwc"]
     th = hwc["thermal"]

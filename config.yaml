@@ -316,7 +316,12 @@ hwc:
     thermal_inertia_time_constant: 0.5
     standing_loss_ua_kw_per_c: 0.0025
     heat_rate_c_per_hour: 6.6
+    # Heat rate eases continuously from the full-reheat rate to the near-target top-up rate across a
+    # band centred on top_up_start_temp_c with this total width (50→56 °C). Continuous (no step), so
+    # the DP can't arbitrage a discontinuity by stopping/restarting — replaces the old FULL/TOP-UP
+    # regime latch that caused the 53 °C short cycle. width 0 = former hard step.
     top_up_start_temp_c: 53.0
+    heat_rate_taper_width_c: 6.0
     top_up_heat_rate_c_per_hour: 5.5
     heat_rate_reference_wet_bulb_c: 12.5
     heat_rate_wet_bulb_slope_c_per_c: 0.08
@@ -337,8 +342,13 @@ hwc:
     # the continuous stratified-tank model (no 53 °C discontinuity). Render + executor/EMHASS
     # contract unchanged; the daemon tracks (V_hot, T_hot) in data/hwc_daemon_state.json and
     # publishes sensor.hwc_soc_state for the apexcharts card. See docs/hwc_2state_soc_model.md.
-    # Disabled 2026-06-27 pending analysis of the divergent seed (model-probe vs real probe; the
-    # T_hot-as-delivery-temp / Option 2 question). Flip back to true to resume the live watch.
+    # SHELVED 2026-06-27. The 2-state plan was less plausible than the legacy single-state DP: the
+    # build phase grows V_hot at ~const T_hot, so the temperature-driven compressor-power model
+    # flatlines during build instead of rising ~linearly with the run as observed in practice. That
+    # power signature is evidence the single rising tank temperature (legacy) is the more faithful
+    # model; splitting into (V_hot, T_hot) breaks the monotonic power<->temp relationship. The seed
+    # divergence (Option 2) is real but orthogonal and would not fix the power shape. Code + xfail
+    # regression tests kept for a possible future revisit. See docs/hwc_2state_soc_model.md.
     soc_model: false
     soc:
       t_mains_c: 18.0              # Adelaide winter mains/inlet (model parameter; tune seasonally)

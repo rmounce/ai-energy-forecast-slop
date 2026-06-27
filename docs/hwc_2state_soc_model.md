@@ -1,7 +1,17 @@
 # HWC two-state `(V_hot, T_hot)` tank model — design spec
 
-Status: **agreed design, not yet implemented** (2026-06-26). Supersedes the FULL/TOP-UP
-heat-rate latch in `hwc_dp_planner.py` once built. Empirical basis:
+> **STATUS: SHELVED 2026-06-27.** Built end-to-end behind `hwc.dp_planner.soc_model` (default off)
+> and watched live, but its plans were less plausible than the single-temperature DP: the build
+> phase grows `V_hot` at ~constant `T_hot`, so the temperature-driven compressor-power model
+> flatlines during build, whereas real compressor power rises monotonically with the run. That made
+> the single rising tank temperature the more faithful state. The FULL/TOP-UP discontinuity this
+> model was meant to remove is instead handled by a **continuous heat-rate taper** on the
+> single-temp DP (`hwc_planner._heat_rate_c_per_hour`, `heat_rate_taper_width_c`; see
+> [hwc_dp_planner.md](hwc_dp_planner.md)). The code + two `xfail` seed-divergence regression tests
+> are kept behind the flag for a possible future revisit. The rest of this spec is retained as the
+> design record.
+
+Original status: agreed design (2026-06-26). Empirical basis:
 [hwc_thermal_characterisation.md](hwc_thermal_characterisation.md) Findings 3–5. Root-cause that
 motivated the rewrite: [hwc_short_cycle_review_2026-06-26.md](hwc_short_cycle_review_2026-06-26.md).
 

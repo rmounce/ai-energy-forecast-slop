@@ -172,22 +172,34 @@ def _heat_rate_c_per_hour(
     th: dict,
     temp_c: float,
     wet_bulb_c: float | None = None,
-    *,
-    heat_block_start_temp_c: float | None = None,
 ) -> float:
-    """Return empirical compressor heat rate for the current modelled tank temp.
+    """Return empirical compressor heat rate for the *current* modelled tank temp.
 
-    The Aquatech data shows lower effective probe lift rate for near-target top-ups.
-    A small wet-bulb adjustment can be configured as a weak datasheet-informed prior:
-    warmer evaporator conditions should recover faster, but observed cycle data remains
-    the anchor for the base rate.
+    The Aquatech data shows a lower effective probe-lift rate near target. The rate eases
+    *continuously*: it holds ``heat_rate_c_per_hour`` (full reheat) below the taper band, ramps
+    linearly down to ``top_up_heat_rate_c_per_hour`` (near-target) across a band of width
+    ``heat_rate_taper_width_c`` centred on ``top_up_start_temp_c``, and holds there above. Because
+    the rate is a function of the current temperature only and has no jump, the DP cannot arbitrage
+    a step by stopping and restarting — this is what replaced the discrete FULL/TOP-UP regime latch
+    that caused the 53 °C short-cycle limit cycle (docs/hwc_short_cycle_review_2026-06-26.md). A
+    ``width`` of 0 degenerates to the former hard step. A small wet-bulb adjustment can be
+    configured as a weak datasheet-informed prior; observed cycle data remains the anchor.
     """
     base = float(th.get("heat_rate_c_per_hour", 5.2))
     top_up = th.get("top_up_heat_rate_c_per_hour")
     top_up_start = th.get("top_up_start_temp_c")
-    regime_temp = temp_c if heat_block_start_temp_c is None else heat_block_start_temp_c
-    if top_up is not None and top_up_start is not None and regime_temp >= float(top_up_start):
-        base = float(top_up)
+    if top_up is not None and top_up_start is not None:
+        top_up = float(top_up)
+        width = float(th.get("heat_rate_taper_width_c", 0.0))
+        lo = float(top_up_start) - width / 2.0
+        hi = float(top_up_start) + width / 2.0
+        if temp_c <= lo:
+            frac = 0.0
+        elif temp_c >= hi:
+            frac = 1.0
+        else:
+            frac = (temp_c - lo) / (hi - lo)
+        base += frac * (top_up - base)
     if wet_bulb_c is not None:
         reference_wb = th.get("heat_rate_reference_wet_bulb_c")
         slope = th.get("heat_rate_wet_bulb_slope_c_per_c")
@@ -255,7 +267,6 @@ def _refresh_planned_power(
     temp = float(start_temperature)
     out: list[float] = []
     heat_ambient = wet_bulb if wet_bulb is not None else [None] * len(schedule_w)
-    heat_block_start_temp: float | None = None
 
     for power_w, ambient_c, heat_wb, draw_kwh in zip(
         schedule_w, dry_bulb, heat_ambient, draw_off, strict=True
@@ -264,18 +275,9 @@ def _refresh_planned_power(
         temp -= loss_kwh / cap_kwh_per_c
         temp -= float(draw_kwh) / cap_kwh_per_c
         if power_w > 0:
-            if heat_block_start_temp is None:
-                heat_block_start_temp = temp
             out.append(_compressor_power_w(th, temp, heat_wb))
-            heat_rate_c_per_h = _heat_rate_c_per_hour(
-                th,
-                temp,
-                heat_wb,
-                heat_block_start_temp_c=heat_block_start_temp,
-            )
-            temp += heat_rate_c_per_h * step_h
+            temp += _heat_rate_c_per_hour(th, temp, heat_wb) * step_h
         else:
-            heat_block_start_temp = None
             out.append(0.0)
         temp = min(max_temp, temp)
     return out
@@ -359,7 +361,6 @@ def simulate_block_temperatures(
     temp = float(start_temperature)
     temps = []
     heat_ambient = wet_bulb if wet_bulb is not None else [None] * len(schedule_w)
-    heat_block_start_temp: float | None = None
     for power_w, ambient_c, heat_wb, draw_kwh in zip(
         schedule_w, dry_bulb, heat_ambient, draw_off, strict=True
     ):
@@ -368,17 +369,7 @@ def simulate_block_temperatures(
         temp -= loss_kwh / cap_kwh_per_c
         temp -= float(draw_kwh) / cap_kwh_per_c
         if power_w > 0:
-            if heat_block_start_temp is None:
-                heat_block_start_temp = temp
-            heat_rate_c_per_h = _heat_rate_c_per_hour(
-                th,
-                temp,
-                heat_wb,
-                heat_block_start_temp_c=heat_block_start_temp,
-            )
-            temp += heat_rate_c_per_h * step_h
-        else:
-            heat_block_start_temp = None
+            temp += _heat_rate_c_per_hour(th, temp, heat_wb) * step_h
         temp = min(max_temp, temp)
     return temps, round(temp, 2)
 

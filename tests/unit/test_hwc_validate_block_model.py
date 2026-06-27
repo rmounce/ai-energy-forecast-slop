@@ -17,6 +17,7 @@ def _config():
                 "nominal_power_w": 780,
                 "heat_rate_c_per_hour": 6.0,
                 "top_up_start_temp_c": 53.0,
+                "heat_rate_taper_width_c": 6.0,
                 "top_up_heat_rate_c_per_hour": 5.0,
             },
         }
@@ -75,8 +76,13 @@ def test_validate_cycles_reports_duration_power_and_end_temp_errors():
         "predicted_end_temp_at_observed_runtime",
         "end_temp_err_c",
     }.issubset(report.columns)
-    assert report.loc[0, "predicted_duration_min"] == 120.0
-    assert report.loc[0, "predicted_end_temp_at_observed_runtime"] == 60.0
+    # Cold-start full reheat 48→60: with the continuous taper (no block-start latch) the rate eases
+    # toward the slower top-up rate as the tank passes through the 50–56 °C band, so the predicted
+    # reheat is ~135 min rather than the old latched 120 min (full rate held the whole way).
+    assert report.loc[0, "predicted_duration_min"] == 135.0
+    # At the observed 120-min runtime the eased model is still climbing, so it predicts ~58.9 °C
+    # rather than reaching 60 (which it now models at ~135 min).
+    assert report.loc[0, "predicted_end_temp_at_observed_runtime"] == 58.9
 
 
 def test_summary_splits_by_cycle_class():

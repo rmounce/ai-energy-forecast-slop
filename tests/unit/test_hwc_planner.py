@@ -231,7 +231,12 @@ def test_simulate_uses_top_up_heat_rate_above_threshold():
     assert terminal == pytest.approx(59.5)
 
 
-def test_simulate_keeps_full_reheat_rate_when_cold_start_crosses_top_up_threshold():
+def test_simulate_eases_heat_rate_across_taper_band_no_latch():
+    # The block-start regime latch is gone: the heat rate now follows the *current* temp through
+    # the continuous taper band (centre 53 ± 6/2 → 50–56 °C). A run that crosses the band slows
+    # smoothly rather than keeping the cold full-reheat rate, so the terminal lands below the old
+    # latched 56.6 °C. Step1: 50 → 53.3 at the full 6.6 (below the band). Step2 starts at 53.3,
+    # frac=(53.3-50)/6=0.55 → rate 6.6+0.55*(1.0-6.6)=3.52 → 53.3 + 3.52*0.5 = 55.06.
     _, terminal = hp.simulate_block_temperatures(
         schedule_w=[800.0, 800.0],
         start_temperature=50.0,
@@ -247,12 +252,38 @@ def test_simulate_keeps_full_reheat_rate_when_cold_start_crosses_top_up_threshol
                 "heat_rate_c_per_hour": 6.6,
                 "top_up_heat_rate_c_per_hour": 1.0,
                 "top_up_start_temp_c": 53.0,
+                "heat_rate_taper_width_c": 6.0,
                 "max_temp": 60,
             },
         },
     )
 
-    assert terminal == pytest.approx(56.6)
+    assert terminal == pytest.approx(55.06)
+
+
+def test_heat_rate_taper_is_continuous_and_monotonic():
+    # The continuous taper replaces the FULL/TOP-UP step: full rate below the band, top-up rate
+    # above it, a linear ramp between (band = top_up_start_temp_c ± width/2 = 50–56 °C).
+    th = {
+        "heat_rate_c_per_hour": 6.6,
+        "top_up_heat_rate_c_per_hour": 5.5,
+        "top_up_start_temp_c": 53.0,
+        "heat_rate_taper_width_c": 6.0,
+    }
+    r = lambda t: hp._heat_rate_c_per_hour(th, t)  # noqa: E731
+    assert r(48.0) == pytest.approx(6.6)            # below band: full reheat rate
+    assert r(50.0) == pytest.approx(6.6)            # band start
+    assert r(56.0) == pytest.approx(5.5)            # band end
+    assert r(60.0) == pytest.approx(5.5)            # above band: top-up rate
+    assert r(53.0) == pytest.approx((6.6 + 5.5) / 2)  # band centre: halfway, not a step
+    # continuous + monotonically non-increasing across the band — no jump to arbitrage
+    samples = [r(50.0 + 0.5 * i) for i in range(13)]  # 50.0 → 56.0
+    assert all(b <= a + 1e-9 for a, b in zip(samples, samples[1:]))
+    assert max(abs(b - a) for a, b in zip(samples, samples[1:])) < 0.2  # small steps, no cliff
+    # width 0 degenerates to the former hard step at the threshold
+    th0 = dict(th, heat_rate_taper_width_c=0.0)
+    assert hp._heat_rate_c_per_hour(th0, 52.9) == pytest.approx(6.6)
+    assert hp._heat_rate_c_per_hour(th0, 53.1) == pytest.approx(5.5)
 
 
 def test_simulate_adjusts_heat_rate_from_wet_bulb_when_configured():
