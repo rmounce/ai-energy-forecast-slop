@@ -22,7 +22,7 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, time as dt_time, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -32,6 +32,8 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import hwc_cop_analysis  # noqa: E402
+import hwc_cycle_reporter  # noqa: E402
 import hwc_dp_planner  # noqa: E402
 import hwc_executor  # noqa: E402
 import hwc_planner  # noqa: E402
@@ -350,6 +352,12 @@ class HwcDaemon:
         self.last_reached_target_at = state.get("last_reached_target_at")
         # Two-state (V_hot, T_hot) tracker state ({v_hot, t_hot, updated_at}); None until seeded.
         self.soc: dict | None = state.get("soc")
+        # Cycle-reporting state (publish-only; firewalled from the control loop). ``cycles`` is the
+        # published ring buffer; ``current_cycle`` is the in-progress/cooling row. See
+        # docs/hwc_cycle_reporting.md.
+        self.cycles: list[dict] = state.get("cycles", []) or []
+        self.current_cycle: dict | None = state.get("current_cycle")
+        self._last_backfill_at = 0.0
         self._next_msg_id = 1
 
     def _msg_id(self) -> int:
@@ -478,6 +486,107 @@ class HwcDaemon:
             if idle >= interval:
                 log.warning("No HWC replan in %.0fs (>= %.0fs heartbeat); arming replan", idle, interval)
                 self.replan_trigger.set()
+
+    async def cycle_reporter(self) -> None:
+        """Publish-only per-cycle reporting to ``sensor.hwc_cycles`` (docs/hwc_cycle_reporting.md).
+
+        Firewalled from the planner/executor: its own task, every exception caught and logged, and
+        it never touches ``run_lock`` state or the command path. Off entirely unless
+        ``hwc.reporting.enabled``.
+        """
+        rep = self.config["hwc"].get("reporting", {})
+        if not rep.get("enabled", False):
+            return
+        interval = float(rep.get("poll_seconds", 60))
+        while not self.shutdown.is_set():
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.shutdown.wait(), timeout=interval)
+            if self.shutdown.is_set():
+                return
+            try:
+                await self._reporter_tick()
+            except Exception:
+                log.exception("HWC cycle reporter tick failed; control loop unaffected")
+
+    async def _reporter_tick(self) -> None:
+        rep = self.config["hwc"]["reporting"]
+        tz = ZoneInfo(self.config["timezone"])
+        now_ts = time.time()
+        raw_on = await asyncio.to_thread(self._reporter_compressor_on)
+        tank = await asyncio.to_thread(self._reporter_tank_temp)
+        energy = await asyncio.to_thread(self._read_energy_counter)
+
+        if raw_on is not None:
+            self.current_cycle = hwc_cycle_reporter.advance_live(
+                self.current_cycle,
+                raw_on=raw_on,
+                now_ts=now_ts,
+                tank_c=tank,
+                energy_kwh=energy,
+            )
+
+        backfill_s = float(rep.get("backfill_seconds", 900))
+        if self._last_backfill_at <= 0 or now_ts - self._last_backfill_at >= backfill_s:
+            await self._reporter_backfill()
+            self._last_backfill_at = now_ts
+
+        if hwc_cycle_reporter.backfill_captured(
+            self.current_cycle, self.cycles, self.config["timezone"]
+        ):
+            self.current_cycle = None
+
+        self._save_state()
+
+        live = hwc_cycle_reporter.live_view(self.current_cycle, now_ts, self.config["timezone"])
+        today = datetime.now(tz).date().isoformat()
+        state_scalar, attributes = hwc_cycle_reporter.build_payload(
+            self.cycles, live, today_local=today
+        )
+        entity = rep.get("cycles_entity", "sensor.hwc_cycles")
+        await asyncio.to_thread(
+            hwc_planner._ha_set_state, self.config, entity, state_scalar, attributes
+        )
+
+    async def _reporter_backfill(self) -> None:
+        """Reconstruct recent completed cycles via the reused COP analyser and merge into the ring.
+
+        Authoritative for completed rows (counter-preferred elec via hwc_cop_analysis), and the
+        self-healing path: cycles that closed while the daemon was down still land here.
+        """
+        rep = self.config["hwc"]["reporting"]
+        lookback_h = float(rep.get("lookback_hours", 36))
+        maxlen = int(self.config["hwc"].get("daemon", {}).get("cycle_history_len", 20))
+        since = datetime.now(ZoneInfo(self.config["timezone"])) - timedelta(hours=lookback_h)
+        df = await asyncio.to_thread(
+            hwc_cop_analysis.analyse, days=None, since=since, until=None, min_minutes=5
+        )
+        records = hwc_cycle_reporter.records_from_analysis(df)
+        self.cycles = hwc_cycle_reporter.merge_records(self.cycles, records, maxlen)
+
+    def _reporter_compressor_on(self) -> bool | None:
+        try:
+            return hwc_planner.compressor_is_on(self.config)
+        except Exception:
+            log.exception("HWC reporter: compressor read failed; leaving live row unchanged")
+            return None
+
+    def _reporter_tank_temp(self) -> float | None:
+        try:
+            return hwc_planner.get_tank_temperature(self.config)
+        except Exception:
+            log.exception("HWC reporter: tank read failed")
+            return None
+
+    def _read_energy_counter(self) -> float | None:
+        entity = self.config["hwc"].get("reporting", {}).get("energy_counter_entity")
+        if not entity:
+            return None
+        try:
+            state = hwc_planner._ha_call(self.config, "GET", f"states/{entity}")
+            return float(state["state"])
+        except Exception:
+            log.exception("HWC reporter: energy counter read failed")
+            return None
 
     async def _wait_for(self, trigger: asyncio.Event) -> None:
         trig = asyncio.create_task(trigger.wait())
@@ -796,6 +905,12 @@ class HwcDaemon:
         soc = getattr(self, "soc", None)  # getattr: tolerate __new__'d daemons in unit tests
         if soc is not None:
             payload["soc"] = soc
+        cycles = getattr(self, "cycles", None)
+        if cycles:
+            payload["cycles"] = cycles
+        current_cycle = getattr(self, "current_cycle", None)
+        if current_cycle is not None:
+            payload["current_cycle"] = current_cycle
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
     async def run(self) -> None:
@@ -807,6 +922,7 @@ class HwcDaemon:
             tg.create_task(self.execution_worker())
             tg.create_task(self.periodic_execution())
             tg.create_task(self.heartbeat())
+            tg.create_task(self.cycle_reporter())
 
 
 def _install_signal_handlers(daemon: HwcDaemon, loop: asyncio.AbstractEventLoop) -> None:

@@ -36,6 +36,7 @@ Dedicated Athom metering is live for the HWC compressor circuit.
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
 | Running compressor policy | compressor-on seeds the DP's initial state; `transition_cost_aud` charged per off→on start (stopping is free) |
 | Short-cycle experiment | **concluded 2026-06-20**: config restored (`79f4bbb`); cost key renamed `stop_cost_aud`→`transition_cost_aud` (`0.05`) |
+| Cycle reporting to HA | **shipped 2026-06-27** (`hwc.reporting.enabled`): daemon `cycle_reporter` task publishes `sensor.hwc_cycles` (recent runs + live row); `analyse` now prefers the `energy_2` cumulative meter (`elec_source`). HA card still to build. Spec: `docs/hwc_cycle_reporting.md` |
 | Short-cycle at 53 °C boundary | **fixed 2026-06-26**: a fresh off→on start sampled regime at the post-step temp `t1` while a continuing run used the pre-step start temp, flipping FULL/TOP-UP at `top_up_start_temp_c` → cross-replan limit cycle. Fix = sample the start regime at the pre-step temp (one line, matches the replay) + symmetric `min_off_seconds` guard. See `docs/hwc_short_cycle_review_2026-06-26.md` |
 
 ## What's committed

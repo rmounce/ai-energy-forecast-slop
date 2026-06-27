@@ -371,6 +371,18 @@ hwc:
     debounce_seconds: 2
     heartbeat_seconds: 1800
     execution_interval_seconds: 60
+    cycle_history_len: 20
+  # Publish-only per-cycle reporting to sensor.hwc_cycles (table of recent heat-pump runs + a live
+  # in-progress row). Firewalled from the planner/executor — a failure here never affects
+  # actuation. See docs/hwc_cycle_reporting.md.
+  reporting:
+    enabled: true
+    cycles_entity: sensor.hwc_cycles
+    # Athom channel-2 cumulative kWh meter; differenced over each cycle for the elec figure.
+    energy_counter_entity: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2
+    poll_seconds: 60          # live-row refresh + compressor-edge poll
+    backfill_seconds: 900     # how often to re-run the COP analyser over recent history
+    lookback_hours: 36        # window the analyser reconstructs completed cycles from
     minimum_replan_interval_seconds: 60
     tank_temp_replan_delta_c: 0.3
     # Suppress an off issued right after a heat command until the Tuya compressor sensor

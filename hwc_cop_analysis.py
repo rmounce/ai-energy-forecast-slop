@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Measure heat-pump hot water (HWC) per-cycle COP from InfluxDB.
 
-The preferred electrical input is the dedicated heat-pump circuit meter (raw
-Athom channel 2). Older history can still use `sensor.remaining_power_load` as a
-residual proxy: subtract the pre/post baseline to isolate the heat pump on clean
-windows. This sweeps recent compressor cycles and reports, per cycle:
+The preferred electrical input is the dedicated heat-pump circuit's cumulative
+energy meter (Athom channel 2, ``energy_2``), differenced over the cycle — no
+baseline subtraction or sampling error. It falls back to integrating the channel-2
+power (and, for older history, baseline-subtracted ``sensor.remaining_power_load``)
+when the counter is missing or has reset. The chosen source is reported per cycle as
+``elec_source``. This sweeps recent compressor cycles and reports, per cycle:
 
   start/end tank temp, ambient, duration, electrical-in (baseline-subtracted),
   thermal-out (single-probe ΔT + standing loss), apparent COP, and a cleanliness
@@ -44,7 +46,13 @@ DEFAULT_SINCE = "2026-05-28"  # Aquatech install date; earlier HA history is unr
 HWC_POWER_ENTITY = (
     "athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2"
 )
+HWC_ENERGY_ENTITY = (
+    "athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2"
+)
 RESIDUAL_POWER_ENTITY = "remaining_power_load"
+# Reject a cumulative-counter cycle delta above this (kWh): a plausible single reheat is
+# ~2 kWh, so anything beyond this is a meter rollover/glitch → fall back to power integration.
+COUNTER_MAX_CYCLE_KWH = 6.0
 
 
 def _client():
@@ -141,6 +149,27 @@ def _first_rise_minutes(series: pd.Series, start, start_temp: float, end_temp: f
     return (reached.index[0] - start).total_seconds() / 60
 
 
+def counter_cycle_kwh(energy_cumulative: pd.Series, cs, ce):
+    """kWh drawn over [cs, ce] from a cumulative (monotonic) energy meter; None if unusable.
+
+    Returns None — so the caller falls back to power integration — when the counter is missing,
+    has fewer than two in-window samples, or the delta is negative (a mid-cycle meter reset) or
+    implausibly large (rollover/glitch above ``COUNTER_MAX_CYCLE_KWH``). The counter measures the
+    whole heat-pump circuit, so it correctly includes any resistive-element assist.
+    """
+    if energy_cumulative is None or energy_cumulative.empty:
+        return None
+    seg = energy_cumulative[
+        (energy_cumulative.index >= cs) & (energy_cumulative.index <= ce)
+    ].dropna()
+    if len(seg) < 2:
+        return None
+    delta = float(seg.iloc[-1] - seg.iloc[0])
+    if delta < 0 or delta > COUNTER_MAX_CYCLE_KWH:
+        return None
+    return delta
+
+
 def stull_wet_bulb(t, rh):
     if pd.isna(t) or pd.isna(rh):
         return np.nan
@@ -162,6 +191,10 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
     )
     residual_pw = _series(
         c, "sensor__power", RESIDUAL_POWER_ENTITY,
+        days=days, since=since, until=until,
+    )
+    hwc_energy = _series(
+        c, "sensor__energy", HWC_ENERGY_ENTITY,
         days=days, since=since, until=until,
     )
     tank = _series(
@@ -249,7 +282,14 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
         baseline = np.mean([b_pre, b_post])
         cyc = P[(idx >= cs) & (idx <= ce)]
         hp = (cyc - baseline).clip(lower=0)
-        elec = hp.sum() * (30 / 3600) / 1000  # kWh
+        integrated_kwh = hp.sum() * (30 / 3600) / 1000  # kWh
+        # Prefer the on-device cumulative meter (no missed-sample/quantisation error); fall back
+        # to the baseline-subtracted power integration on a reset/missing counter.
+        counter_kwh = counter_cycle_kwh(hwc_energy, cs, ce)
+        if counter_kwh is not None:
+            elec, elec_source = counter_kwh, "counter"
+        else:
+            elec, elec_source = integrated_kwh, "power_integration"
         t0 = T[T.index <= cs + pd.Timedelta("90s")]
         t1 = T[T.index <= ce]
         if t0.empty or t1.empty:
@@ -284,7 +324,8 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
             wet_bulb=round(stull_wet_bulb(a, h), 1), baseline_w=round(baseline),
             hp_mean_w=round(hp.mean()), hp_p95_w=round(hp.quantile(0.95)),
             power_source=power_source,
-            elec_kwh=round(elec, 2), therm_kwh=round(therm, 2),
+            elec_kwh=round(elec, 2), elec_source=elec_source,
+            therm_kwh=round(therm, 2),
             cop=round(cop, 2) if pd.notna(cop) else np.nan, clean=clean,
             probe_lag_min=_round_or_nan(probe_lag_min, 1),
             probe_rise_10_min=_round_or_nan(probe_rise_10_min, 1),
@@ -358,7 +399,7 @@ def write_summary_markdown(
         "",
         f"- Source window: {source}",
         f"- Rows: {len(df)} total, {len(clean)} clean",
-        "- Method: compressor-on windows from HA/InfluxDB; electrical input prefers raw Athom channel 2 (`sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2`), with baseline-subtracted `sensor.remaining_power_load` fallback for older history; thermal output from tank probe delta plus standing loss.",
+        "- Method: compressor-on windows from HA/InfluxDB; electrical input prefers the Athom channel-2 cumulative meter (`sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2`, differenced over the cycle — see `elec_source`), falling back to baseline-subtracted power integration (raw channel-2 power, then `sensor.remaining_power_load` for older history) on a counter reset/gap; thermal output from tank probe delta plus standing loss.",
         "- Caveat: tank stratification means single-probe thermal output is approximate; use clean flags and cycle context before fitting model parameters.",
         "",
     ]
@@ -368,7 +409,8 @@ def write_summary_markdown(
         display = format_cycles_for_output(df)
         cols = [
             "start", "dur_min", "tank_start", "tank_end", "ambient", "wet_bulb",
-            "baseline_w", "hp_mean_w", "hp_p95_w", "power_source", "elec_kwh", "therm_kwh",
+            "baseline_w", "hp_mean_w", "hp_p95_w", "power_source", "elec_kwh", "elec_source",
+            "therm_kwh",
             "cop", "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min",
             "probe_rise_90_min", "exhaust_start", "exhaust_max", "exhaust_end",
             "element_on", "defrost_on", "four_way_on", "clean",
