@@ -141,14 +141,14 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
 
 ```yaml
   daemon:
-    cycle_history_len: 10          # ring-buffer length = max rows in the table
+    cycle_history_len: 20          # ring-buffer length = max rows in the table
   reporting:
     enabled: true                  # gates the cycle_reporter task
     cycles_entity: sensor.hwc_cycles
     energy_counter_entity: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2
     poll_seconds: 60               # live-row refresh + compressor-edge poll
     backfill_seconds: 900          # re-run the COP analyser over recent history
-    lookback_hours: 96             # window the analyser reconstructs cycles from (must cover cycle_history_len runs)
+    lookback_hours: 240            # window the analyser reconstructs cycles from (must cover ~cycle_history_len runs to fill on a cold start)
 ```
 
 ## What shipped (2026-06-27)
