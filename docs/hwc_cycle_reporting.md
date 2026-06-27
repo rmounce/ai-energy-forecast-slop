@@ -75,13 +75,20 @@ in `HwcDaemon.run`. Pure helpers live in `hwc_cycle_reporter.py`; the daemon own
 
 Two halves, both on a single `poll_seconds` (60 s) tick:
 
-**Completed rows — periodic backfill (authoritative).** Every `backfill_seconds` (900 s) and on
-the first tick, the daemon runs `hwc_cop_analysis.analyse(since=now−lookback_hours, min_minutes=5)`
-in a thread and merges the rows (`merge_records`, deduped by local start) into the ring buffer.
-This is deliberately *not* per-cycle-on-close: a periodic re-scan **self-heals across restarts**
-(cycles that closed while the daemon was down still get picked up) and keeps the thermal/clean
-maths in exactly one place. `analyse` already prefers the counter, so the merged rows carry the
-accurate `elec_kwh`.
+**Completed rows — periodic backfill (authoritative).** Every `backfill_seconds` (1800 s) and on
+the first tick, the daemon runs `hwc_cop_analysis.analyse(since=now−lookback, min_minutes=5)` in a
+thread and merges the rows (`merge_records`, deduped by local start) into the ring buffer. This is
+deliberately *not* per-cycle-on-close: a periodic re-scan **self-heals across restarts** (cycles
+that closed while the daemon was down still get picked up) and keeps the thermal/clean maths in
+exactly one place. `analyse` already prefers the counter, so the merged rows carry the accurate
+`elec_kwh`.
+
+The lookback is **two-tier** (`backfill_lookback_hours`): a 10-day `analyse` is a ~3-minute
+InfluxDB scan, far too heavy to run every backfill. Because the ring persists in the state file,
+the deep `seed_lookback_hours` window runs **once per process** — only on the first backfill of a
+cold start whose loaded ring isn't yet full — to populate the table; every backfill after uses the
+cheap recurring `lookback_hours` (which only has to catch newly-finished cycles). A restart with an
+already-full ring skips the deep scan entirely.
 
 **Live row — polled edges (lightweight).** Each tick the daemon polls compressor on/off, tank, and
 the energy counter and advances a small state machine (`advance_live`):
@@ -147,8 +154,9 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
     cycles_entity: sensor.hwc_cycles
     energy_counter_entity: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2
     poll_seconds: 60               # live-row refresh + compressor-edge poll
-    backfill_seconds: 900          # re-run the COP analyser over recent history
-    lookback_hours: 240            # window the analyser reconstructs cycles from (must cover ~cycle_history_len runs to fill on a cold start)
+    backfill_seconds: 1800         # re-run the COP analyser to catch newly-finished cycles
+    lookback_hours: 48             # cheap recurring window (steady state; the ring persists)
+    seed_lookback_hours: 240       # one-shot deep backfill on cold start to populate the table
 ```
 
 ## What shipped (2026-06-27)

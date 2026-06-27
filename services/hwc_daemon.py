@@ -358,6 +358,9 @@ class HwcDaemon:
         self.cycles: list[dict] = state.get("cycles", []) or []
         self.current_cycle: dict | None = state.get("current_cycle")
         self._last_backfill_at = 0.0
+        # One-shot deep backfill guard: the first backfill of a process with a short ring uses the
+        # deep seed lookback; every backfill after uses the cheap recurring window.
+        self._seeded = False
         self._next_msg_id = 1
 
     def _msg_id(self) -> int:
@@ -554,14 +557,21 @@ class HwcDaemon:
         self-healing path: cycles that closed while the daemon was down still land here.
         """
         rep = self.config["hwc"]["reporting"]
-        lookback_h = float(rep.get("lookback_hours", 36))
         maxlen = int(self.config["hwc"].get("daemon", {}).get("cycle_history_len", 20))
+        lookback_h = hwc_cycle_reporter.backfill_lookback_hours(
+            seeded=self._seeded,
+            ring_len=len(self.cycles),
+            maxlen=maxlen,
+            seed_hours=float(rep.get("seed_lookback_hours", 240)),
+            recurring_hours=float(rep.get("lookback_hours", 48)),
+        )
         since = datetime.now(ZoneInfo(self.config["timezone"])) - timedelta(hours=lookback_h)
         df = await asyncio.to_thread(
             hwc_cop_analysis.analyse, days=None, since=since, until=None, min_minutes=5
         )
         records = hwc_cycle_reporter.records_from_analysis(df)
         self.cycles = hwc_cycle_reporter.merge_records(self.cycles, records, maxlen)
+        self._seeded = True  # set only after a successful backfill so a failed seed retries deep
 
     def _reporter_compressor_on(self) -> bool | None:
         try:

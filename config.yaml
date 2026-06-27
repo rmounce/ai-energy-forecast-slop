@@ -381,8 +381,11 @@ hwc:
     # Athom channel-2 cumulative kWh meter; differenced over each cycle for the elec figure.
     energy_counter_entity: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2
     poll_seconds: 60          # live-row refresh + compressor-edge poll
-    backfill_seconds: 900     # how often to re-run the COP analyser over recent history
-    lookback_hours: 240       # window the analyser reconstructs completed cycles from (must cover ~cycle_history_len runs to fill the table on a cold start)
+    backfill_seconds: 1800    # how often to re-run the COP analyser to catch newly-finished cycles
+    lookback_hours: 48        # cheap recurring backfill window (steady state; ring persists)
+    # One-shot deep backfill on cold start to populate the table (~cycle_history_len runs back). A
+    # 10-day analyse is a ~3-min InfluxDB scan, so it runs once per process, NOT every backfill.
+    seed_lookback_hours: 240
     minimum_replan_interval_seconds: 60
     tank_temp_replan_delta_c: 0.3
     # Suppress an off issued right after a heat command until the Tuya compressor sensor

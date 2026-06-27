@@ -136,6 +136,21 @@ def test_merge_records_dedupes_by_start_and_trims():
     assert len(cr.merge_records(existing, new, maxlen=1)) == 1  # trims to most recent
 
 
+def test_backfill_lookback_deep_once_then_recurring():
+    # Cold start, short ring → deep seed window.
+    assert cr.backfill_lookback_hours(
+        seeded=False, ring_len=3, maxlen=20, seed_hours=240, recurring_hours=48
+    ) == 240
+    # After seeding → cheap recurring window, even while still short.
+    assert cr.backfill_lookback_hours(
+        seeded=True, ring_len=3, maxlen=20, seed_hours=240, recurring_hours=48
+    ) == 48
+    # Restart with an already-full ring → never pays the deep scan.
+    assert cr.backfill_lookback_hours(
+        seeded=False, ring_len=20, maxlen=20, seed_hours=240, recurring_hours=48
+    ) == 48
+
+
 def test_backfill_captured_matches_within_tolerance():
     start_ts = cr._local_str_to_ts("2026-06-18 13:37", TZ)
     cur = {"status": "cooldown", "start_ts": start_ts}

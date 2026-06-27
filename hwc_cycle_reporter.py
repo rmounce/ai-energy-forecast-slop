@@ -161,6 +161,22 @@ def merge_records(existing: list[dict], new: list[dict], maxlen: int) -> list[di
     return merged[-maxlen:] if maxlen and len(merged) > maxlen else merged
 
 
+def backfill_lookback_hours(
+    *, seeded: bool, ring_len: int, maxlen: int, seed_hours: float, recurring_hours: float
+) -> float:
+    """Pick the analyser lookback: a deep one-shot to populate a short ring on cold start, else
+    the cheap recurring window.
+
+    The ring buffer persists (state file), so once it is full the steady state only needs to catch
+    newly-finished cycles — a short, cheap lookback. The deep window (which can be a multi-minute
+    InfluxDB scan) is reserved for the first backfill of a process whose loaded ring is not yet
+    full, so it runs at most once per cold start rather than every ``backfill_seconds``.
+    """
+    if not seeded and ring_len < maxlen:
+        return seed_hours
+    return recurring_hours
+
+
 def backfill_captured(
     current: dict | None, cycles: list[dict], tz_name: str, tol_min: float = 6.0
 ) -> bool:
