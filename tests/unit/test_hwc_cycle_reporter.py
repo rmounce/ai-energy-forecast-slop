@@ -136,19 +136,34 @@ def test_merge_records_dedupes_by_start_and_trims():
     assert len(cr.merge_records(existing, new, maxlen=1)) == 1  # trims to most recent
 
 
-def test_backfill_lookback_deep_once_then_recurring():
-    # Cold start, short ring → deep seed window.
-    assert cr.backfill_lookback_hours(
-        seeded=False, ring_len=3, maxlen=20, seed_hours=240, recurring_hours=48
-    ) == 240
-    # After seeding → cheap recurring window, even while still short.
-    assert cr.backfill_lookback_hours(
-        seeded=True, ring_len=3, maxlen=20, seed_hours=240, recurring_hours=48
-    ) == 48
-    # Restart with an already-full ring → never pays the deep scan.
-    assert cr.backfill_lookback_hours(
-        seeded=False, ring_len=20, maxlen=20, seed_hours=240, recurring_hours=48
-    ) == 48
+def test_cold_start_since_deep_when_ring_short():
+    now = 1_000_000.0
+    since = cr.cold_start_since_ts(
+        [{"start": "2026-06-27 12:00"}], now, maxlen=20,
+        seed_hours=240, incremental_margin_hours=6, tz_name=TZ,
+    )
+    assert since == now - 240 * 3600   # deep window, ignores ring contents
+
+
+def test_cold_start_since_incremental_when_ring_full():
+    now = cr._local_str_to_ts("2026-06-27 18:00", TZ)
+    cycles = [{"start": "2026-06-2%d 12:00" % d} for d in range(1, 8)]  # 7 rows
+    cycles[-1]["start"] = "2026-06-27 12:00"                            # newest
+    since = cr.cold_start_since_ts(
+        cycles, now, maxlen=7, seed_hours=240, incremental_margin_hours=6, tz_name=TZ,
+    )
+    # since = newest row start (12:00) minus the 6h margin, NOT a flat deep window
+    assert since == cr._local_str_to_ts("2026-06-27 12:00", TZ) - 6 * 3600
+
+
+def test_cooldown_settled_and_expired_gate_on_age():
+    cur = {"status": "cooldown", "ended_ts": 1000.0}
+    assert cr.cooldown_settled(cur, now_ts=1000.0 + 900, settle_seconds=900) is True
+    assert cr.cooldown_settled(cur, now_ts=1000.0 + 600, settle_seconds=900) is False
+    assert cr.cooldown_settled({"status": "running", "ended_ts": 1000.0}, 9999.0, 900) is False
+    assert cr.cooldown_settled(None, 9999.0, 900) is False
+    assert cr.cooldown_expired(cur, now_ts=1000.0 + 1800, giveup_seconds=1800) is True
+    assert cr.cooldown_expired(cur, now_ts=1000.0 + 1200, giveup_seconds=1800) is False
 
 
 def test_backfill_captured_matches_within_tolerance():

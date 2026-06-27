@@ -73,35 +73,39 @@ preferred for completed (`elec_source` column) and live rows.
 A new asyncio task, `cycle_reporter` (`services/hwc_daemon.py`), added to the daemon's `TaskGroup`
 in `HwcDaemon.run`. Pure helpers live in `hwc_cycle_reporter.py`; the daemon owns the I/O.
 
-Two halves, both on a single `poll_seconds` (60 s) tick:
+Steady-state capture is **event-driven** — the daemon already polls every edge, so there is no
+blind periodic rescan. Each `poll_seconds` (60 s) tick:
 
-**Completed rows — periodic backfill (authoritative).** Every `backfill_seconds` (1800 s) and on
-the first tick, the daemon runs `hwc_cop_analysis.analyse(since=now−lookback, min_minutes=5)` in a
-thread and merges the rows (`merge_records`, deduped by local start) into the ring buffer. This is
-deliberately *not* per-cycle-on-close: a periodic re-scan **self-heals across restarts** (cycles
-that closed while the daemon was down still get picked up) and keeps the thermal/clean maths in
-exactly one place. `analyse` already prefers the counter, so the merged rows carry the accurate
-`elec_kwh`.
-
-The lookback is **two-tier** (`backfill_lookback_hours`): a 10-day `analyse` is a ~3-minute
-InfluxDB scan, far too heavy to run every backfill. Because the ring persists in the state file,
-the deep `seed_lookback_hours` window runs **once per process** — only on the first backfill of a
-cold start whose loaded ring isn't yet full — to populate the table; every backfill after uses the
-cheap recurring `lookback_hours` (which only has to catch newly-finished cycles). A restart with an
-already-full ring skips the deep scan entirely.
-
-**Live row — polled edges (lightweight).** Each tick the daemon polls compressor on/off, tank, and
-the energy counter and advances a small state machine (`advance_live`):
+**Live row — polled edges (lightweight).** The daemon polls compressor on/off, tank, and the energy
+counter and advances a small state machine (`advance_live`):
 
 - **off→on**: open a `running` row, snapshotting `start_ts`, `tank_start`, `energy_start`.
 - **running**: refresh `tank_now`/`energy_now`; `live_view` renders elapsed, ΔT, and
   `energy_now − energy_start` kWh.
-- **on→off**: mark `cooldown` (kept visible — `analyse` can't see the cycle until its post-window
-  exists in InfluxDB).
-- once a ring row within ~6 min of `start_ts` appears (`backfill_captured`), the live row clears.
+- **on→off**: mark `cooldown`, snapshotting `ended_ts` (kept visible — `analyse` can't see the
+  cycle until its post-window exists in InfluxDB).
 
 A failed compressor read (`raw_on=None`) skips `advance_live`, so a flaky read never spuriously
-closes a cycle.
+closes a cycle. The state machine survives restarts via `current_cycle` in the state file, so a run
+in progress (or one that ended during downtime) is still finalised.
+
+**Completed rows — per-cycle finalise (authoritative).** When `cooldown_settled` reports a
+cooled-down cycle is old enough (`settle_seconds`, 900 s — its InfluxDB post-window now exists), the
+daemon runs **one narrow** `analyse` over `[ended − finalize_max_cycle_hours, ended + 15 min]` and
+merges the row. `analyse` self-detects the real compressor-on boundaries inside the window, so the
+approximate live `start_ts` need not be exact — the window just has to span the run. That makes it
+*one short query per actual cycle* (a few seconds), instead of a 48 h scan every 30 min. The live
+row clears once the ring row appears (`backfill_captured`); `cooldown_expired`
+(`finalize_giveup_seconds`) drops a run too short for the analyser's `min_minutes` floor so it
+can't retry forever. `analyse` still prefers the counter, so `elec_kwh` stays accurate, and the
+thermal/clean maths live in exactly one place.
+
+**Cold start — one-shot backfill (`cold_start_since_ts`).** A 10-day `analyse` is a ~3-minute
+InfluxDB scan, so it runs **once per process**, only on the first tick: a deep `seed_lookback_hours`
+window when the loaded ring is short (to populate the table), else a cheap **incremental** catch-up
+since the newest row already held (`incremental_margin_hours`) — covering only cycles that completed
+while the daemon was down. A restart with a full, fresh ring does a few-hours query, not a deep
+scan.
 
 ### Persistence
 
@@ -154,9 +158,11 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
     cycles_entity: sensor.hwc_cycles
     energy_counter_entity: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2
     poll_seconds: 60               # live-row refresh + compressor-edge poll
-    backfill_seconds: 1800         # re-run the COP analyser to catch newly-finished cycles
-    lookback_hours: 48             # cheap recurring window (steady state; the ring persists)
-    seed_lookback_hours: 240       # one-shot deep backfill on cold start to populate the table
+    settle_seconds: 900            # wait after a run ends before its narrow finalise analyse
+    finalize_max_cycle_hours: 3    # narrow analyse window spans at most this long a run
+    finalize_giveup_seconds: 1800  # stop retrying a run the analyser won't return
+    seed_lookback_hours: 240       # cold-start deep backfill to populate a short ring (once)
+    incremental_margin_hours: 6    # cold-start incremental catch-up margin when the ring is full
 ```
 
 ## What shipped (2026-06-27)
@@ -164,11 +170,13 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
 - `hwc_cop_analysis.py`: `counter_cycle_kwh` + `energy_2` series; `analyse` prefers the counter and
   emits `elec_source`. Benefits the batch CLI and CSV/markdown output too.
 - `hwc_cycle_reporter.py`: pure `advance_live` / `live_view` / `records_from_analysis` /
-  `merge_records` / `backfill_captured` / `build_payload`.
-- `services/hwc_daemon.py`: `cycle_reporter` task (firewalled), `_reporter_tick`,
-  `_reporter_backfill`, counter/compressor/tank reads; `cycles`/`current_cycle` in the state file.
+  `merge_records` / `backfill_captured` / `build_payload`, plus the event-driven decision helpers
+  `cold_start_since_ts` / `cooldown_settled` / `cooldown_expired`.
+- `services/hwc_daemon.py`: `cycle_reporter` task (firewalled), `_reporter_tick`, event-driven
+  `_reporter_finalize` + one-shot `_reporter_cold_start`, counter/compressor/tank reads;
+  `cycles`/`current_cycle` in the state file.
 - `tests/unit/test_hwc_cycle_reporter.py`: counter selection incl. reset/implausible fallback, live
-  state machine, record projection/merge/capture, payload.
+  state machine, record projection/merge/capture, payload, seed/finalise gating.
 
 **Still to do (not code):** build the HA card against `sensor.hwc_cycles`
 (`attributes.cycles` table + `attributes.current` live row).

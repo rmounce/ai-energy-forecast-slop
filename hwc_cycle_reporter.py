@@ -161,20 +161,56 @@ def merge_records(existing: list[dict], new: list[dict], maxlen: int) -> list[di
     return merged[-maxlen:] if maxlen and len(merged) > maxlen else merged
 
 
-def backfill_lookback_hours(
-    *, seeded: bool, ring_len: int, maxlen: int, seed_hours: float, recurring_hours: float
+def cold_start_since_ts(
+    cycles: list[dict],
+    now_ts: float,
+    *,
+    maxlen: int,
+    seed_hours: float,
+    incremental_margin_hours: float,
+    tz_name: str,
 ) -> float:
-    """Pick the analyser lookback: a deep one-shot to populate a short ring on cold start, else
-    the cheap recurring window.
+    """Epoch ``since`` for the one-shot cold-start backfill.
 
-    The ring buffer persists (state file), so once it is full the steady state only needs to catch
-    newly-finished cycles — a short, cheap lookback. The deep window (which can be a multi-minute
-    InfluxDB scan) is reserved for the first backfill of a process whose loaded ring is not yet
-    full, so it runs at most once per cold start rather than every ``backfill_seconds``.
+    Steady-state capture is event-driven (per-cycle finalise), so the only blind scan is this
+    single backfill when the process starts:
+
+      - ring not yet full → a **deep** ``seed_hours`` window to populate the table;
+      - ring already full → an **incremental** catch-up since the newest row it already holds (less
+        a margin), which only covers cycles that completed while the daemon was down. Usually a few
+        hours; bounded by how stale the ring is.
     """
-    if not seeded and ring_len < maxlen:
-        return seed_hours
-    return recurring_hours
+    if len(cycles) < maxlen:
+        return now_ts - seed_hours * 3600
+    newest = max((_local_str_to_ts(c.get("start", ""), tz_name) or 0.0) for c in cycles)
+    if newest <= 0:
+        return now_ts - seed_hours * 3600
+    return newest - incremental_margin_hours * 3600
+
+
+def cooldown_settled(current: dict | None, now_ts: float, settle_seconds: float) -> bool:
+    """True when a cooled-down cycle is old enough that its post-window exists in InfluxDB.
+
+    ``analyse`` needs ~10 min of post-cycle samples for the baseline/standing-loss context, so a
+    finished cycle can only be reconstructed once it has settled for ``settle_seconds``.
+    """
+    return bool(
+        current
+        and current.get("status") == "cooldown"
+        and current.get("ended_ts") is not None
+        and now_ts - current["ended_ts"] >= settle_seconds
+    )
+
+
+def cooldown_expired(current: dict | None, now_ts: float, giveup_seconds: float) -> bool:
+    """True when a cooled-down cycle has gone uncaptured long enough to give up on (e.g. a run
+    shorter than the analyser's ``min_minutes`` floor, which will never produce a row)."""
+    return bool(
+        current
+        and current.get("status") == "cooldown"
+        and current.get("ended_ts") is not None
+        and now_ts - current["ended_ts"] >= giveup_seconds
+    )
 
 
 def backfill_captured(

@@ -357,9 +357,7 @@ class HwcDaemon:
         # docs/hwc_cycle_reporting.md.
         self.cycles: list[dict] = state.get("cycles", []) or []
         self.current_cycle: dict | None = state.get("current_cycle")
-        self._last_backfill_at = 0.0
-        # One-shot deep backfill guard: the first backfill of a process with a short ring uses the
-        # deep seed lookback; every backfill after uses the cheap recurring window.
+        # Cold-start backfill runs once per process; steady-state capture is event-driven.
         self._seeded = False
         self._next_msg_id = 1
 
@@ -528,14 +526,26 @@ class HwcDaemon:
                 energy_kwh=energy,
             )
 
-        backfill_s = float(rep.get("backfill_seconds", 900))
-        if self._last_backfill_at <= 0 or now_ts - self._last_backfill_at >= backfill_s:
-            await self._reporter_backfill()
-            self._last_backfill_at = now_ts
+        maxlen = int(self.config["hwc"].get("daemon", {}).get("cycle_history_len", 20))
 
+        # Cold-start population runs once per process: deep if the loaded ring is short, else a
+        # cheap incremental catch-up for any cycle that completed while the daemon was down.
+        if not self._seeded:
+            await self._reporter_cold_start(now_ts, maxlen)
+            self._seeded = True
+
+        # Steady state is event-driven: when the live state machine reports a settled, cooled-down
+        # cycle, reconstruct just that run with a narrow analyse — no blind periodic rescan.
+        settle_s = float(rep.get("settle_seconds", 900))
+        giveup_s = float(rep.get("finalize_giveup_seconds", 1800))
+        if hwc_cycle_reporter.cooldown_settled(self.current_cycle, now_ts, settle_s):
+            await self._reporter_finalize(self.current_cycle, maxlen)
         if hwc_cycle_reporter.backfill_captured(
             self.current_cycle, self.cycles, self.config["timezone"]
         ):
+            self.current_cycle = None
+        elif hwc_cycle_reporter.cooldown_expired(self.current_cycle, now_ts, giveup_s):
+            log.info("HWC reporter: giving up on an uncaptured cycle (shorter than analyser floor?)")
             self.current_cycle = None
 
         self._save_state()
@@ -550,28 +560,47 @@ class HwcDaemon:
             hwc_planner._ha_set_state, self.config, entity, state_scalar, attributes
         )
 
-    async def _reporter_backfill(self) -> None:
-        """Reconstruct recent completed cycles via the reused COP analyser and merge into the ring.
+    async def _reporter_cold_start(self, now_ts: float, maxlen: int) -> None:
+        """One-shot backfill to populate the ring on process start.
 
-        Authoritative for completed rows (counter-preferred elec via hwc_cop_analysis), and the
-        self-healing path: cycles that closed while the daemon was down still land here.
+        Deep ``seed_lookback_hours`` window when the loaded ring is short, else a cheap incremental
+        catch-up since the newest row already held (covers cycles missed during downtime). See
+        ``hwc_cycle_reporter.cold_start_since_ts``.
         """
         rep = self.config["hwc"]["reporting"]
-        maxlen = int(self.config["hwc"].get("daemon", {}).get("cycle_history_len", 20))
-        lookback_h = hwc_cycle_reporter.backfill_lookback_hours(
-            seeded=self._seeded,
-            ring_len=len(self.cycles),
+        since_ts = hwc_cycle_reporter.cold_start_since_ts(
+            self.cycles,
+            now_ts,
             maxlen=maxlen,
             seed_hours=float(rep.get("seed_lookback_hours", 240)),
-            recurring_hours=float(rep.get("lookback_hours", 48)),
+            incremental_margin_hours=float(rep.get("incremental_margin_hours", 6)),
+            tz_name=self.config["timezone"],
         )
-        since = datetime.now(ZoneInfo(self.config["timezone"])) - timedelta(hours=lookback_h)
+        since = datetime.fromtimestamp(since_ts, ZoneInfo(self.config["timezone"]))
         df = await asyncio.to_thread(
             hwc_cop_analysis.analyse, days=None, since=since, until=None, min_minutes=5
         )
         records = hwc_cycle_reporter.records_from_analysis(df)
         self.cycles = hwc_cycle_reporter.merge_records(self.cycles, records, maxlen)
-        self._seeded = True  # set only after a successful backfill so a failed seed retries deep
+
+    async def _reporter_finalize(self, current: dict, maxlen: int) -> None:
+        """Reconstruct one just-completed cycle with a narrow analyse window that spans the run.
+
+        ``analyse`` self-detects the compressor-on boundaries inside the window, so the live (and
+        only approximate) start time need not be exact — the window just has to contain the cycle.
+        This is the event-driven steady-state path: one short query per actual run, no rescans.
+        """
+        rep = self.config["hwc"]["reporting"]
+        tz = ZoneInfo(self.config["timezone"])
+        ended = datetime.fromtimestamp(current["ended_ts"], tz)
+        max_cycle_h = float(rep.get("finalize_max_cycle_hours", 3))
+        since = ended - timedelta(hours=max_cycle_h, minutes=30)
+        until = ended + timedelta(minutes=15)
+        df = await asyncio.to_thread(
+            hwc_cop_analysis.analyse, days=None, since=since, until=until, min_minutes=5
+        )
+        records = hwc_cycle_reporter.records_from_analysis(df)
+        self.cycles = hwc_cycle_reporter.merge_records(self.cycles, records, maxlen)
 
     def _reporter_compressor_on(self) -> bool | None:
         try:
