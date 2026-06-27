@@ -7,7 +7,9 @@ T_hot, active heating advances the state, and everything clamps. No daemon / no 
 
 import math
 
-from hwc_soc_model import SoCParams
+import pytest
+
+from hwc_soc_model import SoCParams, probe_temp
 from hwc_soc_tracker import TrackerState, advance, draw_kwh_per_s_to_dv, seed_state
 
 P = SoCParams()
@@ -27,6 +29,20 @@ def test_seed_is_conservative_and_floors_t_hot():
     assert s.v_hot == 0.5
     assert s.t_hot == 54.0
     assert seed_state(10.0, P).t_hot >= P.t_mains_c  # floored above mains
+
+
+@pytest.mark.xfail(strict=True, reason="seed-divergence (Option 2); see docs/hwc_2state_soc_model.md")
+def test_seed_from_hot_probe_is_observation_consistent():
+    # Live divergence on first enable (2026-06-27): with the probe reading ~57 °C the thermocline
+    # is plainly above the 0.50 sensor, yet seed_state pins V_hot at the conservative 0.50 and
+    # T_hot at the under-reading mid-probe. The model's own observation then reads
+    # g(0.50, 57) = (T_mains + 57)/2 ≈ 37 °C — ~20 °C below the real probe — so every plan built
+    # from that seed starts from a phantom-cold tank and diverges. A seed MUST be
+    # observation-consistent: feeding it back through g must reproduce the probe it was seeded from.
+    # Fix = Option 2 (seed T_hot at the delivery temp, V_hot0 = invert_g(probe, T_hot)).
+    for probe in (53.0, 55.0, 57.0, 59.0):
+        s = seed_state(probe, P)
+        assert abs(probe_temp(s.v_hot, s.t_hot, P) - probe) <= 3.0, probe
 
 
 # ── watermark resets dominate ──────────────────────────────────────────────────

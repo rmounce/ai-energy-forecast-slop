@@ -12,9 +12,12 @@ in T_hot — a small, conservative artifact of the smooth g, not a bug.
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import pytz
 
 import hwc_dp_planner as dp
+import hwc_soc_tracker as tracker
+from hwc_soc_model import SoCParams
 
 TZ = pytz.timezone("Australia/Adelaide")
 
@@ -148,6 +151,19 @@ def test_transition_cost_suppresses_fragmentation():
 
     assert _starts(2.0) < _starts(0.0)   # transition cost actually bites
     assert _starts(2.0) <= 3             # and yields a contiguous, non-fragmented plan
+
+
+@pytest.mark.xfail(strict=True, reason="seed-divergence (Option 2); see test_hwc_soc_tracker")
+def test_seeded_plan_first_probe_matches_real_probe():
+    # End-to-end capture of the live symptom: the daemon seeds soc_state0 via tracker.seed_state
+    # from the real control probe, then the planner publishes soc_forecast. With a hot real probe
+    # (~57 °C) the inconsistent seed makes the *first* modelled probe read ~20 °C low, so the
+    # published plan opens from a phantom-cold tank. The published t0 must track reality.
+    grid = _grid(6, 48)
+    real_probe = 57.0
+    seed = tracker.seed_state(real_probe, SoCParams())  # defaults match _cfg's soc params
+    plan = _plan(_cfg(), grid, start=real_probe, soc_state0=(seed.v_hot, seed.t_hot))
+    assert abs(plan["soc_forecast"][0]["probe"] - real_probe) <= 3.0
 
 
 def test_seed_defaults_when_not_supplied():
