@@ -136,6 +136,36 @@ def test_merge_records_dedupes_by_start_and_trims():
     assert len(cr.merge_records(existing, new, maxlen=1)) == 1  # trims to most recent
 
 
+def test_merge_records_collapses_one_minute_wobble():
+    # Same physical cycle, analysed twice over different windows: analyse's self-detected on-edge
+    # wobbles by a resample bin, so the two passes report starts one minute apart. They must NOT
+    # both survive (the bug that produced 13:08/13:09 twins). New (authoritative) pass wins.
+    existing = [{"start": "2026-06-27 13:09", "cop": 1.90, "dur_min": 64}]
+    new = [{"start": "2026-06-27 13:08", "cop": 1.89, "dur_min": 65}]
+    merged = cr.merge_records(existing, new, maxlen=20)
+    assert len(merged) == 1
+    assert merged[0]["start"] == "2026-06-27 13:08" and merged[0]["cop"] == 1.89
+
+
+def test_merge_records_self_heals_existing_twins():
+    # A ring that already holds both twins collapses to one on the next merge (no new record).
+    ring = [
+        {"start": "2026-06-26 15:44", "cop": 1.87},
+        {"start": "2026-06-26 15:45", "cop": 1.88},
+    ]
+    merged = cr.merge_records(ring, [], maxlen=20)
+    assert len(merged) == 1
+
+
+def test_merge_records_keeps_distinct_short_cycles_apart():
+    # Two genuinely distinct runs start ≥5 min apart (analyser min cycle length); the 3-min
+    # tolerance must never merge them.
+    existing = [{"start": "2026-06-26 23:54", "cop": 1.1}]
+    new = [{"start": "2026-06-26 23:59", "cop": 1.2}]  # 5 min later
+    merged = cr.merge_records(existing, new, maxlen=20)
+    assert [r["start"] for r in merged] == ["2026-06-26 23:54", "2026-06-26 23:59"]
+
+
 def test_cold_start_since_deep_when_ring_short():
     now = 1_000_000.0
     since = cr.cold_start_since_ts(

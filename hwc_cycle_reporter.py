@@ -151,13 +151,47 @@ def records_from_analysis(df: pd.DataFrame) -> list[dict]:
     return records
 
 
-def merge_records(existing: list[dict], new: list[dict], maxlen: int) -> list[dict]:
-    """Merge by local start time (new wins), sort ascending, keep the most recent ``maxlen``."""
-    by_start: dict[str, dict] = {r["start"]: r for r in existing if r.get("start")}
-    for r in new:
-        if r.get("start"):
-            by_start[r["start"]] = r
-    merged = sorted(by_start.values(), key=lambda r: r["start"])
+def _start_dt(start: str) -> datetime | None:
+    try:
+        return datetime.strptime(start, "%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return None
+
+
+def merge_records(
+    existing: list[dict], new: list[dict], maxlen: int, tol_min: float = 3.0
+) -> list[dict]:
+    """Merge by local start time (new wins), sort ascending, keep the most recent ``maxlen``.
+
+    Dedup is **tolerant** (``tol_min``), not exact-string: the same physical cycle can be analysed
+    by two passes over different windows (per-cycle finalise vs the incremental cold-start
+    re-scan), and ``analyse`` self-detects the compressor-on edge inside whichever window it is
+    given, so the detected start can wobble by a resample bin (~1 min). Exact-string keying would
+    leak twin rows one minute apart. ``tol_min`` (3 min) absorbs that wobble while staying well
+    under the analyser's 5-min minimum cycle length, so two genuinely-distinct runs (starts always
+    ≥5 min apart) can never be collapsed. This also self-heals any twins already in the ring.
+
+    The later-processed record wins a near-match, so ``new`` overrides ``existing`` and, within the
+    ring, the later twin survives — both are near-identical, so either is fine.
+    """
+    merged: list[dict] = []
+    for rec in list(existing) + list(new):
+        start = rec.get("start")
+        if not start:
+            continue
+        dt = _start_dt(start)
+        slot = None
+        if dt is not None:
+            for i, kept in enumerate(merged):
+                kdt = _start_dt(kept.get("start", ""))
+                if kdt is not None and abs((dt - kdt).total_seconds()) <= tol_min * 60:
+                    slot = i
+                    break
+        if slot is None:
+            merged.append(rec)
+        else:
+            merged[slot] = rec
+    merged.sort(key=lambda r: r["start"])
     return merged[-maxlen:] if maxlen and len(merged) > maxlen else merged
 
 

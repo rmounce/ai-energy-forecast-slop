@@ -100,6 +100,14 @@ row clears once the ring row appears (`backfill_captured`); `cooldown_expired`
 can't retry forever. `analyse` still prefers the counter, so `elec_kwh` stays accurate, and the
 thermal/clean maths live in exactly one place.
 
+Because the per-cycle finalise and the incremental cold-start can both analyse the same run over
+*different* windows, and `analyse` self-detects the on-edge inside whichever window it gets, the
+detected start can wobble by a resample bin (~1 min) between passes. `merge_records` therefore
+dedupes with a **3-minute tolerance** (not exact start-string), which absorbs that wobble while
+staying well under the analyser's 5-min minimum cycle length, so two genuinely-distinct runs
+(starts always ≥5 min apart) are never collapsed. The tolerant merge also self-heals any twin rows
+already in the ring on the next merge.
+
 **Cold start — one-shot backfill (`cold_start_since_ts`).** A 10-day `analyse` is a ~3-minute
 InfluxDB scan, so it runs **once per process**, only on the first tick: a deep `seed_lookback_hours`
 window when the loaded ring is short (to populate the table), else a cheap **incremental** catch-up
@@ -170,7 +178,8 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
 - `hwc_cop_analysis.py`: `counter_cycle_kwh` + `energy_2` series; `analyse` prefers the counter and
   emits `elec_source`. Benefits the batch CLI and CSV/markdown output too.
 - `hwc_cycle_reporter.py`: pure `advance_live` / `live_view` / `records_from_analysis` /
-  `merge_records` / `backfill_captured` / `build_payload`, plus the event-driven decision helpers
+  `merge_records` (tolerant dedup, collapses ~1-min analyse-window wobble twins) /
+  `backfill_captured` / `build_payload`, plus the event-driven decision helpers
   `cold_start_since_ts` / `cooldown_settled` / `cooldown_expired`.
 - `services/hwc_daemon.py`: `cycle_reporter` task (firewalled), `_reporter_tick`, event-driven
   `_reporter_finalize` + one-shot `_reporter_cold_start`, counter/compressor/tank reads;
