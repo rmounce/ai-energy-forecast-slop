@@ -2,6 +2,8 @@
 # cycle_reporter; see docs/hwc_cycle_reporting.md). Built-in markdown card — no HACS dependency.
 # The in-progress run (attributes.current) is the top row, italicised with a 🟢 marker; its COP
 # shows '…' until the cycle completes and the daemon reconstructs it.
+# WB °C is the run's wet-bulb (Stull, from mean ambient + mean RH over the cycle); blank for the
+# in-progress row (only computed once analyse reconstructs the completed cycle).
 # elec kWh marked '*' when it fell back to power integration (counter reset/gap) instead of the
 # Athom energy_2 meter. Flags: 🟢 in progress · ✓ clean · ⚡ element assist · ❄ defrost.
 type: markdown
@@ -13,10 +15,10 @@ content: |
   **Last COP:** {{ states(e) }} · **Today:** {{ state_attr(e, 'cycles_today') or 0 }} run(s) · **Last clean COP:** {{ state_attr(e, 'last_clean_cop') or '–' }}
   {% if cur or cycles %}
 
-  | Start | Dur | Tank °C | ΔT | kWh | COP | |
-  |---|--:|:--|--:|--:|--:|:-:|
-  {% if cur %}| _{{ cur.start }}_ | _{{ cur.dur_min }}m_ | _{{ cur.tank_start | round(0) | int if cur.tank_start is not none else '?' }}→{{ cur.tank_now | round(0) | int if cur.tank_now is not none else '?' }}_ | _{{ cur.dt_c if cur.dt_c is not none else '–' }}_ | _{{ cur.elec_kwh if cur.elec_kwh is not none else '–' }}{% if cur.elec_source and cur.elec_source != 'counter' %}*{% endif %}_ | _…_ | 🟢 |
-  {% endif %}{% for c in cycles %}| {{ c.start }} | {{ c.dur_min }}m | {{ c.tank_start | round(0) | int }}→{{ c.tank_end | round(0) | int }} | {{ (c.tank_end - c.tank_start) | round(1) }} | {{ c.elec_kwh }}{% if c.elec_source and c.elec_source != 'counter' %}*{% endif %} | {{ c.cop if c.cop is not none else '–' }} | {% if c.element_on %}⚡{% endif %}{% if c.defrost_on %}❄{% endif %}{% if c.clean %}✓{% endif %} |
+  | Start | Dur | Tank °C | ΔT | WB °C | kWh | COP | |
+  |---|--:|:--|--:|--:|--:|--:|:-:|
+  {% if cur %}| _{{ cur.start }}_ | _{{ cur.dur_min }}m_ | _{{ cur.tank_start | round(0) | int if cur.tank_start is not none else '?' }}→{{ cur.tank_now | round(0) | int if cur.tank_now is not none else '?' }}_ | _{{ cur.dt_c if cur.dt_c is not none else '–' }}_ | _–_ | _{{ cur.elec_kwh if cur.elec_kwh is not none else '–' }}{% if cur.elec_source and cur.elec_source != 'counter' %}*{% endif %}_ | _…_ | 🟢 |
+  {% endif %}{% for c in cycles %}| {{ c.start }} | {{ c.dur_min }}m | {{ c.tank_start | round(0) | int }}→{{ c.tank_end | round(0) | int }} | {{ (c.tank_end - c.tank_start) | round(1) }} | {{ c.wet_bulb if c.wet_bulb is not none else '–' }} | {{ c.elec_kwh }}{% if c.elec_source and c.elec_source != 'counter' %}*{% endif %} | {{ c.cop if c.cop is not none else '–' }} | {% if c.element_on %}⚡{% endif %}{% if c.defrost_on %}❄{% endif %}{% if c.clean %}✓{% endif %} |
   {% endfor %}
   *🟢 in progress · ✓ clean · ⚡ element assist · ❄ defrost · kWh\* = power-integration fallback (otherwise energy meter)*
   {% else %}
