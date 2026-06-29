@@ -66,6 +66,31 @@ def test_first_rise_minutes_uses_fraction_of_observed_probe_lift():
     assert hca._first_rise_minutes(series, idx[0], 45.0, 60.0, 0.90) == 120
 
 
+def test_cycle_is_clean_ignores_baseline_drift_on_counter_path():
+    # Today's 12:51 case: big pre/post baseline drift (laggy on-edge caught spin-up in the
+    # pre-window), but elec came from the energy_2 counter, so the drift is irrelevant → clean.
+    assert hca.cycle_is_clean(b_pre=485, b_post=4, hp_p95_w=659, cop=2.53,
+                              elec_source="counter") is True
+
+
+def test_cycle_is_clean_keeps_baseline_drift_on_integration_path():
+    # Same drift, but elec is the baseline-subtracted power integral → the drift does contaminate
+    # the COP, so the gate must still reject it.
+    assert hca.cycle_is_clean(b_pre=485, b_post=4, hp_p95_w=659, cop=2.53,
+                              elec_source="power_integration") is False
+    # small drift on the integration path is fine
+    assert hca.cycle_is_clean(b_pre=200, b_post=240, hp_p95_w=659, cop=2.53,
+                              elec_source="power_integration") is True
+
+
+def test_cycle_is_clean_always_gates_power_and_cop_band():
+    # Peak power and COP band apply regardless of elec source.
+    assert hca.cycle_is_clean(0, 0, hp_p95_w=1200, cop=2.5, elec_source="counter") is False
+    assert hca.cycle_is_clean(0, 0, hp_p95_w=500, cop=3.8, elec_source="counter") is False   # > ceiling
+    assert hca.cycle_is_clean(0, 0, hp_p95_w=500, cop=0.5, elec_source="counter") is False   # < floor
+    assert hca.cycle_is_clean(0, 0, hp_p95_w=500, cop=float("nan"), elec_source="counter") is False
+
+
 def test_merge_cycle_tables_replaces_duplicate_start_and_sorts():
     existing = pd.DataFrame(
         [

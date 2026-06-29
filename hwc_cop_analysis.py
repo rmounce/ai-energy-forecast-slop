@@ -41,6 +41,9 @@ TANK_LITRES = 225
 C_WATER = 4.186  # kJ/kg·K
 STANDING_LOSS_KW = 0.12
 HP_POWER_MAX_W = 1100  # plausible upper bound for this unit; above → contamination
+BASELINE_DRIFT_MAX_W = 80  # pre/post off-state baseline mismatch tolerated on the integration path
+COP_CLEAN_MIN = 0.8        # below → broken/standby-dominated estimate
+COP_CLEAN_MAX = 3.3        # above → contamination (elec too low) / stratification-inflated thermal
 LOCAL_TZ = "Australia/Adelaide"
 DEFAULT_SINCE = "2026-05-28"  # Aquatech install date; earlier HA history is unrelated.
 HWC_POWER_ENTITY = (
@@ -136,6 +139,28 @@ def _series_has_window(s: pd.Series, start, end) -> bool:
 
 def _round_or_nan(value, ndigits=1):
     return round(value, ndigits) if pd.notna(value) else np.nan
+
+
+def cycle_is_clean(b_pre, b_post, hp_p95_w, cop, elec_source) -> bool:
+    """Whether a cycle is trustworthy enough to use as a calibration anchor.
+
+    The baseline-drift term (``|b_pre - b_post|``) is a contamination proxy that *only* matters on
+    the ``power_integration`` path, where elec is the baseline-subtracted power integral. For
+    ``counter`` cycles elec comes straight from differencing the dedicated ``energy_2`` meter, so
+    the off-state baseline never feeds the COP — and ``b_pre`` is unreliable anyway, since the
+    compressor-on edge (from the laggy ``aquatech_compressor`` sensor) lags the real power ramp and
+    the pre-window often catches spin-up. So the drift gate is applied only when it's relevant.
+
+    The peak-power and COP-band terms always apply: they catch element-assist / mis-attribution and
+    stratification-inflated (or broken) thermal estimates regardless of the elec source.
+    """
+    baseline_ok = elec_source != "power_integration" or abs(b_pre - b_post) < BASELINE_DRIFT_MAX_W
+    return bool(
+        baseline_ok
+        and hp_p95_w < HP_POWER_MAX_W
+        and pd.notna(cop)
+        and COP_CLEAN_MIN < cop < COP_CLEAN_MAX
+    )
 
 
 def _first_rise_minutes(series: pd.Series, start, start_temp: float, end_temp: float, fraction: float):
@@ -313,11 +338,10 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
         c_cycle = C[cyc_mask].dropna()
         r_cycle = R[cyc_mask].dropna()
         i_cycle = I[cyc_mask].dropna()
-        # Clean = stable, matching pre/post baselines, plausible HP power, and a
-        # physically plausible apparent COP (contamination shows up as elec too low
-        # → COP above the ~3 sensible-capacity ceiling for a to-60 °C reheat).
-        clean = (abs(b_pre - b_post) < 80 and hp.quantile(0.95) < HP_POWER_MAX_W
-                 and pd.notna(cop) and 0.8 < cop < 3.3)
+        # Clean = plausible HP power and a physically plausible apparent COP (contamination shows
+        # up as elec too low → COP above the ~3 sensible-capacity ceiling for a to-60 °C reheat),
+        # plus matching pre/post baselines *only* on the power-integration path (see cycle_is_clean).
+        clean = cycle_is_clean(b_pre, b_post, hp.quantile(0.95), cop, elec_source)
         rows.append(dict(
             start=cs, dur_min=round(dur_h * 60), tank_start=round(t_start, 1),
             tank_end=round(t_end, 1), ambient=round(a, 1) if pd.notna(a) else np.nan,

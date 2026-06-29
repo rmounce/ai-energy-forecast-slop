@@ -67,6 +67,13 @@ over the compressor-on window; thermal-out = tank ΔT × 225 L × 4.186 kJ/kg·K
 Single-probe ΔT under-counts thermal (stratification), so the **hard ceiling** — elec vs the
 sensible capacity of a 45→60 °C reheat (~3.9 kWh) — is the more robust bound.
 
+**Clean gate** (`hwc_cop_analysis.cycle_is_clean`): a cycle is a usable calibration anchor when
+peak power < 1100 W and apparent COP ∈ (0.8, 3.3). A pre/post off-state **baseline-drift** check
+(< 80 W) is applied *only* to power-integration-sourced cycles, where the baseline subtraction
+feeds elec. Counter-sourced cycles (elec = `energy_2` meter difference) skip it: the baseline never
+touches their COP, and `b_pre` is unreliable anyway because the compressor-on edge (laggy
+`aquatech_compressor` sensor) lags the power ramp, so the pre-window often catches spin-up.
+
 Recent clean full-reheat-to-60 °C cycles (see `data/hwc_cop_cycles.csv`):
 
 | ambient | elec (kWh) | thermal (kWh) | **apparent COP** |
