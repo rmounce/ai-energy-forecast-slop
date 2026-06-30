@@ -57,6 +57,25 @@ def test_series_query_can_apply_until_bound():
     )
 
 
+def test_anchor_query_fetches_last_value_before_with_entity_filter():
+    q = hca._anchor_query("sensor__temperature", eid="heat_pump_temperature",
+                          since="2026-06-30 12:28")
+    assert q == (
+        'SELECT "value" FROM "sensor__temperature" '
+        "WHERE entity_id='heat_pump_temperature' AND time < '2026-06-30T02:58:00Z' "
+        "ORDER BY time DESC LIMIT 1"
+    )
+
+
+def test_anchor_query_supports_aggregate_rp_without_entity_tag():
+    q = hca._anchor_query("humidity_adelaide", since="2026-06-30 12:28",
+                          field="mean_value", rp="rp_30m")
+    assert q == (
+        'SELECT "mean_value" FROM "rp_30m"."humidity_adelaide" '
+        "WHERE time < '2026-06-30T02:58:00Z' ORDER BY time DESC LIMIT 1"
+    )
+
+
 def test_first_rise_minutes_uses_fraction_of_observed_probe_lift():
     idx = pd.date_range("2026-06-02T00:00:00Z", periods=5, freq="30min")
     series = pd.Series([45.0, 45.5, 48.0, 55.0, 60.0], index=idx)

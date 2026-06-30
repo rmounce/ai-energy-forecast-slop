@@ -119,6 +119,47 @@ def _series(
     return s[~s.index.duplicated(keep="last")]
 
 
+def _anchor_query(meas, eid=None, since=None, field="value", rp=""):
+    src = f'"{rp}"."{meas}"' if rp else f'"{meas}"'
+    where = [f"entity_id='{eid}'"] if eid else []
+    where.append(f"time < '{_format_influx_time(since)}'")
+    return f"SELECT \"{field}\" FROM {src} WHERE {' AND '.join(where)} ORDER BY time DESC LIMIT 1"
+
+
+def _anchor_before(c, meas, eid=None, since=None, field="value", rp=""):
+    """The single most-recent sample strictly before ``since`` (a 1-point Series), or empty.
+
+    A sparse, on-change series (tank/ambient/humidity) may have no sample inside a narrow analyse
+    window when that window opens in a reporting gap. Seeding the series with its last-known prior
+    value lets a boundary read resolve to the real reading instead of a leading-NaN — a cheap point
+    query (``ORDER BY time DESC LIMIT 1``) rather than widening the scan.
+    """
+    if since is None:
+        return pd.Series(dtype=float)
+    pts = list(c.query(_anchor_query(meas, eid=eid, since=since, field=field, rp=rp)).get_points())
+    s = pd.Series({pd.to_datetime(p["time"]): float(p[field])
+                   for p in pts if p.get(field) is not None})
+    if s.empty:
+        return s
+    s.index = s.index.tz_localize("UTC") if s.index.tz is None else s.index.tz_convert("UTC")
+    return s
+
+
+def _series_anchored(c, meas, eid=None, days=None, since=DEFAULT_SINCE, until=None,
+                     field="value", rp=""):
+    """``_series`` for a sparse input, plus a left-anchor so boundary reads never hit a leading gap.
+
+    See ``_anchor_before``: the extra point is the last value before ``since``, prepended so an
+    ``asof`` (or interpolation) at the window's start resolves to a real reading.
+    """
+    s = _series(c, meas, eid=eid, days=days, since=since, until=until, field=field, rp=rp)
+    anchor = _anchor_before(c, meas, eid=eid, since=since, field=field, rp=rp)
+    if anchor.empty:
+        return s
+    combined = pd.concat([anchor, s])
+    return combined[~combined.index.duplicated(keep="last")].sort_index()
+
+
 def _interp_to_idx(s, idx):
     if s.empty:
         return pd.Series(index=idx, dtype=float)
@@ -222,15 +263,17 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
         c, "sensor__energy", HWC_ENERGY_ENTITY,
         days=days, since=since, until=until,
     )
-    tank = _series(
+    # Sparse, on-change series: anchor each with its last value before the window so a boundary
+    # read at the cycle start resolves to a real reading even when the window opens in a gap.
+    tank = _series_anchored(
         c, "sensor__temperature", "heat_pump_temperature",
         days=days, since=since, until=until,
     )
-    amb = _series(
+    amb = _series_anchored(
         c, "sensor__temperature", "aquatech_temperature",
         days=days, since=since, until=until,
     )
-    hum = _series(
+    hum = _series_anchored(
         c, "humidity_adelaide", days=days, since=since, until=until,
         field="mean_value", rp="rp_30m",
     )
@@ -315,15 +358,24 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
             elec, elec_source = counter_kwh, "counter"
         else:
             elec, elec_source = integrated_kwh, "power_integration"
+        # Boundary temps from the interpolated grid (validated method). The tank series is
+        # left-anchored (see _series_anchored), so a window that opens in a probe gap no longer
+        # yields a leading-NaN start temp; the anchor is inert when a real sample already brackets
+        # the start, so normal-case COPs are unchanged. Guard against a wholly-absent probe.
         t0 = T[T.index <= cs + pd.Timedelta("90s")]
         t1 = T[T.index <= ce]
-        if t0.empty or t1.empty:
+        t_start = t0.iloc[-1] if not t0.empty else np.nan
+        t_end = t1.iloc[-1] if not t1.empty else np.nan
+        if pd.isna(t_start) or pd.isna(t_end):
             continue
-        t_start, t_end = t0.iloc[-1], t1.iloc[-1]
         therm = TANK_LITRES * C_WATER * (t_end - t_start) / 3600 + STANDING_LOSS_KW * dur_h
         cop = therm / elec if elec > 0 else np.nan
-        a = amb[(amb.index >= cs) & (amb.index <= ce)].mean()
-        h = hum[(hum.index >= cs) & (hum.index <= ce)].mean() if not hum.empty else np.nan
+        # Cycle-mean ambient/humidity, falling back to the last-known reading (asof) only when the
+        # cycle window has no sample at all — i.e. exactly the cases the old code left as NaN.
+        a_cyc = amb[(amb.index >= cs) & (amb.index <= ce)]
+        a = a_cyc.mean() if not a_cyc.empty else amb.asof(cs)
+        h_cyc = hum[(hum.index >= cs) & (hum.index <= ce)] if not hum.empty else hum
+        h = h_cyc.mean() if not h_cyc.empty else (hum.asof(cs) if not hum.empty else np.nan)
         cyc_mask = (idx >= cs) & (idx <= ce)
         probe_rise = T[cyc_mask & (T >= t_start + 0.5)]
         probe_lag_min = (
