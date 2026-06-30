@@ -126,7 +126,14 @@ A **separate throwaway seed script** (not part of the live tool):
 2. For the last ≤30 days still in `rp_raw`, run the existing InfluxDB `analyse` once to fill
    `hwc_cycles` **and** reconstruct 30 s traces into `hwc_cycle_samples` (so we don't start with an
    empty trace table).
-3. After seeding, the daemon records forward; InfluxDB HWC code is deleted from `hwc_cop_analysis`.
+3. After seeding, the daemon records forward and `hwc_cop_analysis.analyse` reads the store.
+
+   *Scope note (decided in implementation):* the InfluxDB **access helpers** in `hwc_cop_analysis`
+   (`_client`, `_series`, `_series_anchored`, `_interp_to_idx`, `_state_to_idx`, the entity
+   constants) are **kept**, not deleted — `hwc_validate_cycle_traces.py` and `hwc_soc_extract.py`
+   (separate offline thermal-characterisation tools, whose migration is deferred below) still read
+   InfluxDB through them, and the seed reuses them. Only `analyse` itself is repointed to SQLite;
+   the live per-cycle reporting path no longer touches InfluxDB, which is the actual goal.
 
 ## Work breakdown (post-compaction implementation)
 
@@ -137,8 +144,10 @@ A **separate throwaway seed script** (not part of the live tool):
 - **`services/hwc_daemon.py`**: replace the InfluxDB `analyse`-based reporter (cold-start +
   per-cycle finalise + JSON ring) with: subscribe/cache, 30 s trace sampler, edge snapshots,
   `cycle_metrics` on off-edge, SQLite writes, publish `sensor.hwc_cycles` from a `SELECT`.
-- **`hwc_cop_analysis.py`**: repoint to SQLite (load traces → `cycle_metrics`); remove InfluxDB
-  query code (moved to the seed script). Keep CSV/markdown output.
+- **`hwc_cop_analysis.py`**: repoint `analyse` to SQLite (load traces → `cycle_metrics`, stored
+  summary as-is for trace-less CSV anchors). **Keep** the InfluxDB access helpers (shared by the
+  seed + `hwc_validate_cycle_traces` + `hwc_soc_extract`; see scope note above). Keep CSV/markdown
+  output.
 - **`hwc_cycle_reporter.py`**: retire the InfluxDB-era helpers (`cold_start_since_ts`,
   `cooldown_settled/expired`, `backfill_captured`, `merge_records`); keep/adapt `advance_live`,
   `live_view`, `build_payload`.

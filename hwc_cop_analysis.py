@@ -35,7 +35,11 @@ import numpy as np
 import pandas as pd
 from influxdb import InfluxDBClient
 
+import hwc_cycle_store as store
 from config_utils import load_config
+
+# Durable HWC system-of-record (docs/hwc_local_store.md); ``analyse`` reads it, the daemon writes it.
+DEFAULT_DB_PATH = "data/hwc_cycles.sqlite"
 
 TANK_LITRES = 225
 C_WATER = 4.186  # kJ/kg·K
@@ -386,181 +390,70 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
     )
 
 
-def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
-    c = _client()
-    comp = _series(
-        c, "binary_sensor__running", "aquatech_compressor",
-        days=days, since=since, until=until,
-    )
-    hwc_pw = _series(
-        c, "sensor__power", HWC_POWER_ENTITY,
-        days=days, since=since, until=until,
-    )
-    residual_pw = _series(
-        c, "sensor__power", RESIDUAL_POWER_ENTITY,
-        days=days, since=since, until=until,
-    )
-    hwc_energy = _series(
-        c, "sensor__energy", HWC_ENERGY_ENTITY,
-        days=days, since=since, until=until,
-    )
-    # Sparse, on-change series: anchor each with its last value before the window so a boundary
-    # read at the cycle start resolves to a real reading even when the window opens in a gap.
-    tank = _series_anchored(
-        c, "sensor__temperature", "heat_pump_temperature",
-        days=days, since=since, until=until,
-    )
-    amb = _series_anchored(
-        c, "sensor__temperature", "aquatech_temperature",
-        days=days, since=since, until=until,
-    )
-    hum = _series_anchored(
-        c, "humidity_adelaide", days=days, since=since, until=until,
-        field="mean_value", rp="rp_30m",
-    )
-    exhaust = _series(
-        c, "sensor__temperature", "aquatech_exhaust_temperature",
-        days=days, since=since, until=until,
-    )
-    coil = _series(
-        c, "sensor__temperature", "aquatech_coil_temperature",
-        days=days, since=since, until=until,
-    )
-    return_air = _series(
-        c, "sensor__temperature", "aquatech_return_air_temperature",
-        days=days, since=since, until=until,
-    )
-    inlet = _series(
-        c, "sensor__temperature", "aquatech_inlet_temperature",
-        days=days, since=since, until=until,
-    )
-    element = _series(
-        c, "binary_sensor__running", "aquatech_element",
-        days=days, since=since, until=until,
-    )
-    defrost = _series(
-        c, "binary_sensor__running", "aquatech_defrost",
-        days=days, since=since, until=until,
-    )
-    four_way = _series(
-        c, "binary_sensor__running", "aquatech_four_way_valve",
-        days=days, since=since, until=until,
-    )
-    power_series = [s for s in (hwc_pw, residual_pw) if not s.empty]
-    if comp.empty or not power_series:
-        raise SystemExit(
-            "Missing compressor or HWC power data "
-            f"({HWC_POWER_ENTITY} or {RESIDUAL_POWER_ENTITY})"
-        )
+_SUMMARY_FLOAT_COLS = [
+    "start_ts", "start_local", "end_ts", "dur_min", "tank_start", "tank_end", "ambient",
+    "wet_bulb", "elec_kwh", "elec_source", "therm_kwh", "cop", "hp_mean_w", "hp_p95_w",
+    "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min", "probe_rise_90_min",
+    "exhaust_start", "exhaust_max", "exhaust_end", "coil_mean", "return_air_mean", "inlet_mean",
+]
+_SUMMARY_BOOL_COLS = ["element_on", "defrost_on", "four_way_on", "clean"]
 
-    idx_min = min([comp.index.min()] + [s.index.min() for s in power_series])
-    idx_max = max([comp.index.max()] + [s.index.max() for s in power_series])
-    idx = pd.date_range(idx_min, idx_max, freq="30s", tz="UTC")
-    on = _state_to_idx(comp, idx)
-    T = _interp_to_idx(tank, idx)
-    X = _interp_to_idx(exhaust, idx)
-    C = _interp_to_idx(coil, idx)
-    R = _interp_to_idx(return_air, idx)
-    I = _interp_to_idx(inlet, idx)
-    element_on = _state_to_idx(element, idx)
-    defrost_on = _state_to_idx(defrost, idx)
-    four_way_on = _state_to_idx(four_way, idx)
 
-    rows = []
-    grp = (on != on.shift()).cumsum()
-    for _, g in pd.Series(on, index=idx).groupby(grp):
-        if not g.iloc[0] or len(g) < min_minutes * 2:  # 30s steps
-            continue
-        cs, ce = g.index[0], g.index[-1]
-        dur_h = (ce - cs).total_seconds() / 3600
-        window_start = cs - pd.Timedelta("10min")
-        window_end = ce + pd.Timedelta("10min")
-        if _series_has_window(hwc_pw, window_start, window_end):
-            P = _interp_to_idx(hwc_pw, idx)
-            power_source = HWC_POWER_ENTITY
-        elif _series_has_window(residual_pw, window_start, window_end):
-            P = _interp_to_idx(residual_pw, idx)
-            power_source = RESIDUAL_POWER_ENTITY
-        else:
-            continue
-        pre = P[(idx >= cs - pd.Timedelta("10min")) & (idx < cs) & (~on)]
-        post = P[(idx > ce) & (idx <= ce + pd.Timedelta("10min")) & (~on)]
-        if pre.empty or post.empty:
-            continue
-        b_pre, b_post = pre.median(), post.median()
-        baseline = np.mean([b_pre, b_post])
-        if pd.isna(baseline):  # off-window present but all-NaN (interpolation gap) → unusable
-            continue
-        cyc = P[(idx >= cs) & (idx <= ce)]
-        hp = (cyc - baseline).clip(lower=0)
-        integrated_kwh = hp.sum() * (30 / 3600) / 1000  # kWh
-        # Prefer the on-device cumulative meter (no missed-sample/quantisation error); fall back
-        # to the baseline-subtracted power integration on a reset/missing counter.
-        counter_kwh = counter_cycle_kwh(hwc_energy, cs, ce)
-        if counter_kwh is not None:
-            elec, elec_source = counter_kwh, "counter"
-        else:
-            elec, elec_source = integrated_kwh, "power_integration"
-        # Boundary temps from the interpolated grid (validated method). The tank series is
-        # left-anchored (see _series_anchored), so a window that opens in a probe gap no longer
-        # yields a leading-NaN start temp; the anchor is inert when a real sample already brackets
-        # the start, so normal-case COPs are unchanged. Guard against a wholly-absent probe.
-        t0 = T[T.index <= cs + pd.Timedelta("90s")]
-        t1 = T[T.index <= ce]
-        t_start = t0.iloc[-1] if not t0.empty else np.nan
-        t_end = t1.iloc[-1] if not t1.empty else np.nan
-        if pd.isna(t_start) or pd.isna(t_end):
-            continue
-        therm = TANK_LITRES * C_WATER * (t_end - t_start) / 3600 + STANDING_LOSS_KW * dur_h
-        cop = therm / elec if elec > 0 else np.nan
-        # Cycle-mean ambient/humidity, falling back to the last-known reading (asof) only when the
-        # cycle window has no sample at all — i.e. exactly the cases the old code left as NaN.
-        a_cyc = amb[(amb.index >= cs) & (amb.index <= ce)]
-        a = a_cyc.mean() if not a_cyc.empty else amb.asof(cs)
-        h_cyc = hum[(hum.index >= cs) & (hum.index <= ce)] if not hum.empty else hum
-        h = h_cyc.mean() if not h_cyc.empty else (hum.asof(cs) if not hum.empty else np.nan)
-        cyc_mask = (idx >= cs) & (idx <= ce)
-        probe_rise = T[cyc_mask & (T >= t_start + 0.5)]
-        probe_lag_min = (
-            (probe_rise.index[0] - cs).total_seconds() / 60
-            if not probe_rise.empty else np.nan
-        )
-        tank_cycle = T[cyc_mask].dropna()
-        probe_rise_10_min = _first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.10)
-        probe_rise_50_min = _first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.50)
-        probe_rise_90_min = _first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.90)
-        x_cycle = X[cyc_mask].dropna()
-        c_cycle = C[cyc_mask].dropna()
-        r_cycle = R[cyc_mask].dropna()
-        i_cycle = I[cyc_mask].dropna()
-        # Clean = plausible HP power and a physically plausible apparent COP (contamination shows
-        # up as elec too low → COP above the ~3 sensible-capacity ceiling for a to-60 °C reheat),
-        # plus matching pre/post baselines *only* on the power-integration path (see cycle_is_clean).
-        clean = cycle_is_clean(b_pre, b_post, hp.quantile(0.95), cop, elec_source)
-        rows.append(dict(
-            start=cs, dur_min=round(dur_h * 60), tank_start=round(t_start, 1),
-            tank_end=round(t_end, 1), ambient=round(a, 1) if pd.notna(a) else np.nan,
-            wet_bulb=round(stull_wet_bulb(a, h), 1), baseline_w=round(baseline),
-            hp_mean_w=round(hp.mean()), hp_p95_w=round(hp.quantile(0.95)),
-            power_source=power_source,
-            elec_kwh=round(elec, 2), elec_source=elec_source,
-            therm_kwh=round(therm, 2),
-            cop=round(cop, 2) if pd.notna(cop) else np.nan, clean=clean,
-            probe_lag_min=_round_or_nan(probe_lag_min, 1),
-            probe_rise_10_min=_round_or_nan(probe_rise_10_min, 1),
-            probe_rise_50_min=_round_or_nan(probe_rise_50_min, 1),
-            probe_rise_90_min=_round_or_nan(probe_rise_90_min, 1),
-            exhaust_start=_round_or_nan(x_cycle.iloc[0] if not x_cycle.empty else np.nan, 1),
-            exhaust_max=_round_or_nan(x_cycle.max() if not x_cycle.empty else np.nan, 1),
-            exhaust_end=_round_or_nan(x_cycle.iloc[-1] if not x_cycle.empty else np.nan, 1),
-            coil_mean=_round_or_nan(c_cycle.mean() if not c_cycle.empty else np.nan, 1),
-            return_air_mean=_round_or_nan(r_cycle.mean() if not r_cycle.empty else np.nan, 1),
-            inlet_mean=_round_or_nan(i_cycle.mean() if not i_cycle.empty else np.nan, 1),
-            element_on=bool(element_on[cyc_mask].any()),
-            defrost_on=bool(defrost_on[cyc_mask].any()),
-            four_way_on=bool(four_way_on[cyc_mask].any()),
-        ))
-    return pd.DataFrame(rows)
+def _to_utc(value):
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize(LOCAL_TZ)
+    return ts.tz_convert("UTC")
+
+
+def _summary_row(c: dict) -> dict:
+    """A stored summary row → an ``analyse`` output row: ``start`` as a UTC Timestamp, bools
+    restored from 0/1. Used as-is for trace-less cycles (the CSV-seeded install-period anchors)."""
+    row = {k: c.get(k) for k in _SUMMARY_FLOAT_COLS}
+    row["start"] = pd.Timestamp(c["start_ts"], unit="s", tz="UTC")
+    for col in _SUMMARY_BOOL_COLS:
+        row[col] = bool(c.get(col))
+    return row
+
+
+def analyse(db_path=DEFAULT_DB_PATH, since=None, until=None, min_minutes=None, recompute=True):
+    """Per-cycle COP table from the local SQLite store (docs/hwc_local_store.md).
+
+    InfluxDB is no longer read here — the daemon records cycles live to the store. Each completed
+    cycle is recomputed from its stored 30 s trace via ``cycle_metrics`` (so a methodology change
+    reprocesses history on the next run); the stored summary is used as-is for a trace-less cycle
+    (the CSV-seeded anchors, or any future summary-only row). ``recompute=False`` skips the trace
+    pass and returns the stored summaries directly.
+
+    ``since``/``until`` are optional local-time bounds on the cycle start; ``min_minutes`` filters
+    short runs (the store is already ≥5 min from seeding). The frozen InfluxDB extraction lives in
+    ``scripts/seed_hwc_store.py`` (``legacy_analyse``).
+    """
+    conn = store.connect(db_path, read_only=True)
+    try:
+        stored = store.recent_cycles(conn, 10_000_000, include_running=False)
+        rows = []
+        for c in stored:
+            metrics = None
+            if recompute:
+                trace = store.load_trace(conn, c["start_ts"])
+                if not trace.empty:
+                    metrics = cycle_metrics(trace)
+            rows.append(metrics if metrics is not None else _summary_row(c))
+    finally:
+        conn.close()
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df = df.sort_values("start").reset_index(drop=True)
+    if since is not None:
+        df = df[df["start"] >= _to_utc(since)]
+    if until is not None:
+        df = df[df["start"] <= _to_utc(until)]
+    if min_minutes is not None:
+        df = df[df["dur_min"].fillna(0) >= min_minutes]
+    return df.reset_index(drop=True)
 
 
 def format_cycles_for_output(df: pd.DataFrame) -> pd.DataFrame:
@@ -645,19 +538,24 @@ def write_summary_markdown(
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=None,
-                    help="Optional rolling lookback, still bounded by --since when set")
-    ap.add_argument("--since", default=DEFAULT_SINCE,
-                    help="Earliest local date/time to query; default is Aquatech install date")
+    ap.add_argument("--db", default=DEFAULT_DB_PATH,
+                    help="HWC SQLite store to read (docs/hwc_local_store.md)")
+    ap.add_argument("--since", default=None,
+                    help="Earliest local date/time to include")
     ap.add_argument("--until", default=None,
-                    help="Optional latest local date/time to query")
+                    help="Optional latest local date/time to include")
+    ap.add_argument("--min-minutes", type=int, default=None,
+                    help="Drop cycles shorter than this many minutes")
+    ap.add_argument("--no-recompute", action="store_true",
+                    help="Use stored summaries as-is instead of recomputing from traces")
     ap.add_argument("--merge-existing", action="store_true",
                     help="Merge extracted rows into --csv by local cycle start time")
     ap.add_argument("--csv", default="data/hwc_cop_cycles.csv")
     ap.add_argument("--summary-md", default=None,
                     help="Optional curated Markdown table to write, e.g. docs/hwc_calibration_cycles.md")
     args = ap.parse_args()
-    df = analyse(days=args.days, since=args.since, until=args.until)
+    df = analyse(db_path=args.db, since=args.since, until=args.until,
+                 min_minutes=args.min_minutes, recompute=not args.no_recompute)
     output_df = format_cycles_for_output(df)
     if args.merge_existing:
         csv_path = Path(args.csv)
@@ -679,7 +577,7 @@ if __name__ == "__main__":
         print(f"wrote {args.csv}")
     if args.summary_md:
         write_summary_markdown(
-            output_df, args.summary_md, since=args.since, days=args.days,
+            output_df, args.summary_md, since=args.since, days=None,
             until=args.until, merged=args.merge_existing,
         )
         print(f"wrote {args.summary_md}")

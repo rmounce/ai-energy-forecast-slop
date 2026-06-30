@@ -578,7 +578,7 @@ class HwcDaemon:
         )
         since = datetime.fromtimestamp(since_ts, ZoneInfo(self.config["timezone"]))
         df = await asyncio.to_thread(
-            hwc_cop_analysis.analyse, days=None, since=since, until=None, min_minutes=5
+            hwc_cop_analysis.analyse, since=since, until=None, min_minutes=5
         )
         records = hwc_cycle_reporter.records_from_analysis(df)
         self.cycles = hwc_cycle_reporter.merge_records(self.cycles, records, maxlen)
@@ -597,7 +597,7 @@ class HwcDaemon:
         since = ended - timedelta(hours=max_cycle_h, minutes=30)
         until = ended + timedelta(minutes=15)
         df = await asyncio.to_thread(
-            hwc_cop_analysis.analyse, days=None, since=since, until=until, min_minutes=5
+            hwc_cop_analysis.analyse, since=since, until=until, min_minutes=5
         )
         records = hwc_cycle_reporter.records_from_analysis(df)
         self.cycles = hwc_cycle_reporter.merge_records(self.cycles, records, maxlen)

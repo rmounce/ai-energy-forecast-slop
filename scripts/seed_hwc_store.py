@@ -180,13 +180,79 @@ def seed_csv(conn, csv_path: Path, before_ts: float, tz_name: str) -> int:
     return n
 
 
+def legacy_analyse(since, until, min_minutes):
+    """The frozen InfluxDB-direct per-cycle COP extraction (the pre-migration ``hwc_cop_analysis``
+    body), kept here only for the parity comparison. Dual power source + ±10 min baseline
+    subtraction — the things ``cycle_metrics`` deliberately drops. Calls the kept ``hca`` helpers."""
+    c = hca._client()
+    comp = hca._series(c, "binary_sensor__running", "aquatech_compressor", since=since, until=until)
+    hwc_pw = hca._series(c, "sensor__power", hca.HWC_POWER_ENTITY, since=since, until=until)
+    residual_pw = hca._series(c, "sensor__power", hca.RESIDUAL_POWER_ENTITY, since=since, until=until)
+    hwc_energy = hca._series(c, "sensor__energy", hca.HWC_ENERGY_ENTITY, since=since, until=until)
+    tank = hca._series_anchored(c, "sensor__temperature", "heat_pump_temperature",
+                                since=since, until=until)
+    amb = hca._series_anchored(c, "sensor__temperature", "aquatech_temperature",
+                               since=since, until=until)
+    hum = hca._series_anchored(c, "humidity_adelaide", since=since, until=until,
+                               field="mean_value", rp="rp_30m")
+    power_series = [s for s in (hwc_pw, residual_pw) if not s.empty]
+    if comp.empty or not power_series:
+        raise SystemExit("Missing compressor or HWC power data")
+    idx_min = min([comp.index.min()] + [s.index.min() for s in power_series])
+    idx_max = max([comp.index.max()] + [s.index.max() for s in power_series])
+    idx = pd.date_range(idx_min, idx_max, freq="30s", tz="UTC")
+    on = hca._state_to_idx(comp, idx)
+    T = hca._interp_to_idx(tank, idx)
+
+    rows = []
+    grp = (on != on.shift()).cumsum()
+    for _, g in pd.Series(on, index=idx).groupby(grp):
+        if not g.iloc[0] or len(g) < min_minutes * 2:
+            continue
+        cs, ce = g.index[0], g.index[-1]
+        dur_h = (ce - cs).total_seconds() / 3600
+        ws, we = cs - pd.Timedelta("10min"), ce + pd.Timedelta("10min")
+        if hca._series_has_window(hwc_pw, ws, we):
+            P = hca._interp_to_idx(hwc_pw, idx)
+        elif hca._series_has_window(residual_pw, ws, we):
+            P = hca._interp_to_idx(residual_pw, idx)
+        else:
+            continue
+        pre = P[(idx >= cs - pd.Timedelta("10min")) & (idx < cs) & (~on)]
+        post = P[(idx > ce) & (idx <= ce + pd.Timedelta("10min")) & (~on)]
+        if pre.empty or post.empty:
+            continue
+        b_pre, b_post = pre.median(), post.median()
+        baseline = np.mean([b_pre, b_post])
+        if pd.isna(baseline):
+            continue
+        cyc = P[(idx >= cs) & (idx <= ce)]
+        hp = (cyc - baseline).clip(lower=0)
+        integrated_kwh = hp.sum() * (30 / 3600) / 1000
+        counter_kwh = hca.counter_cycle_kwh(hwc_energy, cs, ce)
+        elec, elec_source = ((counter_kwh, "counter") if counter_kwh is not None
+                             else (integrated_kwh, "power_integration"))
+        t0 = T[T.index <= cs + pd.Timedelta("90s")]
+        t1 = T[T.index <= ce]
+        t_start = t0.iloc[-1] if not t0.empty else np.nan
+        t_end = t1.iloc[-1] if not t1.empty else np.nan
+        if pd.isna(t_start) or pd.isna(t_end):
+            continue
+        therm = hca.TANK_LITRES * hca.C_WATER * (t_end - t_start) / 3600 + hca.STANDING_LOSS_KW * dur_h
+        cop = therm / elec if elec > 0 else np.nan
+        clean = hca.cycle_is_clean(b_pre, b_post, hp.quantile(0.95), cop, elec_source)
+        rows.append(dict(start=cs, cop=round(cop, 2) if pd.notna(cop) else np.nan,
+                         elec_source=elec_source, clean=clean))
+    return pd.DataFrame(rows)
+
+
 def report_parity(conn, since, until, min_minutes) -> None:
     """Compare the seeded store's cycle_metrics summaries against legacy InfluxDB-direct analyse.
 
     Reads the trace-based summaries straight from the store (so it can run standalone over a short
     window for a quick check), and re-derives the legacy numbers over the same window.
     """
-    legacy = hca.analyse(since=since, until=until, min_minutes=min_minutes)
+    legacy = legacy_analyse(since=since, until=until, min_minutes=min_minutes)
     if legacy.empty:
         print("  parity: legacy analyse returned no cycles")
         return
