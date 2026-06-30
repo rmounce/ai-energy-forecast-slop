@@ -245,6 +245,147 @@ def stull_wet_bulb(t, rh):
             - 4.686035)
 
 
+def _counter_kwh_from(edges, energy_series, cs, ce):
+    """Cycle elec from the cumulative counter — precise edge snapshots if the daemon supplied them,
+    else differenced over [cs, ce] from the trace. None (→ power-integration fallback) when missing,
+    negative (mid-cycle reset) or implausibly large (rollover, see ``COUNTER_MAX_CYCLE_KWH``)."""
+    if edges and edges.get("energy_start") is not None and edges.get("energy_end") is not None:
+        delta = float(edges["energy_end"]) - float(edges["energy_start"])
+        if delta < 0 or delta > COUNTER_MAX_CYCLE_KWH:
+            return None
+        return delta
+    return counter_cycle_kwh(energy_series, cs, ce)
+
+
+def _trace_col(trace, name):
+    """A float Series for a (possibly absent) trace column, aligned to the trace index.
+
+    Absent → all-NaN (never an empty Series), so a full-length boolean cycle mask always applies
+    cleanly and a missing sensor degrades to NaN rather than raising.
+    """
+    if name not in trace.columns:
+        return pd.Series(np.nan, index=trace.index, dtype=float)
+    return pd.to_numeric(trace[name], errors="coerce")
+
+
+def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STANDING_LOSS_KW,
+                  tz=LOCAL_TZ):
+    """Canonical per-cycle summary from a raw 30 s trace — the one shared brain (docs/hwc_local_store.md).
+
+    Both feeders call this so they can never diverge: the daemon accumulates a live trace + precise
+    compressor-edge snapshots and calls it on the off-edge; ``hwc_cop_analysis`` loads a stored trace
+    and calls the *same* function. The InfluxDB-era ``analyse`` loop is retired (its dual power-source
+    selection and ±10 min baseline machinery survive, frozen, only in the one-time seed script).
+
+    ``trace`` is a DataFrame indexed by a UTC ``DatetimeIndex`` (30 s grid) with any subset of the
+    sensor columns (tank, power_w, energy_kwh, ambient, humidity, element, defrost, four_way,
+    exhaust, coil, return_air, inlet); absent columns degrade to NaN/False, never an error.
+
+    ``edges`` (optional) carries the daemon's precise snapshots — ``cs``/``ce`` (UTC Timestamps),
+    ``tank_start``/``tank_end``, ``energy_start``/``energy_end`` — which override the trace-derived
+    boundaries. Offline, boundaries come from the trace itself.
+
+    Post-meter simplification (see doc): there is **no baseline subtraction** — the dedicated meter's
+    standby is single-digit watts, so ``hp_mean/p95`` are raw cycle power, the ``power_integration``
+    fallback integrates ``power_w`` directly, and the baseline-drift term in ``cycle_is_clean`` is
+    inert (``b_pre=b_post=0``).
+
+    Returns the rich row dict (a superset of the stored ``CYCLE_COLS``), or ``None`` when the trace
+    is empty / has zero duration / lacks a usable boundary tank temperature.
+    """
+    if trace is None or trace.empty:
+        return None
+    idx = trace.index
+
+    if edges and edges.get("cs") is not None and edges.get("ce") is not None:
+        cs, ce = pd.Timestamp(edges["cs"]), pd.Timestamp(edges["ce"])
+    else:
+        cs, ce = idx[0], idx[-1]
+    dur_h = (ce - cs).total_seconds() / 3600
+    if dur_h <= 0:
+        return None
+
+    cyc_mask = (idx >= cs) & (idx <= ce)
+    if not cyc_mask.any():
+        return None
+
+    # Power stats and the integration fallback — raw cycle power, no baseline (post-meter).
+    P = _trace_col(trace, "power_w")[cyc_mask].dropna().clip(lower=0)
+    hp_mean = P.mean() if not P.empty else np.nan
+    hp_p95 = P.quantile(0.95) if not P.empty else np.nan
+    integrated_kwh = P.sum() * (sample_seconds / 3600) / 1000 if not P.empty else np.nan
+
+    counter_kwh = _counter_kwh_from(edges, _trace_col(trace, "energy_kwh"), cs, ce)
+    if counter_kwh is not None:
+        elec, elec_source = counter_kwh, "counter"
+    else:
+        elec, elec_source = integrated_kwh, "power_integration"
+
+    tank = _trace_col(trace, "tank")
+    if edges and edges.get("tank_start") is not None and edges.get("tank_end") is not None:
+        t_start, t_end = float(edges["tank_start"]), float(edges["tank_end"])
+    else:
+        t0 = tank[tank.index <= cs + pd.Timedelta("90s")].dropna()
+        t1 = tank[tank.index <= ce].dropna()
+        t_start = t0.iloc[-1] if not t0.empty else np.nan
+        t_end = t1.iloc[-1] if not t1.empty else np.nan
+    if pd.isna(t_start) or pd.isna(t_end):
+        return None
+
+    therm = TANK_LITRES * C_WATER * (t_end - t_start) / 3600 + standing_loss_kw * dur_h
+    cop = therm / elec if (elec is not None and pd.notna(elec) and elec > 0) else np.nan
+
+    amb = _trace_col(trace, "ambient")[cyc_mask].dropna()
+    a = amb.mean() if not amb.empty else np.nan
+    humv = _trace_col(trace, "humidity")[cyc_mask].dropna()
+    h = humv.mean() if not humv.empty else np.nan
+
+    tank_cycle = tank[cyc_mask].dropna()
+    probe_rise = tank_cycle[tank_cycle >= t_start + 0.5]
+    probe_lag_min = (
+        (probe_rise.index[0] - cs).total_seconds() / 60 if not probe_rise.empty else np.nan
+    )
+
+    def _stat(name):
+        return _trace_col(trace, name)[cyc_mask].dropna()
+
+    def _any_on(name):
+        s = _trace_col(trace, name)[cyc_mask].dropna()
+        return bool((s > 0.5).any()) if not s.empty else False
+
+    x, c_coil, r_ra, i_in = _stat("exhaust"), _stat("coil"), _stat("return_air"), _stat("inlet")
+    clean = cycle_is_clean(0.0, 0.0, hp_p95, cop, elec_source)
+
+    return dict(
+        start=cs, start_ts=cs.timestamp(),
+        start_local=cs.tz_convert(tz).strftime("%Y-%m-%d %H:%M"),
+        end_ts=ce.timestamp(), dur_min=round(dur_h * 60),
+        tank_start=round(float(t_start), 1), tank_end=round(float(t_end), 1),
+        ambient=round(a, 1) if pd.notna(a) else np.nan,
+        wet_bulb=_round_or_nan(stull_wet_bulb(a, h), 1),
+        elec_kwh=round(float(elec), 2) if (elec is not None and pd.notna(elec)) else np.nan,
+        elec_source=elec_source,
+        therm_kwh=round(therm, 2),
+        cop=round(cop, 2) if pd.notna(cop) else np.nan,
+        hp_mean_w=round(hp_mean) if pd.notna(hp_mean) else np.nan,
+        hp_p95_w=round(hp_p95) if pd.notna(hp_p95) else np.nan,
+        probe_lag_min=_round_or_nan(probe_lag_min, 1),
+        probe_rise_10_min=_round_or_nan(_first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.10), 1),
+        probe_rise_50_min=_round_or_nan(_first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.50), 1),
+        probe_rise_90_min=_round_or_nan(_first_rise_minutes(tank_cycle, cs, t_start, t_end, 0.90), 1),
+        exhaust_start=_round_or_nan(x.iloc[0] if not x.empty else np.nan, 1),
+        exhaust_max=_round_or_nan(x.max() if not x.empty else np.nan, 1),
+        exhaust_end=_round_or_nan(x.iloc[-1] if not x.empty else np.nan, 1),
+        coil_mean=_round_or_nan(c_coil.mean() if not c_coil.empty else np.nan, 1),
+        return_air_mean=_round_or_nan(r_ra.mean() if not r_ra.empty else np.nan, 1),
+        inlet_mean=_round_or_nan(i_in.mean() if not i_in.empty else np.nan, 1),
+        element_on=_any_on("element"),
+        defrost_on=_any_on("defrost"),
+        four_way_on=_any_on("four_way"),
+        clean=clean,
+    )
+
+
 def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
     c = _client()
     comp = _series(

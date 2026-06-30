@@ -20,6 +20,11 @@ nemosis_cache/
 data/nemseer_cache/
 data/http_cache.sqlite
 
+# HWC per-cycle local store (daemon runtime system-of-record; WAL/SHM siblings too)
+data/hwc_cycles.sqlite
+data/hwc_cycles.sqlite-wal
+data/hwc_cycles.sqlite-shm
+
 # Scratch/working data
 scratch/
 .codex

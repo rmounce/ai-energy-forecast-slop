@@ -1,4 +1,5 @@
 import hwc_cop_analysis as hca
+import numpy as np
 import pandas as pd
 
 
@@ -133,3 +134,103 @@ def test_merge_cycle_tables_replaces_duplicate_start_and_sorts():
     ]
     assert merged.loc[merged["start"] == "2026-06-03 10:24", "cop"].item() == 2.24
     assert merged.loc[merged["start"] == "2026-06-03 10:24", "clean"].item() is True
+
+
+# ── cycle_metrics: the shared trace->summary brain (docs/hwc_local_store.md) ──
+
+
+def _trace(minutes=60, tank0=45.0, tank1=56.0, power_w=1000.0, energy0=100.0,
+           energy_total=1.0, start="2026-06-30T01:00:00Z", step_s=30, cols=None, drop=()):
+    n = int(minutes * 60 / step_s) + 1
+    idx = pd.date_range(start, periods=n, freq=f"{step_s}s", tz="UTC")
+    frac = np.linspace(0.0, 1.0, n)
+    df = pd.DataFrame(
+        {
+            "tank": tank0 + (tank1 - tank0) * frac,
+            "power_w": float(power_w),
+            "energy_kwh": energy0 + energy_total * frac,
+            "ambient": 14.0,
+            "humidity": 70.0,
+            "element": 0,
+            "defrost": 0,
+            "four_way": 0,
+            "exhaust": 20.0 + 30.0 * frac,
+            "coil": 5.0,
+            "return_air": 18.0,
+            "inlet": 15.0,
+        },
+        index=idx,
+    )
+    for k, v in (cols or {}).items():
+        df[k] = v
+    return df.drop(columns=list(drop))
+
+
+def test_cycle_metrics_counter_path_cop_and_clean():
+    m = hca.cycle_metrics(_trace(tank1=56.0, energy_total=1.0))
+    assert m["elec_source"] == "counter"
+    assert abs(m["elec_kwh"] - 1.0) < 1e-6
+    # tank_start is the +90 s settle-anchored sample (45.3°C), not the very first reading;
+    # therm ≈ 225*4.186*(56-45.3)/3600 + 0.12*1h ≈ 2.93 kWh, elec 1.0 -> COP ≈ 2.93.
+    assert m["tank_start"] == 45.3 and m["tank_end"] == 56.0
+    assert abs(m["cop"] - 2.93) < 0.03
+    assert m["clean"] is True
+    assert m["hp_mean_w"] == 1000 and m["hp_p95_w"] == 1000
+    assert m["dur_min"] == 60
+    assert m["start_local"] == "2026-06-30 10:30"  # 01:00Z -> ACST +9:30
+    assert m["element_on"] is False and m["four_way_on"] is False
+    assert m["exhaust_start"] == 20.0 and m["exhaust_max"] == 50.0
+
+
+def test_cycle_metrics_falls_back_to_power_integration_without_counter():
+    m = hca.cycle_metrics(_trace(drop=["energy_kwh"]))
+    assert m["elec_source"] == "power_integration"
+    # 1000 W held across the cycle integrates to ~1 kWh (rectangular, endpoint-inclusive)
+    assert abs(m["elec_kwh"] - 1.0) < 0.02
+
+
+def test_cycle_metrics_rejects_implausible_counter_delta():
+    m = hca.cycle_metrics(_trace(energy_total=9.0))  # > COUNTER_MAX_CYCLE_KWH
+    assert m["elec_source"] == "power_integration"
+
+
+def test_cycle_metrics_edge_snapshots_override_trace_boundaries():
+    trace = _trace()
+    edges = {
+        "cs": trace.index[0], "ce": trace.index[-1],
+        "tank_start": 44.0, "tank_end": 60.0,
+        "energy_start": 100.0, "energy_end": 101.5,
+    }
+    m = hca.cycle_metrics(trace, edges=edges)
+    assert abs(m["elec_kwh"] - 1.5) < 1e-6
+    assert m["tank_start"] == 44.0 and m["tank_end"] == 60.0
+
+
+def test_cycle_metrics_window_from_edges_subsets_a_wider_trace():
+    trace = _trace(minutes=90)
+    cs = trace.index[20]   # 10 min in
+    ce = trace.index[-21]  # 10 min before end -> 70 min span
+    m = hca.cycle_metrics(trace, edges={"cs": cs, "ce": ce})
+    assert m["dur_min"] == 70
+
+
+def test_cycle_metrics_tolerates_missing_optional_columns():
+    m = hca.cycle_metrics(_trace(drop=["ambient", "humidity", "exhaust", "coil",
+                                       "return_air", "inlet", "four_way"]))
+    assert np.isnan(m["wet_bulb"])
+    assert np.isnan(m["exhaust_start"])
+    assert m["four_way_on"] is False
+    assert m["cop"] is not None
+
+
+def test_cycle_metrics_flags_element_and_defrost_when_on():
+    m = hca.cycle_metrics(_trace(cols={"element": 1, "defrost": 1}))
+    assert m["element_on"] is True and m["defrost_on"] is True
+
+
+def test_cycle_metrics_none_for_empty_or_untemperatured_trace():
+    assert hca.cycle_metrics(pd.DataFrame()) is None
+    assert hca.cycle_metrics(None) is None
+    blind = _trace()
+    blind["tank"] = np.nan
+    assert hca.cycle_metrics(blind) is None

@@ -72,10 +72,19 @@ elec_kwh REAL, elec_source TEXT, therm_kwh REAL, cop REAL NULL,
 hp_mean_w REAL, hp_p95_w REAL,
 probe_lag_min REAL NULL, probe_rise_10_min REAL NULL, probe_rise_50_min REAL NULL,
 probe_rise_90_min REAL NULL,
+exhaust_start REAL NULL, exhaust_max REAL NULL, exhaust_end REAL NULL,
+coil_mean REAL NULL, return_air_mean REAL NULL, inlet_mean REAL NULL,
 element_on INT, defrost_on INT, four_way_on INT,
 clean INT, status TEXT,            -- 'running' | 'complete'
 updated_at REAL
 ```
+
+The per-run thermal extras (exhaust/coil/return-air/inlet stats) are cached in the summary —
+cheap at one row per run, and it spares every reader from re-deriving them off the trace — while
+the raw signals still live in `hwc_cycle_samples` for any recompute. There is **no `baseline_w`**:
+the dedicated meter makes the off-state baseline single-digit watts, so `cycle_metrics` drops the
+baseline subtraction entirely (`hp_mean/p95` are raw cycle power; the `power_integration` fallback
+integrates `power_w` directly; the baseline-drift term in `cycle_is_clean` goes inert).
 
 The 20-row card ring is `SELECT … ORDER BY start_ts DESC LIMIT N`. The in-progress row is the
 `status='running'` row (replaces the JSON ring in the state file and the `current_cycle` field).
@@ -85,11 +94,15 @@ The 20-row card ring is `SELECT … ORDER BY start_ts DESC LIMIT N`. The in-prog
 ```
 cycle_start_ts REAL,           -- FK -> hwc_cycles.start_ts
 ts REAL,                       -- 30 s grid, epoch UTC
-tank REAL, power_w REAL, energy_kwh REAL, ambient REAL,
-element INT, defrost INT,
+tank REAL, power_w REAL, energy_kwh REAL, ambient REAL, humidity REAL,
+element INT, defrost INT, four_way INT,
 exhaust REAL NULL, coil REAL NULL, return_air REAL NULL, inlet REAL NULL,
 PRIMARY KEY (cycle_start_ts, ts)
 ```
+
+`four_way` is in the full sensor set (decision #2); `humidity` is stored alongside `ambient` so
+`wet_bulb` is recomputable from the trace offline (not just a daemon-time scalar) — every column of
+the `hwc_cycles` summary can then be regenerated from raw by `cycle_metrics`.
 
 ### Capture mechanism
 
