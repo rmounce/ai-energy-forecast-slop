@@ -223,5 +223,19 @@ def test_build_payload_state_is_last_cop_and_counters():
     assert empty_attrs["current"] == {"status": "running"}
 
 
+def test_build_payload_headline_skips_null_cop_rows():
+    # A run can land with a null COP (e.g. tank-probe gap at the cycle start); the headline should
+    # fall back to the most recent computable COP rather than going "unknown".
+    cycles = [
+        {"start": "2026-06-29 12:51", "cop": 2.53, "clean": True},
+        {"start": "2026-06-30 12:28", "cop": None, "clean": False},
+    ]
+    state, _ = cr.build_payload(cycles, live=None, today_local="2026-06-30")
+    assert state == 2.53
+    # all-null → unknown
+    allnull, _ = cr.build_payload([{"start": "x", "cop": None}], live=None, today_local="x")
+    assert allnull == "unknown"
+
+
 def cr_close(a, b, tol=1e-6):
     return a is not None and math.isclose(a, b, abs_tol=tol)

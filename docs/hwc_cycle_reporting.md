@@ -134,10 +134,14 @@ N configurable (`hwc.daemon.cycle_history_len`, default 20).
 
 Publish `sensor.hwc_cycles` (via the existing `_ha_set_state` path):
 
-- **state**: the **last completed cycle's COP** (the headline statistic; a single at-a-glance
-  health number). Carry its real value even when element-assisted/unclean — the `element_on` and
-  `clean` flags in the row explain a low reading rather than hiding it. `unknown` until the first
-  cycle closes.
+- **state**: the most recent **computable** cycle COP (the headline statistic; a single
+  at-a-glance health number). Carry its real value even when element-assisted/unclean — the
+  `element_on` and `clean` flags in the row explain a low reading rather than hiding it. A run can
+  land with a **null COP** (e.g. a sparse tank probe leaving the cycle-start temp as a leading-NaN
+  interpolation when the finalise window starts in a data gap; this self-heals on the next
+  re-analyse), so the headline skips null-COP rows rather than going `unknown`. `unknown` only
+  until the first computable cycle closes. The card likewise renders `–`/`?` for any null field —
+  one degenerate row must never blank the whole table.
 - **attributes.cycles**: the ring buffer (completed rows).
 - **attributes.current**: the in-progress row, or null.
 - **attributes.cycles_today** / **attributes.last_clean_cop**: cheap derived counters for the card.

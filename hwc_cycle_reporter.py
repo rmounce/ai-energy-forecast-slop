@@ -275,7 +275,10 @@ def build_payload(
     State is the last completed cycle's COP (the headline at-a-glance number), 'unknown' until the
     first cycle closes; its ``clean``/``element_on`` flags travel in the row to explain a low value.
     """
-    last_cop = cycles[-1].get("cop") if cycles else None
+    # Headline = most recent *computable* COP, not literally cycles[-1]: a run can land with a
+    # null COP (e.g. a tank-probe gap at the cycle start → NaN thermal), and "unknown" then hides
+    # an otherwise healthy history. Skip such rows for the at-a-glance number.
+    last_cop = next((c.get("cop") for c in reversed(cycles) if c.get("cop") is not None), None)
     clean_cops = [c.get("cop") for c in cycles if c.get("clean") and c.get("cop") is not None]
     attributes = {
         "cycles": list(reversed(cycles)),  # most recent first for the card
