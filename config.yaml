@@ -378,18 +378,29 @@ hwc:
   reporting:
     enabled: true
     cycles_entity: sensor.hwc_cycles
-    # Athom channel-2 cumulative kWh meter; differenced over each cycle for the elec figure.
-    energy_counter_entity: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2
-    poll_seconds: 60          # live-row refresh + compressor-edge poll
-    # Steady state is event-driven: each completed cycle is reconstructed by a single narrow
-    # analyse once it has settled (no blind periodic rescan — the daemon already sees every edge).
-    settle_seconds: 900       # wait after a run ends so its post-window exists in InfluxDB
-    finalize_max_cycle_hours: 3   # narrow analyse window spans at most this long a run
-    finalize_giveup_seconds: 1800 # stop retrying a run the analyser won't return (sub-min_minutes)
-    # Cold-start backfill (once per process): deep window to populate a short ring, else an
-    # incremental catch-up since the newest row held — for cycles missed while the daemon was down.
-    seed_lookback_hours: 240
-    incremental_margin_hours: 6
+    # Durable local system-of-record (docs/hwc_local_store.md). The daemon records every cycle
+    # here live (30 s trace + precise compressor-edge snapshots) and publishes the card from it;
+    # InfluxDB is no longer read for HWC.
+    db_path: data/hwc_cycles.sqlite
+    sample_seconds: 30        # trace-sampler cadence + live-row refresh
+    history_len: 20           # completed rows shown in sensor.hwc_cycles
+    min_cycle_seconds: 300    # discard runs shorter than this (defrost flicker); matches analyse floor
+    # Live HWC sensor set captured into the per-cycle trace. `compressor` drives the on/off cycle
+    # edges (energy/tank snapshotted at the edge); the rest are sampled every `sample_seconds`.
+    # `humidity_entity` is a weather entity — humidity is read from its attribute, for wet-bulb.
+    humidity_entity: weather.woodville_west_hourly
+    entities:
+      compressor: binary_sensor.aquatech_compressor
+      tank: sensor.aquatech_current_temperature_local
+      power: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_power_2
+      energy: sensor.athom_energy_monitor_02a3c8_athom_energy_monitor_02a3c8_energy_2
+      ambient: sensor.aquatech_temperature
+      element: binary_sensor.aquatech_element
+      defrost: binary_sensor.aquatech_defrost
+      four_way: binary_sensor.aquatech_four_way_valve
+      exhaust: sensor.aquatech_exhaust_temperature
+      coil: sensor.aquatech_coil_temperature
+      return_air: sensor.aquatech_return_air_temperature
     minimum_replan_interval_seconds: 60
     tank_temp_replan_delta_c: 0.3
     # Suppress an off issued right after a heat command until the Tuya compressor sensor

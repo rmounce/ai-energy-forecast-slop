@@ -226,6 +226,14 @@ def get_cycle(conn: sqlite3.Connection, start_ts: float) -> dict | None:
     return dict(row) if row else None
 
 
+def delete_cycle(conn: sqlite3.Connection, start_ts: float) -> None:
+    """Remove a cycle and its trace samples — used to discard a too-short run (e.g. a defrost
+    flicker) that opened a 'running' row but never reached the minimum duration."""
+    conn.execute("DELETE FROM hwc_cycle_samples WHERE cycle_start_ts = ?", (start_ts,))
+    conn.execute("DELETE FROM hwc_cycles WHERE start_ts = ?", (start_ts,))
+    conn.commit()
+
+
 def load_trace(conn: sqlite3.Connection, cycle_start_ts: float) -> pd.DataFrame:
     """The 30 s trace for one cycle as a DataFrame indexed by a UTC ``DatetimeIndex``.
 

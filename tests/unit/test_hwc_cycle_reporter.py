@@ -39,171 +39,69 @@ def test_counter_cycle_kwh_none_on_reset_or_implausible_delta():
     assert hca.counter_cycle_kwh(huge, huge.index[0], huge.index[-1]) is None
 
 
-# ── live row state machine ──────────────────────────────────────────────────
+# ── store-row projection (the live reporter feeds build_payload from SQLite) ─────────────────
 
 
-def test_advance_live_opens_running_on_compressor_start():
-    cur = cr.advance_live(None, raw_on=True, now_ts=1000.0, tank_c=47.0, energy_kwh=5.0)
-    assert cur["status"] == "running"
-    assert cur["start_ts"] == 1000.0
-    assert cur["tank_start"] == 47.0 and cur["energy_start"] == 5.0
+def _store_row(start_ts=1.75e9, **over):
+    base = dict(
+        start_ts=start_ts, start_local="2026-06-30 12:00", end_ts=start_ts + 3600,
+        dur_min=60, tank_start=45.0, tank_end=60.0, ambient=14.0, wet_bulb=11.0,
+        elec_kwh=1.5, elec_source="counter", therm_kwh=3.1, cop=2.07,
+        element_on=0, defrost_on=0, clean=1, status="complete",
+    )
+    base.update(over)
+    return base
 
 
-def test_advance_live_updates_while_running_then_cools_down():
-    cur = cr.advance_live(None, raw_on=True, now_ts=1000.0, tank_c=47.0, energy_kwh=5.0)
-    cur = cr.advance_live(cur, raw_on=True, now_ts=1600.0, tank_c=52.0, energy_kwh=5.5)
-    assert cur["status"] == "running"
-    assert cur["tank_now"] == 52.0 and cur["energy_now"] == 5.5
-    assert cur["tank_start"] == 47.0  # start snapshot preserved
-
-    cur = cr.advance_live(cur, raw_on=False, now_ts=2200.0, tank_c=60.0, energy_kwh=6.7)
-    assert cur["status"] == "cooldown"
-    assert cur["ended_ts"] == 2200.0 and cur["energy_now"] == 6.7
+def test_record_from_store_row_projects_and_restores_bools():
+    rec = cr.record_from_store_row(_store_row(clean=1, element_on=0, cop=2.07))
+    assert rec["start"] == "2026-06-30 12:00"   # start_local becomes 'start'
+    assert rec["cop"] == 2.07
+    assert rec["clean"] is True                 # 0/1 -> bool
+    assert rec["element_on"] is False
+    assert set(rec) == set(cr.PUBLISH_COLS)
 
 
-def test_advance_live_cooldown_persists_until_cleared_and_reopens_on_next_start():
-    cur = {"status": "cooldown", "start_ts": 1000.0, "ended_ts": 2200.0,
-           "tank_start": 47.0, "energy_start": 5.0, "tank_now": 60.0, "energy_now": 6.7}
-    same = cr.advance_live(cur, raw_on=False, now_ts=2300.0, tank_c=59.0, energy_kwh=6.7)
-    assert same["status"] == "cooldown"  # unchanged while off
-    nxt = cr.advance_live(cur, raw_on=True, now_ts=9000.0, tank_c=50.0, energy_kwh=7.0)
-    assert nxt["status"] == "running" and nxt["start_ts"] == 9000.0
+def test_record_from_store_row_nan_and_none_become_none():
+    rec = cr.record_from_store_row(_store_row(cop=float("nan"), elec_kwh=None))
+    assert rec["cop"] is None
+    assert rec["elec_kwh"] is None
 
 
-def test_advance_live_unknown_compressor_read_left_to_caller():
-    # The daemon skips advance_live when the compressor read fails (raw_on=None), so a flaky
-    # read never spuriously closes a cycle. This asserts the contract the daemon relies on.
-    cur = cr.advance_live(None, raw_on=True, now_ts=1000.0, tank_c=47.0, energy_kwh=5.0)
-    # passing raw_on=False would cool it down; daemon avoids that by not calling on None.
-    assert cur["status"] == "running"
+def test_records_from_store_rows_sorts_oldest_first():
+    rows = [_store_row(start_ts=200, start_local="2026-06-30 12:00"),
+            _store_row(start_ts=100, start_local="2026-06-29 12:00")]
+    recs = cr.records_from_store_rows(rows)
+    assert [r["start"] for r in recs] == ["2026-06-29 12:00", "2026-06-30 12:00"]
 
 
-# ── live view rendering ─────────────────────────────────────────────────────
+# ── live (in-progress) row from the daemon's edge snapshot + cache ───────────────────────────
 
 
-def test_live_view_reports_counter_delta_and_elapsed():
-    cur = {"status": "running", "start_ts": 1000.0,
-           "tank_start": 47.0, "energy_start": 5.0, "tank_now": 52.0, "energy_now": 5.5}
-    view = cr.live_view(cur, now_ts=1000.0 + 1800, tz_name=TZ)
-    assert view["dur_min"] == 30
-    assert view["dt_c"] == 5.0
-    assert cr_close(view["elec_kwh"], 0.5)
-    assert view["elec_source"] == "counter"
+def test_live_record_reports_counter_delta_and_elapsed():
+    rc = {"start_ts": 1.75e9, "tank_start": 45.0, "energy_start": 100.0}
+    view = cr.live_record(rc, tank_now=52.0, energy_now=100.5,
+                          now_ts=1.75e9 + 1800, tz_name=TZ)
     assert view["status"] == "running"
+    assert view["dur_min"] == 30
+    assert cr_close(view["elec_kwh"], 0.5)
+    assert cr_close(view["dt_c"], 7.0)
+    assert view["elec_source"] == "counter"
 
 
-def test_live_view_handles_counter_reset_and_missing():
-    cur = {"status": "running", "start_ts": 1000.0,
-           "tank_start": 47.0, "energy_start": 6.0, "tank_now": 52.0, "energy_now": 0.2}
-    view = cr.live_view(cur, now_ts=1100.0, tz_name=TZ)
-    assert view["elec_kwh"] is None and view["elec_source"] is None
-    assert cr.live_view(None, now_ts=1100.0, tz_name=TZ) is None
+def test_live_record_handles_counter_reset_and_missing():
+    rc = {"start_ts": 1.75e9, "tank_start": 45.0, "energy_start": 100.0}
+    # energy_now below energy_start (reset) -> no elec
+    reset = cr.live_record(rc, tank_now=46.0, energy_now=99.0, now_ts=1.75e9 + 60, tz_name=TZ)
+    assert reset["elec_kwh"] is None and reset["elec_source"] is None
+    # missing tank_now -> no dt_c
+    missing = cr.live_record(rc, tank_now=None, energy_now=100.2, now_ts=1.75e9 + 60, tz_name=TZ)
+    assert missing["dt_c"] is None and cr_close(missing["elec_kwh"], 0.2)
 
 
-# ── records / merge / capture / payload ─────────────────────────────────────
-
-
-def _analysis_df():
-    return pd.DataFrame([
-        {"start": pd.Timestamp("2026-06-18T04:07:00Z"), "dur_min": 136,
-         "tank_start": 47.1, "tank_end": 60.0, "ambient": 14.5, "wet_bulb": 9.8,
-         "elec_kwh": 1.72, "elec_source": "counter", "therm_kwh": 3.66, "cop": 2.13,
-         "element_on": False, "defrost_on": False, "clean": True},
-        {"start": pd.Timestamp("2026-06-17T03:06:00Z"), "dur_min": 59,
-         "tank_start": 53.9, "tank_end": 60.0, "ambient": 19.3, "wet_bulb": 16.0,
-         "elec_kwh": 0.82, "elec_source": "power_integration", "therm_kwh": 1.70,
-         "cop": float("nan"), "element_on": False, "defrost_on": False, "clean": True},
-    ])
-
-
-def test_records_from_analysis_normalises_start_and_nan():
-    records = cr.records_from_analysis(_analysis_df())
-    assert records[0]["start"] == "2026-06-18 13:37"   # UTC 04:07 → Adelaide
-    assert records[0]["elec_source"] == "counter"
-    assert records[1]["cop"] is None                    # NaN → None
-    assert cr.records_from_analysis(pd.DataFrame()) == []
-
-
-def test_merge_records_dedupes_by_start_and_trims():
-    existing = [{"start": "2026-06-16 12:13", "cop": 2.27}]
-    new = [
-        {"start": "2026-06-17 12:36", "cop": 2.09},
-        {"start": "2026-06-16 12:13", "cop": 9.99},  # replaces existing
-    ]
-    merged = cr.merge_records(existing, new, maxlen=2)
-    assert [r["start"] for r in merged] == ["2026-06-16 12:13", "2026-06-17 12:36"]
-    assert merged[0]["cop"] == 9.99
-    assert len(cr.merge_records(existing, new, maxlen=1)) == 1  # trims to most recent
-
-
-def test_merge_records_collapses_one_minute_wobble():
-    # Same physical cycle, analysed twice over different windows: analyse's self-detected on-edge
-    # wobbles by a resample bin, so the two passes report starts one minute apart. They must NOT
-    # both survive (the bug that produced 13:08/13:09 twins). New (authoritative) pass wins.
-    existing = [{"start": "2026-06-27 13:09", "cop": 1.90, "dur_min": 64}]
-    new = [{"start": "2026-06-27 13:08", "cop": 1.89, "dur_min": 65}]
-    merged = cr.merge_records(existing, new, maxlen=20)
-    assert len(merged) == 1
-    assert merged[0]["start"] == "2026-06-27 13:08" and merged[0]["cop"] == 1.89
-
-
-def test_merge_records_self_heals_existing_twins():
-    # A ring that already holds both twins collapses to one on the next merge (no new record).
-    ring = [
-        {"start": "2026-06-26 15:44", "cop": 1.87},
-        {"start": "2026-06-26 15:45", "cop": 1.88},
-    ]
-    merged = cr.merge_records(ring, [], maxlen=20)
-    assert len(merged) == 1
-
-
-def test_merge_records_keeps_distinct_short_cycles_apart():
-    # Two genuinely distinct runs start ≥5 min apart (analyser min cycle length); the 3-min
-    # tolerance must never merge them.
-    existing = [{"start": "2026-06-26 23:54", "cop": 1.1}]
-    new = [{"start": "2026-06-26 23:59", "cop": 1.2}]  # 5 min later
-    merged = cr.merge_records(existing, new, maxlen=20)
-    assert [r["start"] for r in merged] == ["2026-06-26 23:54", "2026-06-26 23:59"]
-
-
-def test_cold_start_since_deep_when_ring_short():
-    now = 1_000_000.0
-    since = cr.cold_start_since_ts(
-        [{"start": "2026-06-27 12:00"}], now, maxlen=20,
-        seed_hours=240, incremental_margin_hours=6, tz_name=TZ,
-    )
-    assert since == now - 240 * 3600   # deep window, ignores ring contents
-
-
-def test_cold_start_since_incremental_when_ring_full():
-    now = cr._local_str_to_ts("2026-06-27 18:00", TZ)
-    cycles = [{"start": "2026-06-2%d 12:00" % d} for d in range(1, 8)]  # 7 rows
-    cycles[-1]["start"] = "2026-06-27 12:00"                            # newest
-    since = cr.cold_start_since_ts(
-        cycles, now, maxlen=7, seed_hours=240, incremental_margin_hours=6, tz_name=TZ,
-    )
-    # since = newest row start (12:00) minus the 6h margin, NOT a flat deep window
-    assert since == cr._local_str_to_ts("2026-06-27 12:00", TZ) - 6 * 3600
-
-
-def test_cooldown_settled_and_expired_gate_on_age():
-    cur = {"status": "cooldown", "ended_ts": 1000.0}
-    assert cr.cooldown_settled(cur, now_ts=1000.0 + 900, settle_seconds=900) is True
-    assert cr.cooldown_settled(cur, now_ts=1000.0 + 600, settle_seconds=900) is False
-    assert cr.cooldown_settled({"status": "running", "ended_ts": 1000.0}, 9999.0, 900) is False
-    assert cr.cooldown_settled(None, 9999.0, 900) is False
-    assert cr.cooldown_expired(cur, now_ts=1000.0 + 1800, giveup_seconds=1800) is True
-    assert cr.cooldown_expired(cur, now_ts=1000.0 + 1200, giveup_seconds=1800) is False
-
-
-def test_backfill_captured_matches_within_tolerance():
-    start_ts = cr._local_str_to_ts("2026-06-18 13:37", TZ)
-    cur = {"status": "cooldown", "start_ts": start_ts}
-    # analyse start 2 min off the polled start still matches
-    assert cr.backfill_captured(cur, [{"start": "2026-06-18 13:39"}], TZ) is True
-    assert cr.backfill_captured(cur, [{"start": "2026-06-18 14:30"}], TZ) is False
-    running = {"status": "running", "start_ts": start_ts}
-    assert cr.backfill_captured(running, [{"start": "2026-06-18 13:37"}], TZ) is False
+def test_live_record_none_without_open_cycle():
+    assert cr.live_record(None, tank_now=50.0, energy_now=1.0, now_ts=1.75e9, tz_name=TZ) is None
+    assert cr.live_record({}, tank_now=50.0, energy_now=1.0, now_ts=1.75e9, tz_name=TZ) is None
 
 
 def test_build_payload_state_is_last_cop_and_counters():
@@ -239,3 +137,4 @@ def test_build_payload_headline_skips_null_cop_rows():
 
 def cr_close(a, b, tol=1e-6):
     return a is not None and math.isclose(a, b, abs_tol=tol)
+
