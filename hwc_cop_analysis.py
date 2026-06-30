@@ -489,6 +489,8 @@ def analyse(days=None, since=DEFAULT_SINCE, until=None, min_minutes=20):
             continue
         b_pre, b_post = pre.median(), post.median()
         baseline = np.mean([b_pre, b_post])
+        if pd.isna(baseline):  # off-window present but all-NaN (interpolation gap) → unusable
+            continue
         cyc = P[(idx >= cs) & (idx <= ce)]
         hp = (cyc - baseline).clip(lower=0)
         integrated_kwh = hp.sum() * (30 / 3600) / 1000  # kWh
