@@ -372,6 +372,15 @@ hwc:
     heartbeat_seconds: 1800
     execution_interval_seconds: 60
     cycle_history_len: 20     # max rows kept/shown in sensor.hwc_cycles
+    minimum_replan_interval_seconds: 60
+    tank_temp_replan_delta_c: 0.3
+    # Symmetric hardware guard: minimum compressor rest after an off command before a restart is
+    # allowed. Bounds the start rate against sensor jitter / model edge-cases regardless of the
+    # planner. 180 s = 3 min, a typical heat-pump anti-short-cycle minimum.
+    min_off_seconds: 180
+    # For the planner's effective-running signal: a compressor off (while below target, with
+    # heat still commanded) shorter than this is treated as a defrost pause, not a stop.
+    compressor_off_debounce_seconds: 600
   # Publish-only per-cycle reporting to sensor.hwc_cycles (table of recent heat-pump runs + a live
   # in-progress row). Firewalled from the planner/executor — a failure here never affects
   # actuation. See docs/hwc_cycle_reporting.md.
@@ -401,18 +410,17 @@ hwc:
       exhaust: sensor.aquatech_exhaust_temperature
       coil: sensor.aquatech_coil_temperature
       return_air: sensor.aquatech_return_air_temperature
-    minimum_replan_interval_seconds: 60
-    tank_temp_replan_delta_c: 0.3
-    # Suppress an off issued right after a heat command until the Tuya compressor sensor
-    # confirms running, bridging its ~60 s LocalTuya poll lag. 120 s = 2 poll cycles.
+    # NOTE: this is read from `hwc.daemon`, NOT here — so as placed it is INERT and each read site
+    # uses its code default. Left here (not moved up) because the value is ambiguous: the daemon
+    # reads heat_command_grace_seconds at three sites with defaults 120/600/120, so putting a single
+    # value under `daemon:` would change the off-after-heat suppression grace (600 → 120) — not a
+    # no-op. Reconcile the intended graces (split into two keys?) before moving.
     heat_command_grace_seconds: 120
-    # Symmetric hardware guard: minimum compressor rest after an off command before a restart is
-    # allowed. Bounds the start rate against sensor jitter / model edge-cases regardless of the
-    # planner. 180 s = 3 min, a typical heat-pump anti-short-cycle minimum.
-    min_off_seconds: 180
-    # For the planner's effective-running signal: a compressor off (while below target, with
-    # heat still commanded) shorter than this is treated as a defrost pause, not a stop.
-    compressor_off_debounce_seconds: 600
+    # NOTE: these fallback_* keys are read from `hwc.daemon`, NOT here — so as placed they are
+    # INERT and the fixed-window/emergency-heat fallback is effectively OFF (fallback_enabled
+    # defaults to False). They are left here because moving them up to `daemon:` is not a no-op:
+    # it would enable the fallback (fallback_enabled: true) with fallback_min_temp_c 48. Decide
+    # whether the fallback should be on, then move the block to `daemon:` deliberately.
     fallback_enabled: true
     fallback_window_start: '10:00'
     fallback_window_end: '16:00'
