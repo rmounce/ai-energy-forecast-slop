@@ -3500,8 +3500,7 @@ def _run_pd_direct_publish_archived(publish_hass):
 
 
 def apply_tariffs_to_forecast(pred_df):
-    # This function remains unchanged
-    logging.info("Applying tariffs to wholesale price forecast with conditional GST...")
+    logging.info("Applying tariffs to wholesale price forecast (GST on import leg only)...")
     try:
         with open(CONFIG['paths']['tariff_file'], 'r') as f:
             tariffs = json.load(f)
@@ -3535,11 +3534,14 @@ def apply_tariffs_to_forecast(pred_df):
     general_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['general_tariff']
     feed_in_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['feed_in_tariff']
 
+    # Import (general) leg carries GST, but only when it is a net cost (> 0); a negative
+    # import price (paid to consume) keeps its sign guard. The feed-in (export) leg is
+    # GST-free in both directions — credits and export charges alike (Amber, from ~FY27).
     pred_df['general_price'] = np.where(general_price_ex_gst > 0, general_price_ex_gst * CONFIG['gst_rate'], general_price_ex_gst)
-    pred_df['feed_in_price'] = np.where(feed_in_price_ex_gst < 0, feed_in_price_ex_gst * CONFIG['gst_rate'], feed_in_price_ex_gst)
+    pred_df['feed_in_price'] = feed_in_price_ex_gst
 
     pred_df.drop(columns=['local_time', 'general_tariff', 'feed_in_tariff'], inplace=True)
-    logging.info("Successfully applied general and feed-in tariffs with conditional GST.")
+    logging.info("Successfully applied general and feed-in tariffs (GST on import cost only).")
 
 def publish_forecast_to_hass(model_key, forecast_df):
     """Publishes a forecast DataFrame to a Home Assistant entity using a model key."""
@@ -3594,9 +3596,19 @@ def _get_tariff_data(entity_id, is_feed_in=False):
             true_loss_spot = raw_spot * net_loss
             
             if is_feed_in:
-                tariff = -remove_gst(per_kwh_dollars) - true_loss_spot
+                # Amber reports the feed-in (export) leg GST-free — both credits and the
+                # solar-sponge export charge (verified against live forecasts 2026-07-01:
+                # per_kwh slope = -network_loss_factor with no GST, in both price signs).
+                # Do NOT remove_gst here, or the residual picks up a -loss*(1-1/gst)*spot
+                # term that rides the wholesale curve. See docs/tariff_gst_regime.md.
+                tariff = -per_kwh_dollars - true_loss_spot
             else:
-                tariff = remove_gst(per_kwh_dollars) - true_loss_spot
+                # Import leg carries GST only when it is a net cost. per_kwh > 0 iff the
+                # customer is charged (Amber applied GST); a negative import price (paid
+                # to consume) is GST-free. This mirrors the sign guard in
+                # apply_tariffs_to_forecast so forward/reverse are exact inverses.
+                gross = remove_gst(per_kwh_dollars) if per_kwh_dollars > 0 else per_kwh_dollars
+                tariff = gross - true_loss_spot
             processed.append({'datetime': pd.to_datetime(f['start_time']).round('min'), 'tariff': tariff})
     return pd.DataFrame(processed).set_index('datetime')
 
@@ -3714,7 +3726,11 @@ def _calculate_forecasted_network_loss_factor():
                 raw_spot = spot_per_kwh_dollars / api_scaling
                 
                 if abs(raw_spot) > 0.01:
-                    derived_nlf = -remove_gst(per_kwh_dollars) / raw_spot
+                    # Feed-in leg is GST-free (see _get_tariff_data): divide the raw,
+                    # GST-free per_kwh directly. Using remove_gst here would deflate the
+                    # loss factor by 1/gst (~1.1245 -> ~1.0225) and then contaminate the
+                    # GST-inclusive general_tariff on the next rebuild.
+                    derived_nlf = -per_kwh_dollars / raw_spot
                     start_time = pd.to_datetime(f['start_time']).tz_convert(CONFIG['timezone'])
                     records.append({
                         'hour': start_time.hour,

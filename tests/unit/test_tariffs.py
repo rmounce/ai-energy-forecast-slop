@@ -1,10 +1,11 @@
 """
 Tests for apply_tariffs_to_forecast():
-  - GST applied to general_price when > 0
-  - GST applied to feed_in_price when < 0
-  - GST NOT applied when price is on wrong side of zero
+  - GST applied to general_price when it is a net cost (> 0), not when negative
+  - feed_in_price is GST-free in both directions (export leg carries no GST)
   - Loss factor applied to both paths
 """
+
+import json
 
 import numpy as np
 import pandas as pd
@@ -69,28 +70,38 @@ def test_general_price_units_positive(fixed_loss_factor):
 
 # ── Feed-in price (consumer sells) ────────────────────────────────────────────
 
+def _feed_in_tariff_at(local_key: str) -> float:
+    """Read the feed-in fixed adder for a given HH:MM:SS key from the live profile."""
+    with open(fc.CONFIG["paths"]["tariff_file"]) as f:
+        return json.load(f)["feed_in_tariff"][local_key]
+
+
 def test_feed_in_price_positive_wholesale_no_gst():
-    """Positive wholesale: feed_in_price_ex_gst > 0 → GST NOT applied."""
-    df = _make_price_df([0.10])
+    """Positive wholesale (credit): feed-in leg is GST-free → price == wholesale*loss + tariff."""
+    wholesale = 0.10
+    df = _make_price_df([wholesale])  # 2025-06-01 00:00 UTC → 09:30 Adelaide (off-peak)
     _apply(df)
-    # feed_in formula: apply GST only if < 0
     fip = df["feed_in_price"].iloc[0]
-    # For positive wholesale + positive feed_in_tariff: feed_in_price > 0, no GST
+    expected = wholesale * LOSS + _feed_in_tariff_at("09:30:00")
     assert fip > 0
+    assert abs(fip - expected) < 1e-9  # no GST multiplier applied
 
 
-def test_feed_in_price_negative_wholesale_gets_gst():
-    """Negative dispatch price: feed_in_price_ex_gst < 0 → GST (×1.1) applied."""
-    df = _make_price_df([-0.30])
+def test_feed_in_price_negative_wholesale_no_gst():
+    """Negative dispatch price (export charge): feed-in leg is still GST-free.
+
+    Regression guard for the ~FY27 change where Amber began reporting the feed-in leg
+    GST-exclusive. The export charge must NOT be inflated by ×1.1 the way the old
+    sign-conditional branch did.
+    """
+    wholesale = -0.30
+    df = _make_price_df([wholesale])
     _apply(df)
     fip = df["feed_in_price"].iloc[0]
+    ex_gst = wholesale * LOSS + _feed_in_tariff_at("09:30:00")
     assert fip < 0
-    # GST makes negative price MORE negative (×1.1)
-    # ex_gst_value: (-0.30 * 1.05) + feed_in_tariff; tariff ~0.05 $/kWh
-    # → ex_gst ≈ -0.265; with GST: ≈ -0.2915
-    # Without GST it would be ≈ -0.265 (less negative)
-    # We can only assert it's negative:
-    assert fip < -0.10
+    assert abs(fip - ex_gst) < 1e-9          # equals the ex-GST value
+    assert abs(fip - ex_gst * GST) > 1e-3    # and is NOT the GST-inflated value
 
 
 def test_tariff_columns_dropped():
