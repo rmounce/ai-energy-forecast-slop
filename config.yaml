@@ -394,6 +394,8 @@ hwc:
     sample_seconds: 30        # trace-sampler cadence + live-row refresh
     history_len: 20           # completed rows shown in sensor.hwc_cycles
     min_cycle_seconds: 300    # discard runs shorter than this (defrost flicker); matches analyse floor
+    close_settle_seconds: 60  # after compressor-off, settle before finalising so the tank probe's
+                              # post-off peak (it lags a few s) lands as tank_end (docs/hwc_cycle_reporting.md)
     # Live HWC sensor set captured into the per-cycle trace. `compressor` drives the on/off cycle
     # edges (energy/tank snapshotted at the edge); the rest are sampled every `sample_seconds`.
     # `humidity_entity` is a weather entity — humidity is read from its attribute, for wet-bulb.

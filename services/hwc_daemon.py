@@ -370,8 +370,13 @@ class HwcDaemon:
         self.report_entities: dict[str, str] = dict(rep.get("entities", {}))
         self.report_entity_role = {eid: role for role, eid in self.report_entities.items()}
         self.humidity_entity = rep.get("humidity_entity")
+        # After compressor-off, wait this long before finalising so the tank probe's post-off peak
+        # (it keeps rising a few seconds) lands in the cache/trace; see docs/hwc_cycle_reporting.md.
+        self._close_settle_seconds = float(rep.get("close_settle_seconds", 60))
         self.report_cache: dict[str, float | bool | None] = {}
-        # Open cycle {start_ts, tank_start, energy_start}; persisted so a restart resumes it.
+        # Open cycle {start_ts, tank_start, energy_start}; once the compressor stops it also carries
+        # {closed_at, end_ts, energy_end, tank_end_edge} and finalises after the settle window.
+        # Persisted so a restart resumes (still running) or finalises (settling) it.
         self.reporter_cycle: dict | None = state.get("reporter_cycle")
         self._reporter_prev_on: bool | None = None
         self._next_msg_id = 1
@@ -623,6 +628,9 @@ class HwcDaemon:
 
     async def _reporter_open(self, now_ts: float) -> None:
         """Compressor off→on: open a 'running' cycle, snapshotting tank/energy at the edge."""
+        # A cycle still settling (compressor flicked back on inside the settle window) finalises now.
+        if self.reporter_cycle is not None and "closed_at" in self.reporter_cycle:
+            await self._reporter_finalise()
         c = self.report_cache
         self.reporter_cycle = {
             "start_ts": now_ts, "tank_start": c.get("tank"), "energy_start": c.get("energy"),
@@ -638,12 +646,13 @@ class HwcDaemon:
         await self._reporter_publish()
 
     async def _reporter_close(self, now_ts: float) -> None:
-        """Compressor on→off: finalise via cycle_metrics over the stored trace + edge snapshots."""
+        """Compressor on→off: mark the cycle settling; ``_reporter_finalise`` closes it after the
+        settle window so the tank probe's post-off peak is captured (it lags compressor-off by a few
+        seconds). A sub-``min_cycle_seconds`` run (defrost flicker) is discarded immediately."""
         rc = self.reporter_cycle
-        if not rc:
+        if not rc or "closed_at" in rc:
             return
         cs = rc["start_ts"]
-        tz = self.config["timezone"]
         min_s = float(self.config["hwc"]["reporting"].get("min_cycle_seconds", 300))
         if now_ts - cs < min_s:
             await asyncio.to_thread(self._store_delete, cs)
@@ -653,41 +662,67 @@ class HwcDaemon:
             await self._reporter_publish()
             return
         c = self.report_cache
+        # Snapshot the compressor-off boundary: energy_end (elec input stops here) and the edge tank.
+        rc.update(closed_at=now_ts, end_ts=now_ts,
+                  energy_end=c.get("energy"), tank_end_edge=c.get("tank"))
         await asyncio.to_thread(self._store_append_sample, cs, self._reporter_sample(now_ts))
+        self._save_state()
+        log.info("HWC reporter: cycle settling %.0fs before finalise", self._close_settle_seconds)
+        await self._reporter_publish()
+
+    async def _reporter_finalise(self) -> None:
+        """Close a settling cycle: recompute via cycle_metrics over the trace + edge snapshots, using
+        the settled post-off tank as ``tank_end``. Called once the settle window elapses (or on a
+        reopen / restart that lands mid-settle)."""
+        rc = self.reporter_cycle
+        if not rc or "closed_at" not in rc:
+            return
+        cs, ce = rc["start_ts"], rc["closed_at"]
+        tz = self.config["timezone"]
+        c = self.report_cache
+        # Settled tank: the highest of the compressor-off edge and the (now risen) cached probe.
+        tank_end = rc.get("tank_end_edge")
+        tank_now = c.get("tank")
+        if tank_now is not None and (tank_end is None or tank_now > tank_end):
+            tank_end = tank_now
         trace = await asyncio.to_thread(self._store_load_trace, cs)
         edges = {
             "cs": pd.Timestamp(cs, unit="s", tz="UTC"),
-            "ce": pd.Timestamp(now_ts, unit="s", tz="UTC"),
-            "tank_start": rc.get("tank_start"), "tank_end": c.get("tank"),
-            "energy_start": rc.get("energy_start"), "energy_end": c.get("energy"),
+            "ce": pd.Timestamp(ce, unit="s", tz="UTC"),
+            "tank_start": rc.get("tank_start"), "tank_end": tank_end,
+            "energy_start": rc.get("energy_start"), "energy_end": rc.get("energy_end"),
         }
         metrics = hwc_cop_analysis.cycle_metrics(trace, edges=edges) if not trace.empty else None
         if metrics is not None:
             row = {**metrics, "status": "complete", "updated_at": time.time()}
         else:
             # No usable tank trace — keep the run as a minimal complete row from the edge snapshot.
-            es, en = rc.get("energy_start"), c.get("energy")
+            es, en = rc.get("energy_start"), rc.get("energy_end")
             row = {
                 "start_ts": cs, "start_local": hwc_cycle_reporter._local_str(cs, tz),
-                "end_ts": now_ts, "dur_min": round((now_ts - cs) / 60),
-                "tank_start": rc.get("tank_start"), "tank_end": c.get("tank"),
+                "end_ts": ce, "dur_min": round((ce - cs) / 60),
+                "tank_start": rc.get("tank_start"), "tank_end": tank_end,
                 "elec_kwh": (round(en - es, 3) if (es is not None and en is not None) else None),
                 "elec_source": "counter", "status": "complete", "updated_at": time.time(),
             }
         await asyncio.to_thread(self._store_upsert, row)
         self.reporter_cycle = None
         self._save_state()
-        log.info("HWC reporter: cycle finalised %s cop=%s",
-                 hwc_cycle_reporter._local_str(cs, tz), row.get("cop"))
+        log.info("HWC reporter: cycle finalised %s cop=%s tank_end=%s",
+                 hwc_cycle_reporter._local_str(cs, tz), row.get("cop"), row.get("tank_end"))
         await self._reporter_publish()
 
     async def _reporter_sample_tick(self) -> None:
-        """Every ``sample_seconds``: append a trace sample while a cycle is open, refresh the card."""
-        if self.reporter_cycle is not None:
+        """Every ``sample_seconds``: append a trace sample while a cycle is open (this is what pulls
+        the settling probe's post-off peak into the trace), finalise a settled cycle, refresh card."""
+        rc = self.reporter_cycle
+        if rc is not None:
             await asyncio.to_thread(
-                self._store_append_sample, self.reporter_cycle["start_ts"],
-                self._reporter_sample(time.time()),
+                self._store_append_sample, rc["start_ts"], self._reporter_sample(time.time()),
             )
+            if "closed_at" in rc and time.time() - rc["closed_at"] >= self._close_settle_seconds:
+                await self._reporter_finalise()
+                return
         await self._reporter_publish()
 
     async def _reporter_publish(self) -> None:
@@ -711,13 +746,18 @@ class HwcDaemon:
         await asyncio.to_thread(self._reporter_seed_cache)
         compressor_on = bool(self.report_cache.get("compressor"))
         self._reporter_prev_on = compressor_on
-        if self.reporter_cycle is not None and not compressor_on:
+        rc = self.reporter_cycle
+        if rc is not None and "closed_at" in rc:
+            # Was settling when we went down — finalise from the snapshot (the probe has since settled,
+            # and the cache was just reseeded from the current state).
+            await self._reporter_finalise()
+        elif rc is not None and not compressor_on:
             # A run ended while we were down — can't reconstruct precisely; drop it (forward-only).
-            await asyncio.to_thread(self._store_delete, self.reporter_cycle["start_ts"])
+            await asyncio.to_thread(self._store_delete, rc["start_ts"])
             log.info("HWC reporter: dropped an open cycle that ended during downtime")
             self.reporter_cycle = None
             self._save_state()
-        elif self.reporter_cycle is None and compressor_on:
+        elif rc is None and compressor_on:
             await self._reporter_open(time.time())
         await self._reporter_publish()
 

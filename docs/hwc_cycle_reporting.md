@@ -89,21 +89,34 @@ detects an off→on or on→off flip against the previous observed state:
 
 - **off→on** (`_reporter_open`): open a `status='running'` row, snapshotting `tank_start` and
   `energy_start` from the cache *at the edge*; write the first trace sample.
-- **on→off** (`_reporter_close`): snapshot `tank_end`/`energy_end`, append a final trace sample,
-  load the cycle's trace from the store, and finalise through
-  `cycle_metrics(trace, edges=…)` — the edge snapshots override the 30 s-grid boundaries, so
-  `tank_start`/`tank_end` and the counter elec are edge-precise. The summary upserts over the
-  `running` row (same `start_ts` PK → `complete`). A run shorter than `min_cycle_seconds` (300 s,
-  matching the analyser floor) is **discarded** (a defrost flicker that briefly drops the compressor
-  sensor), deleting its `running` row and samples.
+- **on→off** (`_reporter_close`): snapshot `energy_end` and the compressor-off edge tank, append a
+  boundary trace sample, and mark the cycle **settling** (`closed_at`) rather than finalising
+  immediately. A run shorter than `min_cycle_seconds` (300 s, matching the analyser floor) is
+  **discarded** here (a defrost flicker that briefly drops the compressor sensor), deleting its
+  `running` row and samples.
+- **finalise (`_reporter_finalise`, after the settle):** once `close_settle_seconds` (60 s) have
+  elapsed — checked on the sampler tick — load the trace and finalise through
+  `cycle_metrics(trace, edges=…)`. The edge snapshots override the 30 s-grid boundaries, so
+  `tank_start`, the counter elec (`energy_start`/`energy_end` at the compressor edges) and `tank_end`
+  are edge-precise. The summary upserts over the `running` row (same `start_ts` PK → `complete`).
 
-**Sampler (`sample_seconds`, 30 s).** While a cycle is open, `_reporter_sample_tick` appends one
-trace sample from the cache; every tick (open or not) republishes the card so the live row's elapsed
-time and running kWh stay current.
+  **Why the settle.** The tank probe keeps rising for a few seconds *after* the compressor stops
+  (residual heat / probe lag) — e.g. on 2026-07-01 the compressor went off at `05:07:35` and the tank
+  ticked 59→60 at `05:07:38`, a ~3 s lag that a same-instant snapshot missed (the row read 59, not
+  60). So `tank_end` is taken as the settled post-off peak: `_reporter_finalise` uses the highest of
+  the off-edge tank and the (by-then risen) cached probe, and the sampler keeps appending during the
+  settle so that peak is also in the trace for the offline recompute. Elec/energy still end at the
+  compressor-off edge (`energy_end` is frozen there); only the final tank extends past it.
+
+**Sampler (`sample_seconds`, 30 s).** While a cycle is open *or settling*, `_reporter_sample_tick`
+appends one trace sample from the cache (this is what pulls the settling probe's post-off peak into
+the trace) and, once the settle window has elapsed, finalises the cycle; every tick (open or not)
+republishes the card so the live row's elapsed time and running kWh stay current.
 
 **Startup / restart (`_reporter_startup`).** Seeds the cache from current HA states, seeds the
 previous-compressor-state from the live reading (so the first event is a real edge, not a phantom
-open), and resolves a persisted open cycle: resume it if the compressor is still on; drop it if the
+open), and resolves a persisted cycle: **finalise** it if it was settling when we went down (the
+probe has since settled); otherwise resume it if the compressor is still on, or drop it if the
 compressor is now off (the run ended during downtime and can't be reconstructed precisely —
 forward-only, gaps acceptable).
 
@@ -111,12 +124,14 @@ forward-only, gaps acceptable).
 
 The store (`data/hwc_cycles.sqlite`) is the system-of-record: the card ring is `recent_cycles(N)`
 and the in-progress row is the `status='running'` row. The daemon state file
-(`_save_state`/`_load_state`) keeps only the open cycle's edge snapshot, so a restart can resume it:
+(`_save_state`/`_load_state`) keeps only the open cycle's edge snapshot, so a restart can resume it
+(or, if it was settling, finalise it):
 
 ```jsonc
 {
   "last_reached_target_at": "...",
   "soc": { ... },
+  // open cycle; once the compressor stops it also carries closed_at/end_ts/energy_end/tank_end_edge:
   "reporter_cycle": { "start_ts": 1750.0, "tank_start": 45.0, "energy_start": 5.235 } // or absent
 }
 ```
@@ -163,6 +178,8 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
     sample_seconds: 30             # trace-sampler cadence + live-row refresh
     history_len: 20                # completed rows shown in the card
     min_cycle_seconds: 300         # discard sub-floor runs (defrost flicker)
+    close_settle_seconds: 60       # wait after compressor-off before finalising (capture the
+                                   # tank probe's post-off peak as tank_end)
     humidity_entity: weather.woodville_west_hourly   # humidity (attribute) for wet-bulb
     entities:                      # live HWC sensor set captured into the trace
       compressor: binary_sensor.aquatech_compressor  # drives the on/off cycle edges

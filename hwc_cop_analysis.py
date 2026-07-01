@@ -44,6 +44,7 @@ DEFAULT_DB_PATH = "data/hwc_cycles.sqlite"
 TANK_LITRES = 225
 C_WATER = 4.186  # kJ/kg·K
 STANDING_LOSS_KW = 0.12
+TANK_SETTLE_SECONDS = 60  # tank probe keeps rising a few s past compressor-off; final temp settles here
 HP_POWER_MAX_W = 1100  # plausible upper bound for this unit; above → contamination
 BASELINE_DRIFT_MAX_W = 80  # pre/post off-state baseline mismatch tolerated on the integration path
 COP_CLEAN_MIN = 0.8        # below → broken/standby-dominated estimate
@@ -273,7 +274,7 @@ def _trace_col(trace, name):
 
 
 def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STANDING_LOSS_KW,
-                  tz=LOCAL_TZ):
+                  tank_settle_seconds=TANK_SETTLE_SECONDS, tz=LOCAL_TZ):
     """Canonical per-cycle summary from a raw 30 s trace — the one shared brain (docs/hwc_local_store.md).
 
     Both feeders call this so they can never diverge: the daemon accumulates a live trace + precise
@@ -330,7 +331,9 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
         t_start, t_end = float(edges["tank_start"]), float(edges["tank_end"])
     else:
         t0 = tank[tank.index <= cs + pd.Timedelta("90s")].dropna()
-        t1 = tank[tank.index <= ce].dropna()
+        # The probe keeps climbing a few seconds past compressor-off; look a short settle window
+        # beyond ``ce`` for the final temperature (power/energy stay bounded by ``ce`` above).
+        t1 = tank[tank.index <= ce + pd.Timedelta(seconds=tank_settle_seconds)].dropna()
         t_start = t0.iloc[-1] if not t0.empty else np.nan
         t_end = t1.iloc[-1] if not t1.empty else np.nan
     if pd.isna(t_start) or pd.isna(t_end):
@@ -406,6 +409,21 @@ def _to_utc(value):
     return ts.tz_convert("UTC")
 
 
+def _stored_edges(c: dict):
+    """Bound a recompute's power/energy window by the stored compressor on/off timestamps.
+
+    The daemon appends trailing post-off samples during the tank settle window, so the trace's last
+    index sits past compressor-off; pinning ``ce`` to the stored ``end_ts`` keeps ``[cs, ce]`` on the
+    real cycle. tank_start/tank_end and the counter elec are deliberately left out so they still
+    derive from the trace (the settle window then picks up the post-off peak). ``None`` (fully
+    trace-derived boundaries) when either timestamp is missing.
+    """
+    cs, ce = c.get("start_ts"), c.get("end_ts")
+    if cs is None or ce is None:
+        return None
+    return {"cs": pd.Timestamp(cs, unit="s", tz="UTC"), "ce": pd.Timestamp(ce, unit="s", tz="UTC")}
+
+
 def _summary_row(c: dict) -> dict:
     """A stored summary row → an ``analyse`` output row: ``start`` as a UTC Timestamp, bools
     restored from 0/1. Used as-is for trace-less cycles (the CSV-seeded install-period anchors)."""
@@ -438,7 +456,7 @@ def analyse(db_path=DEFAULT_DB_PATH, since=None, until=None, min_minutes=None, r
             if recompute:
                 trace = store.load_trace(conn, c["start_ts"])
                 if not trace.empty:
-                    metrics = cycle_metrics(trace)
+                    metrics = cycle_metrics(trace, edges=_stored_edges(c))
             rows.append(metrics if metrics is not None else _summary_row(c))
     finally:
         conn.close()
