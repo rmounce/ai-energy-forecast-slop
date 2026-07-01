@@ -32,8 +32,10 @@ import zipfile
 from tariff_utils import (
     ensure_utc_index,
     export_value_to_amber_feed_in_price,
+    fit_shared_slope,
     load_tariff_profile,
     smooth_tariff_maps,
+    tariff_bucket,
     tariffed_price_frame_from_wholesale_mwh,
 )
 from eval.retro_tier1_inference import build_feature_dict as build_tier1_feature_dict, build_long_matrix_for_model as build_tier1_long_matrix
@@ -3575,43 +3577,40 @@ def publish_forecast_to_hass(model_key, forecast_df):
     logging.info(f"Successfully published state '{state}' and attributes to {entity_id}.")
 
 
-def _get_tariff_data(entity_id, is_feed_in=False):
-    # This function extracts pure network tariffs
+def _fetch_amber_leg(entity_id):
+    """Return a local-time-indexed DataFrame of ``per_kwh`` and ``spot`` for one Amber leg."""
     entity_state = get_entity_state(entity_id)
-    if not entity_state: return pd.DataFrame()
-    forecasts = entity_state.get("attributes", {}).get("Forecasts", [])
-    if not forecasts: return pd.DataFrame()
-    processed = []
-    
-    api_scaling = get_amber_api_scaling_factor()
-    net_loss = get_network_loss_factor()
-    
-    for f in forecasts:
-        if f.get('per_kwh') is not None and f.get('spot_per_kwh') is not None:
-            per_kwh_dollars = float(f['per_kwh'])
-            spot_per_kwh_dollars = float(f['spot_per_kwh'])
-            
-            # Strip the 1.10 API inflation down to Raw AEMO scale
-            raw_spot = spot_per_kwh_dollars / api_scaling
-            # Scale it up to the True Network Loss scale (1.08)
-            true_loss_spot = raw_spot * net_loss
-            
-            if is_feed_in:
-                # Amber reports the feed-in (export) leg GST-free — both credits and the
-                # solar-sponge export charge (verified against live forecasts 2026-07-01:
-                # per_kwh slope = -network_loss_factor with no GST, in both price signs).
-                # Do NOT remove_gst here, or the residual picks up a -loss*(1-1/gst)*spot
-                # term that rides the wholesale curve. See docs/tariff_gst_regime.md.
-                tariff = -per_kwh_dollars - true_loss_spot
-            else:
-                # Import leg carries GST only when it is a net cost. per_kwh > 0 iff the
-                # customer is charged (Amber applied GST); a negative import price (paid
-                # to consume) is GST-free. This mirrors the sign guard in
-                # apply_tariffs_to_forecast so forward/reverse are exact inverses.
-                gross = remove_gst(per_kwh_dollars) if per_kwh_dollars > 0 else per_kwh_dollars
-                tariff = gross - true_loss_spot
-            processed.append({'datetime': pd.to_datetime(f['start_time']).round('min'), 'tariff': tariff})
-    return pd.DataFrame(processed).set_index('datetime')
+    forecasts = (entity_state or {}).get("attributes", {}).get("Forecasts", [])
+    rows = [
+        {
+            'datetime': pd.to_datetime(f['start_time']).round('min'),
+            'per_kwh': float(f['per_kwh']),
+            'spot': float(f['spot_per_kwh']),
+        }
+        for f in forecasts
+        if f.get('per_kwh') is not None and f.get('spot_per_kwh') is not None
+    ]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows).set_index('datetime').sort_index()
+    df.index = df.index.tz_convert(CONFIG['timezone'])
+    return df
+
+
+def _reconstruct_per_interval(df, is_feed_in, api_scaling, net_loss):
+    """Per-interval fixed-tariff reconstruction (diagnostic; strips the wholesale term).
+
+    Mirrors the GST convention in apply_tariffs_to_forecast so forward/reverse are exact
+    inverses: the feed-in (export) leg is GST-free in both signs, while the import leg
+    carries GST only when it is a net cost (per_kwh > 0). See docs/tariff_gst_regime.md.
+    """
+    loss_spot = (df['spot'] / api_scaling) * net_loss
+    if is_feed_in:
+        tariff = -df['per_kwh'] - loss_spot
+    else:
+        gross = np.where(df['per_kwh'] > 0, df['per_kwh'] / CONFIG['gst_rate'], df['per_kwh'])
+        tariff = gross - loss_spot
+    return pd.DataFrame({'tariff': tariff}, index=df.index)
 
 def _create_complete_profile(tariff_df, local_tz, tariff_type_for_logging):
     """
@@ -3703,65 +3702,80 @@ def _calculate_amber_api_scaling_factor():
         logging.warning(f"Calculated Amber API scaling factor {median_ratio:.4f} is outside reasonable bounds [0.95, 1.25]. Ignoring.")
         return None
 
-def _calculate_forecasted_network_loss_factor():
-    logging.info("Calculating network loss factor from forward feed-in forecast...")
-    try:
-        api_scaling = get_amber_api_scaling_factor()
-        entity_id = CONFIG['home_assistant']['amber_feed_in_entity']
-        entity_state = get_entity_state(entity_id)
-        
-        if not entity_state:
-            logging.warning(f"Could not retrieve state for {entity_id}")
-            return None
-            
-        forecasts = entity_state.get("attributes", {}).get("Forecasts", [])
-        if not forecasts:
-            logging.warning("No forecasts found in entity attributes")
-            return None
-            
-        records = []
-        for f in forecasts:
-            if f.get('per_kwh') is not None and f.get('spot_per_kwh') is not None:
-                per_kwh_dollars = float(f['per_kwh'])
-                spot_per_kwh_dollars = float(f['spot_per_kwh'])
-                raw_spot = spot_per_kwh_dollars / api_scaling
-                
-                if abs(raw_spot) > 0.01:
-                    # Feed-in leg is GST-free (see _get_tariff_data): divide the raw,
-                    # GST-free per_kwh directly. Using remove_gst here would deflate the
-                    # loss factor by 1/gst (~1.1245 -> ~1.0225) and then contaminate the
-                    # GST-inclusive general_tariff on the next rebuild.
-                    derived_nlf = -per_kwh_dollars / raw_spot
-                    start_time = pd.to_datetime(f['start_time']).tz_convert(CONFIG['timezone'])
-                    records.append({
-                        'hour': start_time.hour,
-                        'derived_nlf': derived_nlf
-                    })
-                    
-        df = pd.DataFrame(records)
-        if df.empty:
-            logging.warning("No valid forecast points found for loss factor calculation")
-            return None
-            
-        # Zero tariff hours: 0-9, 16, 21-23
-        mask_zero_tariff = (df['hour'] < 10) | (df['hour'] == 16) | (df['hour'] >= 21)
-        df_zero = df[mask_zero_tariff]
-        
-        if df_zero.empty:
-            logging.warning("No zero-tariff forecast points found for loss factor calculation")
-            return None
-            
-        median_nlf = df_zero['derived_nlf'].median()
-        
-        if 0.95 <= median_nlf <= 1.25:
-            logging.info(f"Successfully calculated network loss factor from forecast: {median_nlf:.4f}")
-            return float(median_nlf)
-        else:
-            logging.warning(f"Forecast-derived network loss factor {median_nlf:.4f} is outside reasonable bounds. Ignoring.")
-            return None
-    except Exception as e:
-        logging.error(f"Error calculating forecasted loss factor: {e}")
+def _resolve_api_scaling_factor():
+    """Resolve the Amber spot scaling factor, snapping to GST when the sanity check passes.
+
+    `amber_api_scaling_factor` reconciles Amber's GST-inclusive `spot_per_kwh` display with
+    the raw AEMO wholesale price, so its true value is the GST rate. Estimating it from the
+    Amber-vs-AEMO-predispatch ratio only adds forecast/rounding noise, which then compounds
+    into network_loss_factor. So we compute it purely as a sanity check: if it sits within
+    tolerance of GST we use exactly GST; if it drifts outside, Amber may have changed their
+    spot basis — we keep the measured value and log loudly rather than snap. See
+    docs/tariff_gst_regime.md.
+    """
+    gst = CONFIG['gst_rate']
+    measured = _calculate_amber_api_scaling_factor()
+    if measured is None:
+        logging.info(f"api_scaling sanity check unavailable; using GST={gst:.4f}.")
+        return gst
+    if abs(measured - gst) <= 0.02:
+        logging.info(f"api_scaling sanity check {measured:.4f} ≈ GST; using exactly {gst:.4f}.")
+        return gst
+    logging.error(
+        f"api_scaling {measured:.4f} deviates from GST {gst:.4f} beyond tolerance — Amber may "
+        "have changed their spot basis. Using the measured value and NOT snapping."
+    )
+    return measured
+
+
+def _fit_tariff_profile(general_df, feed_in_df, api_scaling):
+    """Pooled per-band OLS: one shared loss factor + per-(leg, band) fixed adders.
+
+    Regresses the GST-adjusted price on wholesale across every interval of both legs at
+    once, so the loss factor (slope) is pooled over all data and each fixed adder (band
+    intercept) is jointly estimated. Far more precise than reconstructing per interval and
+    taking a median. Returns ``(loss, se_loss, general_map48, feed_in_map48)`` or ``None``.
+    """
+    gst = CONFIG['gst_rate']
+    wholesale, y, groups = [], [], []
+
+    def _collect(df, leg):
+        for ts, row in df.iterrows():
+            wholesale.append(row['spot'] / api_scaling)
+            if leg == 'general':
+                # Import: GST removed only when a net cost (per_kwh > 0), else GST-free.
+                y.append(row['per_kwh'] / gst if row['per_kwh'] > 0 else row['per_kwh'])
+            else:
+                y.append(-row['per_kwh'])  # feed-in leg is GST-free
+            groups.append((leg, tariff_bucket(ts.time())))
+
+    if not general_df.empty:
+        _collect(general_df, 'general')
+    if not feed_in_df.empty:
+        _collect(feed_in_df, 'feed_in')
+
+    fit = fit_shared_slope(wholesale, y, groups)
+    if fit is None:
         return None
+    loss, se_loss, intercepts = fit
+    if not (1.0 <= loss <= 1.3):
+        logging.warning(f"OLS loss factor {loss:.5f} outside [1.0, 1.3]; ignoring OLS fit.")
+        return None
+
+    slots = [(f"{h:02d}:{m:02d}:00", datetime(2000, 1, 1, h, m).time()) for h in range(24) for m in (0, 30)]
+
+    def _build(leg):
+        return {
+            key: round(intercepts.get((leg, tariff_bucket(tod)), 0.0), 4)
+            for key, tod in slots
+        }
+
+    logging.info(
+        "OLS tariff fit: loss=%.5f ± %.5f; adders=%s",
+        loss, se_loss,
+        {f"{leg}/{band}": round(v, 4) for (leg, band), v in sorted(intercepts.items())},
+    )
+    return loss, se_loss, _build('general'), _build('feed_in')
 
 def update_tariffs():
     """
@@ -3770,62 +3784,83 @@ def update_tariffs():
     """
     logging.info("--- Running in UPDATE-TARIFFS mode ---")
     local_tz = pytz.timezone(CONFIG['timezone'])
-    
-    # 1. Fetch all available future tariff data
-    general_tariff_df = _get_tariff_data(CONFIG['home_assistant']['amber_entity'], is_feed_in=False)
-    feed_in_tariff_df = _get_tariff_data(CONFIG['home_assistant']['amber_feed_in_entity'], is_feed_in=True)
+    gst = CONFIG['gst_rate']
 
-    if general_tariff_df.empty and feed_in_tariff_df.empty:
+    # 1. Fetch the raw Amber forecasts (per_kwh + spot) for both legs.
+    general_df = _fetch_amber_leg(CONFIG['home_assistant']['amber_entity'])
+    feed_in_df = _fetch_amber_leg(CONFIG['home_assistant']['amber_feed_in_entity'])
+    if general_df.empty and feed_in_df.empty:
         raise SystemExit("Could not retrieve any tariff information from Amber entities.")
 
-    final_profile = {}
-
+    # Previous scalars are the defaults / fallback for anything we can't re-estimate.
     try:
         with open(CONFIG['paths']['tariff_file'], 'r') as f:
             old_profile = json.load(f)
-            if 'amber_api_scaling_factor' in old_profile:
-                final_profile['amber_api_scaling_factor'] = old_profile['amber_api_scaling_factor']
-            if 'network_loss_factor' in old_profile:
-                final_profile['network_loss_factor'] = old_profile['network_loss_factor']
+        prev_loss = float(old_profile.get('network_loss_factor', 1.05))
     except (FileNotFoundError, json.JSONDecodeError):
-        final_profile['amber_api_scaling_factor'] = 1.10
-        final_profile['network_loss_factor'] = 1.05
+        prev_loss = 1.05
 
-    new_api_scaling = _calculate_amber_api_scaling_factor()
-    if new_api_scaling is not None:
-        final_profile['amber_api_scaling_factor'] = new_api_scaling
-        
-    new_network_loss = _calculate_forecasted_network_loss_factor()
-    if new_network_loss is not None:
-        final_profile['network_loss_factor'] = new_network_loss
+    api_scaling = _resolve_api_scaling_factor()
 
-    # 2. Generate profile for general tariff, if data exists
-    if not general_tariff_df.empty:
-        final_profile['general_tariff'] = _create_complete_profile(
-            general_tariff_df, local_tz, "general"
-        )
+    # 2. Primary: pooled per-band OLS (shared loss factor + per-band fixed adders).
+    net_loss = prev_loss
+    general_map = feed_in_map = None
+    fit = _fit_tariff_profile(general_df, feed_in_df, api_scaling)
+    if fit is not None:
+        loss, se_loss, general_map, feed_in_map = fit
+        if se_loss <= 0.02:
+            net_loss = loss
+        else:
+            logging.warning(
+                f"OLS loss factor {loss:.5f} poorly determined (se={se_loss:.4f}, likely a "
+                f"flat-spot day); keeping previous network_loss_factor {prev_loss:.5f} but "
+                "using the OLS fixed adders."
+            )
+    else:
+        # 2b. Fallback: median-smooth the per-interval reconstruction, keep previous loss.
+        logging.warning("OLS tariff fit unavailable; falling back to per-interval median reconstruction.")
+        fallback = {}
+        if not general_df.empty:
+            fallback['general_tariff'] = _create_complete_profile(
+                _reconstruct_per_interval(general_df, False, api_scaling, net_loss), local_tz, "general")
+        if not feed_in_df.empty:
+            fallback['feed_in_tariff'] = _create_complete_profile(
+                _reconstruct_per_interval(feed_in_df, True, api_scaling, net_loss), local_tz, "feed-in")
+        smoothed = smooth_tariff_maps(fallback)
+        general_map = smoothed.get('general_tariff')
+        feed_in_map = smoothed.get('feed_in_tariff')
 
-    # 3. Generate profile for feed-in tariff, if data exists
-    if not feed_in_tariff_df.empty:
-        final_profile['feed_in_tariff'] = _create_complete_profile(
-            feed_in_tariff_df, local_tz, "feed-in"
-        )
+    final_profile = {'amber_api_scaling_factor': api_scaling, 'network_loss_factor': net_loss}
+    if general_map is not None:
+        final_profile['general_tariff'] = general_map
+    if feed_in_map is not None:
+        final_profile['feed_in_tariff'] = feed_in_map
 
-    # 4. Persist. The raw per-interval reconstruction goes to *_raw.json (diagnostic);
-    #    the smoothed bucket-median profile is the production artifact (tariff_file).
-    #    tariff_file is written last and only on success, so a smoothing failure leaves
-    #    the previous good smoothed profile in place rather than a raw one.
+    # 3. Raw diagnostic: per-interval reconstruction with the resolved scaling + chosen loss.
+    raw_profile = {'amber_api_scaling_factor': api_scaling, 'network_loss_factor': net_loss}
+    if not general_df.empty:
+        raw_profile['general_tariff'] = _create_complete_profile(
+            _reconstruct_per_interval(general_df, False, api_scaling, net_loss), local_tz, "general")
+    if not feed_in_df.empty:
+        raw_profile['feed_in_tariff'] = _create_complete_profile(
+            _reconstruct_per_interval(feed_in_df, True, api_scaling, net_loss), local_tz, "feed-in")
+
+    # 4. Persist. Per-interval reconstruction -> *_raw.json (diagnostic); the OLS band-fit
+    #    (or median fallback) -> tariff_file. tariff_file is written last and only on
+    #    success, so a failure leaves the previous good production profile in place.
     tariff_file = Path(CONFIG['paths']['tariff_file'])
     raw_file = tariff_file.with_name(f"{tariff_file.stem}_raw{tariff_file.suffix}")
     try:
         with open(raw_file, 'w') as f:
-            json.dump(final_profile, f, indent=4)
+            json.dump(raw_profile, f, indent=4)
         logging.info(f"Saved raw tariff reconstruction to {raw_file}")
 
-        smoothed_profile = smooth_tariff_maps(final_profile)
         with open(tariff_file, 'w') as f:
-            json.dump(smoothed_profile, f, indent=4)
-        logging.info(f"Saved smoothed tariff profile to {tariff_file}")
+            json.dump(final_profile, f, indent=4)
+        logging.info(
+            f"Saved tariff profile to {tariff_file} "
+            f"(loss={net_loss:.5f}, api_scaling={api_scaling:.5f})"
+        )
     except Exception as e:
         logging.error(f"Failed to save tariff profile: {e}")
 

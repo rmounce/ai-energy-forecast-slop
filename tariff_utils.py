@@ -32,12 +32,60 @@ _PEAK_START, _PEAK_END = time(17, 0), time(20, 59)
 _SOLAR_START, _SOLAR_END = time(10, 0), time(15, 59)
 
 
-def _tariff_bucket(t: time) -> str:
+def tariff_bucket(t: time) -> str:
+    """Peak / Solar-sponge / Off-peak bucket for a time-of-day."""
     if _PEAK_START <= t <= _PEAK_END:
         return "peak"
     if _SOLAR_START <= t <= _SOLAR_END:
         return "solar"
     return "off_peak"
+
+
+def fit_shared_slope(
+    wholesale,
+    y,
+    groups,
+    *,
+    min_points: int = 8,
+) -> tuple[float, float, dict] | None:
+    """Pooled OLS with one shared slope and a separate intercept per group.
+
+    Fits ``y == slope * wholesale + intercept[group]`` across all observations, so a
+    single loss factor (the slope) is estimated from every interval and leg at once
+    while each group (e.g. import/off-peak, feed-in/solar) gets its own fixed adder
+    (the intercept). This is the BLUE for the reconstruction and pools the per-interval
+    rounding noise far better than taking per-interval reconstructions and medianing.
+
+    Returns ``(slope, se_slope, {group: intercept})`` or ``None`` if the design is
+    rank-deficient or there are too few points.
+    """
+    wholesale = np.asarray(wholesale, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    groups = list(groups)
+    n = len(y)
+    if n < min_points or len(wholesale) != n or len(groups) != n:
+        return None
+
+    uniq = sorted(set(groups), key=lambda g: (str(type(g)), repr(g)))
+    gidx = {g: i for i, g in enumerate(uniq)}
+    design = np.zeros((n, len(uniq) + 1), dtype=np.float64)
+    design[:, 0] = wholesale
+    for row, g in enumerate(groups):
+        design[row, 1 + gidx[g]] = 1.0
+
+    if np.linalg.matrix_rank(design) < design.shape[1]:
+        return None
+    dof = n - design.shape[1]
+    if dof <= 0:
+        return None
+
+    beta, *_ = np.linalg.lstsq(design, y, rcond=None)
+    resid = y - design @ beta
+    s2 = float(resid @ resid / dof)
+    xtx_inv = np.linalg.inv(design.T @ design)
+    se_slope = float(np.sqrt(max(s2 * xtx_inv[0, 0], 0.0)))
+    intercepts = {g: float(beta[1 + gidx[g]]) for g in uniq}
+    return float(beta[0]), se_slope, intercepts
 
 
 def smooth_tariff_maps(profile: dict) -> dict:
@@ -55,13 +103,13 @@ def smooth_tariff_maps(profile: dict) -> dict:
             continue
         buckets: dict[str, list[float]] = {"peak": [], "solar": [], "off_peak": []}
         for time_str, value in schedule.items():
-            buckets[_tariff_bucket(time.fromisoformat(time_str))].append(value)
+            buckets[tariff_bucket(time.fromisoformat(time_str))].append(value)
         medians = {
             b: (round(statistics.median(vals), 4) if vals else 0.0)
             for b, vals in buckets.items()
         }
         smoothed[key] = {
-            time_str: medians[_tariff_bucket(time.fromisoformat(time_str))]
+            time_str: medians[tariff_bucket(time.fromisoformat(time_str))]
             for time_str in schedule
         }
     return smoothed

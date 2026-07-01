@@ -164,9 +164,15 @@ Weather forecasts (BOM) and PV forecasts (Solcast) exhibit systematic biases. Da
 
 #### Tariff Pipeline
 
-`update-tariffs` → writes `tariff_profile_raw.json` (48 slots reconstructed from observed Amber data), then buckets by Peak/Solar Sponge/Off-Peak, replaces each with the bucket median, and writes `tariff_profile.json` (the smoothed version actually used). `tariff_profile.json` is written last and only on success, so a failure leaves the previous good smoothed profile intact rather than a raw one.
+`update-tariffs` reconstructs the deterministic time-of-day tariff adders from Amber's `per_kwh`/`spot_per_kwh` forecasts:
 
-At prediction time, `apply_tariffs_to_forecast()` adds network loss factor and conditionally applies GST (10%) to produce final consumer prices.
+- **`amber_api_scaling_factor`** is computed as a sanity check (Amber-vs-AEMO ratio) but its true value is the GST rate, so it is **snapped to exactly GST (1.1)** when in tolerance; a drift outside logs loudly and keeps the measured value (signals Amber changed their spot basis).
+- **Loss factor + fixed adders** come from a **pooled per-band OLS** (`tariff_utils.fit_shared_slope`): one shared slope (the network loss factor) is fit across every interval of both legs at once, with a separate intercept (fixed adder) per (leg, Peak/Solar-Sponge/Off-Peak) bucket. This pools rounding noise far better than per-interval reconstruction + median. If the slope is poorly determined (flat-spot day) the previous loss factor is retained; if the fit is unavailable it falls back to median-smoothing the per-interval reconstruction (`smooth_tariff_maps`).
+- GST convention: import leg carries GST only when a net cost; the feed-in leg is GST-free in both directions (see `docs/tariff_gst_regime.md`).
+
+Outputs: the per-interval reconstruction → `tariff_profile_raw.json` (diagnostic); the OLS band-fit → `tariff_profile.json` (production). `tariff_profile.json` is written last and only on success, so a failure leaves the previous good profile intact.
+
+At prediction time, `apply_tariffs_to_forecast()` applies the network loss factor and the GST convention above to produce final consumer prices.
 
 ---
 
@@ -239,13 +245,12 @@ Continuous queries in InfluxDB downsample raw → 5m → 30m automatically for o
 
 ---
 
-### Tariff smoothing (`tariff_utils.smooth_tariff_maps`)
+### Tariff estimation (`tariff_utils.fit_shared_slope`, `smooth_tariff_maps`)
 
-Folded into `update-tariffs` (was the standalone `smooth_tariffs.py`). Smooths the reconstructed profile to remove day-to-day volatility:
+Both folded into `update-tariffs` (the standalone `smooth_tariffs.py` is gone). Buckets are Peak (17:00–20:59), Solar Sponge (10:00–15:59), Off-Peak (all others).
 
-1. Classifies each 30-min slot: Peak (17:00–20:59), Solar Sponge (10:00–15:59), Off-Peak (all others)
-2. Replaces all slots in each bucket with the bucket median (scalars like `network_loss_factor` pass through)
-3. `update-tariffs` writes the raw reconstruction to `tariff_profile_raw.json` and the smoothed result to `tariff_profile.json`
+- **Primary — pooled OLS** (`fit_shared_slope`): fits one shared slope (network loss factor) plus a per-(leg, bucket) intercept (fixed adder) across all intervals at once. Statistically the BLUE for this linear reconstruction; pools per-interval rounding noise (Amber quantizes to 0.01 c/kWh) and yields the loss factor with a standard error.
+- **Fallback — bucket median** (`smooth_tariff_maps`): replaces each slot with its bucket median of the per-interval reconstruction; scalars pass through. Used only when the OLS fit is unavailable.
 
 ---
 

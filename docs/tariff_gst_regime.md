@@ -71,6 +71,37 @@ Round-trip verification against the live 2026-07-01 forecast reconstructs
 (solar-sponge), each with std ≈ 0.00004, and the loss-factor re-derivation returns
 ~1.119 instead of the corrupt ~1.018.
 
+## Estimation methodology (precision)
+
+Amber quantizes both `per_kwh` and `spot_per_kwh` to 4 dp ($/kWh) = **0.01 c/kWh**, so
+each field carries ±0.00005 rounding noise. Two design choices compensate:
+
+1. **Snap `amber_api_scaling_factor` to GST.** This factor reconciles Amber's
+   GST-inclusive `spot_per_kwh` display with the raw AEMO wholesale price, so its true
+   value *is* the GST rate (1.1). Estimating it from the Amber-vs-AEMO-predispatch ratio
+   only injects forecast/rounding noise, which compounds into `network_loss_factor`
+   (which is derived as `≈ 1.022 × api_scaling`). We therefore compute it only as a
+   sanity check and, when it lands within tolerance of GST, use **exactly** 1.1. A drift
+   beyond tolerance is logged as an error and the measured value kept, since it would
+   signal Amber changed their spot basis. The reverse-path fixed-adder reconstruction is
+   unchanged by this (it depends only on `net_loss / api_scaling`); the benefit is to the
+   forward path, which uses `net_loss` alone against the AEMO-scale price forecast.
+
+   GST = 1.1 is confirmed independently of this estimate: within a band, regressing import
+   `per_kwh` on feed-in `per_kwh` (same underlying spot) gives slope −1.0998 (r = 0.99999),
+   i.e. `−gst·(L_import/L_export)` with equal loss factors.
+
+2. **Pooled per-band OLS instead of per-interval median.** The reconstruction is linear
+   (`gst-adjusted price = loss·wholesale + fixed_adder`), so one least-squares fit with a
+   shared slope (the loss factor) and a per-(leg, bucket) intercept (the fixed adder)
+   estimates everything jointly and pools the rounding noise. Empirically this tightened
+   the off-peak fixed adder from a per-interval spread of ~1×10⁻⁴ to a standard error of
+   ~7×10⁻⁶ (~15×), and returns the loss factor with an error bar (e.g. 1.1247 ± 0.0003
+   from one day). If the slope is poorly determined (a flat-spot day, large SE) the
+   previous loss factor is retained; if the fit is unavailable it falls back to bucket
+   medians. A rolling multi-day window would tighten this further and is a possible future
+   step, but is deferred to avoid straddling FY and export-credit-season boundaries.
+
 ## Observed FY26 → FY27 rate changes (Adelaide, SAPN / Amber)
 
 Fixed adders from `tariff_profile.json` (ex-GST, $/kWh) and the calibration scalars:

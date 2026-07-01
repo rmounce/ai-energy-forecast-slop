@@ -17,6 +17,7 @@ from tariff_utils import (
     amber_feed_in_price_to_export_value,
     ensure_utc_index,
     export_value_to_amber_feed_in_price,
+    fit_shared_slope,
     smooth_tariff_maps,
 )
 
@@ -183,6 +184,38 @@ def test_smooth_tariff_maps_handles_missing_schedule():
     """Profile with only scalars is returned unchanged."""
     raw = {"network_loss_factor": 1.05}
     assert smooth_tariff_maps(raw) == raw
+
+
+# ── Pooled OLS fit (shared slope + per-group intercepts) ──────────────────────
+
+def test_fit_shared_slope_recovers_slope_and_intercepts():
+    """One shared slope, distinct per-group intercepts, recovered from noisy samples."""
+    rng = np.random.default_rng(0)
+    true_slope = 1.1247
+    fixed = {"import_off": 0.1462, "import_peak": 0.4001, "export_off": 0.0}
+    wholesale, y, groups = [], [], []
+    for g, b in fixed.items():
+        for w in np.linspace(-0.05, 0.30, 40):
+            wholesale.append(w)
+            # add rounding-scale noise
+            y.append(true_slope * w + b + rng.uniform(-5e-5, 5e-5))
+            groups.append(g)
+
+    slope, se_slope, intercepts = fit_shared_slope(wholesale, y, groups)
+
+    assert abs(slope - true_slope) < 1e-3
+    assert se_slope < 1e-3
+    for g, b in fixed.items():
+        assert abs(intercepts[g] - b) < 1e-3
+
+
+def test_fit_shared_slope_returns_none_when_underdetermined():
+    """Too few points, or a single-point group with no leverage, returns None."""
+    assert fit_shared_slope([0.1, 0.2], [0.1, 0.2], ["a", "a"]) is None  # < min_points
+    # rank-deficient: only one distinct wholesale value → slope not identifiable
+    w = [0.05] * 10
+    y = [0.2] * 10
+    assert fit_shared_slope(w, y, ["a"] * 10) is None
 
 
 def test_ensure_utc_index_localizes_naive_index():
