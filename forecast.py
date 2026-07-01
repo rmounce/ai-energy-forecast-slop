@@ -30,6 +30,7 @@ import re
 import zipfile
 
 from tariff_utils import (
+    dumps_decimal,
     ensure_utc_index,
     export_value_to_amber_feed_in_price,
     fit_shared_slope,
@@ -3854,11 +3855,11 @@ def update_tariffs():
     raw_file = tariff_file.with_name(f"{tariff_file.stem}_raw{tariff_file.suffix}")
     try:
         with open(raw_file, 'w') as f:
-            json.dump(raw_profile, f, indent=4)
+            f.write(dumps_decimal(raw_profile))
         logging.info(f"Saved raw tariff reconstruction to {raw_file}")
 
         with open(tariff_file, 'w') as f:
-            json.dump(final_profile, f, indent=4)
+            f.write(dumps_decimal(final_profile))
         logging.info(
             f"Saved tariff profile to {tariff_file} "
             f"(loss={net_loss:.5f}, api_scaling={api_scaling:.5f})"

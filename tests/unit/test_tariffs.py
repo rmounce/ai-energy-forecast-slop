@@ -15,6 +15,7 @@ from conftest import ROOT, _make_price_df
 import forecast as fc
 from tariff_utils import (
     amber_feed_in_price_to_export_value,
+    dumps_decimal,
     ensure_utc_index,
     export_value_to_amber_feed_in_price,
     fit_shared_slope,
@@ -216,6 +217,20 @@ def test_fit_shared_slope_returns_none_when_underdetermined():
     w = [0.05] * 10
     y = [0.2] * 10
     assert fit_shared_slope(w, y, ["a"] * 10) is None
+
+
+def test_dumps_decimal_avoids_scientific_notation():
+    """Small floats render as plain decimals but parse back to the same values."""
+    obj = {
+        "network_loss_factor": 1.12497,
+        "feed_in_tariff": {"00:00:00": -4e-06, "12:00:00": -0.009998, "17:00:00": 0.0},
+        "general_tariff": {"00:00:00": 0.145813},
+    }
+    text = dumps_decimal(obj)
+
+    assert "e-" not in text.lower() and "e+" not in text.lower()
+    assert "-0.000004" in text
+    assert json.loads(text) == obj
 
 
 def test_ensure_utc_index_localizes_naive_index():

@@ -16,6 +16,7 @@ separately persisted historical effective-rate dataset.
 from __future__ import annotations
 
 import json
+import re
 import statistics
 from datetime import time
 from pathlib import Path
@@ -23,6 +24,23 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytz
+
+
+_SCI_NUMBER = re.compile(r"-?\d+\.?\d*[eE][+-]?\d+")
+
+
+def dumps_decimal(obj, *, indent: int = 4) -> str:
+    """json.dumps, but with scientific-notation floats rewritten as plain decimals.
+
+    JSON numbers are notation-agnostic, but Python renders small floats (|x| < 1e-4) in
+    scientific notation by default (e.g. ``-4e-06``). Tariff adders can be that small, so
+    this keeps the profile files human-readable as fixed decimals without changing values.
+    """
+    def _plain(match: re.Match) -> str:
+        s = format(float(match.group(0)), ".10f").rstrip("0").rstrip(".")
+        return s if s not in ("", "-", "-0") else "0"
+
+    return _SCI_NUMBER.sub(_plain, json.dumps(obj, indent=indent))
 
 
 # Time-of-day buckets used to smooth the reconstructed tariff profile. Each interval
