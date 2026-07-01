@@ -82,7 +82,7 @@ Seven pairs of `.service` + `.timer` units plus one event-driven daemon drive th
 | `ai-energy-listener.service` | Event-driven (Amber APF state change in HA; 30-min idle heartbeat) | `forecast.py predict-price --dynamic-handoff --publish-hass` — added 2026-05-27, see [docs/event_driven_predict_price_plan.md](docs/event_driven_predict_price_plan.md) |
 | `ai-energy-predict.timer` | Every 30 min (`:01` and `:31`) | `forecast.py predict-load --publish-hass --publish-covariates` — price path moved to the listener 2026-05-27; cadence aligned with the 30-min InfluxDB CQ granularity |
 | `ai-energy-train.timer` | Monday 12:00 | `forecast.py train-load && forecast.py train-price` |
-| `ai-energy-update-tariffs.timer` | Daily 00:00 | `forecast.py update-tariffs && smooth_tariffs.py && forecast.py backfill-actuals && forecast.py update-adjusters` |
+| `ai-energy-update-tariffs.timer` | Daily 00:00 | `forecast.py update-tariffs && forecast.py backfill-actuals && forecast.py update-adjusters` |
 
 **AEMO data collection (added 2026-04-10):**
 
@@ -164,8 +164,7 @@ Weather forecasts (BOM) and PV forecasts (Solcast) exhibit systematic biases. Da
 
 #### Tariff Pipeline
 
-`update-tariffs` → builds `tariff_profile_raw.json` (48 slots of real observed Amber data)
-→ `smooth_tariffs.py` buckets by Peak/Solar Sponge/Off-Peak and replaces each with the bucket median → `tariff_profile.json` (the smoothed version actually used)
+`update-tariffs` → writes `tariff_profile_raw.json` (48 slots reconstructed from observed Amber data), then buckets by Peak/Solar Sponge/Off-Peak, replaces each with the bucket median, and writes `tariff_profile.json` (the smoothed version actually used). `tariff_profile.json` is written last and only on success, so a failure leaves the previous good smoothed profile intact rather than a raw one.
 
 At prediction time, `apply_tariffs_to_forecast()` adds network loss factor and conditionally applies GST (10%) to produce final consumer prices.
 
@@ -240,14 +239,13 @@ Continuous queries in InfluxDB downsample raw → 5m → 30m automatically for o
 
 ---
 
-### `smooth_tariffs.py`
+### Tariff smoothing (`tariff_utils.smooth_tariff_maps`)
 
-Standalone utility called by the nightly `ai-energy-update-tariffs` service. Smooths the tariff profile to remove day-to-day volatility:
+Folded into `update-tariffs` (was the standalone `smooth_tariffs.py`). Smooths the reconstructed profile to remove day-to-day volatility:
 
-1. Loads `tariff_profile.json`
-2. Classifies each 30-min slot: Peak (17:00–20:59), Solar Sponge (10:00–15:59), Off-Peak (all others)
-3. Replaces all slots in each bucket with the bucket median
-4. Saves smoothed to `tariff_profile.json`, original backed up to `tariff_profile_raw.json`
+1. Classifies each 30-min slot: Peak (17:00–20:59), Solar Sponge (10:00–15:59), Off-Peak (all others)
+2. Replaces all slots in each bucket with the bucket median (scalars like `network_loss_factor` pass through)
+3. `update-tariffs` writes the raw reconstruction to `tariff_profile_raw.json` and the smoothed result to `tariff_profile.json`
 
 ---
 
@@ -455,7 +453,7 @@ This is the most complex HA file. It does:
 | `price_forecast_log.csv` | Historical predictions + actuals for price (~330MB, growing) |
 | `load_forecast_log.csv` | Historical predictions + actuals for load (~340MB, growing) |
 | `tariff_profile.json` | Smoothed 48-slot daily tariff profile |
-| `tariff_profile_raw.json` | Unsmoothed tariff data (pre-smoothing backup) |
+| `tariff_profile_raw.json` | Raw per-interval tariff reconstruction (diagnostic; pre-smoothing) |
 | `adjuster_*.json` | Weather covariate bias corrections by time-of-day |
 | `price_model.pkl` / `price_p30_model.pkl` / `price_p70_model.pkl` | Trained price models (~128MB each) |
 | `load_model.pkl` / `load_p65_model.pkl` / `load_p75_model.pkl` | Trained load models (~82MB each) |

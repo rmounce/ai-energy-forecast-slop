@@ -33,6 +33,7 @@ from tariff_utils import (
     ensure_utc_index,
     export_value_to_amber_feed_in_price,
     load_tariff_profile,
+    smooth_tariff_maps,
     tariffed_price_frame_from_wholesale_mwh,
 )
 from eval.retro_tier1_inference import build_feature_dict as build_tier1_feature_dict, build_long_matrix_for_model as build_tier1_long_matrix
@@ -3810,11 +3811,21 @@ def update_tariffs():
             feed_in_tariff_df, local_tz, "feed-in"
         )
 
-    # 4. Save the combined profile to disk
+    # 4. Persist. The raw per-interval reconstruction goes to *_raw.json (diagnostic);
+    #    the smoothed bucket-median profile is the production artifact (tariff_file).
+    #    tariff_file is written last and only on success, so a smoothing failure leaves
+    #    the previous good smoothed profile in place rather than a raw one.
+    tariff_file = Path(CONFIG['paths']['tariff_file'])
+    raw_file = tariff_file.with_name(f"{tariff_file.stem}_raw{tariff_file.suffix}")
     try:
-        with open(CONFIG['paths']['tariff_file'], 'w') as f:
+        with open(raw_file, 'w') as f:
             json.dump(final_profile, f, indent=4)
-        logging.info(f"Successfully saved combined tariff profile to {CONFIG['paths']['tariff_file']}")
+        logging.info(f"Saved raw tariff reconstruction to {raw_file}")
+
+        smoothed_profile = smooth_tariff_maps(final_profile)
+        with open(tariff_file, 'w') as f:
+            json.dump(smoothed_profile, f, indent=4)
+        logging.info(f"Saved smoothed tariff profile to {tariff_file}")
     except Exception as e:
         logging.error(f"Failed to save tariff profile: {e}")
 

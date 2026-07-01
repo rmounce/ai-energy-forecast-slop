@@ -16,11 +16,55 @@ separately persisted historical effective-rate dataset.
 from __future__ import annotations
 
 import json
+import statistics
+from datetime import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytz
+
+
+# Time-of-day buckets used to smooth the reconstructed tariff profile. Each interval
+# is collapsed to its bucket median so the deterministic adders don't inherit the
+# per-interval noise of a single day's reconstruction.
+_PEAK_START, _PEAK_END = time(17, 0), time(20, 59)
+_SOLAR_START, _SOLAR_END = time(10, 0), time(15, 59)
+
+
+def _tariff_bucket(t: time) -> str:
+    if _PEAK_START <= t <= _PEAK_END:
+        return "peak"
+    if _SOLAR_START <= t <= _SOLAR_END:
+        return "solar"
+    return "off_peak"
+
+
+def smooth_tariff_maps(profile: dict) -> dict:
+    """Return a copy of `profile` with each tariff schedule collapsed to bucket medians.
+
+    Only the `general_tariff` and `feed_in_tariff` maps are smoothed; scalar fields
+    (e.g. `amber_api_scaling_factor`, `network_loss_factor`) are passed through
+    unchanged. Each HH:MM:SS interval is replaced by the median of its Peak /
+    Solar-sponge / Off-peak bucket, rounded to 4 dp.
+    """
+    smoothed = dict(profile)
+    for key in ("general_tariff", "feed_in_tariff"):
+        schedule = profile.get(key)
+        if not schedule:
+            continue
+        buckets: dict[str, list[float]] = {"peak": [], "solar": [], "off_peak": []}
+        for time_str, value in schedule.items():
+            buckets[_tariff_bucket(time.fromisoformat(time_str))].append(value)
+        medians = {
+            b: (round(statistics.median(vals), 4) if vals else 0.0)
+            for b, vals in buckets.items()
+        }
+        smoothed[key] = {
+            time_str: medians[_tariff_bucket(time.fromisoformat(time_str))]
+            for time_str in schedule
+        }
+    return smoothed
 
 
 def load_tariff_profile(config: dict, root: Path) -> tuple[dict[str, float], dict[str, float], float]:

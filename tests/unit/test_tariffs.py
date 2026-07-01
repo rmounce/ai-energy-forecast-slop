@@ -17,6 +17,7 @@ from tariff_utils import (
     amber_feed_in_price_to_export_value,
     ensure_utc_index,
     export_value_to_amber_feed_in_price,
+    smooth_tariff_maps,
 )
 
 
@@ -136,6 +137,52 @@ def test_export_value_amber_feed_in_boundary_conversion():
     assert amber_feed_in_price_to_export_value(
         export_value_to_amber_feed_in_price(0.25)
     ) == 0.25
+
+
+def _slots(peak, solar, off):
+    """Build a 48-slot HH:MM:SS schedule with per-bucket values."""
+    out = {}
+    for hh in range(24):
+        for mm in (0, 30):
+            key = f"{hh:02d}:{mm:02d}:00"
+            if 17 <= hh <= 20:
+                out[key] = peak
+            elif 10 <= hh <= 15:
+                out[key] = solar
+            else:
+                out[key] = off
+    return out
+
+
+def test_smooth_tariff_maps_collapses_to_bucket_median():
+    """Each bucket is replaced by its median; scalars pass through untouched."""
+    raw = {
+        "network_loss_factor": 1.1234,
+        "amber_api_scaling_factor": 1.10,
+        "general_tariff": _slots(0.40, 0.07, 0.146),
+        "feed_in_tariff": _slots(0.001, -0.0099, 0.0004),
+    }
+    # perturb a few slots so the median differs from a flat value
+    raw["general_tariff"]["17:00:00"] = 0.42
+    raw["feed_in_tariff"]["10:00:00"] = -0.0105
+
+    out = smooth_tariff_maps(raw)
+
+    # scalars untouched, input not mutated
+    assert out["network_loss_factor"] == 1.1234
+    assert raw["general_tariff"]["17:00:00"] == 0.42
+    # every slot within a bucket is now identical (the bucket median)
+    assert len({v for k, v in out["general_tariff"].items() if k.startswith("17")}) == 1
+    peak_vals = [v for k, v in out["general_tariff"].items() if 17 <= int(k[:2]) <= 20]
+    assert len(set(peak_vals)) == 1
+    solar_fip = {v for k, v in out["feed_in_tariff"].items() if 10 <= int(k[:2]) <= 15}
+    assert solar_fip == {-0.0099}  # median of mostly -0.0099 with one -0.0105
+
+
+def test_smooth_tariff_maps_handles_missing_schedule():
+    """Profile with only scalars is returned unchanged."""
+    raw = {"network_loss_factor": 1.05}
+    assert smooth_tariff_maps(raw) == raw
 
 
 def test_ensure_utc_index_localizes_naive_index():
