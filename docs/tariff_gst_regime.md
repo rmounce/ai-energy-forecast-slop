@@ -4,20 +4,31 @@
 
 The pipeline reconstructs deterministic time-of-day tariff *adders* (`general_tariff`,
 `feed_in_tariff` in `tariff_profile.json`) by stripping the wholesale component out of
-Amber's reported `per_kwh` prices. Around the FY26 → FY27 boundary (~1 July 2026) Amber
-changed how GST is applied to the **feed-in (export) leg**, which broke that
-reconstruction until the code was updated to match.
+Amber's reported `per_kwh` prices. Around the FY26 → FY27 boundary (~1 July 2026) the
+feed-in (export) `per_kwh` from Amber's **live pricing API** stopped carrying GST, which
+broke that reconstruction until the code was updated to match.
+
+> **Correction (2026-07-01, from bill reconciliation):** this was *not* a billing/behavioural
+> change. PDF bills confirm feed-in credits have been **GST-free the entire time** (all 12
+> FY26 bills; standing ATO residential rule). What changed at ~1 July was Amber's price-**API
+> representation** catching up to the always-GST-free billing reality — a representation
+> change, not economic. See `docs/tariff_gst_billing_reconciliation.md`. That same
+> reconciliation retired the **import sign guard** (the bills apply GST to negative-usage
+> months too): the import leg now carries GST unconditionally, as reflected in the rule below.
 
 **Rule (verified against live forecasts on 2026-07-01):**
 
-- **Import (general) leg** carries GST, and only when the price is a net **cost** (`> 0`).
-  A negative import price (being paid to consume) is GST-free.
+- **Import (general) leg** carries GST **unconditionally**, both signs — including a
+  negative import price (being paid to consume). Bills levy GST on the net usage regardless
+  of sign; the old `> 0` sign guard was dropped 2026-07-01 (see
+  `docs/tariff_gst_billing_reconciliation.md`).
 - **Feed-in (export) leg is GST-free in both directions** — export *credits* (you are
   paid) *and* the solar-sponge export *charge* (you pay to export) alike.
 
-This is a **directional** (buy-vs-sell) rule, not a sign-conditional one. We explicitly
-tested and rejected the "GST on whatever costs you, either leg" hypothesis: the feed-in
-export charge is not GST'd.
+This is a **directional** (buy-vs-sell) rule, not a sign-conditional one: GST is decided by
+the *leg* (import vs export), never by the sign of the price. We explicitly tested and
+rejected the "GST on whatever costs you, either leg" hypothesis: the feed-in export charge
+is not GST'd.
 
 ## Evidence
 
@@ -33,13 +44,17 @@ Splitting feed-in by sign of spot (credit vs export charge) gives the same slope
 `−net_loss` and an implied GST multiplier of ≈ 1.00 in **both** cases, including the
 solar-sponge export charge. So the export leg is uniformly GST-free.
 
-Untestable at present: negative **import** prices (import stays positive except during
-summer solar-sponge negative-spot events) and large feed-in export charges. We keep the
-import sign guard (GST only on positive cost) as the low-regret choice for the former.
+Rarely exercised: negative **import** prices (import stays positive except during summer
+solar-sponge negative-spot events) and large feed-in export charges. The import leg was
+originally given a `> 0` sign guard as a low-regret default; the FY26 bills later showed
+GST *is* levied on negative-usage months, so the guard was removed (import GST is now
+unconditional — see `tariff_gst_billing_reconciliation.md`).
 
 ## Why it broke
 
-In FY26 the feed-in `per_kwh` was GST-*inclusive* (slope `−gst·net_loss`). The reverse
+In FY26 the **live price API's** feed-in `per_kwh` was reported GST-*inclusive* (slope
+`−gst·net_loss`) — even though the underlying billing was always GST-free (see the
+correction note above and `tariff_gst_billing_reconciliation.md`). The reverse
 path did `-remove_gst(per_kwh) - wholesale·loss`, and the two GST factors cancelled
 exactly, so `feed_in_tariff` reconstructed to a clean `0` / `−0.01` regardless of spot.
 

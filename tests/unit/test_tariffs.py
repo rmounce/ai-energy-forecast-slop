@@ -1,6 +1,6 @@
 """
 Tests for apply_tariffs_to_forecast():
-  - GST applied to general_price when it is a net cost (> 0), not when negative
+  - GST applied to general_price unconditionally (import leg carries GST in both signs)
   - feed_in_price is GST-free in both directions (export leg carries no GST)
   - Loss factor applied to both paths
 """
@@ -48,14 +48,25 @@ def test_general_price_positive_wholesale_has_gst():
     assert df["general_price"].iloc[0] > 0.10
 
 
-def test_general_price_negative_wholesale_no_gst():
-    """Negative wholesale → general_price_ex_gst ≤ 0 → no GST multiplier."""
-    df = _make_price_df([-0.20])
+def _general_tariff_at(local_key: str) -> float:
+    """Read the general fixed adder for a given HH:MM:SS key from the live profile."""
+    with open(fc.CONFIG["paths"]["tariff_file"]) as f:
+        return json.load(f)["general_tariff"][local_key]
+
+
+def test_general_price_negative_wholesale_still_has_gst():
+    """Negative import price still carries GST — the `> 0` sign guard was dropped.
+
+    Bills levy GST on the net usage regardless of sign (a negative-usage month is still
+    GST'd). Regression guard for that fix; see docs/tariff_gst_billing_reconciliation.md.
+    """
+    wholesale = -0.20
+    df = _make_price_df([wholesale])  # 2025-06-01 00:00 UTC → 09:30 Adelaide (off-peak)
     _apply(df)
-    # general_price_ex_gst = (-0.20 * 1.05) + general_tariff
-    # Even with a positive tariff, if result ≤ 0 then no GST.
-    # At midnight (00:00) tariff ≈ 0.13 $/kWh.  -0.20 * 1.05 + 0.13 = -0.081 < 0 → no GST.
-    assert df["general_price"].iloc[0] < 0
+    gp = df["general_price"].iloc[0]
+    ex_gst = wholesale * LOSS + _general_tariff_at("09:30:00")
+    assert ex_gst < 0                     # genuinely exercising the negative branch
+    assert abs(gp - ex_gst * GST) < 1e-9  # GST applied unconditionally, not skipped
 
 
 def test_general_price_units_positive(fixed_loss_factor):

@@ -556,16 +556,14 @@ def get_amber_spot_price_forecast(apply_loss_factor=True):
     return df
 
 def add_gst(price):
-    if price > 0:
-        return price * CONFIG['gst_rate']
-    else:
-        return price
+    # Import (general) leg carries GST unconditionally — including negative-price
+    # intervals (paid to consume). Confirmed against bills: GST is levied on the net
+    # usage regardless of sign. See docs/tariff_gst_billing_reconciliation.md.
+    return price * CONFIG['gst_rate']
 
 def remove_gst(price):
-    if price > 0:
-        return price / CONFIG['gst_rate']
-    else:
-        return price
+    # Inverse of add_gst; unconditional (see note there).
+    return price / CONFIG['gst_rate']
 
 def get_amber_advanced_forecast(price_key='advanced_price_predicted', apply_loss_factor=True):
     """
@@ -3538,10 +3536,10 @@ def apply_tariffs_to_forecast(pred_df):
     general_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['general_tariff']
     feed_in_price_ex_gst = (pred_df['wholesale_price'] * loss_factor) + pred_df['feed_in_tariff']
 
-    # Import (general) leg carries GST, but only when it is a net cost (> 0); a negative
-    # import price (paid to consume) keeps its sign guard. The feed-in (export) leg is
-    # GST-free in both directions — credits and export charges alike (Amber, from ~FY27).
-    pred_df['general_price'] = np.where(general_price_ex_gst > 0, general_price_ex_gst * CONFIG['gst_rate'], general_price_ex_gst)
+    # Import (general) leg carries GST unconditionally, both signs (bills levy GST on the
+    # net usage regardless of sign; see docs/tariff_gst_billing_reconciliation.md). The
+    # feed-in (export) leg is GST-free in both directions — credits and export charges alike.
+    pred_df['general_price'] = general_price_ex_gst * CONFIG['gst_rate']
     pred_df['feed_in_price'] = feed_in_price_ex_gst
 
     pred_df.drop(columns=['local_time', 'general_tariff', 'feed_in_tariff'], inplace=True)
@@ -3603,14 +3601,13 @@ def _reconstruct_per_interval(df, is_feed_in, api_scaling, net_loss):
 
     Mirrors the GST convention in apply_tariffs_to_forecast so forward/reverse are exact
     inverses: the feed-in (export) leg is GST-free in both signs, while the import leg
-    carries GST only when it is a net cost (per_kwh > 0). See docs/tariff_gst_regime.md.
+    carries GST unconditionally (both signs). See docs/tariff_gst_regime.md.
     """
     loss_spot = (df['spot'] / api_scaling) * net_loss
     if is_feed_in:
         tariff = -df['per_kwh'] - loss_spot
     else:
-        gross = np.where(df['per_kwh'] > 0, df['per_kwh'] / CONFIG['gst_rate'], df['per_kwh'])
-        tariff = gross - loss_spot
+        tariff = (df['per_kwh'] / CONFIG['gst_rate']) - loss_spot
     return pd.DataFrame({'tariff': tariff}, index=df.index)
 
 def _create_complete_profile(tariff_df, local_tz, tariff_type_for_logging):
@@ -3744,8 +3741,8 @@ def _fit_tariff_profile(general_df, feed_in_df, api_scaling):
         for ts, row in df.iterrows():
             wholesale.append(row['spot'] / api_scaling)
             if leg == 'general':
-                # Import: GST removed only when a net cost (per_kwh > 0), else GST-free.
-                y.append(row['per_kwh'] / gst if row['per_kwh'] > 0 else row['per_kwh'])
+                # Import: GST removed unconditionally (both signs carry GST).
+                y.append(row['per_kwh'] / gst)
             else:
                 y.append(-row['per_kwh'])  # feed-in leg is GST-free
             groups.append((leg, tariff_bucket(ts.time())))

@@ -6,8 +6,8 @@ These utilities intentionally implement the same current-tariff assumptions used
 by live forecast publication and rolling MPC eval:
   - wholesale price plus network loss factor
   - separate general and feed-in tariff schedules
-  - GST on the import leg only, and only when it is a net cost (> 0); the feed-in
-    (export) leg is GST-free in both directions (Amber, from ~FY27)
+  - GST on the import leg unconditionally (both signs); the feed-in
+    (export) leg is GST-free in both directions
 
 This supports "current-tariff backtest" experiments without requiring a
 separately persisted historical effective-rate dataset.
@@ -220,14 +220,10 @@ def tariffed_price_frame_from_wholesale_mwh(
     general_price_ex_gst = frame["wholesale_price"] * network_loss_factor + frame["general_tariff"]
     feed_in_price_ex_gst = frame["wholesale_price"] * network_loss_factor + frame["feed_in_tariff"]
 
-    # GST applies to the import leg only, and only when it is a net cost (> 0). The
-    # feed-in (export) leg is GST-free in both directions — credits and export charges
-    # alike (Amber, from ~FY27; see docs/tariff_gst_regime.md).
-    frame["general_price"] = np.where(
-        general_price_ex_gst > 0,
-        general_price_ex_gst * gst_rate,
-        general_price_ex_gst,
-    )
+    # GST applies to the import leg unconditionally (both signs; bills levy GST on the net
+    # usage regardless of sign — see docs/tariff_gst_billing_reconciliation.md). The feed-in
+    # (export) leg is GST-free in both directions — credits and export charges alike.
+    frame["general_price"] = general_price_ex_gst * gst_rate
     frame["feed_in_price"] = feed_in_price_ex_gst
     frame["general_price_mwh"] = frame["general_price"] * 1000.0
     frame["feed_in_price_mwh"] = frame["feed_in_price"] * 1000.0
