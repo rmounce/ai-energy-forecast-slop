@@ -94,7 +94,7 @@ def smooth_tariff_maps(profile: dict) -> dict:
     Only the `general_tariff` and `feed_in_tariff` maps are smoothed; scalar fields
     (e.g. `amber_api_scaling_factor`, `network_loss_factor`) are passed through
     unchanged. Each HH:MM:SS interval is replaced by the median of its Peak /
-    Solar-sponge / Off-peak bucket, rounded to 4 dp.
+    Solar-sponge / Off-peak bucket, rounded to 6 dp.
     """
     smoothed = dict(profile)
     for key in ("general_tariff", "feed_in_tariff"):
@@ -105,7 +105,7 @@ def smooth_tariff_maps(profile: dict) -> dict:
         for time_str, value in schedule.items():
             buckets[tariff_bucket(time.fromisoformat(time_str))].append(value)
         medians = {
-            b: (round(statistics.median(vals), 4) if vals else 0.0)
+            b: (round(statistics.median(vals), 6) if vals else 0.0)
             for b, vals in buckets.items()
         }
         smoothed[key] = {

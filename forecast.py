@@ -3765,8 +3765,10 @@ def _fit_tariff_profile(general_df, feed_in_df, api_scaling):
     slots = [(f"{h:02d}:{m:02d}:00", datetime(2000, 1, 1, h, m).time()) for h in range(24) for m in (0, 30)]
 
     def _build(leg):
+        # 6 dp: the OLS intercept SEs are ~6e-6–1.3e-5, so a 1e-4 (Amber display) quantum
+        # would dominate the error and throw away the precision pooling just earned.
         return {
-            key: round(intercepts.get((leg, tariff_bucket(tod)), 0.0), 4)
+            key: round(intercepts.get((leg, tariff_bucket(tod)), 0.0), 6)
             for key, tod in slots
         }
 
@@ -3803,13 +3805,13 @@ def update_tariffs():
     api_scaling = _resolve_api_scaling_factor()
 
     # 2. Primary: pooled per-band OLS (shared loss factor + per-band fixed adders).
-    net_loss = prev_loss
+    net_loss = round(prev_loss, 6)
     general_map = feed_in_map = None
     fit = _fit_tariff_profile(general_df, feed_in_df, api_scaling)
     if fit is not None:
         loss, se_loss, general_map, feed_in_map = fit
         if se_loss <= 0.02:
-            net_loss = loss
+            net_loss = round(loss, 6)
         else:
             logging.warning(
                 f"OLS loss factor {loss:.5f} poorly determined (se={se_loss:.4f}, likely a "
