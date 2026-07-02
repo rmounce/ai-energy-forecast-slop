@@ -3,7 +3,7 @@
 How the heat-pump hot-water (HWC) unit should exploit **PV surplus / curtailment** and
 **negative grid buy prices**, and how that fits the existing flexible-load controllers
 (battery, A/C, dump-load fan heaters). Design + phased plan. Read alongside
-`docs/hwc_handover.md`, `docs/hwc_dp_planner.md`, `docs/hwc_aquatech_entities.md`.
+`docs/hwc/handover.md`, `docs/hwc/dp_planner.md`, `docs/hwc/aquatech_entities.md`.
 
 Status: **design agreed 2026-06-28, not yet implemented.** Neither event fires in winter, so
 there is no rush; Phase 2 has runway to be done properly rather than as a stopgap.

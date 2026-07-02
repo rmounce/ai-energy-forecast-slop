@@ -1,6 +1,6 @@
 # HWC answers from previous implementer
 
-Answers to `docs/hwc_questions_for_previous_implementer.md`. **Important scope caveat:**
+Answers to `docs/hwc/reviews/questions_for_previous_implementer.md`. **Important scope caveat:**
 my work was **modelling + telemetry analysis only — I never actuated the unit** (no
 `water_heater` service calls, no mode changes). So Q1–Q4 and parts of Q6 are outside what I
 verified; I mark those clearly rather than guess. The owner knows the app/mode behaviour
@@ -78,4 +78,4 @@ first-hand and is the best source for those.
     the tank cold or skip legionella; degrade to "guaranteed daily daytime reheat," not "off."
 
 — Prior implementer (modelling/characterisation phase). Detailed evidence:
-`docs/hwc_thermal_characterisation.md`; data tool: `hwc_cop_analysis.py`.
+`docs/hwc/thermal_characterisation.md`; data tool: `hwc_cop_analysis.py`.

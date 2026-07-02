@@ -8,7 +8,7 @@ Loads a window CSV from ``hwc_soc_extract.py`` and produces diagnostic plots:
   cop      phase-2 COP vs condensing (exhaust) temp, estimated from a clean reheat where the
            tank is destratified and the probe rate ≈ the bulk thermal rate.
 
-Design context: docs/hwc_thermal_characterisation.md, docs/hwc_short_cycle_review_2026-06-26.md.
+Design context: docs/hwc/thermal_characterisation.md, docs/hwc/reviews/short_cycle_review_2026-06-26.md.
 """
 from __future__ import annotations
 
@@ -141,7 +141,7 @@ def replay(df: pd.DataFrame, p: SoCParams | None = None) -> pd.DataFrame:
     fitting it to the probe. The build duration then matches the data by construction, and the
     *rise* phase + final probe are a genuine over-identified **prediction**. Residual there tests
     the rise COP and the probe map ``g``. Parameters are first-cut
-    (``docs/hwc_2state_soc_model.md`` "What still needs fitting"); this drives their refinement.
+    (``docs/hwc/2state_soc_model.md`` "What still needs fitting"); this drives their refinement.
     """
     p = p or SoCParams()
     rows = []

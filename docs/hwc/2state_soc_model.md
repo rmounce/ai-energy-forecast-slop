@@ -7,13 +7,13 @@
 > the single rising tank temperature the more faithful state. The FULL/TOP-UP discontinuity this
 > model was meant to remove is instead handled by a **continuous heat-rate taper** on the
 > single-temp DP (`hwc_planner._heat_rate_c_per_hour`, `heat_rate_taper_width_c`; see
-> [hwc_dp_planner.md](hwc_dp_planner.md)). The code + two `xfail` seed-divergence regression tests
+> [dp_planner.md](dp_planner.md)). The code + two `xfail` seed-divergence regression tests
 > are kept behind the flag for a possible future revisit. The rest of this spec is retained as the
 > design record.
 
 Original status: agreed design (2026-06-26). Empirical basis:
-[hwc_thermal_characterisation.md](hwc_thermal_characterisation.md) Findings 3–5. Root-cause that
-motivated the rewrite: [hwc_short_cycle_review_2026-06-26.md](hwc_short_cycle_review_2026-06-26.md).
+[thermal_characterisation.md](thermal_characterisation.md) Findings 3–5. Root-cause that
+motivated the rewrite: [reviews/short_cycle_review_2026-06-26.md](reviews/short_cycle_review_2026-06-26.md).
 
 ## Why a second state
 

@@ -22,7 +22,7 @@ from config_utils import load_config
 
 DEFAULT_CYCLES_CSV = "data/hwc_cop_cycles.csv"
 DEFAULT_REPORT_CSV = "data/hwc_block_model_validation.csv"
-DEFAULT_REPORT_MD = "docs/hwc_block_model_validation.md"
+DEFAULT_REPORT_MD = "docs/hwc/block_model_validation.md"
 
 
 def load_validation_cycles_from_frame(df: pd.DataFrame, *, target_c: float = 60.0) -> pd.DataFrame:

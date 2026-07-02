@@ -11,7 +11,7 @@ unit-testable without a database or network:
     the latest cached tank/energy readings.
   - ``build_payload`` assembles the ``sensor.hwc_cycles`` state + attributes.
 
-Design intent (docs/hwc_cycle_reporting.md, docs/hwc_local_store.md): publish-only telemetry, fully
+Design intent (docs/hwc/cycle_reporting.md, docs/hwc/local_store.md): publish-only telemetry, fully
 firewalled from the planner/executor — a failure here must never perturb actuation.
 """
 

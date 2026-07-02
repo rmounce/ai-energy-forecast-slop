@@ -331,24 +331,24 @@ hwc:
   dp_planner:
     # survivors_per_state: 2 keeps the max-temp ("run a bit longer") path as well as the
     # min-cost one. Enabled at owner's request; measured net-negative (~1c/plan) and NOT
-    # objectively helpful (errs warmer/safer). See docs/hwc_dp_planner.md. Revert to 1 anytime.
+    # objectively helpful (errs warmer/safer). See docs/hwc/dp_planner.md. Revert to 1 anytime.
     survivors_per_state: 2
     # min_temp floor penalty, AUD/°C charged EACH 5-min step under min_temp. Code default 5.0
     # makes the floor effectively hard (yields only above ~$47/kWh). 0.1 lets the tank ride
     # through high prices — yields above ~$0.94/kWh single-step — while the per-step
-    # accumulation still caps how long/deep it sits under-floor. See docs/hwc_dp_planner.md.
+    # accumulation still caps how long/deep it sits under-floor. See docs/hwc/dp_planner.md.
     min_temp_penalty_aud_per_c: 0.1
     # Opt-in two-state (V_hot, T_hot) decision model — replaces the FULL/TOP-UP regime latch with
     # the continuous stratified-tank model (no 53 °C discontinuity). Render + executor/EMHASS
     # contract unchanged; the daemon tracks (V_hot, T_hot) in data/hwc_daemon_state.json and
-    # publishes sensor.hwc_soc_state for the apexcharts card. See docs/hwc_2state_soc_model.md.
+    # publishes sensor.hwc_soc_state for the apexcharts card. See docs/hwc/2state_soc_model.md.
     # SHELVED 2026-06-27. The 2-state plan was less plausible than the legacy single-state DP: the
     # build phase grows V_hot at ~const T_hot, so the temperature-driven compressor-power model
     # flatlines during build instead of rising ~linearly with the run as observed in practice. That
     # power signature is evidence the single rising tank temperature (legacy) is the more faithful
     # model; splitting into (V_hot, T_hot) breaks the monotonic power<->temp relationship. The seed
     # divergence (Option 2) is real but orthogonal and would not fix the power shape. Code + xfail
-    # regression tests kept for a possible future revisit. See docs/hwc_2state_soc_model.md.
+    # regression tests kept for a possible future revisit. See docs/hwc/2state_soc_model.md.
     soc_model: false
     soc:
       t_mains_c: 18.0              # Adelaide winter mains/inlet (model parameter; tune seasonally)
@@ -383,11 +383,11 @@ hwc:
     compressor_off_debounce_seconds: 600
   # Publish-only per-cycle reporting to sensor.hwc_cycles (table of recent heat-pump runs + a live
   # in-progress row). Firewalled from the planner/executor — a failure here never affects
-  # actuation. See docs/hwc_cycle_reporting.md.
+  # actuation. See docs/hwc/cycle_reporting.md.
   reporting:
     enabled: true
     cycles_entity: sensor.hwc_cycles
-    # Durable local system-of-record (docs/hwc_local_store.md). The daemon records every cycle
+    # Durable local system-of-record (docs/hwc/local_store.md). The daemon records every cycle
     # here live (30 s trace + precise compressor-edge snapshots) and publishes the card from it;
     # InfluxDB is no longer read for HWC.
     db_path: data/hwc_cycles.sqlite
@@ -395,7 +395,7 @@ hwc:
     history_len: 20           # completed rows shown in sensor.hwc_cycles
     min_cycle_seconds: 300    # discard runs shorter than this (defrost flicker); matches analyse floor
     close_settle_seconds: 60  # after compressor-off, settle before finalising so the tank probe's
-                              # post-off peak (it lags a few s) lands as tank_end (docs/hwc_cycle_reporting.md)
+                              # post-off peak (it lags a few s) lands as tank_end (docs/hwc/cycle_reporting.md)
     # Live HWC sensor set captured into the per-cycle trace. `compressor` drives the on/off cycle
     # edges (energy/tank snapshotted at the edge); the rest are sampled every `sample_seconds`.
     # `humidity_entity` is a weather entity — humidity is read from its attribute, for wet-bulb.

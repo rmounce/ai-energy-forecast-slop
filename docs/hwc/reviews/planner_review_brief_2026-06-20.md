@@ -276,9 +276,9 @@ journalctl --user -u ai-energy-hwc-daemon.service -n 100 --no-pager
 - `services/hwc_daemon.py`
 - `config.json`
 - `hass/packages/emhass.yaml`
-- `docs/hwc_handover.md`
-- `docs/hwc_thermal_characterisation.md`
-- `docs/hwc_emhass.md`
+- `docs/hwc/handover.md`
+- `docs/hwc/thermal_characterisation.md`
+- `docs/hwc/emhass.md`
 - `tests/unit/test_hwc_planner.py`
 - `tests/unit/test_hwc_executor.py`
 - `tests/unit/test_hwc_daemon.py`

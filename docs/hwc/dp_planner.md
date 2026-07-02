@@ -17,7 +17,7 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 
 - **Pure monetary objective.** No hard min-runtime, no min-lift. Short cycles discouraged
   *only* by a per-start `hwc.transition_cost_aud`. See
-  [hwc_thermal_characterisation.md] "Planner direction".
+  [thermal_characterisation.md] "Planner direction".
 - **DP picks the binary on/off sequence only.** Published power/temps come from the exact
   shared `hwc_planner` model (`_refresh_planned_power` + `simulate_block_temperatures` via
   `assemble_plan_dict`). Temp binning is an internal cost/feasibility approximation; it never
@@ -32,7 +32,7 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
     default 50–56 °C). With the rate depending on current temp alone, continuing a run and starting
     a fresh one at the same temp compute the same rate — the asymmetry the 53 °C short-cycle bug
     arbitraged no longer exists. (The earlier two-state `(V_hot, T_hot)` model was the other
-    candidate for this; it was shelved — see [hwc_2state_soc_model.md](hwc_2state_soc_model.md).)
+    candidate for this; it was shelved — see [2state_soc_model.md](2state_soc_model.md).)
   - `satisfied_today` for the daily 60 C obligation; resets at local midnight.
 - **Costs:** import energy + `transition_cost_aud` on each off→on edge.
 - **Soft high-penalty obligations (not locks; degrade gracefully on cold start):**
@@ -42,7 +42,7 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
 - **Compressor-on = initial state** (`compressor_on` seeded). No seed enumeration, and no regime to
   seed — the rate is read from the current temp, so a continuing run and a fresh off→on start agree
   at any temp by construction (this is the structural fix for the 53 °C short-cycle limit cycle;
-  background in `docs/hwc_short_cycle_review_2026-06-26.md`).
+  background in `docs/hwc/reviews/short_cycle_review_2026-06-26.md`).
 
 ## Config (`hwc.dp_planner`, all optional; code defaults shown)
 
@@ -62,7 +62,7 @@ Code: `hwc_dp_planner.py`. Tests: `tests/unit/test_hwc_dp_planner.py`.
   `_build_dp_plan_soc`). Kept behind the flag for a possible future revisit but **off in
   production**: on the live watch its plans were less plausible than the continuous-rate
   single-temperature path (the build phase flatlines the temperature-driven power model). See
-  [hwc_2state_soc_model.md](hwc_2state_soc_model.md). When on it publishes `soc_v_hot`/`soc_t_hot`/
+  [2state_soc_model.md](2state_soc_model.md). When on it publishes `soc_v_hot`/`soc_t_hot`/
   `soc_probe` diagnostics and reads a `soc:` sub-dict of model params; the daemon supplies the seed
   `(V_hot0, T_hot0)`. The short-cycle discontinuity it was meant to address is instead handled by
   the continuous `_heat_rate_c_per_hour` taper on the default path.
@@ -103,22 +103,22 @@ Reuses from `thermal`: rate/power model (incl. the `top_up_start_temp_c` /
 - Binning makes the DP internal temp an approximation of the exact replay; published plan is
   exact. Penalties are tuned, not derived.
 - **Reheat durations are knowingly approximate.** A probe-only heat rate provably cannot
-  predict per-cycle reheat time/energy ([hwc_thermal_characterisation.md] Finding 4: the
+  predict per-cycle reheat time/energy ([thermal_characterisation.md] Finding 4: the
   probe-blind build phase is 20–72 % of cycle energy and non-monotone in the start probe).
   The taper smears this under a pessimistic ceiling and closed-loop replanning + the
   hardware-60 ceiling absorb the residual — a deliberate trade, not a bug. **Watch item:**
   planned-vs-actual reheat duration from the SQLite cycle store is the instrument for
   detecting if this variance ever costs real money (overruns into expensive slots, deep-draw
   over-booking); that evidence, not model aesthetics, is what would justify revisiting a
-  richer state (see [hwc_2state_soc_model.md] for why the last attempt was shelved).
+  richer state (see [2state_soc_model.md] for why the last attempt was shelved).
 - **Every on-slot is priced at `load_cost` as a grid import** — the DP has no concept of PV
   surplus/curtailment or negative feed-in prices. Known gap with an agreed design:
-  [hwc_surplus_negative_price.md] (curtailment → DP-planned; negative price → executor
+  [surplus_negative_price.md] (curtailment → DP-planned; negative price → executor
   override).
 - **Calibration is winter-fit, single fan-speed regime.** Heat rates, the power curve and the
   taper anchors come from ~18 June-2026 cycles at the quiet fan setting
-  ([hwc_thermal_characterisation.md] "Fan-speed regime"). Mains temp and wet-bulb drift the
+  ([thermal_characterisation.md] "Fan-speed regime"). Mains temp and wet-bulb drift the
   real rates seasonally; the pessimistic bias buys margin, but expect a re-fit toward summer.
 - Compressor-on signal still reads the lagging Tuya binary; switch to Athom ch2 power
-  (>~250 W) — separate follow-up (see [hwc_thermal_characterisation.md]).
+  (>~250 W) — separate follow-up (see [thermal_characterisation.md]).
 - Daily-60 only (no N-day legionella variant) — low-stakes per midday price/wet-bulb.

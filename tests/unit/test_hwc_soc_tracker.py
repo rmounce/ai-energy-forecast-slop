@@ -1,6 +1,6 @@
 """Unit tests for the daemon-side (V_hot, T_hot) tracker (hwc_soc_tracker).
 
-Design-faithful checks (docs/hwc_2state_soc_model.md "Production architecture"): the two watermark
+Design-faithful checks (docs/hwc/2state_soc_model.md "Production architecture"): the two watermark
 resets are exact and dominate, the conservative draw prior only decrements, standing loss cools
 T_hot, active heating advances the state, and everything clamps. No daemon / no I/O.
 """
@@ -31,7 +31,7 @@ def test_seed_is_conservative_and_floors_t_hot():
     assert seed_state(10.0, P).t_hot >= P.t_mains_c  # floored above mains
 
 
-@pytest.mark.xfail(strict=True, reason="seed-divergence (Option 2); see docs/hwc_2state_soc_model.md")
+@pytest.mark.xfail(strict=True, reason="seed-divergence (Option 2); see docs/hwc/2state_soc_model.md")
 def test_seed_from_hot_probe_is_observation_consistent():
     # Live divergence on first enable (2026-06-27): with the probe reading ~57 °C the thermocline
     # is plainly above the 0.50 sensor, yet seed_state pins V_hot at the conservative 0.50 and

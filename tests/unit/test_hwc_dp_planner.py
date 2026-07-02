@@ -220,7 +220,7 @@ def test_dp_no_short_cycle_flip_at_taper_boundary():
     # (no carried FULL/TOP-UP regime), so continuing a run and freshly starting at the same temp
     # compute the same rate — the asymmetry the DP used to arbitrage is gone. The seeded-on and
     # seeded-off plans must therefore agree on the first action at the old boundary temp.
-    # (docs/hwc_short_cycle_review_2026-06-26.md)
+    # (docs/hwc/reviews/short_cycle_review_2026-06-26.md)
     grid = _grid(15, 48, step_min=5, day=26)  # 18:00 legionella deadline is in-window
     cfg = _cfg(step_min=5, heat_rate_taper_width_c=6.0)
     load = [0.12, 0.12] + [0.4] * 46  # the scenario that exposed the flip

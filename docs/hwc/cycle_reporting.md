@@ -13,7 +13,7 @@ from the planner/executor. Modules: the SQLite system-of-record `hwc_cycle_store
 > (`data/hwc_cycles.sqlite`) — a 30 s trace plus precise compressor-edge snapshots, finalised
 > through `cycle_metrics` — instead of reconstructing completed cycles after the fact from InfluxDB.
 > InfluxDB is no longer read for HWC. The store is the durable system-of-record (InfluxDB's `rp_raw`
-> kept only 30 days and never downsampled HWC entities); see **`docs/hwc_local_store.md`** for the
+> kept only 30 days and never downsampled HWC entities); see **`docs/hwc/local_store.md`** for the
 > why and the schema. Sections below describe the as-built live-recording design.
 
 ## Goal
@@ -174,7 +174,7 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
   reporting:
     enabled: true                  # gates the cycle_reporter task
     cycles_entity: sensor.hwc_cycles
-    db_path: data/hwc_cycles.sqlite # durable system-of-record (docs/hwc_local_store.md)
+    db_path: data/hwc_cycles.sqlite # durable system-of-record (docs/hwc/local_store.md)
     sample_seconds: 30             # trace-sampler cadence + live-row refresh
     history_len: 20                # completed rows shown in the card
     min_cycle_seconds: 300         # discard sub-floor runs (defrost flicker)
@@ -202,7 +202,7 @@ live HA entity, so it isn't captured going forward; the store column stays nulla
 
 - **2026-06-27** (original): counter-aware `analyse`, an InfluxDB after-the-fact reporter (live
   state machine + per-cycle re-analyse + cold-start backfill + JSON ring).
-- **2026-06-30** (rearchitecture, `docs/hwc_local_store.md`):
+- **2026-06-30** (rearchitecture, `docs/hwc/local_store.md`):
   - `hwc_cycle_store.py`: SQLite system-of-record (`hwc_cycles` summary + `hwc_cycle_samples` 30 s
     trace), WAL writer / read-only reader.
   - `hwc_cop_analysis.cycle_metrics`: the shared trace→summary brain; `analyse` repointed to read the
@@ -225,4 +225,4 @@ compressor-power parameters (`config.yaml hwc.thermal.*`). It makes per-cycle dr
 closing an automatic tuning loop. A genuine auto-tune (periodic robust refit of the rate/power
 slopes from accumulated clean cycles, written to an override the planner reads) is a separate,
 later step and should land behind its own publish-only watch — not folded in here. See the
-hand-anchored parameters in `config.yaml` and `docs/hwc_thermal_characterisation.md`.
+hand-anchored parameters in `config.yaml` and `docs/hwc/thermal_characterisation.md`.

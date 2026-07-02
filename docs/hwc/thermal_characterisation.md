@@ -2,7 +2,7 @@
 
 Measured behaviour of the Aquatech RAPID X6 heat-pump hot water unit, from InfluxDB
 telemetry. This is the empirical ground truth behind the COP/thermal assumptions in
-`docs/hwc_emhass.md`. Reproduce/extend with `hwc_cop_analysis.py` (writes
+`docs/hwc/emhass.md`. Reproduce/extend with `hwc_cop_analysis.py` (writes
 `data/hwc_cop_cycles.csv`).
 
 The Aquatech unit was installed on **2026-05-28**. `hwc_cop_analysis.py` defaults
@@ -11,7 +11,7 @@ pre-installation Home Assistant history.
 
 ## Telemetry available (Local Tuya → HA → InfluxDB)
 
-> Canonical, empirically-verified entity map: **`docs/hwc_aquatech_entities.md`**. Maps to the
+> Canonical, empirically-verified entity map: **`docs/hwc/aquatech_entities.md`**. Maps to the
 > manual's T1–T5: `coil`=T1 evaporator coil, `temperature`=T2 ambient, `exhaust`=T3 discharge,
 > `return_air`=**T4 suction line** (refrigerant, not "air"), `inlet` duplicates T1, T5 inlet has
 > no working entity, `outlet` is dead (−50 °C). The ~2–4 °C evaporator figure below only holds in
@@ -98,7 +98,7 @@ the excluded rows are contaminated/partial windows. The five clean Athom-metered
 2026-06-14 through 2026-06-18 have mean COP ≈ **2.24**.
 (`wet_bulb` is populated from `rp_30m.humidity_adelaide`; regenerate the CSV after analyzer
 changes before using it for calibration.) Keep `data/hwc_cop_cycles.csv` as the
-machine-readable cycle table, and write `--summary-md docs/hwc_calibration_cycles.md`
+machine-readable cycle table, and write `--summary-md docs/hwc/calibration_cycles.md`
 when a run should be easy to review in Git.
 
 ## Finding 4 — the probe-blind build phase (decisive 2-state evidence)
@@ -232,5 +232,5 @@ Manual `water_heater.aquatech` test from `operation_mode=off`, tank 57 °C, ambi
    rules. The DP objective is therefore monetary; min_temp / 60 °C remain as
    high-penalty cost terms rather than hard locks.
 
-See `docs/hwc_emhass.md` for the open question of whether to enhance EMHASS's COP model or use
+See `docs/hwc/emhass.md` for the open question of whether to enhance EMHASS's COP model or use
 a purpose-built block optimiser.

@@ -3,7 +3,7 @@
 
 Feeds the stratified two-state ``(V_hot, T_hot)`` tank model (design: the heat-rate/COP and the
 probe map are calibrated from real cycles rather than a hand-set FULL/TOP-UP latch — see
-``docs/hwc_thermal_characterisation.md`` and ``docs/hwc_short_cycle_review_2026-06-26.md``).
+``docs/hwc/thermal_characterisation.md`` and ``docs/hwc/reviews/short_cycle_review_2026-06-26.md``).
 
 Two modes:
   --list     survey recent compressor-on reheats + the deepest probe draw, to pick windows.
@@ -69,7 +69,7 @@ def segment_reheat(run: pd.DataFrame, blind_rise_c: float = 2.0) -> dict:
     "Blind" = on-start until the probe has risen ``blind_rise_c`` above its start value (robust to
     the probe's 1 C source quantisation). The blind phase's duration/energy is the part a
     probe-only heat-rate curve cannot predict — it is set by latent hot-volume, not the probe
-    (see docs/hwc_thermal_characterisation.md Finding 4). Shared by ``batch`` here and
+    (see docs/hwc/thermal_characterisation.md Finding 4). Shared by ``batch`` here and
     ``hwc_soc_calibrate.py --mode phases`` so the definition can't diverge.
     """
     kwh = _elec_kwh(run)

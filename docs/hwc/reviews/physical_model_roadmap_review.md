@@ -1,8 +1,8 @@
 # HWC Physical Model Roadmap — review
 
-Previous-implementer review of `docs/hwc_physical_model_roadmap.md` (the roadmap invites it).
+Previous-implementer review of `docs/hwc/physical_model_roadmap.md` (the roadmap invites it).
 Grounded in the actual code (`hwc_stratified_model.py`, `hwc_planner.py`, `services/hwc_daemon.py`)
-and the calibration snapshots (`docs/hwc_calibration_cycles.md`, `docs/hwc_model_fit.md`,
+and the calibration snapshots (`docs/hwc/calibration_cycles.md`, `docs/hwc/model_fit.md`,
 `data/hwc_cop_cycles.csv`) as of `083f16f`.
 
 **Use this file for back-and-forth.** Reply inline under each point (e.g. `> RESP:`); I'll keep
@@ -16,7 +16,7 @@ the guardrails, and the honesty about a 5-cycle sample are all right. My critiqu
 
 ## 1. The fit has quietly collapsed the stratified model back toward single-node
 
-`hwc_model_fit.md` estimates `thermocline_width_fraction = 0.63`, `probe_height_fraction = 0.62`.
+`../model_fit.md` estimates `thermocline_width_fraction = 0.63`, `probe_height_fraction = 0.62`.
 Put those into `probe_temp_c()`: the probe starts rising at `hot_fraction ≈ 0.305` and saturates
 at `≈ 0.935` — a gentle ramp across essentially the whole charge, **not** the "flat, then sharp
 jump when the thermocline arrives" story in the narrative. So the fitted two-layer model behaves

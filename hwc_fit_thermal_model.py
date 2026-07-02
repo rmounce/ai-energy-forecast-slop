@@ -251,7 +251,7 @@ def main() -> None:
     ap.add_argument("--csv", default=DEFAULT_CSV)
     ap.add_argument("--target-c", type=float, default=DEFAULT_TARGET_C)
     ap.add_argument("--top-up-start-c", type=float, default=DEFAULT_TOP_UP_START_C)
-    ap.add_argument("--summary-md", default="docs/hwc_model_fit.md")
+    ap.add_argument("--summary-md", default="docs/hwc/model_fit.md")
     args = ap.parse_args()
 
     fit = fit_parameters(

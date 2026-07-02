@@ -5,7 +5,7 @@ Chooses the compressor on/off sequence by minimising a single monetary objective
 — import energy + a per-start ``transition_cost_aud`` — subject to *soft, high-penalty*
 min-temperature and daily-60 °C obligations. Short cycles are discouraged purely by the
 transition cost; there is no hard minimum-runtime rule (2026-06-20 decision, see
-``docs/hwc_thermal_characterisation.md``).
+``docs/hwc/thermal_characterisation.md``).
 
 The DP only selects the binary on/off sequence. The published power/temperature plan is
 then produced by the *exact* ``hwc_planner`` thermal model
@@ -20,7 +20,7 @@ taper), so there is no FULL/TOP-UP regime to carry: with no step in the rate, st
 restarting buys nothing, which is what killed the 53 °C short-cycle limit cycle that the old
 carried-regime workaround quarantined.
 
-Design notes live in ``docs/hwc_dp_planner.md``.
+Design notes live in ``docs/hwc/dp_planner.md``.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _soc_params_from_cfg(th: dict, dp_cfg: dict) -> soc.SoCParams:
 
     Only the few things the planner config already knows (tank volume, water properties) are
     threaded; the COP/geometry stay at the first-cut ``SoCParams`` anchors unless explicitly
-    overridden under ``hwc.dp_planner.soc`` (see docs/hwc_2state_soc_model.md "What still needs
+    overridden under ``hwc.dp_planner.soc`` (see docs/hwc/2state_soc_model.md "What still needs
     fitting"). This keeps the calibrated standalone model the single source of those numbers.
     """
     base = soc.SoCParams()
@@ -78,7 +78,7 @@ def build_dp_plan(
     tz = pytz.timezone(cfg["timezone"])
     n = len(grid_times_utc)
 
-    # Opt-in two-state (V_hot, T_hot) decision model (docs/hwc_2state_soc_model.md), shelved and
+    # Opt-in two-state (V_hot, T_hot) decision model (docs/hwc/2state_soc_model.md), shelved and
     # off in production: kept behind the flag for a possible future revisit. When off, the default
     # continuous-rate single-temperature path below runs. The published render is unchanged either
     # way (it is a function of the chosen binary schedule, not the DP's internal temperature).
@@ -130,7 +130,7 @@ def build_dp_plan(
     # keeps the max-temp ("run a bit longer") path. NOTE: survivors_per_state=2 is present
     # ONLY because the owner wanted it kept; the 2026-06-21 sweep measured it net-negative
     # (~1c/plan, mixed sign) on objective_cost_aud — i.e. NOT objectively helpful, just
-    # warmer/safer. See docs/hwc_dp_planner.md. Safe to delete this knob if never enabled.
+    # warmer/safer. See docs/hwc/dp_planner.md. Safe to delete this knob if never enabled.
     survivors = 2 if int(dp_cfg.get("survivors_per_state", 1)) >= 2 else 1
 
     terminal_setting = th.get("terminal_target", "current")
@@ -266,7 +266,7 @@ def _build_dp_plan_soc(
     compressor_initially_on: bool,
     soc_state0: tuple[float, float] | None,
 ) -> dict:
-    """Two-state ``(V_hot, T_hot)`` DP (docs/hwc_2state_soc_model.md).
+    """Two-state ``(V_hot, T_hot)`` DP (docs/hwc/2state_soc_model.md).
 
     Same contract and published render as ``build_dp_plan`` — only the internal decision model
     changes. The DP still picks the binary on/off sequence; the published power/temps come from the

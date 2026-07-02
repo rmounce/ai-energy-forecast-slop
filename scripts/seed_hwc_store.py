@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-time seed of the HWC SQLite store from InfluxDB + the CSV anchor history.
 
-THROWAWAY migration tool (docs/hwc_local_store.md). After it has run once the daemon records
+THROWAWAY migration tool (docs/hwc/local_store.md). After it has run once the daemon records
 forward and InfluxDB is never read for HWC again; ``hwc_cop_analysis`` is repointed to the store.
 This script is the *only* place the InfluxDB HWC extraction survives, and it deliberately leans on
 ``hwc_cop_analysis``'s current low-level fetch helpers — so run it **before** those helpers are

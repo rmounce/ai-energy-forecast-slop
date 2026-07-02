@@ -3,7 +3,7 @@
 **Status:** v1 = modelling only (no actuation). Timer enabled 2026-06-01. The default planner
 is now the dynamic-programming scheduler (`hwc_dp_planner.py`), which publishes the HA plan
 sensors itself; the heuristic block planner described below was removed 2026-06-24 (see
-`docs/hwc_dp_planner.md`).
+`docs/hwc/dp_planner.md`).
 **Operational guard:** the old EMHASS thermal-battery path remains available with
 `hwc.planner: "emhass"`, but it still uses HWC `entity_save` alongside the battery and must run
 only against an EMHASS build with the shared metadata race fix. See

@@ -16,7 +16,7 @@ InfluxDB is **not** the system-of-record for HWC, and quietly cannot be:
   weather, dump/deferrable load). **No HWC entity is downsampled** — for HWC it is raw-or-nothing.
 - So per-cycle history is a rolling 30-day window. Verified 2026-06-30: earliest retained tank /
   compressor data is **2026-05-31**; the install-period cycles (2026-05-28/30) in
-  `docs/hwc_thermal_characterisation.md` are already gone from InfluxDB and survive only because
+  `docs/hwc/thermal_characterisation.md` are already gone from InfluxDB and survive only because
   they were snapshotted to `data/hwc_cop_cycles.csv`.
 
 Reconstructing cycles after the fact from a 30-day-rolling time-series DB was never the right shape
@@ -166,4 +166,4 @@ path.
 
 ## Open / deferred
 
-- Eventual: point `docs/hwc_thermal_characterisation.md` refits at the SQLite store.
+- Eventual: point `docs/hwc/thermal_characterisation.md` refits at the SQLite store.

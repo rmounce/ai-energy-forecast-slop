@@ -1,8 +1,8 @@
 # HWC planner — independent review response (2026-06-20)
 
-Response to `docs/hwc_planner_review_brief_2026-06-20.md`. Scope reviewed:
+Response to `docs/hwc/reviews/planner_review_brief_2026-06-20.md`. Scope reviewed:
 `hwc_planner.py`, `hwc_executor.py`, `services/hwc_daemon.py`, `config.json`,
-`hass/packages/emhass.yaml`, `docs/hwc_thermal_characterisation.md`, and the three
+`hass/packages/emhass.yaml`, `docs/hwc/thermal_characterisation.md`, and the three
 HWC unit-test modules. All 59 unit tests pass; the brief's "fixed bugs" are genuinely
 fixed and the EMHASS integration matches its description.
 

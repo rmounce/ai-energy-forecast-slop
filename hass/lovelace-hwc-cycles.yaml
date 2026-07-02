@@ -1,5 +1,5 @@
 # Recent heat-pump hot-water runs, from sensor.hwc_cycles (published by the HWC daemon's
-# cycle_reporter; see docs/hwc_cycle_reporting.md). Built-in markdown card — no HACS dependency.
+# cycle_reporter; see docs/hwc/cycle_reporting.md). Built-in markdown card — no HACS dependency.
 # The in-progress run (attributes.current) is the top row, italicised with a 🟢 marker; its COP
 # shows '…' until the cycle completes and the daemon reconstructs it.
 # WB °C is the run's wet-bulb (Stull, from mean ambient + mean RH over the cycle); blank for the

@@ -2,7 +2,7 @@
 """Daemon-side ``(V_hot, T_hot)`` state tracker for the two-state HWC model.
 
 This is the production estimator that seeds the DP planner (``soc_state0``). Per the agreed design
-(docs/hwc_2state_soc_model.md "Production architecture") it is deliberately **not** a state
+(docs/hwc/2state_soc_model.md "Production architecture") it is deliberately **not** a state
 observer — ``V_hot`` is unobservable in the interior, so an observer would drift and lie. Instead:
 
 1. **Conservative (pessimistic) draw prior** decrements ``V_hot`` between resets — an over-estimating

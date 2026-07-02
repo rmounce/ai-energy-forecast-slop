@@ -136,7 +136,7 @@ def test_merge_cycle_tables_replaces_duplicate_start_and_sorts():
     assert merged.loc[merged["start"] == "2026-06-03 10:24", "clean"].item() is True
 
 
-# ── cycle_metrics: the shared trace->summary brain (docs/hwc_local_store.md) ──
+# ── cycle_metrics: the shared trace->summary brain (docs/hwc/local_store.md) ──
 
 
 def _trace(minutes=60, tank0=45.0, tank1=56.0, power_w=1000.0, energy0=100.0,

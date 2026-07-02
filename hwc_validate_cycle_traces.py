@@ -24,9 +24,9 @@ from config_utils import load_config
 DEFAULT_CYCLES_CSV = "data/hwc_cop_cycles.csv"
 DEFAULT_TRACE_CSV = "data/hwc_cycle_traces.csv"
 DEFAULT_REPORT_CSV = "data/hwc_cycle_trace_validation.csv"
-DEFAULT_REPORT_MD = "docs/hwc_cycle_trace_validation.md"
+DEFAULT_REPORT_MD = "docs/hwc/cycle_trace_validation.md"
 DEFAULT_LOO_REPORT_CSV = "data/hwc_cycle_trace_loo_validation.csv"
-DEFAULT_LOO_REPORT_MD = "docs/hwc_cycle_trace_loo_validation.md"
+DEFAULT_LOO_REPORT_MD = "docs/hwc/cycle_trace_loo_validation.md"
 LOCAL_TZ = cop.LOCAL_TZ
 
 

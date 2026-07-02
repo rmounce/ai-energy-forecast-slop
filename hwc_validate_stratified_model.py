@@ -22,7 +22,7 @@ from config_utils import load_config
 
 DEFAULT_CYCLES_CSV = "data/hwc_cop_cycles.csv"
 DEFAULT_REPORT_CSV = "data/hwc_stratified_validation.csv"
-DEFAULT_REPORT_MD = "docs/hwc_stratified_validation.md"
+DEFAULT_REPORT_MD = "docs/hwc/stratified_validation.md"
 MILESTONES = (10, 50, 90)
 
 

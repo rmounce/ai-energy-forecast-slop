@@ -1,6 +1,6 @@
 # EMHASS shared-state race — handoff brief (for the EMHASS source discussion)
 
-**Discovered:** 2026-06-01, while bringing up the HWC planner (`docs/hwc_emhass.md`).
+**Discovered:** 2026-06-01, while bringing up the HWC planner (`docs/hwc/emhass.md`).
 **EMHASS version:** v0.17.5 (`ghcr.io/davidusb-geek/emhass`; custom images also built —
 `emhass:rmounce`, `emhass:fix`).
 **Scope of this brief:** the fix belongs upstream in EMHASS, not as a workaround in this
@@ -91,7 +91,7 @@ efficiency + decoupling improvement on top.
 The HWC planner (`hwc_planner.py`) and its timer are **still disabled** in this repo. The
 corruption race they would trigger is now fixed in the deployed build
 (`emhass:metadata-race-20260601`, fix #1 above), so the original blocker is resolved on the
-running instance. Before re-enabling per `docs/hwc_emhass.md`, confirm the EMHASS instance is
+running instance. Before re-enabling per `docs/hwc/emhass.md`, confirm the EMHASS instance is
 running a build that includes the fix (it is, as of 2026-06-01) — do **not** re-enable against
 a stock image that predates it. Longer term, prefer the upstream release once PR #919 merges,
 or move HWC to a dedicated instance.

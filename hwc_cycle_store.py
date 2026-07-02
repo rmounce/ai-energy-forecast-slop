@@ -5,7 +5,7 @@ InfluxDB cannot hold HWC history: the default retention policy (``rp_raw``) keep
 no Aquatech/HWC entity is downsampled into the longer policies (those continuous queries cover only
 the forecasting signals). So per-cycle telemetry — needed both for the live "recent runs" card and
 for long-term COP characterisation — lives here instead, in-repo runtime data the daemon owns.
-See ``docs/hwc_local_store.md``.
+See ``docs/hwc/local_store.md``.
 
 Two tables:
 

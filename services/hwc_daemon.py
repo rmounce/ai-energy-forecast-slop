@@ -192,7 +192,7 @@ def should_suppress_off_after_heat(
     start has not yet registered.
 
     The Tuya ``binary_sensor.aquatech_compressor`` lags the real compressor by ~50 s on both
-    edges (see ``docs/hwc_thermal_characterisation.md``), so right after an off->heat command
+    edges (see ``docs/hwc/thermal_characterisation.md``), so right after an off->heat command
     the sensor still reads "off"; a replan flip to ``off`` in that window would abort the start
     on a stale reading. We therefore hold the ``off`` until the compressor is *confirmed on*
     (``compressor_on``) or the grace expires. Gating on the current observed state — rather than
@@ -362,7 +362,7 @@ class HwcDaemon:
         # Two-state (V_hot, T_hot) tracker state ({v_hot, t_hot, updated_at}); None until seeded.
         self.soc: dict | None = state.get("soc")
         # Cycle-reporting state (publish-only; firewalled from the control loop). The SQLite store
-        # (docs/hwc_local_store.md) is the system-of-record; the daemon keeps only the open cycle's
+        # (docs/hwc/local_store.md) is the system-of-record; the daemon keeps only the open cycle's
         # edge snapshot and a websocket-fed cache of the latest HWC sensor values.
         rep = config["hwc"].get("reporting", {})
         self._report_enabled = bool(rep.get("enabled", False))
@@ -371,7 +371,7 @@ class HwcDaemon:
         self.report_entity_role = {eid: role for role, eid in self.report_entities.items()}
         self.humidity_entity = rep.get("humidity_entity")
         # After compressor-off, wait this long before finalising so the tank probe's post-off peak
-        # (it keeps rising a few seconds) lands in the cache/trace; see docs/hwc_cycle_reporting.md.
+        # (it keeps rising a few seconds) lands in the cache/trace; see docs/hwc/cycle_reporting.md.
         self._close_settle_seconds = float(rep.get("close_settle_seconds", 60))
         self.report_cache: dict[str, float | bool | None] = {}
         # Open cycle {start_ts, tank_start, energy_start}; once the compressor stops it also carries
@@ -522,7 +522,7 @@ class HwcDaemon:
                 self.replan_trigger.set()
 
     async def cycle_reporter(self) -> None:
-        """Publish-only per-cycle reporting to ``sensor.hwc_cycles`` (docs/hwc_local_store.md).
+        """Publish-only per-cycle reporting to ``sensor.hwc_cycles`` (docs/hwc/local_store.md).
 
         Firewalled from the planner/executor: its own task, every exception caught, never touches
         ``run_lock`` or the command path. The websocket feeds a live cache of the HWC sensor set and
@@ -1001,7 +1001,7 @@ class HwcDaemon:
         """Conservative draw-prior rate (kWh/s of hot water) during the configured draw window.
 
         Pessimistic by design: a draw that stays above the probe fires no watermark, so the prior is
-        the only guard (docs/hwc_2state_soc_model.md). Defaults to the planning draw total spread
+        the only guard (docs/hwc/2state_soc_model.md). Defaults to the planning draw total spread
         over the window; tune up via ``hwc.dp_planner.soc.draw_prior_kwh_per_day``.
         """
         hwc = self.config["hwc"]
@@ -1022,7 +1022,7 @@ class HwcDaemon:
         """Advance the (V_hot, T_hot) tracker to now and return the planner seed (or None if off).
 
         Coarse but conservative: the current ``heating`` signal is applied over the whole elapsed
-        interval; the two watermark resets correct any drift (docs/hwc_2state_soc_model.md). Pure
+        interval; the two watermark resets correct any drift (docs/hwc/2state_soc_model.md). Pure
         math + a local state-file write — no network (probe/heating are passed in).
         """
         hwc = self.config["hwc"]

@@ -2,7 +2,7 @@
 
 Handover for an implementer continuing the **heat-pump hot water (HWC)** scheduling work
 (Aquatech RAPID X6), via EMHASS or a replacement. Read alongside, in order:
-`docs/hwc_emhass.md` (design/spec + PAUSED banner), `docs/hwc_thermal_characterisation.md`
+`docs/hwc/emhass.md` (design/spec + PAUSED banner), `docs/hwc/thermal_characterisation.md`
 (measured physics/COP), `docs/emhass_shared_state_race.md` (the EMHASS bug we hit + fix
 status). Project memory: `project_heat_pump_hot_water` (+ `feedback_secrets_practice`,
 `feedback_influxdb_cli`).
@@ -28,7 +28,7 @@ Dedicated Athom metering is live for the HWC compressor circuit.
 | EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
 | COP characterisation | updated through `2026-06-18`; 12/14 clean cycles, five recent Athom-metered cycles |
 | Engine decision (EMHASS vs custom) | custom DP planner is the default; EMHASS kept as fallback |
-| DP planner | **default and only optimiser** (`hwc.planner = "dp"`); ~350 ms vs removed block 12 s/225 s; see `docs/hwc_dp_planner.md` |
+| DP planner | **default and only optimiser** (`hwc.planner = "dp"`); ~350 ms vs removed block 12 s/225 s; see `docs/hwc/dp_planner.md` |
 | Block planner | **removed 2026-06-24**; `transition_cost_aud`/`main_window_end` moved to `hwc` top-level |
 | Recalibration (`carnot_efficiency` 0.45→0.38) | **applied** (`6af7f5f`); `supply_temperature` still needs review |
 | COP analyzer `wet_bulb` column | **fixed** (`6af7f5f`); regenerate `data/hwc_cop_cycles.csv` when needed |
@@ -36,8 +36,8 @@ Dedicated Athom metering is live for the HWC compressor circuit.
 | EMHASS load input | LGBM load excludes HWC/dump loads; HA EMHASS payload adds planned HWC compressor power back in |
 | Running compressor policy | compressor-on seeds the DP's initial state; `transition_cost_aud` charged per off→on start (stopping is free) |
 | Short-cycle experiment | **concluded 2026-06-20**: config restored (`79f4bbb`); cost key renamed `stop_cost_aud`→`transition_cost_aud` (`0.05`) |
-| Cycle reporting to HA | **shipped 2026-06-27** (`hwc.reporting.enabled`): daemon `cycle_reporter` task publishes `sensor.hwc_cycles` (recent runs + live row); `analyse` now prefers the `energy_2` cumulative meter (`elec_source`). HA card still to build. Spec: `docs/hwc_cycle_reporting.md` |
-| Short-cycle at 53 °C boundary | **fixed 2026-06-26**: a fresh off→on start sampled regime at the post-step temp `t1` while a continuing run used the pre-step start temp, flipping FULL/TOP-UP at `top_up_start_temp_c` → cross-replan limit cycle. Fix = sample the start regime at the pre-step temp (one line, matches the replay) + symmetric `min_off_seconds` guard. See `docs/hwc_short_cycle_review_2026-06-26.md` |
+| Cycle reporting to HA | **shipped 2026-06-27** (`hwc.reporting.enabled`): daemon `cycle_reporter` task publishes `sensor.hwc_cycles` (recent runs + live row); `analyse` now prefers the `energy_2` cumulative meter (`elec_source`). HA card still to build. Spec: `docs/hwc/cycle_reporting.md` |
+| Short-cycle at 53 °C boundary | **fixed 2026-06-26**: a fresh off→on start sampled regime at the post-step temp `t1` while a continuing run used the pre-step start temp, flipping FULL/TOP-UP at `top_up_start_temp_c` → cross-replan limit cycle. Fix = sample the start regime at the pre-step temp (one line, matches the replay) + symmetric `min_off_seconds` guard. See `docs/hwc/reviews/short_cycle_review_2026-06-26.md` |
 
 ## What's committed
 
@@ -45,7 +45,7 @@ Dedicated Athom metering is live for the HWC compressor circuit.
   unit tests, ApexCharts card, spec doc.
 - `c61520e` — paused the planner; documented the EMHASS shared-state race.
 - `5c1ab55` — `hwc_cop_analysis.py` (reusable COP sweep), `data/hwc_cop_cycles.csv`,
-  `docs/hwc_thermal_characterisation.md`.
+  `docs/hwc/thermal_characterisation.md`.
 
 Pre-existing uncommitted changes in the working tree (`docs/emhass_shared_state_race.md`,
 `docs/ha_entity_inventory.md`,
@@ -74,7 +74,7 @@ leave them alone.
 
 ## Measured findings that MUST shape the model (the important part)
 
-From `docs/hwc_thermal_characterisation.md` (telemetry analysis; reproduce with
+From `docs/hwc/thermal_characterisation.md` (telemetry analysis; reproduce with
 `hwc_cop_analysis.py`):
 
 1. **Stratified charging.** The control probe (`sensor.heat_pump_temperature`) sits flat for
@@ -165,7 +165,7 @@ the engine-independent long pole — gather it regardless.
   (`regime_for_start(start_temperature)`) and the published replay use. Previously a fresh start
   used the post-step `t1`, so at exactly `top_up_start_temp_c` a continuing run (TOP-UP) and a
   fresh start (FULL) disagreed → a cross-replan short-cycle limit cycle
-  (`docs/hwc_short_cycle_review_2026-06-26.md`). A carried-regime daemon seed was tried first and
+  (`docs/hwc/reviews/short_cycle_review_2026-06-26.md`). A carried-regime daemon seed was tried first and
   reverted — carrying FULL into the slow phase-2 tail made the DP under-provision and under-shoot
   the 60 °C legionella target.
 - **Executor hardware guards:** `heat_command_grace_seconds` suppresses an `off` right after a
@@ -176,7 +176,7 @@ the engine-independent long pole — gather it regardless.
 - **Aquatech actuation (measured 2026-06-20):** `off`→`heat_pump` starts in ~seconds and
   `turn_off` stops promptly (compressor); `binary_sensor.aquatech_compressor` lags the real
   transition ~50 s on *both* edges (Local Tuya poll), so Athom ch2 power (>~250 W) is the
-  faster, authoritative compressor signal. See `docs/hwc_thermal_characterisation.md`.
+  faster, authoritative compressor signal. See `docs/hwc/thermal_characterisation.md`.
 - **HWC/DH coherence:** battery DH snapshots `sensor.hwc_power_plan` immediately before the
   DH solve (`sensor.emhass_dh_hwc_power_plan_snapshot`) and uses that snapshot when adding
   planned HWC compressor power into DH load. MPC uses the same snapshot when subtracting HWC

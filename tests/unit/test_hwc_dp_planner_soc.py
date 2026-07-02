@@ -1,6 +1,6 @@
 """Unit tests for the opt-in two-state (V_hot, T_hot) DP path (hwc.dp_planner.soc_model).
 
-Slice 1 of docs/hwc_2state_soc_model.md steps 2–3: the flag-gated decision model. These cover that
+Slice 1 of docs/hwc/2state_soc_model.md steps 2–3: the flag-gated decision model. These cover that
 the flag-off path is untouched (the existing suite is the regression guard), and that the flag-on
 path keeps the published contract, meets the daily-60 obligation on the *probe*, emits the soc_*
 diagnostics, and responds to the seed `(V_hot0, T_hot0)` the daemon tracker will supply.

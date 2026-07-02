@@ -1,6 +1,6 @@
 # HWC Physical Model Roadmap
 
-Status: superseded in part by `docs/hwc_observer_milp_path.md`.
+Status: superseded in part by `docs/hwc/observer_milp_path.md`.
 
 This note records where the hot-water-control model currently stands, what we think the
 important physical/economic effects are, and how to move from the current MVP planner to a
@@ -18,10 +18,10 @@ Live control is intentionally conservative:
 - `hwc_cop_analysis.py` extracts compressor cycles from HA/InfluxDB since the Aquatech install
   date, `2026-05-28`.
 - `data/hwc_cop_cycles.csv` is the machine-readable calibration table.
-- `docs/hwc_calibration_cycles.md` and `docs/hwc_model_fit.md` are human-readable snapshots.
+- `docs/hwc/calibration_cycles.md` and `docs/hwc/model_fit.md` are human-readable snapshots.
 - `hwc_stratified_model.py` is an offline two-layer tank model scaffold. It is not used by
   the live planner.
-- `docs/hwc_observer_milp_path.md` defines the current next modelling path: an observer that
+- `docs/hwc/observer_milp_path.md` defines the current next modelling path: an observer that
   estimates useful thermal inventory, followed by a shadow MILP/MPC planner.
 
 The MVP is good enough to run and observe, but the physical model is still too simple. The

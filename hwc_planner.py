@@ -9,7 +9,7 @@ thermal/cost core (``simulate_block_temperatures``, ``assemble_plan_dict``,
 tank temperature + planned power directly to Home Assistant. The older EMHASS
 ``thermal_battery`` planner is still available via ``hwc.planner: emhass``.
 
-See ``docs/hwc_dp_planner.md`` for the DP design and ``docs/hwc_emhass.md`` for the
+See ``docs/hwc/dp_planner.md`` for the DP design and ``docs/hwc/emhass.md`` for the
 calibration anchors and history.
 
 Pure helpers (``stull_wet_bulb``, ``interpolate_to_grid``, ``build_draw_off_profile``,
@@ -45,7 +45,7 @@ def stull_wet_bulb(temp_c: float, rh_pct: float) -> float:
     Stull (2011) empirical approximation — valid for roughly RH 5–99 % and
     T −20…50 °C, which comfortably covers Adelaide conditions. The heat pump's COP is
     governed by evaporator (wet-bulb) conditions, so this is what we feed EMHASS as the
-    outdoor-temperature forecast. See docs/hwc_emhass.md ("Wet-bulb vs dry-bulb").
+    outdoor-temperature forecast. See docs/hwc/emhass.md ("Wet-bulb vs dry-bulb").
     """
     rh = max(1.0, min(100.0, float(rh_pct)))
     t = float(temp_c)
@@ -181,7 +181,7 @@ def _heat_rate_c_per_hour(
     ``heat_rate_taper_width_c`` centred on ``top_up_start_temp_c``, and holds there above. Because
     the rate is a function of the current temperature only and has no jump, the DP cannot arbitrage
     a step by stopping and restarting — this is what replaced the discrete FULL/TOP-UP regime latch
-    that caused the 53 °C short-cycle limit cycle (docs/hwc_short_cycle_review_2026-06-26.md). A
+    that caused the 53 °C short-cycle limit cycle (docs/hwc/reviews/short_cycle_review_2026-06-26.md). A
     ``width`` of 0 degenerates to the former hard step. A small wet-bulb adjustment can be
     configured as a weak datasheet-informed prior; observed cycle data remains the anchor.
     """

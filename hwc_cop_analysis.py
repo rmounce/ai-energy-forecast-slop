@@ -12,7 +12,7 @@ when the counter is missing or has reset. The chosen source is reported per cycl
   thermal-out (single-probe ΔT + standing loss), apparent COP, and a cleanliness
   flag (so contaminated windows aren't over-trusted).
 
-Caveats (see docs/hwc_thermal_characterisation.md):
+Caveats (see docs/hwc/thermal_characterisation.md):
   - Thermal-out uses the single tank probe; the tank stratifies, so this is
     approximate. The hard COP ceiling (elec vs 45→target sensible capacity) is
     more robust than the point estimate.
@@ -22,7 +22,7 @@ Usage:
   python hwc_cop_analysis.py
   python hwc_cop_analysis.py --days 3 --csv data/hwc_cop_cycles.csv
   python hwc_cop_analysis.py --since 2026-06-03 --merge-existing
-  python hwc_cop_analysis.py --summary-md docs/hwc_calibration_cycles.md
+  python hwc_cop_analysis.py --summary-md docs/hwc/calibration_cycles.md
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from influxdb import InfluxDBClient
 import hwc_cycle_store as store
 from config_utils import load_config
 
-# Durable HWC system-of-record (docs/hwc_local_store.md); ``analyse`` reads it, the daemon writes it.
+# Durable HWC system-of-record (docs/hwc/local_store.md); ``analyse`` reads it, the daemon writes it.
 DEFAULT_DB_PATH = "data/hwc_cycles.sqlite"
 
 TANK_LITRES = 225
@@ -275,7 +275,7 @@ def _trace_col(trace, name):
 
 def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STANDING_LOSS_KW,
                   tank_settle_seconds=TANK_SETTLE_SECONDS, tz=LOCAL_TZ):
-    """Canonical per-cycle summary from a raw 30 s trace — the one shared brain (docs/hwc_local_store.md).
+    """Canonical per-cycle summary from a raw 30 s trace — the one shared brain (docs/hwc/local_store.md).
 
     Both feeders call this so they can never diverge: the daemon accumulates a live trace + precise
     compressor-edge snapshots and calls it on the off-edge; ``hwc_cop_analysis`` loads a stored trace
@@ -435,7 +435,7 @@ def _summary_row(c: dict) -> dict:
 
 
 def analyse(db_path=DEFAULT_DB_PATH, since=None, until=None, min_minutes=None, recompute=True):
-    """Per-cycle COP table from the local SQLite store (docs/hwc_local_store.md).
+    """Per-cycle COP table from the local SQLite store (docs/hwc/local_store.md).
 
     InfluxDB is no longer read here — the daemon records cycles live to the store. Each completed
     cycle is recomputed from its stored 30 s trace via ``cycle_metrics`` (so a methodology change
@@ -557,7 +557,7 @@ def write_summary_markdown(
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=DEFAULT_DB_PATH,
-                    help="HWC SQLite store to read (docs/hwc_local_store.md)")
+                    help="HWC SQLite store to read (docs/hwc/local_store.md)")
     ap.add_argument("--since", default=None,
                     help="Earliest local date/time to include")
     ap.add_argument("--until", default=None,
@@ -570,7 +570,7 @@ if __name__ == "__main__":
                     help="Merge extracted rows into --csv by local cycle start time")
     ap.add_argument("--csv", default="data/hwc_cop_cycles.csv")
     ap.add_argument("--summary-md", default=None,
-                    help="Optional curated Markdown table to write, e.g. docs/hwc_calibration_cycles.md")
+                    help="Optional curated Markdown table to write, e.g. docs/hwc/calibration_cycles.md")
     args = ap.parse_args()
     df = analyse(db_path=args.db, since=args.since, until=args.until,
                  min_minutes=args.min_minutes, recompute=not args.no_recompute)

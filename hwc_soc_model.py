@@ -2,10 +2,10 @@
 """Standalone two-state ``(V_hot, T_hot)`` stratified-tank forward model (HWC).
 
 Pure physics, **no wiring into the DP planner** — this is step 1 of
-``docs/hwc_2state_soc_model.md`` (the validate-before-touching-production step). It replaces the
+``docs/hwc/2state_soc_model.md`` (the validate-before-touching-production step). It replaces the
 discontinuous FULL/TOP-UP heat-rate latch in ``hwc_dp_planner.py`` with a continuous two-state
 tank: ``V_hot`` (fraction of the tank above the thermocline) and ``T_hot`` (that hot zone's
-temperature). See ``docs/hwc_thermal_characterisation.md`` Findings 1–5 for the empirical basis.
+temperature). See ``docs/hwc/thermal_characterisation.md`` Findings 1–5 for the empirical basis.
 
 Three pieces, all scalar and side-effect-free:
 
@@ -40,8 +40,8 @@ class SoCParams:
     """First-cut parameters for the two-state tank model.
 
     Values marked ``TODO fit`` are placeholders pending more metered cycles (see
-    ``docs/hwc_2state_soc_model.md`` "What still needs fitting"). The *structure* is settled; these
-    numbers are not. Geometry/COP anchors are from ``docs/hwc_thermal_characterisation.md``.
+    ``docs/hwc/2state_soc_model.md`` "What still needs fitting"). The *structure* is settled; these
+    numbers are not. Geometry/COP anchors are from ``docs/hwc/thermal_characterisation.md``.
     """
 
     # Tank sensible capacity: 222 L heated volume (manual), water cp.
