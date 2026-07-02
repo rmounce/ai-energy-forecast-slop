@@ -43,10 +43,10 @@ bias-calibration sensitivity hook.
 
 ### New audit / analysis tools
 - `eval/audit_pd_direct_debiaser.py` — PD-direct vs raw PREDISPATCH vs
-  realised. Verdict in `docs/pd_direct_debiaser_audit_2026-05-13.md`:
+  realised. Verdict in `docs/price/pd_direct_debiaser_audit_2026-05-13.md`:
   debiaser MAE exceeds raw PREDISPATCH MAE on this window.
 - `eval/audit_price_forecast.py` — generic LGBM/TFT forecast-vs-realised.
-  Verdict in `docs/price_forecast_bias_audit_2026-05-14.md`. Bug found
+  Verdict in `docs/price/price_forecast_bias_audit_2026-05-14.md`. Bug found
   and fixed: forecast log `actual` column is $/kWh, not $/MWh.
 - `eval/retariff_dispatch.py` — replay an existing rolling-MPC raw_rows
   under RESELE / Flow Power / IO Energy tariff structures. Verdict in

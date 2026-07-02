@@ -10,9 +10,9 @@ This is intentionally narrower than the previous review draft. It is meant to an
 - what the next decision point is
 
 Related:
-- [docs/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
-- [docs/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
-- [docs/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md)
+- [docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
+- [docs/price/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
+- [docs/price/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md)
 - [docs/roadmap.md](./roadmap.md)
 
 ---

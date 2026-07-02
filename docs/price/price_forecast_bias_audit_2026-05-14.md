@@ -1,6 +1,6 @@
 # Price Forecast Bias Audit — 2026-05-14
 
-Companion to `docs/pd_direct_debiaser_audit_2026-05-13.md`. Run B v3's negative
+Companion to `docs/price/pd_direct_debiaser_audit_2026-05-13.md`. Run B v3's negative
 absolute PnL under `--strategic-soc-handoff exact` raised the question: is
 the strategic LP being misled by a biased price-forecast curve, and if so,
 *which* forecast? The PD-direct debiaser audit characterised one Tier 2
@@ -79,7 +79,7 @@ Strikingly different shape from LGBM:
 
 - **Under-forecasts at short horizons** (0-1h bias −$28.46, 1-4h bias
   −$22.17). Largely the "double compression" problem documented in
-  `docs/tft_price_forecast.md`.
+  `docs/price/tft_price_forecast.md`.
 - **Essentially unbiased at long horizons** (24h+ bias +$0.12).
 - Evening and late biases near zero (+$0.41, −$0.74) — TFT does *not*
   systematically over-forecast evening peaks the way LGBM does.
@@ -125,12 +125,12 @@ TFT-feature alignment problem orthogonal to the bias question.
 
 ## Connection to Other Audits
 
-- `docs/pd_direct_debiaser_audit_2026-05-13.md`: PD-direct OOF debiaser
+- `docs/price/pd_direct_debiaser_audit_2026-05-13.md`: PD-direct OOF debiaser
   POST-promotion bias is −$5.13 overall (slight under-forecast), so PD-direct
   *would* probably *not* drive the same over-charging pattern as LGBM if
   used as a strategic curve. But PD-direct is not currently the strategic
   source for any production-equivalent source contract in Run B/C.
-- `docs/tft_price_forecast.md`: documents TFT's known short-horizon "double
+- `docs/price/tft_price_forecast.md`: documents TFT's known short-horizon "double
   compression" pathology, which this audit reproduces (0-1h bias −$28.46).
 
 ## Possible Next Steps

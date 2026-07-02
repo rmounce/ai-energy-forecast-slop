@@ -22,7 +22,7 @@ frozen actuals from holistic_eval_actuals.parquet):
 Debiaser routing: upstream LightGBM spike classifier (train/train_spike_classifier.py)
   routes each run_time to: debiaser (normal windows) or raw PREDISPATCH (spike windows).
   Classifier threshold: 0.65 (tuned 2026-04-19 on this same 811-window eval set — see
-  caveat below). See docs/review_debiaser_spike_guard.md for full tuning history.
+  caveat below). See docs/price/reviews/review_debiaser_spike_guard.md for full tuning history.
 
 Threshold provenance caveat: threshold=0.65 was selected by iterating on the same
   811-window set used to declare this gate passing. The threshold is not independently

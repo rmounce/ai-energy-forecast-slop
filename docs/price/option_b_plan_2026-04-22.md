@@ -9,9 +9,9 @@ second handoff carrying **risk / opportunity posture** into the tactical price p
 quantile selection or blending.
 
 Related documents:
-- [docs/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
+- [docs/price/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
 - [docs/roadmap.md](./roadmap.md)
-- [docs/independent_review_brief_2026-04-21.md](./independent_review_brief_2026-04-21.md)
+- [docs/price/reviews/independent_review_brief_2026-04-21.md](./independent_review_brief_2026-04-21.md)
 
 ---
 

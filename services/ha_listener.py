@@ -7,7 +7,7 @@ near-simultaneous updates, and shells out to `predict-price`. A 30-minute
 idle heartbeat fires the same command even if no event has arrived — the
 defensive fallback the user asked for in the design plan.
 
-Design: docs/event_driven_predict_price_plan.md
+Design: docs/price/event_driven_predict_price_plan.md
 """
 
 from __future__ import annotations

@@ -100,7 +100,7 @@ The alignment-fix variants were trained or rebuilt by adding
 paths so interval-ending AEMO forecast rows join against the actual price for
 the same half-hour. See:
 
-- `docs/alignment_fix_retrain_2026-05-11.md`
+- `docs/price/alignment_fix_retrain_2026-05-11.md`
 - `docs/pipeline_audit_2026-05-11.md`
 - `docs/timestamp_convention_audit_2026-05-11.md`
 

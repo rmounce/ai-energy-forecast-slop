@@ -14,7 +14,7 @@ This draft is grounded in:
 - [docs/data_sources.md](./data_sources.md)
 - [docs/roadmap.md](./roadmap.md)
 - [eval/README.md](../eval/README.md)
-- [docs/training_runs.md](./training_runs.md)
+- [docs/price/training_runs.md](./training_runs.md)
 - [forecast.py](../forecast.py)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 

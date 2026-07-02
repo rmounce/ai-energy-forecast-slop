@@ -350,7 +350,7 @@ Shadow predictions are logged to `tft_price_forecast_log.csv` for objective benc
 9. ✅ Phase 1a: PREDISPATCH debiaser (`train/train_pd_debiaser.py`) — OOF MAE 325→65 $/MWh overall, spike 1125→182 $/MWh (commit ee2f415)
 10. ✅ Phase 1b: Run 011 — OOF debiased decoder + SDO features + q5/10/50/90/95/99 (commit 26b9cb5). Run 011b: lr=1e-4, patience=15.
 11. ~~Unified debiaser (Runs 012+013, 2026-04-20): ABANDONED~~ — pw_wMAPE objective destroys 72h accuracy when PD7Day sparse. Binary routing (Run 011b) retained. Scalers co-location fix in train_tft_price.py is permanent.
-12. **Phase 7:** Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder features. `pd_rrp` becomes PREDISPATCH-only (0-filled after accordion); new `pd7_rrp` covers all 144 steps; `covar_missing` renamed `predispatch_active` (flipped polarity); `pd7_generation_hour` and `pd7_available` added. Decoder 15→18 features. **Run 014 completed** with the new decoder and produced a valid 18-feature checkpoint, but the interim holistic eval failed badly (**−35.3% overall vs amber_apf_lgbm**). Rolling MPC eval still remains the real gate. See `docs/training_runs.md`.
+12. **Phase 7:** Enhanced Input TFT — parallel PREDISPATCH + PD7Day decoder features. `pd_rrp` becomes PREDISPATCH-only (0-filled after accordion); new `pd7_rrp` covers all 144 steps; `covar_missing` renamed `predispatch_active` (flipped polarity); `pd7_generation_hour` and `pd7_available` added. Decoder 15→18 features. **Run 014 completed** with the new decoder and produced a valid 18-feature checkpoint, but the interim holistic eval failed badly (**−35.3% overall vs amber_apf_lgbm**). Rolling MPC eval still remains the real gate. See `docs/price/training_runs.md`.
 
 **Operational note:** the latest local training run overwrote `models/tft_price/checkpoint_best.pt`
 with the Run 014 18-feature checkpoint. The evaluated incumbent is still Run 011b, but that is
@@ -409,7 +409,7 @@ Likely a fundamental mismatch: LightGBM uses PREDISPATCH RRP directly as a featu
 infer spike onset from encoder context. TFT's production value is in **long-horizon baseload
 accuracy and calibrated quantile intervals**, not spike prediction.
 
-Full run history and calibration results: **[docs/training_runs.md](training_runs.md)**
+Full run history and calibration results: **[docs/price/training_runs.md](training_runs.md)**
 
 ### Completed (Runs 001–010) ✅
 11. ✅ VIC1/NSW1 decoder features (Run 006)
@@ -503,7 +503,7 @@ See plan file for full sequencing. Summary:
 | `train/train_pd_debiaser.py` | Phase 1a: LightGBM debiaser (OOF 5-fold). Outputs `debiased_pd_rrp_oof.parquet` + `models/pd_debiaser/lgbm_final.pkl` |
 | `train/train_tft_price.py` | TFT training script |
 | `train/evaluate_tft.py` | Rolling-origin evaluation: TFT vs LightGBM nMAPE at 1h/2h/4h/8h/16h/28h + quantile calibration |
-| `docs/training_runs.md` | Persistent log of all training runs, configs, and eval results |
+| `docs/price/training_runs.md` | Persistent log of all training runs, configs, and eval results |
 | `models/tft_price/checkpoint_best.pt` | Best trained model |
 | `models/tft_price/training_log.csv` | Epoch-level metrics |
 | `models/tft_price/evaluation_results.csv` | nMAPE comparison table (written by evaluate_tft.py) |

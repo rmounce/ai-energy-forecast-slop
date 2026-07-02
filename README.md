@@ -148,9 +148,9 @@ not currently trusted as replacement paths and should not be used as evidence
 about APF extrapolation.
 
 The current price-forecast source contract lives in
-`docs/price_forecast_sources.md` and `eval/price_source_contracts.py`.
+`docs/price/price_forecast_sources.md` and `eval/price_source_contracts.py`.
 Historical APF-free plans and abandonment notes live in `docs/roadmap.md`.
-Structural critique of the TFT line is in `docs/tft_price_forecast.md`.
+Structural critique of the TFT line is in `docs/price/tft_price_forecast.md`.
 
 Near-term work, in order:
 
@@ -171,7 +171,7 @@ Older infrastructure work that remains relevant regardless of which forecast win
 -   **Event-driven service (Phase 7):** ~~replace systemd timers with a persistent process
     using HA WebSocket subscriptions.~~ **Initial scope landed 2026-05-27** as
     `ai-energy-listener.service`, which drives `predict-price` on Amber APF state changes;
-    see [docs/event_driven_predict_price_plan.md](docs/event_driven_predict_price_plan.md).
+    see [docs/price/event_driven_predict_price_plan.md](docs/price/event_driven_predict_price_plan.md).
     Remaining work would be event-driving more of the pipeline if a use-case emerges.
 
 ## Acknowledgements

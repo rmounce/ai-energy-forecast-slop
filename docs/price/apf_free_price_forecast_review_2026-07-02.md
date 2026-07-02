@@ -5,11 +5,11 @@ is an Amber-APF-free price source viable, what open data would help, and
 what model construction suits CPU-only training and inference.
 
 Written after reviewing `docs/roadmap.md` (strategic pivot + Phase α-prime),
-`docs/tft_price_forecast.md` (Structural Critique 2026-05-05),
-`docs/pd_direct_debiaser_audit_2026-05-13.md`,
-`docs/lgbm_residual_driver_audit_2026-06-14.md`,
-`docs/aemo_renewable_availability_discovery_2026-06-14.md`,
-`docs/price_forecast_sources.md`, and the current logs/model artifacts.
+`docs/price/tft_price_forecast.md` (Structural Critique 2026-05-05),
+`docs/price/pd_direct_debiaser_audit_2026-05-13.md`,
+`docs/price/lgbm_residual_driver_audit_2026-06-14.md`,
+`docs/price/aemo_renewable_availability_discovery_2026-06-14.md`,
+`docs/price/price_forecast_sources.md`, and the current logs/model artifacts.
 
 ## Caveman Summary
 

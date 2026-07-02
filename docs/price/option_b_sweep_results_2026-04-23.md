@@ -4,8 +4,8 @@ Purpose: record the first fixed-weight Option B sweep on the **handoff-enabled**
 Window B baseline.
 
 Related:
-- [docs/option_b_plan_2026-04-22.md](./option_b_plan_2026-04-22.md)
-- [docs/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
+- [docs/price/option_b_plan_2026-04-22.md](./option_b_plan_2026-04-22.md)
+- [docs/price/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 Artifacts:
