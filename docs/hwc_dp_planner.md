@@ -102,6 +102,23 @@ Reuses from `thermal`: rate/power model (incl. the `top_up_start_temp_c` /
 
 - Binning makes the DP internal temp an approximation of the exact replay; published plan is
   exact. Penalties are tuned, not derived.
+- **Reheat durations are knowingly approximate.** A probe-only heat rate provably cannot
+  predict per-cycle reheat time/energy ([hwc_thermal_characterisation.md] Finding 4: the
+  probe-blind build phase is 20–72 % of cycle energy and non-monotone in the start probe).
+  The taper smears this under a pessimistic ceiling and closed-loop replanning + the
+  hardware-60 ceiling absorb the residual — a deliberate trade, not a bug. **Watch item:**
+  planned-vs-actual reheat duration from the SQLite cycle store is the instrument for
+  detecting if this variance ever costs real money (overruns into expensive slots, deep-draw
+  over-booking); that evidence, not model aesthetics, is what would justify revisiting a
+  richer state (see [hwc_2state_soc_model.md] for why the last attempt was shelved).
+- **Every on-slot is priced at `load_cost` as a grid import** — the DP has no concept of PV
+  surplus/curtailment or negative feed-in prices. Known gap with an agreed design:
+  [hwc_surplus_negative_price.md] (curtailment → DP-planned; negative price → executor
+  override).
+- **Calibration is winter-fit, single fan-speed regime.** Heat rates, the power curve and the
+  taper anchors come from ~18 June-2026 cycles at the quiet fan setting
+  ([hwc_thermal_characterisation.md] "Fan-speed regime"). Mains temp and wet-bulb drift the
+  real rates seasonally; the pessimistic bias buys margin, but expect a re-fit toward summer.
 - Compressor-on signal still reads the lagging Tuya binary; switch to Athom ch2 power
   (>~250 W) — separate follow-up (see [hwc_thermal_characterisation.md]).
 - Daily-60 only (no N-day legionella variant) — low-stakes per midday price/wet-bulb.
