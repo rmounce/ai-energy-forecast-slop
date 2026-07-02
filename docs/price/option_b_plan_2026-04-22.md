@@ -10,8 +10,8 @@ quantile selection or blending.
 
 Related documents:
 - [docs/price/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
-- [docs/roadmap.md](./roadmap.md)
-- [docs/price/reviews/independent_review_brief_2026-04-21.md](./independent_review_brief_2026-04-21.md)
+- [docs/roadmap.md](../roadmap.md)
+- [docs/price/reviews/independent_review_brief_2026-04-21.md](reviews/independent_review_brief_2026-04-21.md)
 
 ---
 
@@ -212,8 +212,8 @@ Expected work items:
 - keep strategic SoC handoff enabled and unchanged during Option B sweeps
 
 Secondary docs to update when this lands:
-- [eval/README.md](../eval/README.md)
-- [docs/roadmap.md](./roadmap.md)
+- [eval/README.md](../../eval/README.md)
+- [docs/roadmap.md](../roadmap.md)
 
 ---
 

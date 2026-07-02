@@ -1082,13 +1082,13 @@ decide whether the next production-facing mechanism should be quantile/risk-poli
 combined approach (C).
 
 **Next planned experiment:** a production-aligned **Option B** path is now documented in
-[docs/price/option_b_plan_2026-04-22.md](./option_b_plan_2026-04-22.md). The near-term plan is to keep
+[docs/price/option_b_plan_2026-04-22.md](price/option_b_plan_2026-04-22.md). The near-term plan is to keep
 the strategic `14h` SoC handoff as the baseline contract and test whether an
 opportunity-cost-aware **upper-tail quantile blend** improves the residual `low` / `normal`
 weakness on handoff-enabled Track 10A before introducing any dynamic posture logic.
 
 **Fixed-blend Option B result (2026-04-23):** the first handoff-enabled fixed-weight sweep is a
-clear negative result. See [docs/price/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md).
+clear negative result. See [docs/price/option_b_sweep_results_2026-04-23.md](price/option_b_sweep_results_2026-04-23.md).
 Blending the hybrid path upward from `q50` toward `q90` made Window B worse at every tested
 weight:
 - `blend 0.25`: hybrid **$2.232/day** vs amber **$2.451/day** (**−8.9%**)
@@ -1106,7 +1106,7 @@ toward:
 - simpler strategic-output baselines
 
 **Reviewer follow-up implication (2026-04-23):** the latest follow-up response in
-[docs/price/reviews/codex_review_response_2026-04-23.md](./codex_review_response_2026-04-23.md) sharpens
+[docs/price/reviews/codex_review_response_2026-04-23.md](price/reviews/codex_review_response_2026-04-23.md) sharpens
 that conclusion further. The recommended next move is **not** another full-path quantile tilt.
 Instead, keep the strategic `14h` SoC handoff as the baseline contract and add a
 **dynamic, state-dependent bridge signal** derived from strategic upper-tail value.
@@ -1127,7 +1127,7 @@ variants to test are:
 
 **First dynamic bridge result (2026-04-24):** the first completed dynamic bridge-contract
 variants did **not** improve on the handoff-enabled baseline. See
-[docs/price/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md).
+[docs/price/dynamic_bridge_results_2026-04-24.md](price/dynamic_bridge_results_2026-04-24.md).
 On Window B:
 - handoff refresh: hybrid **$2.2706/day** vs amber **$2.4511/day** (**−7.4%**)
 - dynamic terminal bridge `scale=1.0`: hybrid **$2.2706/day** vs amber **$2.4511/day**
@@ -1158,7 +1158,7 @@ diagnostics that verify dispatch actually changes before any full 6-week rerun:
 
 **Follow-up 2-day pilot result (2026-04-24):** the first two short pilots completed over
 `2025-09-01 -> 2025-09-03` after improving the multi-worker path. See
-[docs/price/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md).
+[docs/price/dynamic_bridge_results_2026-04-24.md](price/dynamic_bridge_results_2026-04-24.md).
 Both pilots used `--workers 2 --mp-start-method auto`; on Linux this selected `fork`, emitted
 worker startup diagnostics, and completed cleanly.
 
@@ -1258,7 +1258,7 @@ Updated implication:
 
 **Full-window tariffed follow-up (2026-04-25):** the next batch extended the tariffed exact-handoff
 comparison beyond the initial 2-day pilot. See
-[docs/price/rolling_eval_fidelity_full_windows_2026-04-25.md](./rolling_eval_fidelity_full_windows_2026-04-25.md).
+[docs/price/rolling_eval_fidelity_full_windows_2026-04-25.md](price/rolling_eval_fidelity_full_windows_2026-04-25.md).
 
 Finished runs:
 - `rolling_mpc_eval_pilot_exact_netload_7day_20260425`
@@ -1320,7 +1320,7 @@ Updated implication:
 
 **Crossed counterfactual pilot (2026-04-25):** the first 2-day pilot using the recovered
 snapshot-backed Run 011b-era TFT asset is documented in
-[docs/price/counterfactual_pilot_2026-04-25.md](./counterfactual_pilot_2026-04-25.md).
+[docs/price/counterfactual_pilot_2026-04-25.md](price/counterfactual_pilot_2026-04-25.md).
 
 Window B `netload_tariffed` (`2025-09-01 -> 2025-09-03`):
 - `amber_apf_lgbm`: **$6.311/day**
@@ -1539,7 +1539,7 @@ Interpretation:
   by headline MAE alone
 
 The first clean short-window rolling comparison is documented in
-[docs/price/tariff_aware_tier1_candidate_2026-04-27.md](./tariff_aware_tier1_candidate_2026-04-27.md).
+[docs/price/tariff_aware_tier1_candidate_2026-04-27.md](price/tariff_aware_tier1_candidate_2026-04-27.md).
 
 **Compatibility checkpoint:** adding tariff-aware Tier 1 features changed the tactical
 inference contract from a legacy `25`-column long matrix to a new `33`-column long matrix.
@@ -2049,10 +2049,10 @@ So the next branch should stop thinking “big export spikes” and start thinki
     import/export decomposition, and Window A sanity before treating this as a candidate.
 
 **Holistic review implication (2026-04-22):** the latest system-level review in
-[docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
+[docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](price/reviews/codex_holistic_review_draft_2026-04-22.md)
 argues that the repo may now be closer to a local optimum where strategic forecast
 iteration is compensating for an under-specified strategic-to-tactical contract. The
-response note in [docs/price/reviews/review_response_2026-04-22.md](./review_response_2026-04-22.md)
+response note in [docs/price/reviews/review_response_2026-04-22.md](price/reviews/review_response_2026-04-22.md)
 records the current interpretation:
 - keep the two-timescale framing
 - make rolling MPC eval the primary architecture gate

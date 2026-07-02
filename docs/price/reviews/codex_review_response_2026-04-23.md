@@ -7,8 +7,8 @@ after the strategic-handoff rerun and the fixed-blend Option B sweep.
 Related:
 - [docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 - [docs/price/reviews/codex_holistic_review_followup_2026-04-23.md](./codex_holistic_review_followup_2026-04-23.md)
-- [docs/price/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
-- [docs/price/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md)
+- [docs/price/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
+- [docs/price/option_b_sweep_results_2026-04-23.md](../option_b_sweep_results_2026-04-23.md)
 
 ---
 

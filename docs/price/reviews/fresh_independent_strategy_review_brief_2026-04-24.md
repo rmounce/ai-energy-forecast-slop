@@ -7,18 +7,18 @@ This brief is intentionally compact. It is meant to help the reviewer get their 
 quickly, then read the repo directly and form their own view.
 
 Primary repo entry points:
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
-- [docs/roadmap.md](./roadmap.md)
-- [docs/data_sources.md](./data_sources.md)
-- [eval/README.md](../eval/README.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+- [docs/roadmap.md](../../roadmap.md)
+- [docs/data_sources.md](../../data_sources.md)
+- [eval/README.md](../../../eval/README.md)
 - [forecast.py](../forecast.py)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
-- [docs/price/training_runs.md](./training_runs.md)
+- [docs/price/training_runs.md](../training_runs.md)
 
 Recent review / experiment notes:
 - [docs/price/reviews/independent_review_brief_2026-04-21.md](./independent_review_brief_2026-04-21.md)
 - [docs/price/reviews/holistic_independent_review_brief_2026-04-22.md](./holistic_independent_review_brief_2026-04-22.md)
-- [docs/price/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md)
+- [docs/price/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
 - [docs/price/reviews/codex_review_response_2026-04-23.md](./codex_review_response_2026-04-23.md)
 
 ---
@@ -92,8 +92,8 @@ The important question is not only what data exists, but:
 - whether the current architecture makes best use of those arrival patterns
 
 See:
-- [docs/data_sources.md](./data_sources.md)
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
+- [docs/data_sources.md](../../data_sources.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
 
 ---
 
@@ -129,7 +129,7 @@ The repo currently contains:
 The rolling MPC work is now the most important live architectural evaluation track.
 
 See:
-- [eval/README.md](../eval/README.md)
+- [eval/README.md](../../../eval/README.md)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 ---
@@ -211,7 +211,7 @@ Current repo reading:
   diagnosing the residual Amber gap more directly
 
 See:
-- [docs/price/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md)
+- [docs/price/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
 
 ---
 
@@ -275,14 +275,14 @@ The most useful review would address questions like:
 
 If helpful, a reasonable order is:
 
-1. [ARCHITECTURE.md](../ARCHITECTURE.md)
-2. [docs/data_sources.md](./data_sources.md)
-3. [docs/roadmap.md](./roadmap.md)
-4. [eval/README.md](../eval/README.md)
+1. [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+2. [docs/data_sources.md](../../data_sources.md)
+3. [docs/roadmap.md](../../roadmap.md)
+4. [eval/README.md](../../../eval/README.md)
 5. [forecast.py](../forecast.py)
 6. [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 Then, for recent context:
-- [docs/price/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md)
+- [docs/price/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
 - [docs/price/reviews/holistic_independent_review_brief_2026-04-22.md](./holistic_independent_review_brief_2026-04-22.md)
 - [docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

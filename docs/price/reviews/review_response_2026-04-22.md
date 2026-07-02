@@ -9,9 +9,9 @@ change in the repo's working roadmap.
 
 Related:
 - [docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
-- [docs/roadmap.md](./roadmap.md)
-- [docs/price/option_b_plan_2026-04-22.md](./option_b_plan_2026-04-22.md)
-- [docs/price/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
+- [docs/roadmap.md](../../roadmap.md)
+- [docs/price/option_b_plan_2026-04-22.md](../option_b_plan_2026-04-22.md)
+- [docs/price/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
 
 ---
 

@@ -7,11 +7,11 @@ This brief is intentionally short and neutral. It is not meant to argue for a pa
 architecture. The reviewer is expected to read the repo directly and form their own view.
 
 Related repo entry points:
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
-- [docs/roadmap.md](./roadmap.md)
-- [docs/data_sources.md](./data_sources.md)
-- [eval/README.md](../eval/README.md)
-- [docs/price/training_runs.md](./training_runs.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+- [docs/roadmap.md](../../roadmap.md)
+- [docs/data_sources.md](../../data_sources.md)
+- [eval/README.md](../../../eval/README.md)
+- [docs/price/training_runs.md](../training_runs.md)
 - [forecast.py](../forecast.py)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
@@ -104,8 +104,8 @@ The important question is not only "what data exists?" but:
 - whether the current architecture makes the best use of those arrival times
 
 See:
-- [docs/data_sources.md](./data_sources.md)
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
+- [docs/data_sources.md](../../data_sources.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
 
 ---
 
@@ -144,7 +144,7 @@ The repo currently contains multiple evaluation layers:
 The rolling MPC work is currently the most important live architectural evaluation track.
 
 See:
-- [eval/README.md](../eval/README.md)
+- [eval/README.md](../../../eval/README.md)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 ---
@@ -248,18 +248,18 @@ The most useful review would address questions like:
 
 If helpful, a reasonable order is:
 
-1. [ARCHITECTURE.md](../ARCHITECTURE.md)
-2. [docs/data_sources.md](./data_sources.md)
-3. [docs/roadmap.md](./roadmap.md)
-4. [eval/README.md](../eval/README.md)
+1. [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+2. [docs/data_sources.md](../../data_sources.md)
+3. [docs/roadmap.md](../../roadmap.md)
+4. [eval/README.md](../../../eval/README.md)
 5. [forecast.py](../forecast.py)
 6. [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 Optional deeper context:
-- [docs/price/training_runs.md](./training_runs.md)
-- [docs/price/tft_price_forecast.md](./tft_price_forecast.md)
-- [docs/price/track10a_handoff_analysis_2026-04-22.md](./track10a_handoff_analysis_2026-04-22.md)
-- [docs/price/option_b_plan_2026-04-22.md](./option_b_plan_2026-04-22.md)
+- [docs/price/training_runs.md](../training_runs.md)
+- [docs/price/tft_price_forecast.md](../tft_price_forecast.md)
+- [docs/price/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
+- [docs/price/option_b_plan_2026-04-22.md](../option_b_plan_2026-04-22.md)
 
 ---
 

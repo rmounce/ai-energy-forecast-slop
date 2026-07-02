@@ -7,8 +7,8 @@ These runs are intended as a **diagnostic decomposition**, not an architecture v
 
 Related documents:
 - [rolling_eval_fidelity_full_windows_2026-04-25.md](./rolling_eval_fidelity_full_windows_2026-04-25.md)
-- [fresh_independent_strategy_review_followup_2026-04-25.md](./fresh_independent_strategy_review_followup_2026-04-25.md)
-- [roadmap.md](./roadmap.md)
+- [fresh_independent_strategy_review_followup_2026-04-25.md](reviews/fresh_independent_strategy_review_followup_2026-04-25.md)
+- [roadmap.md](../roadmap.md)
 
 ---
 

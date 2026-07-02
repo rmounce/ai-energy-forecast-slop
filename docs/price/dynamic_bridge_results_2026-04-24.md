@@ -5,8 +5,8 @@ Purpose: record the first completed Track 10A runs for the new
 
 Related:
 - [docs/price/dynamic_bridge_experiment_plan_2026-04-23.md](./dynamic_bridge_experiment_plan_2026-04-23.md)
-- [docs/roadmap.md](./roadmap.md)
-- [docs/price/reviews/codex_review_response_2026-04-23.md](./codex_review_response_2026-04-23.md)
+- [docs/roadmap.md](../roadmap.md)
+- [docs/price/reviews/codex_review_response_2026-04-23.md](reviews/codex_review_response_2026-04-23.md)
 
 ---
 

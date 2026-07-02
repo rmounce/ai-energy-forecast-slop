@@ -9,10 +9,10 @@ duplicate all earlier background.
 
 Related documents:
 - [fresh_independent_strategy_review_brief_2026-04-24.md](./fresh_independent_strategy_review_brief_2026-04-24.md)
-- [rolling_eval_fidelity_pilot_2026-04-25.md](./rolling_eval_fidelity_pilot_2026-04-25.md)
-- [rolling_eval_fidelity_full_windows_2026-04-25.md](./rolling_eval_fidelity_full_windows_2026-04-25.md)
-- [roadmap.md](./roadmap.md)
-- [eval/README.md](../eval/README.md)
+- [rolling_eval_fidelity_pilot_2026-04-25.md](../rolling_eval_fidelity_pilot_2026-04-25.md)
+- [rolling_eval_fidelity_full_windows_2026-04-25.md](../rolling_eval_fidelity_full_windows_2026-04-25.md)
+- [roadmap.md](../../roadmap.md)
+- [eval/README.md](../../../eval/README.md)
 
 ---
 

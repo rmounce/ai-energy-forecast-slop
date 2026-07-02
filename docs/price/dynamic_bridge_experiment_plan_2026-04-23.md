@@ -5,8 +5,8 @@ Purpose: capture the first implementation pass for the post-review
 long-run evaluation shape that was tried.
 
 Related:
-- [docs/roadmap.md](./roadmap.md)
-- [docs/price/reviews/codex_review_response_2026-04-23.md](./codex_review_response_2026-04-23.md)
+- [docs/roadmap.md](../roadmap.md)
+- [docs/price/reviews/codex_review_response_2026-04-23.md](reviews/codex_review_response_2026-04-23.md)
 - [docs/price/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md)
 
 ---

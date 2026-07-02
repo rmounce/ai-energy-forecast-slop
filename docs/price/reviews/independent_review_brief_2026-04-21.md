@@ -7,10 +7,10 @@ and the open architectural decision around opportunity-cost-aware control.
 This document is intended to be shareable without additional verbal context.
 
 Related repo documents:
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
-- [docs/roadmap.md](./roadmap.md)
-- [eval/README.md](../eval/README.md)
-- [docs/price/training_runs.md](./training_runs.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+- [docs/roadmap.md](../../roadmap.md)
+- [eval/README.md](../../../eval/README.md)
+- [docs/price/training_runs.md](../training_runs.md)
 
 ---
 
@@ -26,8 +26,8 @@ High-level architecture from the repo:
 - EMHASS MPC optimization at `14h × 5-minute`
 
 Relevant sources in the repo:
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
-- [docs/roadmap.md](./roadmap.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+- [docs/roadmap.md](../../roadmap.md)
 
 ### Current modeling layers
 
@@ -40,7 +40,7 @@ From existing repo docs:
 
 ### Current known eval status
 
-From [docs/roadmap.md](./roadmap.md) and [eval/README.md](../eval/README.md):
+From [docs/roadmap.md](../../roadmap.md) and [eval/README.md](../../../eval/README.md):
 - Phase 6 holistic dispatch gate: passing for the intended Tier1+Tier2 hybrid
 - Tactical Tier 1 eval: passing
 - Phase 7 enhanced-input TFT work: currently failing interim eval
@@ -107,7 +107,7 @@ The review request is therefore **not** just "how to improve one metric", but:
 
 ## 4. Current Rolling MPC Eval Setup
 
-From [docs/roadmap.md](./roadmap.md) and [eval/README.md](../eval/README.md):
+From [docs/roadmap.md](../../roadmap.md) and [eval/README.md](../../../eval/README.md):
 
 ### Track 10A
 
@@ -158,7 +158,7 @@ Window B (`2025-09-01 → 2025-10-13`):
 
 ### 5.2 Behavioral diagnosis from Window B
 
-From repo results summarized in [docs/roadmap.md](./roadmap.md) and [eval/README.md](../eval/README.md):
+From repo results summarized in [docs/roadmap.md](../../roadmap.md) and [eval/README.md](../../../eval/README.md):
 
 - On `low` days, the hybrid ended with less stored energy than amber
 - On `normal` days, the hybrid had weaker SoC posture and worse monetization

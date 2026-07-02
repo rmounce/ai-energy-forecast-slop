@@ -10,11 +10,11 @@ Secondary objective:
 - if possible, maintain a credible path that does not depend on Amber APF as a core input
 
 This draft is grounded in:
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
-- [docs/data_sources.md](./data_sources.md)
-- [docs/roadmap.md](./roadmap.md)
-- [eval/README.md](../eval/README.md)
-- [docs/price/training_runs.md](./training_runs.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+- [docs/data_sources.md](../../data_sources.md)
+- [docs/roadmap.md](../../roadmap.md)
+- [eval/README.md](../../../eval/README.md)
+- [docs/price/training_runs.md](../training_runs.md)
 - [forecast.py](../forecast.py)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
