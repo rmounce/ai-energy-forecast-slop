@@ -8,21 +8,26 @@
 # Athom energy_2 meter. Flags: 🟢 in progress · ✓ clean · ⚡ element assist · ❄ defrost.
 # Fan: High if sensor.aquatech_flow read "high" at any point in the run (in-progress row shows the
 # live reading instead) — tracked to classify the effect of the fan-speed threshold setting on COP.
+# 🕒 top row (attributes.next): the next not-yet-started block from the planner's own published
+# schedule — re-derived every publish tick, so it jitters with every replan by design; it's a live
+# forecast, not a commitment. Tank °C/ΔT/kWh are the planner's predictions, not measurements.
 type: markdown
 title: Hot water — recent runs
 content: |
   {% set e = 'sensor.hwc_cycles' %}
   {% set cur = state_attr(e, 'current') %}
+  {% set nxt = state_attr(e, 'next') %}
   {% set cycles = state_attr(e, 'cycles') or [] %}
   **Last COP:** {{ states(e) }} · **Today:** {{ state_attr(e, 'cycles_today') or 0 }} run(s) · **Last clean COP:** {{ state_attr(e, 'last_clean_cop') or '–' }}
-  {% if cur or cycles %}
+  {% if cur or cycles or nxt %}
 
   | Start | Dur | Tank °C | ΔT | WB °C | Fan | kWh | COP | |
   |---|--:|:--|--:|--:|:-:|--:|--:|:-:|
-  {% if cur %}| _{{ cur.start }}_ | _{{ cur.dur_min }}m_ | _{{ cur.tank_start | round(0) | int if cur.tank_start is not none else '?' }}→{{ cur.tank_now | round(0) | int if cur.tank_now is not none else '?' }}_ | _{{ cur.dt_c if cur.dt_c is not none else '–' }}_ | _–_ | _{% if cur.fan_high is none %}?{% elif cur.fan_high %}High{% else %}Low{% endif %}_ | _{{ cur.elec_kwh if cur.elec_kwh is not none else '–' }}{% if cur.elec_source and cur.elec_source != 'counter' %}*{% endif %}_ | _…_ | 🟢 |
+  {% if nxt %}| _{{ nxt.start }}_ | _{{ nxt.dur_min if nxt.dur_min is not none else '–' }}m_ | _{{ nxt.tank_start | round(0) | int if nxt.tank_start is not none else '?' }}→{{ nxt.tank_end | round(0) | int if nxt.tank_end is not none else '?' }}_ | _{{ (nxt.tank_end - nxt.tank_start) | round(1) if (nxt.tank_start is not none and nxt.tank_end is not none) else '–' }}_ | _–_ | _–_ | _{{ nxt.elec_kwh if nxt.elec_kwh is not none else '–' }}_ | _…_ | 🕒 |
+  {% endif %}{% if cur %}| _{{ cur.start }}_ | _{{ cur.dur_min }}m_ | _{{ cur.tank_start | round(0) | int if cur.tank_start is not none else '?' }}→{{ cur.tank_now | round(0) | int if cur.tank_now is not none else '?' }}_ | _{{ cur.dt_c if cur.dt_c is not none else '–' }}_ | _–_ | _{% if cur.fan_high is none %}?{% elif cur.fan_high %}High{% else %}Low{% endif %}_ | _{{ cur.elec_kwh if cur.elec_kwh is not none else '–' }}{% if cur.elec_source and cur.elec_source != 'counter' %}*{% endif %}_ | _…_ | 🟢 |
   {% endif %}{% for c in cycles %}| {{ c.start }} | {{ c.dur_min if c.dur_min is not none else '–' }}m | {{ c.tank_start | round(0) | int if c.tank_start is not none else '?' }}→{{ c.tank_end | round(0) | int if c.tank_end is not none else '?' }} | {{ (c.tank_end - c.tank_start) | round(1) if (c.tank_start is not none and c.tank_end is not none) else '–' }} | {{ c.wet_bulb if c.wet_bulb is not none else '–' }} | {% if c.fan_high_on is none %}–{% elif c.fan_high_on %}High{% else %}Low{% endif %} | {{ c.elec_kwh if c.elec_kwh is not none else '–' }}{% if c.elec_source and c.elec_source != 'counter' %}*{% endif %} | {{ c.cop if c.cop is not none else '–' }} | {% if c.element_on %}⚡{% endif %}{% if c.defrost_on %}❄{% endif %}{% if c.clean %}✓{% endif %} |
   {% endfor %}
-  *🟢 in progress · ✓ clean · ⚡ element assist · ❄ defrost · kWh\* = power-integration fallback (otherwise energy meter)*
+  *🕒 next planned (jitters with replans) · 🟢 in progress · ✓ clean · ⚡ element assist · ❄ defrost · kWh\* = power-integration fallback (otherwise energy meter)*
   {% else %}
 
   _No completed cycles in the reporting window yet._

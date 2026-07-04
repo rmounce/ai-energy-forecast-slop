@@ -104,6 +104,66 @@ def test_live_record_none_without_open_cycle():
     assert cr.live_record({}, tank_now=50.0, energy_now=1.0, now_ts=1.75e9, tz_name=TZ) is None
 
 
+# ── next planned cycle from the planner's own published schedule ────────────────────────────
+
+
+def _schedule(now_ts, powers, *, step_s=300, key="hwc_power_plan"):
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    return [
+        {"date": (t0 + timedelta(seconds=i * step_s)).isoformat(), key: p}
+        for i, p in enumerate(powers)
+    ]
+
+
+def _temps(now_ts, temps, *, step_s=300, key="hwc_predicted_temp"):
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    return [
+        {"date": (t0 + timedelta(seconds=i * step_s)).isoformat(), key: t}
+        for i, t in enumerate(temps)
+    ]
+
+
+def test_next_planned_record_finds_upcoming_block():
+    now = 1.75e9
+    schedule = _schedule(now, [0, 0, 0, 1500, 1500, 1500, 0, 0])
+    temps = _temps(now, [45, 45, 45, 50, 52, 55, 55, 55])
+    rec = cr.next_planned_record(schedule, temps, compressor_on=False, now_ts=now, tz_name=TZ)
+    assert rec["dur_min"] == 15
+    assert rec["tank_start"] == 50 and rec["tank_end"] == 55
+    assert cr_close(rec["elec_kwh"], 0.38)
+    assert rec["start"] == cr._local_str(now + 3 * 300, TZ)
+
+
+def test_next_planned_record_skips_the_currently_running_block():
+    now = 1.75e9
+    # already on for the first 2 steps (that's the `current` row), off, then the real next block
+    schedule = _schedule(now, [1500, 1500, 0, 0, 1500, 1500, 0])
+    rec = cr.next_planned_record(schedule, None, compressor_on=True, now_ts=now, tz_name=TZ)
+    assert rec["start"] == cr._local_str(now + 4 * 300, TZ)
+    assert rec["dur_min"] == 10
+    assert rec["tank_start"] is None and rec["tank_end"] is None  # no predicted_temperatures given
+
+
+def test_next_planned_record_none_when_no_upcoming_block():
+    now = 1.75e9
+    assert cr.next_planned_record(None, None, compressor_on=False, now_ts=now, tz_name=TZ) is None
+    assert cr.next_planned_record([], None, compressor_on=False, now_ts=now, tz_name=TZ) is None
+    all_off = _schedule(now, [0, 0, 0, 0])
+    assert cr.next_planned_record(all_off, None, compressor_on=False, now_ts=now, tz_name=TZ) is None
+    # currently on for the whole schedule -> nothing left to call "next"
+    all_on = _schedule(now, [1500, 1500, 1500])
+    assert cr.next_planned_record(all_on, None, compressor_on=True, now_ts=now, tz_name=TZ) is None
+
+
+def test_next_planned_record_skips_a_stale_schedule():
+    # schedule built for an earlier "now" -> every entry is now in the past; a replan hasn't landed
+    schedule = _schedule(1.75e9, [0, 0, 1500, 1500])
+    later = 1.75e9 + 10_000
+    assert cr.next_planned_record(schedule, None, compressor_on=False, now_ts=later, tz_name=TZ) is None
+
+
 def test_build_payload_state_is_last_cop_and_counters():
     cycles = [
         {"start": "2026-06-26 12:00", "cop": 2.2, "clean": True},
@@ -119,6 +179,10 @@ def test_build_payload_state_is_last_cop_and_counters():
     empty_state, empty_attrs = cr.build_payload([], live={"status": "running"}, today_local="x")
     assert empty_state == "unknown"
     assert empty_attrs["current"] == {"status": "running"}
+    assert empty_attrs["next"] is None
+
+    with_next = cr.build_payload([], live=None, today_local="x", next_planned={"start": "x"})[1]
+    assert with_next["next"] == {"start": "x"}
 
 
 def test_build_payload_headline_skips_null_cop_rows():

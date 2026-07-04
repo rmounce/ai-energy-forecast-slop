@@ -57,6 +57,8 @@ def _reporter_daemon(tmp_path):
     d.report_entities = dict(ENTITIES)
     d.report_entity_role = {eid: role for role, eid in ENTITIES.items()}
     d.humidity_entity = "weather.x"
+    d.plan_power_entity = "sensor.hwc_power_plan"
+    d.plan_temp_entity = "sensor.hwc_predicted_temp"
     d.report_cache = {}
     d.reporter_cycle = None
     d._reporter_prev_on = False  # as if startup seeded the compressor 'off'

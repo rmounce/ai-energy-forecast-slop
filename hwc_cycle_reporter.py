@@ -9,6 +9,9 @@ unit-testable without a database or network:
   - ``record_from_store_row`` projects a completed ``hwc_cycles`` row to a compact published record.
   - ``live_record`` renders the in-progress ('running') cycle from the daemon's edge snapshot plus
     the latest cached tank/energy readings.
+  - ``next_planned_record`` renders the next not-yet-started compressor-on block from the planner's
+    own already-published schedule (``sensor.hwc_power_plan``/``sensor.hwc_predicted_temp``) — read
+    only, no in-process planner state touched.
   - ``build_payload`` assembles the ``sensor.hwc_cycles`` state + attributes.
 
 Design intent (docs/hwc/cycle_reporting.md, docs/hwc/local_store.md): publish-only telemetry, fully
@@ -111,8 +114,91 @@ def live_record(
     }
 
 
+def _power_key(row: dict) -> str | None:
+    return next((k for k in row if k != "date"), None)
+
+
+def next_planned_record(
+    deferrables_schedule: list[dict] | None,
+    predicted_temperatures: list[dict] | None,
+    *,
+    compressor_on: bool,
+    now_ts: float,
+    tz_name: str,
+) -> dict | None:
+    """The next not-yet-started compressor-on block from the planner's published schedule.
+
+    ``deferrables_schedule``/``predicted_temperatures`` are ``sensor.hwc_power_plan``'s/
+    ``sensor.hwc_predicted_temp``'s own published attributes (each a list of ``{"date": iso, key:
+    value}`` on the planner's grid) — this is the planner's already-externalised output, not its
+    in-process state, so reading it doesn't cross the reporter/control-loop firewall (docs/hwc/
+    cycle_reporting.md). Re-derived from scratch on every call, so it jitters with every replan by
+    design — the schedule is a live forecast, not a commitment.
+
+    ``compressor_on`` skips past a currently-running block (that's the ``current`` row already);
+    a stale/past-dated schedule entry (the daemon hasn't replanned in a while) is skipped too, not
+    reported as "next". Returns None when there's no schedule or no upcoming on-block in it.
+    """
+    if not deferrables_schedule:
+        return None
+    power_key = _power_key(deferrables_schedule[0])
+    if power_key is None:
+        return None
+    now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+
+    def _power(row: dict) -> float:
+        try:
+            return float(row.get(power_key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _at(row: dict) -> datetime:
+        return datetime.fromisoformat(row["date"])
+
+    n = len(deferrables_schedule)
+    i = 0
+    if compressor_on:
+        while i < n and _power(deferrables_schedule[i]) > 0:
+            i += 1
+    while i < n and (_power(deferrables_schedule[i]) <= 0 or _at(deferrables_schedule[i]) < now):
+        i += 1
+    if i >= n:
+        return None
+    start_idx = i
+    while i + 1 < n and _power(deferrables_schedule[i + 1]) > 0:
+        i += 1
+    end_idx = i
+
+    step_s = (
+        (_at(deferrables_schedule[1]) - _at(deferrables_schedule[0])).total_seconds()
+        if n >= 2 else 0.0
+    )
+    dur_min = round((end_idx - start_idx + 1) * step_s / 60) if step_s else None
+    elec_kwh = (
+        round(sum(_power(r) for r in deferrables_schedule[start_idx:end_idx + 1]) * step_s / 3600 / 1000, 2)
+        if step_s else None
+    )
+
+    tank_start = tank_end = None
+    if predicted_temperatures and len(predicted_temperatures) > end_idx:
+        temp_key = _power_key(predicted_temperatures[0])
+        if temp_key is not None:
+            tank_start = _clean_value(predicted_temperatures[start_idx].get(temp_key))
+            tank_end = _clean_value(predicted_temperatures[end_idx].get(temp_key))
+            tank_start = float(tank_start) if tank_start is not None else None
+            tank_end = float(tank_end) if tank_end is not None else None
+
+    return {
+        "start": _local_str(_at(deferrables_schedule[start_idx]).timestamp(), tz_name),
+        "dur_min": dur_min,
+        "tank_start": tank_start,
+        "tank_end": tank_end,
+        "elec_kwh": elec_kwh,
+    }
+
+
 def build_payload(
-    cycles: list[dict], live: dict | None, *, today_local: str
+    cycles: list[dict], live: dict | None, *, today_local: str, next_planned: dict | None = None
 ) -> tuple[object, dict]:
     """Return (state_scalar, attributes) for ``sensor.hwc_cycles``.
 
@@ -125,6 +211,7 @@ def build_payload(
     attributes = {
         "cycles": list(reversed(cycles)),  # most recent first for the card
         "current": live,
+        "next": next_planned,
         "cycle_count": len(cycles),
         "cycles_today": sum(1 for c in cycles if str(c.get("start", "")).startswith(today_local)),
         "last_clean_cop": clean_cops[-1] if clean_cops else None,

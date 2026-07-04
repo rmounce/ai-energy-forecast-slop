@@ -155,9 +155,31 @@ Publish `sensor.hwc_cycles` (via the existing `_ha_set_state` path):
   one degenerate row must never blank the whole table.
 - **attributes.cycles**: the ring buffer (completed rows).
 - **attributes.current**: the in-progress row, or null.
+- **attributes.next**: the next not-yet-started compressor-on block from the planner's own already-
+  published schedule, or null — see "Next planned cycle" below.
 - **attributes.cycles_today** / **attributes.last_clean_cop**: cheap derived counters for the card.
 
 Rendered with an apexcharts/markdown/flex-table card (same family as `sensor.hwc_soc_state`).
+
+### Next planned cycle
+
+`hwc_cycle_reporter.next_planned_record` (`hwc_cycle_reporter.py`) projects the top row of the card
+from the planner's own already-published output — `sensor.hwc_power_plan`'s `deferrables_schedule`
+attribute (per-timestep planned watts) and `sensor.hwc_predicted_temp`'s `predicted_temperatures`
+attribute (per-timestep predicted tank temp), both on the planner's grid (`optimization_time_step`
+minutes, `horizon_steps` steps). It scans forward from "now" for the next run of nonzero-power
+timesteps — skipping past the currently-running block first if the compressor is already on (that's
+the `current` row) — and returns its predicted start, duration, tank temp range and elec_kwh, or
+`None` if there's no schedule or no upcoming on-block in it.
+
+This reads the planner's *externalised* state (an HA entity it already publishes), not its in-process
+plan — no new REST polling either: the daemon watches `sensor.hwc_power_plan`/`sensor.hwc_predicted_temp`
+via the same websocket `state_changed` stream it already needs for `plan_entities` (the executor
+re-arm trigger), and caches their `deferrables_schedule`/`predicted_temperatures` attributes into
+`report_cache` (`_reporter_observe`, seeded once at startup by `_reporter_seed_cache`). `next_planned_record`
+is called fresh on every publish tick, purely from that cache, so **the "next" row jitters with every
+replan by design** — it's a live forecast, not a commitment, and re-derives from scratch each time
+rather than tracking a previous prediction across replans.
 
 ## Safety / isolation
 

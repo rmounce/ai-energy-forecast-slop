@@ -370,6 +370,12 @@ class HwcDaemon:
         self.report_entities: dict[str, str] = dict(rep.get("entities", {}))
         self.report_entity_role = {eid: role for role, eid in self.report_entities.items()}
         self.humidity_entity = rep.get("humidity_entity")
+        # The planner's own published output (already read-only/publish-only itself — see
+        # docs/hwc/cycle_reporting.md) is cached the same way, so the reporter can show the next
+        # planned cycle without a new REST poll or touching in-process planner/executor state.
+        prefix = config["hwc"].get("publish_prefix", "hwc_")
+        self.plan_power_entity = _published_entity_id(prefix, config["hwc"]["power_plan_entity"])
+        self.plan_temp_entity = _published_entity_id(prefix, config["hwc"]["predicted_temp_entity"])
         # After compressor-off, wait this long before finalising so the tank probe's post-off peak
         # (it keeps rising a few seconds) lands in the cache/trace; see docs/hwc/cycle_reporting.md.
         self._close_settle_seconds = float(rep.get("close_settle_seconds", 60))
@@ -592,6 +598,14 @@ class HwcDaemon:
             self.report_cache["humidity"] = _coerce_float(
                 (new_state.get("attributes") or {}).get("humidity"))
             return
+        if entity_id == self.plan_power_entity:
+            self.report_cache["plan_schedule"] = (new_state.get("attributes") or {}).get(
+                "deferrables_schedule")
+            return
+        if entity_id == self.plan_temp_entity:
+            self.report_cache["plan_temps"] = (new_state.get("attributes") or {}).get(
+                "predicted_temperatures")
+            return
         role = self.report_entity_role.get(entity_id)
         if role is None:
             return
@@ -738,8 +752,14 @@ class HwcDaemon:
             self.reporter_cycle, tank_now=c.get("tank"), energy_now=c.get("energy"),
             fan_high=c.get("fan"), now_ts=time.time(), tz_name=self.config["timezone"],
         )
+        next_planned = hwc_cycle_reporter.next_planned_record(
+            c.get("plan_schedule"), c.get("plan_temps"), compressor_on=bool(c.get("compressor")),
+            now_ts=time.time(), tz_name=self.config["timezone"],
+        )
         today = datetime.now(ZoneInfo(self.config["timezone"])).date().isoformat()
-        state_scalar, attributes = hwc_cycle_reporter.build_payload(records, live, today_local=today)
+        state_scalar, attributes = hwc_cycle_reporter.build_payload(
+            records, live, today_local=today, next_planned=next_planned,
+        )
         await asyncio.to_thread(
             hwc_planner._ha_set_state, self.config, rep.get("cycles_entity", "sensor.hwc_cycles"),
             state_scalar, attributes,
@@ -783,6 +803,13 @@ class HwcDaemon:
                 st = hwc_planner._ha_call(self.config, "GET", f"states/{self.humidity_entity}")
                 self.report_cache["humidity"] = _coerce_float(
                     (st.get("attributes") or {}).get("humidity"))
+            except Exception:
+                pass
+        for role, eid in (("plan_schedule", self.plan_power_entity), ("plan_temps", self.plan_temp_entity)):
+            try:
+                st = hwc_planner._ha_call(self.config, "GET", f"states/{eid}")
+                key = "deferrables_schedule" if role == "plan_schedule" else "predicted_temperatures"
+                self.report_cache[role] = (st.get("attributes") or {}).get(key)
             except Exception:
                 pass
 
