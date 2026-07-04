@@ -170,10 +170,11 @@ def test_cycle_metrics_counter_path_cop_and_clean():
     m = hca.cycle_metrics(_trace(tank1=56.0, energy_total=1.0))
     assert m["elec_source"] == "counter"
     assert abs(m["elec_kwh"] - 1.0) < 1e-6
-    # tank_start is the +90 s settle-anchored sample (45.3°C), not the very first reading;
-    # therm ≈ 225*4.186*(56-45.3)/3600 + 0.12*1h ≈ 2.93 kWh, elec 1.0 -> COP ≈ 2.93.
-    assert m["tank_start"] == 45.3 and m["tank_end"] == 56.0
-    assert abs(m["cop"] - 2.93) < 0.03
+    # tank_start/tank_end are the min/max trace reading over the cycle; this trace rises
+    # monotonically so that's simply the first (45.0) and last (56.0) sample;
+    # therm ≈ 225*4.186*(56-45.0)/3600 + 0.12*1h ≈ 3.00 kWh, elec 1.0 -> COP ≈ 3.00.
+    assert m["tank_start"] == 45.0 and m["tank_end"] == 56.0
+    assert abs(m["cop"] - 3.00) < 0.03
     assert m["clean"] is True
     assert m["hp_mean_w"] == 1000 and m["hp_p95_w"] == 1000
     assert m["dur_min"] == 60

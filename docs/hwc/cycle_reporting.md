@@ -96,17 +96,20 @@ detects an off→on or on→off flip against the previous observed state:
   `running` row and samples.
 - **finalise (`_reporter_finalise`, after the settle):** once `close_settle_seconds` (60 s) have
   elapsed — checked on the sampler tick — load the trace and finalise through
-  `cycle_metrics(trace, edges=…)`. The edge snapshots override the 30 s-grid boundaries, so
-  `tank_start`, the counter elec (`energy_start`/`energy_end` at the compressor edges) and `tank_end`
-  are edge-precise. The summary upserts over the `running` row (same `start_ts` PK → `complete`).
+  `cycle_metrics(trace, edges=…)`. `cs`/`ce` and the counter elec (`energy_start`/`energy_end`) are
+  edge-precise; `tank_start`/`tank_end` are instead the **min/max tank reading across the cycle
+  window** (thermal inertia/stratification can dip the probe below its compressor-on reading well
+  into a run, so an edge-only start understates the true delta-T and therm_kwh/COP). The edge tank
+  snapshots are only a fallback for a trace with no tank readings. The summary upserts over the
+  `running` row (same `start_ts` PK → `complete`).
 
   **Why the settle.** The tank probe keeps rising for a few seconds *after* the compressor stops
   (residual heat / probe lag) — e.g. on 2026-07-01 the compressor went off at `05:07:35` and the tank
   ticked 59→60 at `05:07:38`, a ~3 s lag that a same-instant snapshot missed (the row read 59, not
-  60). So `tank_end` is taken as the settled post-off peak: `_reporter_finalise` uses the highest of
-  the off-edge tank and the (by-then risen) cached probe, and the sampler keeps appending during the
-  settle so that peak is also in the trace for the offline recompute. Elec/energy still end at the
-  compressor-off edge (`energy_end` is frozen there); only the final tank extends past it.
+  60). The settle window extends the trace `tank_end` search past `ce` to capture that peak, and the
+  sampler keeps appending during the settle so it lands in the stored trace for the offline
+  recompute too. Elec/energy still end at the compressor-off edge (`energy_end` is frozen there);
+  only the tank window extends past it.
 
 **Sampler (`sample_seconds`, 30 s).** While a cycle is open *or settling*, `_reporter_sample_tick`
 appends one trace sample from the cache (this is what pulls the settling probe's post-off peak into
@@ -193,7 +196,22 @@ As-built: the reporter task is registered in `HwcDaemon.run` and returns immedia
       exhaust: sensor.aquatech_exhaust_temperature
       coil: sensor.aquatech_coil_temperature
       return_air: sensor.aquatech_return_air_temperature
+      fan: sensor.aquatech_flow      # enum sensor, "Off"/"Low"/"High" fan speed -> bool
 ```
+
+`fan` is the one non-numeric, non-"on"/"off" entity in the set: it's an enum sensor (`options: [Off,
+Low, High]`, not a `binary_sensor`), so `_reporter_observe`/`_reporter_seed_cache` coerce it to a bool
+case-insensitively (`raw.lower() == "high"`) rather than `_coerce_float`. Per-cycle it's
+classified the same way as `element_on`/`defrost_on`/`four_way_on` — `fan_high_on` is true if the fan was
+ever "high" at any point in the cycle (`cycle_metrics`' `_any_on("fan")`). The in-progress row instead
+carries the raw current reading as `fan_high` (no over-the-cycle classification exists yet for an open
+cycle). Tracked to let COP analysis be split by fan speed when evaluating the fan-speed threshold setting.
+
+**2026-07-04 09:55**: owner reverted the unit's fan-speed thresholds from the install-time custom
+setting towards factory defaults, expecting "high" to trigger more often (including on the typical
+mid-day run) — the intent is to observe the COP effect using `fan_high_on` on cycles from this point
+on. Cycles before this timestamp reflect the old (more conservative) threshold, so don't pool them
+with post-change cycles when comparing COP by fan speed.
 
 (`sensor.aquatech_inlet_temperature` is in the InfluxDB-seeded history but no longer exists as a
 live HA entity, so it isn't captured going forward; the store column stays nullable.)

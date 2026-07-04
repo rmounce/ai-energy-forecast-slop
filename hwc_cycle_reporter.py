@@ -24,9 +24,10 @@ from zoneinfo import ZoneInfo
 # Columns surfaced to HA per completed cycle (keep the attribute payload small).
 PUBLISH_COLS = [
     "start", "dur_min", "tank_start", "tank_end", "ambient", "wet_bulb",
-    "elec_kwh", "elec_source", "therm_kwh", "cop", "element_on", "defrost_on", "clean",
+    "elec_kwh", "elec_source", "therm_kwh", "cop", "element_on", "defrost_on", "fan_high_on",
+    "clean",
 ]
-_BOOL_COLS = {"element_on", "defrost_on", "clean"}
+_BOOL_COLS = {"element_on", "defrost_on", "fan_high_on", "clean"}
 
 
 def _local_str(now_ts: float, tz_name: str) -> str:
@@ -73,6 +74,7 @@ def live_record(
     *,
     tank_now: float | None,
     energy_now: float | None,
+    fan_high: bool | None = None,
     now_ts: float,
     tz_name: str,
 ) -> dict | None:
@@ -80,7 +82,9 @@ def live_record(
 
     ``reporter_cycle`` is the daemon's in-memory open cycle ``{start_ts, tank_start, energy_start}``
     (persisted across restarts). Elec is ``energy_now − energy_start`` from the dedicated counter;
-    ΔT is ``tank_now − tank_start``. Returns None when no cycle is open.
+    ΔT is ``tank_now − tank_start``. ``fan_high`` is the current cached fan-speed reading (True/False),
+    not yet classified over the whole cycle the way ``fan_high_on`` is for a completed row. Returns
+    None when no cycle is open.
     """
     if not reporter_cycle:
         return None
@@ -103,6 +107,7 @@ def live_record(
         "dt_c": dt_c,
         "elec_kwh": elec,
         "elec_source": "counter" if elec is not None else None,
+        "fan_high": fan_high,
     }
 
 

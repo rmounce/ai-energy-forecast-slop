@@ -74,7 +74,7 @@ probe_lag_min REAL NULL, probe_rise_10_min REAL NULL, probe_rise_50_min REAL NUL
 probe_rise_90_min REAL NULL,
 exhaust_start REAL NULL, exhaust_max REAL NULL, exhaust_end REAL NULL,
 coil_mean REAL NULL, return_air_mean REAL NULL, inlet_mean REAL NULL,
-element_on INT, defrost_on INT, four_way_on INT,
+element_on INT, defrost_on INT, four_way_on INT, fan_high_on INT,
 clean INT, status TEXT,            -- 'running' | 'complete'
 updated_at REAL
 ```
@@ -95,7 +95,7 @@ The 20-row card ring is `SELECT … ORDER BY start_ts DESC LIMIT N`. The in-prog
 cycle_start_ts REAL,           -- FK -> hwc_cycles.start_ts
 ts REAL,                       -- 30 s grid, epoch UTC
 tank REAL, power_w REAL, energy_kwh REAL, ambient REAL, humidity REAL,
-element INT, defrost INT, four_way INT,
+element INT, defrost INT, four_way INT, fan INT,
 exhaust REAL NULL, coil REAL NULL, return_air REAL NULL, inlet REAL NULL,
 PRIMARY KEY (cycle_start_ts, ts)
 ```
@@ -109,8 +109,11 @@ the `hwc_cycles` summary can then be regenerated from raw by `cycle_metrics`.
 - The daemon **subscribes** (websocket) to the HWC entity set and caches latest values; the trace
   sampler reads the **cache** every 30 s (near-zero cost, no per-tick REST storm). Edge snapshots
   read the same cache at the compressor state-change instant.
-- **on-edge** (compressor off→on): open a `running` cycle; snapshot `tank_start`, `energy_start`,
-  `ts`. **off-edge**: snapshot `tank_end`, `energy_end`, `ts`; finalise.
+- **on-edge** (compressor off→on): open a `running` cycle; snapshot the edge tank, `energy_start`,
+  `ts`. **off-edge**: snapshot the edge tank, `energy_end`, `ts`; finalise. The stored
+  `tank_start`/`tank_end` are the min/max tank reading over the cycle trace (not the edge
+  snapshots — see docs/hwc/cycle_reporting.md), since stratification can dip the probe below its
+  on-edge reading well into a run.
 - `elec_kwh = energy_end − energy_start` (counter), `power_integration` fallback on a counter
   reset/gap (computed from the trace `power_w`).
 - Reconnect handling: a missed websocket reconnect just leaves a gap in the 30 s trace (and at

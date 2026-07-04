@@ -108,7 +108,7 @@ def test_append_and_load_trace_round_trips(conn):
     assert str(trace.index.tz) == "UTC"
     assert list(trace.columns) == [
         "tank", "power_w", "energy_kwh", "ambient", "humidity",
-        "element", "defrost", "four_way", "exhaust", "coil", "return_air", "inlet",
+        "element", "defrost", "four_way", "exhaust", "coil", "return_air", "inlet", "fan",
     ]
     assert trace["tank"].iloc[0] == 45.0
     assert trace["element"].iloc[0] == 0

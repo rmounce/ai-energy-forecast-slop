@@ -598,6 +598,8 @@ class HwcDaemon:
         raw = new_state.get("state")
         if role in ("compressor", "element", "defrost", "four_way"):
             value = raw == "on"
+        elif role == "fan":
+            value = isinstance(raw, str) and raw.lower() == "high"
         else:
             value = _coerce_float(raw)
         self.report_cache[role] = value
@@ -624,6 +626,7 @@ class HwcDaemon:
             "defrost": c.get("defrost"), "four_way": c.get("four_way"),
             "exhaust": c.get("exhaust"), "coil": c.get("coil"),
             "return_air": c.get("return_air"), "inlet": c.get("inlet"),
+            "fan": c.get("fan"),
         }
 
     async def _reporter_open(self, now_ts: float) -> None:
@@ -671,9 +674,10 @@ class HwcDaemon:
         await self._reporter_publish()
 
     async def _reporter_finalise(self) -> None:
-        """Close a settling cycle: recompute via cycle_metrics over the trace + edge snapshots, using
-        the settled post-off tank as ``tank_end``. Called once the settle window elapses (or on a
-        reopen / restart that lands mid-settle)."""
+        """Close a settling cycle: recompute via cycle_metrics over the trace (tank_start/tank_end
+        become the trace's min/max reading over the cycle); the settled post-off tank is only used
+        as ``edges["tank_end"]``, a fallback for a trace with no tank readings. Called once the
+        settle window elapses (or on a reopen / restart that lands mid-settle)."""
         rc = self.reporter_cycle
         if not rc or "closed_at" not in rc:
             return
@@ -732,7 +736,7 @@ class HwcDaemon:
         c = self.report_cache
         live = hwc_cycle_reporter.live_record(
             self.reporter_cycle, tank_now=c.get("tank"), energy_now=c.get("energy"),
-            now_ts=time.time(), tz_name=self.config["timezone"],
+            fan_high=c.get("fan"), now_ts=time.time(), tz_name=self.config["timezone"],
         )
         today = datetime.now(ZoneInfo(self.config["timezone"])).date().isoformat()
         state_scalar, attributes = hwc_cycle_reporter.build_payload(records, live, today_local=today)
@@ -770,6 +774,8 @@ class HwcDaemon:
             raw = st.get("state")
             if role in ("compressor", "element", "defrost", "four_way"):
                 self.report_cache[role] = raw == "on"
+            elif role == "fan":
+                self.report_cache[role] = isinstance(raw, str) and raw.lower() == "high"
             else:
                 self.report_cache[role] = _coerce_float(raw)
         if self.humidity_entity:

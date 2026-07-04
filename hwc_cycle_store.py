@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS hwc_cycles (
     element_on        INTEGER,
     defrost_on        INTEGER,
     four_way_on       INTEGER,
+    fan_high_on       INTEGER,
     clean             INTEGER,
     status            TEXT,
     updated_at        REAL
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS hwc_cycle_samples (
     coil           REAL,
     return_air     REAL,
     inlet          REAL,
+    fan            INTEGER,
     PRIMARY KEY (cycle_start_ts, ts)
 )
 """
@@ -95,19 +97,19 @@ CYCLE_COLS = [
     "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min", "probe_rise_90_min",
     "exhaust_start", "exhaust_max", "exhaust_end",
     "coil_mean", "return_air_mean", "inlet_mean",
-    "element_on", "defrost_on", "four_way_on",
+    "element_on", "defrost_on", "four_way_on", "fan_high_on",
     "clean", "status", "updated_at",
 ]
 
 SAMPLE_COLS = [
     "cycle_start_ts", "ts", "tank", "power_w", "energy_kwh", "ambient", "humidity",
-    "element", "defrost", "four_way", "exhaust", "coil", "return_air", "inlet",
+    "element", "defrost", "four_way", "exhaust", "coil", "return_air", "inlet", "fan",
 ]
 
 # Columns stored as 0/1 integers; a writer may pass python bools.
 _BOOL_COLS = {
-    "element_on", "defrost_on", "four_way_on", "clean",
-    "element", "defrost", "four_way",
+    "element_on", "defrost_on", "four_way_on", "fan_high_on", "clean",
+    "element", "defrost", "four_way", "fan",
 }
 
 
@@ -131,9 +133,24 @@ def connect(path, *, read_only: bool = False) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_columns(conn: sqlite3.Connection, table: str, declared_cols: list[str]) -> None:
+    """Add any column present in ``declared_cols`` but missing from the on-disk table.
+
+    ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so a schema addition (e.g. a new
+    tracked sensor) needs this to reach a database created before the column existed. New columns are
+    always nullable, so a plain ``ADD COLUMN ... REAL`` back-fills existing rows with NULL.
+    """
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for col in declared_cols:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} REAL")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute(CYCLES_DDL)
     conn.execute(SAMPLES_DDL)
+    _migrate_columns(conn, "hwc_cycles", CYCLE_COLS)
+    _migrate_columns(conn, "hwc_cycle_samples", SAMPLE_COLS)
     conn.commit()
 
 

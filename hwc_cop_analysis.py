@@ -287,8 +287,9 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
     exhaust, coil, return_air, inlet); absent columns degrade to NaN/False, never an error.
 
     ``edges`` (optional) carries the daemon's precise snapshots — ``cs``/``ce`` (UTC Timestamps),
-    ``tank_start``/``tank_end``, ``energy_start``/``energy_end`` — which override the trace-derived
-    boundaries. Offline, boundaries come from the trace itself.
+    ``tank_start``/``tank_end``, ``energy_start``/``energy_end``. ``cs``/``ce`` bound the cycle;
+    ``tank_start``/``tank_end`` are only used as a fallback when the trace has no tank readings in
+    the cycle window (the min/max of the trace itself is preferred — see below).
 
     Post-meter simplification (see doc): there is **no baseline subtraction** — the dedicated meter's
     standby is single-digit watts, so ``hp_mean/p95`` are raw cycle power, the ``power_integration``
@@ -327,15 +328,22 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
         elec, elec_source = integrated_kwh, "power_integration"
 
     tank = _trace_col(trace, "tank")
-    if edges and edges.get("tank_start") is not None and edges.get("tank_end") is not None:
-        t_start, t_end = float(edges["tank_start"]), float(edges["tank_end"])
-    else:
-        t0 = tank[tank.index <= cs + pd.Timedelta("90s")].dropna()
-        # The probe keeps climbing a few seconds past compressor-off; look a short settle window
-        # beyond ``ce`` for the final temperature (power/energy stay bounded by ``ce`` above).
-        t1 = tank[tank.index <= ce + pd.Timedelta(seconds=tank_settle_seconds)].dropna()
-        t_start = t0.iloc[-1] if not t0.empty else np.nan
-        t_end = t1.iloc[-1] if not t1.empty else np.nan
+    # tank_start/tank_end are the min/max probe reading across the cycle, not the edge readings:
+    # thermal inertia/stratification can dip the probe below its compressor-on reading well into a
+    # run (e.g. 45 min in), so an edge-only start understates the true delta-T and therm_kwh/COP.
+    # The settle window beyond ``ce`` is included since the probe keeps climbing a few seconds past
+    # compressor-off (power/energy stay bounded by ``ce`` above). The edge snapshots (when given)
+    # are folded in as extra candidates rather than an all-or-nothing override, so a settled reading
+    # that hasn't yet landed as a trace sample (e.g. the daemon's own finalise-time cache read) is
+    # never lost to a strict window cutoff.
+    tank_window = tank[(tank.index >= cs) & (tank.index <= ce + pd.Timedelta(seconds=tank_settle_seconds))].dropna()
+    mins, maxs = list(tank_window.values), list(tank_window.values)
+    if edges and edges.get("tank_start") is not None:
+        mins.append(float(edges["tank_start"]))
+    if edges and edges.get("tank_end") is not None:
+        maxs.append(float(edges["tank_end"]))
+    t_start = min(mins) if mins else np.nan
+    t_end = max(maxs) if maxs else np.nan
     if pd.isna(t_start) or pd.isna(t_end):
         return None
 
@@ -389,6 +397,7 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
         element_on=_any_on("element"),
         defrost_on=_any_on("defrost"),
         four_way_on=_any_on("four_way"),
+        fan_high_on=_any_on("fan"),
         clean=clean,
     )
 
@@ -399,7 +408,7 @@ _SUMMARY_FLOAT_COLS = [
     "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min", "probe_rise_90_min",
     "exhaust_start", "exhaust_max", "exhaust_end", "coil_mean", "return_air_mean", "inlet_mean",
 ]
-_SUMMARY_BOOL_COLS = ["element_on", "defrost_on", "four_way_on", "clean"]
+_SUMMARY_BOOL_COLS = ["element_on", "defrost_on", "four_way_on", "fan_high_on", "clean"]
 
 
 def _to_utc(value):
@@ -543,7 +552,7 @@ def write_summary_markdown(
             "therm_kwh",
             "cop", "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min",
             "probe_rise_90_min", "exhaust_start", "exhaust_max", "exhaust_end",
-            "element_on", "defrost_on", "four_way_on", "clean",
+            "element_on", "defrost_on", "four_way_on", "fan_high_on", "clean",
         ]
         cols = [col for col in cols if col in display.columns]
         table = display[cols].fillna("").astype(str)

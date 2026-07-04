@@ -412,6 +412,7 @@ hwc:
       exhaust: sensor.aquatech_exhaust_temperature
       coil: sensor.aquatech_coil_temperature
       return_air: sensor.aquatech_return_air_temperature
+      fan: sensor.aquatech_flow  # "low"/"high" fan speed; classified as fan_high_on per cycle
     # NOTE: this is read from `hwc.daemon`, NOT here — so as placed it is INERT and each read site
     # uses its code default. Left here (not moved up) because the value is ambiguous: the daemon
     # reads heat_command_grace_seconds at three sites with defaults 120/600/120, so putting a single
