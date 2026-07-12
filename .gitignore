@@ -57,3 +57,21 @@ eval/results/*
 docs/review_*.md
 docs/hwc_questions_for_previous_implementer.md
 HANDOVER.md
+
+# Personal shell/editor/tool dotfiles (not project config)
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.gitmodules
+.ripgreprc
+.idea
+.vscode
+.claude/agents
+.claude/commands
+.claude/hooks
+.claude/routines
+.claude/skills
+.claude/workflows
