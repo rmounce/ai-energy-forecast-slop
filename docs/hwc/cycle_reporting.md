@@ -235,6 +235,26 @@ mid-day run) — the intent is to observe the COP effect using `fan_high_on` on 
 on. Cycles before this timestamp reflect the old (more conservative) threshold, so don't pool them
 with post-change cycles when comparing COP by fan speed.
 
+**Backfilling `fan_high_on` for pre-existing cycles (2026-07-04, one-off).** `fan` wasn't tracked
+before this feature landed, so every already-stored cycle had a null `fan_high_on`. Rather than leave
+it null, each cycle's window was checked against HA's own recorder history for
+`sensor.aquatech_flow`, its 30 s trace samples' `fan` column patched from that history (forward-filled
+segments), and the row recomputed through `cycle_metrics` — so the backfill survives any future
+recompute instead of being silently overwritten back to null. Two sources were used:
+
+- **Live HA recorder** (`/api/history/period`) for cycles within its purge window (~10 days).
+- **ZFS snapshots** of the recorder's `home-assistant_v2.db` for older cycles: the recorder purges
+  each snapshot's own history to the same ~10-day window relative to *when the snapshot was taken*,
+  not relative to now, so one snapshot only covers ~10 days around its own date — 3 overlapping
+  daily snapshots (roughly a week apart) were needed to cover a 3-week gap. The db is WAL-mode and
+  the snapshot mount is read-only, so it can't be queried in place (SQLite needs a writable `-shm`
+  file to coordinate against the `-wal` file; the `immutable=1` read-only mode that avoids that
+  requirement also skips WAL recovery, silently missing anything not yet checkpointed into the main
+  file). Each snapshot's `.db`/`-wal`/`-shm` trio was copied to local scratch (~11GB, ~10s), queried,
+  then deleted.
+- 6 of the very earliest stored cycles (the original CSV-seeded anchors, pre-dating this SQLite
+  store) have no `end_ts` and no trace to patch, so they're unrecoverable and stay null.
+
 (`sensor.aquatech_inlet_temperature` is in the InfluxDB-seeded history but no longer exists as a
 live HA entity, so it isn't captured going forward; the store column stays nullable.)
 
