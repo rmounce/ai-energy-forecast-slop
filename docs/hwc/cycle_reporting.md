@@ -235,6 +235,17 @@ mid-day run) — the intent is to observe the COP effect using `fan_high_on` on 
 on. Cycles before this timestamp reflect the old (more conservative) threshold, so don't pool them
 with post-change cycles when comparing COP by fan speed.
 
+**2026-07-12 first read: fan-high is worth ~+0.15 COP (~7%).** Every daytime cycle since the
+2026-07-04 change has run fan-high; every one before it fan-low, giving a clean before/after split
+(9 fan-high vs 20 fan-low clean, heat-pump-only daytime cycles finishing at ~60 °C since fan
+tracking began 2026-06-02). COP is dominated by starting tank temperature (≈ −0.053 COP per °C
+warmer start), so the comparison must control for it: a regression of COP on tank_start + ambient +
+fan gives a fan-high coefficient of **+0.15 COP** (t ≈ 2.6); matched tank-start bands agree
+(51.5–54 °C top-ups: 1.96 → 2.14; 44–50 °C reheats: 2.24 → 2.53). Mean compressor-period power is
+only ~12 W higher on fan-high, so the gain is real extra heat delivery, not power-accounting drift.
+Caveats: only 9 fan-high cycles, all in similar winter conditions — re-run at ~20 fan-high cycles
+and before drawing conclusions for milder ambients.
+
 **Backfilling `fan_high_on` for pre-existing cycles (2026-07-04, one-off).** `fan` wasn't tracked
 before this feature landed, so every already-stored cycle had a null `fan_high_on`. Rather than leave
 it null, each cycle's window was checked against HA's own recorder history for
