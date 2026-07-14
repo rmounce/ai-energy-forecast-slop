@@ -46,6 +46,13 @@ class Decision:
     # Lets the daemon gate the post-heat off-suppression grace on confirmed-running state
     # rather than a fragile edge latch.
     compressor_on: bool = False
+    # Operation mode to command for ``heat``. ``None`` means the configured planned-heating
+    # mode (``actuation.operation_mode``). The negative-price override (docs/hwc/
+    # surplus_negative_price.md) sets ``electric``/``performance`` explicitly.
+    mode: str | None = None
+    # Element-only modes do not start the compressor, so the daemon's compressor short-cycle
+    # guard (``min_off_seconds``) must not inhibit them.
+    uses_compressor: bool = True
 
 
 def _published_entity_id(prefix: str, entity_id: str) -> str:
@@ -173,11 +180,17 @@ def decide(
     return Decision(action="off", reason=reason)
 
 
+def decision_mode(cfg: dict, decision: Decision) -> str:
+    """Operation mode a ``heat`` decision commands: its own, else the planned-heating default."""
+    act = cfg["hwc"].get("actuation", {})
+    return decision.mode or act.get("operation_mode", "heat_pump")
+
+
 def apply_decision(cfg: dict, decision: Decision):
     act = cfg["hwc"]["actuation"]
     entity = act["water_heater_entity"]
     if decision.action == "heat":
-        mode = act.get("operation_mode", "heat_pump")
+        mode = decision_mode(cfg, decision)
         logging.info(
             "HWC command: set %s mode=%s setpoint=%sC (assuming off->heat starts promptly)",
             entity,

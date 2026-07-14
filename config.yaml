@@ -366,6 +366,38 @@ hwc:
     power_on_threshold_w: 100
     setpoint_min_c: 55
     setpoint_max_c: 60
+  # Negative-price override (docs/hwc/surplus_negative_price.md). Reactive layer on top of the DP
+  # plan: while the live buy price is negative we are paid to import, so dump as much electrical
+  # power as the unit can take. Compressor idle -> `electric` at 75 °C (max draw, 1800 W).
+  # Compressor running -> `performance` at 75 °C, which keeps it running to 60 °C and then hands
+  # over to the element by itself; interrupting a running compressor buys only the extra ~1.1 kW
+  # of paid draw (the element delivers no more *heat*) and costs a restart, so it happens only
+  # when `price < -transition_cost_aud / (1.1 kW × gain_hours)` clears — then it latches.
+  negative_price:
+    # Enabled 2026-07-14 to catch the next event. The default paths (`performance` while the
+    # compressor runs, `electric` while it is idle) don't depend on element_power_w at all — only
+    # the break-even compressor-interrupt does, so a mis-set Δ can only mis-time that one branch.
+    enabled: true
+    price_entity: sensor.amber_effective_general_price
+    # 5-minute forward intervals, for the break-even's remaining-negative-window term.
+    forecast_entity: sensor.amber_billing_interval_forecasts_general_price
+    setpoint_c: 75
+    # ASSUMED. Confirm from the Athom ch2 element circuit the first time the element runs; it
+    # sets the break-even's Δ, so a wrong value biases the compressor-interrupt decision.
+    element_power_w: 1800
+    heat_pump_power_w: 700
+    # The price entity publishes a conservative estimate at the start of each 5-min interval and
+    # the confirmed actual ~30 s later, with nothing to tell them apart. Entry acts on the first
+    # value (a false entry costs <1c); the compressor *interrupt* — the only decision that costs
+    # a restart — waits for the price to have read negative across an update boundary.
+    confirm_seconds: 45
+    # Above this the element is running under `performance` anyway, so a switch buys nothing.
+    element_handover_c: 60
+    # Used when the forward price series is missing/unparseable: assume the shortest possible
+    # window, so the break-even is hard to clear and we don't interrupt on a blind guess.
+    fallback_window_minutes: 5
+    max_window_hours: 4
+
   daemon:
     state_file: data/hwc_daemon_state.json
     debounce_seconds: 2

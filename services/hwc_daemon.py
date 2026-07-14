@@ -38,6 +38,7 @@ import hwc_cycle_reporter  # noqa: E402
 import hwc_cycle_store  # noqa: E402
 import hwc_dp_planner  # noqa: E402
 import hwc_executor  # noqa: E402
+import hwc_negative_price  # noqa: E402
 import hwc_planner  # noqa: E402
 import hwc_soc_tracker  # noqa: E402
 from config_utils import load_config  # noqa: E402
@@ -115,6 +116,8 @@ def watched_entities(config: dict) -> set[str]:
     for key in ("water_heater_entity", "compressor_entity"):
         if act.get(key):
             entities.add(act[key])
+    if hwc_negative_price.enabled(config):
+        entities.add(hwc_negative_price.price_entity(config))
     return entities
 
 
@@ -161,23 +164,34 @@ def classify_state_change(config: dict, entity_id: str, old_state: dict | None, 
     if entity_id in {act.get("water_heater_entity"), act.get("compressor_entity")}:
         return TriggerDecision(False, True, "equipment state changed")
 
+    if hwc_negative_price.enabled(config) and entity_id == hwc_negative_price.price_entity(config):
+        # Execute, don't replan: the override is reactive and sits on top of the existing plan.
+        # Every 5-minute price tick is a chance to enter/exit it, so this must not wait for the
+        # periodic tick.
+        return TriggerDecision(False, True, "live buy price changed")
+
     if entity_id in plan_entities:
         return TriggerDecision(False, True, "published plan changed")
 
     return TriggerDecision(False, False, "not watched")
 
 
-def command_key(decision: hwc_executor.Decision):
+def command_key(config: dict, decision: hwc_executor.Decision):
     """Identity of an actuation command; equal keys => a redundant re-command.
 
     ``None`` for no-op actions (idle/wait), which are never actuated and never dedup-skipped.
     Used to avoid re-issuing an identical water_heater command every periodic tick; the
     daemon invalidates its cached key on equipment state changes so real drift re-asserts.
+
+    The mode is part of the key: the negative-price override switches mode at an unchanged
+    action/setpoint, and without the mode such a switch would be dedup-skipped as "unchanged"
+    and never actuated.
     """
     if decision.action not in ("off", "heat"):
         return None
     setpoint = round(decision.setpoint_c, 1) if decision.setpoint_c is not None else None
-    return (decision.action, setpoint)
+    mode = hwc_executor.decision_mode(config, decision) if decision.action == "heat" else None
+    return (decision.action, setpoint, mode)
 
 
 def should_suppress_off_after_heat(
@@ -214,6 +228,7 @@ def should_suppress_heat_after_off(
     now: float,
     last_off_command_at: float,
     min_off_seconds: float,
+    uses_compressor: bool = True,
 ) -> bool:
     """Inhibit a ``heat`` command issued within ``min_off_seconds`` of an off command.
 
@@ -224,8 +239,14 @@ def should_suppress_heat_after_off(
     jitter or any model edge-case (the 53 °C short-cycle being the motivating one). A min-*on*
     guard is deliberately not added: forcing a stop to be deferred would push the tank past its
     setpoint, whereas deferring a *start* is always safe.
+
+    ``uses_compressor=False`` (element-only ``electric`` heating, from the negative-price
+    override) bypasses the gate entirely: it is a resistive element with no short-cycle
+    constraint, so there is no compressor to rest and no reason to forfeit a dump window.
     """
     if decision_action != "heat":
+        return False
+    if not uses_compressor:
         return False
     if last_off_command_at <= 0:
         return False
@@ -355,10 +376,24 @@ class HwcDaemon:
         # last_command_action persists across cache invalidations (unlike last_applied_command),
         # so the planner's effective-running signal can tell a commanded stop from a defrost pause.
         self.last_command_action: str | None = None
+        # The same intent expressed *for the compressor*: element-only heating ("electric") is a
+        # heat command to the unit but a stop to the compressor, since the two sources are
+        # mutually exclusive. This — not last_command_action — is what the compressor-state
+        # signals must consult.
+        self.last_compressor_command_action: str | None = None
+        # Element-only heating is invisible to the compressor sensor, so the SoC tracker would
+        # otherwise coast (and shed its draw prior) while the tank is actually gaining ~1800 W.
+        # False after a restart: the tracker then under-states V_hot, which is the safe direction.
+        self.element_running = False
         self.compressor_last_on_at = 0.0
         self._heat_unconfirmed_warned = False
         state = self._load_state()
         self.last_reached_target_at = state.get("last_reached_target_at")
+        # Survives a restart mid-event, so an in-flight negative-price override (and its latch)
+        # isn't dropped and re-decided from scratch.
+        self.negative_price_state = hwc_negative_price.OverrideState.from_dict(
+            state.get("negative_price")
+        )
         # Two-state (V_hot, T_hot) tracker state ({v_hot, t_hot, updated_at}); None until seeded.
         self.soc: dict | None = state.get("soc")
         # Cycle-reporting state (publish-only; firewalled from the control loop). The SQLite store
@@ -859,6 +894,7 @@ class HwcDaemon:
                     seed = self._update_soc_tracker(
                         probe_c=probe,
                         heating=planner_config["hwc"]["compressor_initially_on_override"],
+                        element_on=self.element_running,
                     )
                     if seed is not None:
                         planner_config["hwc"].setdefault("dp_planner", {})["_soc_state0"] = list(seed)
@@ -875,6 +911,7 @@ class HwcDaemon:
     async def _run_executor(self) -> None:
         async with self.run_lock:
             started = time.monotonic()
+            effective_on = False
             try:
                 effective_on = await asyncio.to_thread(self._effective_compressor_running)
                 decision = await asyncio.to_thread(
@@ -887,17 +924,24 @@ class HwcDaemon:
                     log.error("HWC fallback disabled or unavailable; no water_heater command issued")
                     return
                 log.warning("Using HWC fallback decision: %s (%s)", decision.action, decision.reason)
+
+            decision = await asyncio.to_thread(
+                self._apply_negative_price_override, decision, effective_on
+            )
+
             log.info(
-                "HWC executor decision: %s (%s), setpoint=%s",
+                "HWC executor decision: %s (%s), setpoint=%s, mode=%s",
                 decision.action,
                 decision.reason,
                 decision.setpoint_c,
+                hwc_executor.decision_mode(self.config, decision) if decision.action == "heat" else "-",
             )
 
             grace = float(self.config["hwc"].get("daemon", {}).get("heat_command_grace_seconds", 120))
             if (
                 decision.action == "heat"
-                and self.last_command_action == "heat"
+                and decision.uses_compressor
+                and self.last_compressor_command_action == "heat"
                 and self.last_heat_command_at > 0
                 and time.monotonic() - self.last_heat_command_at > grace
                 and not decision.compressor_on
@@ -925,7 +969,7 @@ class HwcDaemon:
                 return
 
             act = self.config["hwc"].get("actuation", {})
-            key = command_key(decision)
+            key = command_key(self.config, decision)
             if self.dry_run or not act.get("enabled", False):
                 log.info("Dry/config-disabled run; not calling water_heater services")
             elif key is None:
@@ -945,12 +989,80 @@ class HwcDaemon:
                     return
                 self.last_applied_command = key
                 self.last_command_action = decision.action
-                if decision.action == "heat":
+                self.element_running = decision.action == "heat" and not decision.uses_compressor
+                if decision.action == "heat" and decision.uses_compressor:
+                    self.last_compressor_command_action = "heat"
                     self.last_heat_command_at = time.monotonic()
                     self._heat_unconfirmed_warned = False
+                elif decision.action == "heat":
+                    # Element-only heating: a heat command to the unit, but a *stop* to the
+                    # compressor (mutually exclusive sources — 10 A plug). Booking it as a
+                    # compressor stop makes a later heat_pump restart owe the min-off rest, and
+                    # stops the off-suppression grace and the start-grace in
+                    # effective_compressor_running waiting on a confirmation that can never come.
+                    self.last_compressor_command_action = "off"
+                    self.last_off_command_at = time.monotonic()
                 elif decision.action == "off":
+                    self.last_compressor_command_action = "off"
                     self.last_off_command_at = time.monotonic()
             log.info("HWC executor completed in %.1fs: %s", time.monotonic() - started, decision.action)
+
+    def _apply_negative_price_override(
+        self, decision: hwc_executor.Decision, effective_on: bool
+    ) -> hwc_executor.Decision:
+        """Replace the DP decision while the live buy price is negative.
+
+        Blocking (two HA reads); called via ``to_thread``. Any failure leaves the DP plan in
+        force — the override is an opportunistic bonus, never a dependency.
+
+        On exit the plan is *re-asserted*, not merely un-overridden: ``performance``'s 60->75
+        element leg is ungated, so leaving it in place above 60 °C would keep importing at
+        1800 W. Returning the plan decision here re-commands it (the mode is part of
+        ``command_key``, so the change is not dedup-skipped).
+        """
+        if not hwc_negative_price.enabled(self.config):
+            return decision
+        try:
+            price = _coerce_float(
+                hwc_executor._entity_state(
+                    self.config, hwc_negative_price.price_entity(self.config)
+                ).get("state")
+            )
+            forecasts: list[dict] = []
+            if price is not None and price < 0:
+                # Only needed for the break-even; skip the read on the common non-negative path.
+                state = hwc_executor._entity_state(
+                    self.config, hwc_negative_price.forecast_entity(self.config)
+                )
+                forecasts = (state.get("attributes") or {}).get("Forecasts") or []
+            tank_c = hwc_planner.get_tank_temperature(self.config)
+        except Exception:
+            log.exception("HWC negative-price override could not read inputs; using the DP plan")
+            return decision
+
+        override, new_state = hwc_negative_price.decide(
+            self.config,
+            planned=decision,
+            price_aud_per_kwh=price,
+            compressor_on=effective_on,
+            tank_c=tank_c,
+            forecasts=forecasts,
+            now=datetime.now(timezone.utc),
+            state=self.negative_price_state,
+        )
+        if new_state != self.negative_price_state:
+            self.negative_price_state = new_state
+            self._save_state()
+        if override is None:
+            return decision
+        log.warning(
+            "HWC negative-price override active (price=%.3f $/kWh): %s -> %s (%s)",
+            price,
+            decision.action,
+            override.mode,
+            override.reason,
+        )
+        return override
 
     def _fallback_decision_current(self) -> hwc_executor.Decision | None:
         try:
@@ -986,6 +1098,7 @@ class HwcDaemon:
             now=time.monotonic(),
             last_off_command_at=self.last_off_command_at,
             min_off_seconds=min_off,
+            uses_compressor=decision.uses_compressor,
         )
 
     def _invalidate_command_cache_on_equipment_change(self, entity_id: str) -> None:
@@ -1021,7 +1134,7 @@ class HwcDaemon:
             tank_at_target = False
         return effective_compressor_running(
             raw_on=raw_on,
-            last_command_action=self.last_command_action,
+            last_command_action=self.last_compressor_command_action,
             tank_at_target=tank_at_target,
             now=time.monotonic(),
             last_heat_command_at=self.last_heat_command_at,
@@ -1051,12 +1164,21 @@ class HwcDaemon:
         window_s = ((end.hour * 60 + end.minute) - (start.hour * 60 + start.minute)) * 60
         return kwh_per_day / (window_s if window_s > 0 else 3600)
 
-    def _update_soc_tracker(self, *, probe_c: float, heating: bool) -> tuple[float, float] | None:
+    def _update_soc_tracker(
+        self, *, probe_c: float, heating: bool, element_on: bool = False
+    ) -> tuple[float, float] | None:
         """Advance the (V_hot, T_hot) tracker to now and return the planner seed (or None if off).
 
         Coarse but conservative: the current ``heating`` signal is applied over the whole elapsed
         interval; the two watermark resets correct any drift (docs/hwc/2state_soc_model.md). Pure
         math + a local state-file write — no network (probe/heating are passed in).
+
+        ``element_on`` (negative-price override) is heat the *compressor* signal cannot see: the
+        element is resistive, so it delivers its electrical power as heat (COP 1) while the
+        compressor reads off. ``soc.step`` applies the heat pump's COP to whatever power it is
+        given, so the element is passed as a COP-equivalent electrical power. That is exact in
+        the *build* regime — the only one reachable below the 60 °C element handover, since
+        crossing 60 °C trips the full watermark, which snaps V_hot regardless.
         """
         hwc = self.config["hwc"]
         dp_cfg = hwc.get("dp_planner", {})
@@ -1073,9 +1195,18 @@ class HwcDaemon:
         else:
             dt_s = max(0.0, now - float(self.soc.get("updated_at", now)))
             prev = hwc_soc_tracker.TrackerState(float(self.soc["v_hot"]), float(self.soc["t_hot"]))
-            power = hwc_planner._compressor_power_w(th, probe_c, None)
+            if element_on:
+                element_w = float(
+                    hwc_negative_price.config(self.config).get(
+                        "element_power_w", hwc_negative_price.DEFAULT_ELEMENT_POWER_W
+                    )
+                )
+                power = element_w / p.cop_build if p.cop_build > 0 else 0.0
+            else:
+                power = hwc_planner._compressor_power_w(th, probe_c, None)
             st, reason = hwc_soc_tracker.advance(
-                prev, dt_s, heating=bool(heating), probe_c=probe_c, modelled_power_w=power,
+                prev, dt_s, heating=bool(heating) or element_on, probe_c=probe_c,
+                modelled_power_w=power,
                 draw_kwh_per_s=self._soc_draw_rate_kwh_per_s(), p=p,
                 desired_c=desired, cliff_probe_c=cliff,
             )
@@ -1127,6 +1258,9 @@ class HwcDaemon:
         path = _daemon_state_path(self.config)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"last_reached_target_at": self.last_reached_target_at}
+        negative_price = getattr(self, "negative_price_state", None)
+        if negative_price is not None:
+            payload["negative_price"] = negative_price.to_dict()
         soc = getattr(self, "soc", None)  # getattr: tolerate __new__'d daemons in unit tests
         if soc is not None:
             payload["soc"] = soc

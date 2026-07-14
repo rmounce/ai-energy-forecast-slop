@@ -13,7 +13,7 @@ from the home battery. Live pipeline: `services/hwc_daemon.py` (replan + actuati
 | [dp_planner.md](dp_planner.md) | The production optimiser: monetary DP, continuous heat-rate taper, config, known limits |
 | [thermal_characterisation.md](thermal_characterisation.md) | Measured physics: stratification, COP, power model, standing loss, actuation semantics |
 | [emhass.md](emhass.md) | Original design/spec (EMHASS thermal-battery route; EMHASS retained as fallback planner) |
-| [surplus_negative_price.md](surplus_negative_price.md) | Agreed design (2026-06-28), not yet implemented: curtailment → DP-planned, negative price → executor override |
+| [surplus_negative_price.md](surplus_negative_price.md) | Curtailment → DP-planned (Phase 2, pending); negative price → executor override (Phase 1, live 2026-07-14) |
 | [local_store.md](local_store.md) | Cycle data on local SQLite (off InfluxDB); deployed 2026-07-01 |
 | [cycle_reporting.md](cycle_reporting.md) | `sensor.hwc_cycles` Lovelace card + reporter |
 | [aquatech_entities.md](aquatech_entities.md) | Canonical, verified HA entity map (T1–T5 etc.) |
@@ -37,7 +37,9 @@ planner review briefs/responses, the 2026-06-26 short-cycle diagnosis, prior-imp
 
 ## Open workstreams
 
-- **Surplus/negative-price handling** — spec agreed, implementation pending
+- **Surplus/negative-price handling** — Phase 1 (negative-price override) implemented and enabled
+  2026-07-14; element power still assumed (1800 W), confirm from Athom ch2 on the first live
+  event. Phase 2 (DP curtailment modelling) still to do
   ([surplus_negative_price.md](surplus_negative_price.md)).
 - **Emergency-heat fallback silently disabled** — pre-existing config bug: `fallback_*` keys
   sit under `hwc.reporting:` instead of `hwc.daemon:`; needs an owner config fix.

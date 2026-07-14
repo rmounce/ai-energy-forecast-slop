@@ -1,3 +1,5 @@
+import pytest
+
 import services.hwc_daemon as hd
 
 
@@ -142,19 +144,39 @@ def test_command_key_dedups_identical_commands_and_ignores_noops():
     import services.hwc_daemon as hd
     import hwc_executor as he
 
+    cfg = {"hwc": {"actuation": {"operation_mode": "heat_pump"}}}
     off = he.Decision(action="off", reason="r")
     heat60 = he.Decision(action="heat", reason="r", setpoint_c=60.0)
     heat60b = he.Decision(action="heat", reason="other", setpoint_c=60.04)  # rounds to 60.0
     heat58 = he.Decision(action="heat", reason="r", setpoint_c=58.0)
 
     # Identical actuation => equal key (skipped); setpoint rounds to 0.1.
-    assert hd.command_key(off) == hd.command_key(he.Decision(action="off", reason="x"))
-    assert hd.command_key(heat60) == hd.command_key(heat60b)
-    assert hd.command_key(heat60) != hd.command_key(heat58)
-    assert hd.command_key(off) != hd.command_key(heat60)
+    assert hd.command_key(cfg, off) == hd.command_key(cfg, he.Decision(action="off", reason="x"))
+    assert hd.command_key(cfg, heat60) == hd.command_key(cfg, heat60b)
+    assert hd.command_key(cfg, heat60) != hd.command_key(cfg, heat58)
+    assert hd.command_key(cfg, off) != hd.command_key(cfg, heat60)
     # No-op actions are never dedup-keyed (and never actuated).
-    assert hd.command_key(he.Decision(action="idle", reason="r")) is None
-    assert hd.command_key(he.Decision(action="wait", reason="r")) is None
+    assert hd.command_key(cfg, he.Decision(action="idle", reason="r")) is None
+    assert hd.command_key(cfg, he.Decision(action="wait", reason="r")) is None
+
+
+def test_command_key_distinguishes_mode_so_override_is_not_dedup_skipped():
+    """A negative-price override switches mode at an unchanged action/setpoint; if the key
+    ignored mode the command would be skipped as 'unchanged' and never actuate."""
+    import services.hwc_daemon as hd
+    import hwc_executor as he
+
+    cfg = {"hwc": {"actuation": {"operation_mode": "heat_pump"}}}
+    planned = he.Decision(action="heat", reason="plan", setpoint_c=60.0)
+    perf = he.Decision(action="heat", reason="neg price", setpoint_c=60.0, mode="performance")
+    electric = he.Decision(action="heat", reason="neg price", setpoint_c=60.0, mode="electric")
+
+    assert hd.command_key(cfg, planned) != hd.command_key(cfg, perf)
+    assert hd.command_key(cfg, perf) != hd.command_key(cfg, electric)
+    # An explicit mode equal to the configured default is the same command.
+    assert hd.command_key(cfg, planned) == hd.command_key(
+        cfg, he.Decision(action="heat", reason="x", setpoint_c=60.0, mode="heat_pump")
+    )
 
 
 def test_does_not_suppress_heat_or_expired_grace():
@@ -202,6 +224,19 @@ def test_does_not_suppress_off_or_expired_min_off():
     )
     assert not hd.should_suppress_heat_after_off(
         decision_action="heat", now=160.0, last_off_command_at=0.0, min_off_seconds=180
+    )
+
+
+def test_min_off_does_not_gate_element_only_heating():
+    # The gate exists to rest the *compressor*. Element-only heating (`electric`, from the
+    # negative-price override) has no compressor and no short-cycle constraint, so gating it
+    # would forfeit a dump window for nothing.
+    assert not hd.should_suppress_heat_after_off(
+        decision_action="heat",
+        now=160.0,
+        last_off_command_at=100.0,
+        min_off_seconds=180,
+        uses_compressor=False,
     )
 
 
@@ -307,6 +342,41 @@ def test_soc_tracker_top_watermark_snaps_full(tmp_path):
     d = _soc_daemon(tmp_path, soc={"v_hot": 0.3, "t_hot": 55.0, "updated_at": _t.time() - 60})
     v, t = d._update_soc_tracker(probe_c=60.0, heating=True)  # probe at target ⇒ full
     assert v == 1.0 and t >= 60.0
+
+
+def test_soc_tracker_credits_element_heat_at_cop_1(tmp_path):
+    """Element-only heating (negative-price override) is invisible to the compressor sensor, so
+    the tracker would coast while the tank gains ~1800 W. It must be credited as heating — but at
+    COP 1: soc.step applies the heat pump's COP to whatever power it is given, so passing the raw
+    1800 W would over-credit the delivered heat by ~cop_build."""
+    import time as _t
+    import hwc_dp_planner as dp
+    import hwc_soc_model as soc
+
+    d = _soc_daemon(tmp_path)
+    d.config["hwc"]["negative_price"] = {"element_power_w": 1800}
+    p = dp._soc_params_from_cfg(d.config["hwc"]["thermal"], d.config["hwc"]["dp_planner"])
+
+    start = {"v_hot": 0.3, "t_hot": 50.0, "updated_at": _t.time() - 600}
+
+    # Coasting (the pre-fix behaviour): compressor off and no element => V_hot must not grow.
+    d.soc = dict(start)
+    coast_v, _ = d._update_soc_tracker(probe_c=50.0, heating=False)
+    assert coast_v <= start["v_hot"]
+
+    # Element running: heats, and delivers exactly its electrical power as heat (COP 1).
+    d.soc = dict(start)
+    elem_v, _ = d._update_soc_tracker(probe_c=50.0, heating=False, element_on=True)
+    assert elem_v > coast_v
+
+    expected_v, _ = soc.step(
+        start["v_hot"], start["t_hot"], on=True, dt_s=600, p_elec_w=1800 / p.cop_build, p=p
+    )
+    assert elem_v == pytest.approx(expected_v, abs=1e-3)
+
+    # The raw-1800 W mistake would credit ~cop_build times the heat: guard against it.
+    over_v, _ = soc.step(start["v_hot"], start["t_hot"], on=True, dt_s=600, p_elec_w=1800, p=p)
+    assert elem_v < over_v
 
 
 def test_soc_state_save_preserves_target_reached(tmp_path):
