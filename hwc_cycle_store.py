@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS hwc_cycles (
     elec_source       TEXT,
     therm_kwh         REAL,
     cop               REAL,
+    band_cop          REAL,
     hp_mean_w         REAL,
     hp_p95_w          REAL,
     probe_lag_min     REAL,
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS hwc_cycle_samples (
 CYCLE_COLS = [
     "start_ts", "start_local", "end_ts", "dur_min",
     "tank_start", "tank_end", "ambient", "wet_bulb",
-    "elec_kwh", "elec_source", "therm_kwh", "cop",
+    "elec_kwh", "elec_source", "therm_kwh", "cop", "band_cop",
     "hp_mean_w", "hp_p95_w",
     "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min", "probe_rise_90_min",
     "exhaust_start", "exhaust_max", "exhaust_end",

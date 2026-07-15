@@ -229,6 +229,41 @@ def test_cycle_metrics_flags_element_and_defrost_when_on():
     assert m["element_on"] is True and m["defrost_on"] is True
 
 
+def test_cycle_metrics_band_cop_measures_only_the_band_traversal():
+    # Linear 45→60 over 60 min: probe hits 54.0 at sample 72/120 and 59.0 at 112/120, so the
+    # band consumes (112-72)/120 of the 1.0 kWh counter delta; therm credits the 5 °C band plus
+    # standing loss over the 20 min traversal.
+    m = hca.cycle_metrics(_trace(tank1=60.0, energy_total=1.0))
+    elec = 1.0 * (112 - 72) / 120
+    dur_h = (112 - 72) * 30 / 3600
+    therm = 225 * 4.186 * 5.0 / 3600 + 0.12 * dur_h
+    assert abs(m["band_cop"] - therm / elec) < 0.01
+
+
+def test_cycle_metrics_band_cop_ignores_pre_band_probe_lag_energy():
+    # Same band traversal, but preceded by a 60 min flat probe-lag phase burning another 1.0 kWh:
+    # full-cycle COP halves, band_cop must not move.
+    plain = hca.cycle_metrics(_trace(tank1=60.0, energy_total=1.0))
+    lag = _trace(minutes=60, tank0=45.0, tank1=45.0, energy0=99.0, energy_total=1.0,
+                 start="2026-06-30T00:00:00Z")
+    rise = _trace(tank1=60.0, energy_total=1.0)  # starts 01:00Z, energy0=100.0 continues the meter
+    lagged = hca.cycle_metrics(pd.concat([lag.iloc[:-1], rise]))
+    assert lagged["cop"] < plain["cop"] - 0.5
+    assert abs(lagged["band_cop"] - plain["band_cop"]) < 0.01
+
+
+def test_cycle_metrics_band_cop_nan_without_a_full_traversal_from_below():
+    assert np.isnan(hca.cycle_metrics(_trace(tank1=56.0))["band_cop"])       # never reaches 59
+    assert np.isnan(hca.cycle_metrics(_trace(tank0=55.0, tank1=60.0))["band_cop"])  # starts in-band
+
+
+def test_cycle_metrics_band_cop_nan_on_mid_band_probe_dip():
+    trace = _trace(tank1=60.0)
+    dip = (trace["tank"] >= 55.5) & (trace["tank"] <= 56.5)
+    trace.loc[dip, "tank"] = trace.loc[dip, "tank"] - 1.0  # a draw hits the probe mid-band
+    assert np.isnan(hca.cycle_metrics(trace)["band_cop"])
+
+
 def test_cycle_metrics_none_for_empty_or_untemperatured_trace():
     assert hca.cycle_metrics(pd.DataFrame()) is None
     assert hca.cycle_metrics(None) is None

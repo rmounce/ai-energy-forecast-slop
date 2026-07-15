@@ -49,6 +49,12 @@ HP_POWER_MAX_W = 1100  # plausible upper bound for this unit; above → contamin
 BASELINE_DRIFT_MAX_W = 80  # pre/post off-state baseline mismatch tolerated on the integration path
 COP_CLEAN_MIN = 0.8        # below → broken/standby-dominated estimate
 COP_CLEAN_MAX = 3.3        # above → contamination (elec too low) / stratification-inflated thermal
+# Fixed probe-temperature band for ``band_cop``: chosen so every routine cycle (top-ups start
+# ≤ ~54.6 °C, target 60 °C) traverses it from below, and low enough that the compressor warm-up
+# transient has passed before entry (the probe-lag phase precedes the first rise).
+BAND_COP_LOW_C = 54.0
+BAND_COP_HIGH_C = 59.0
+BAND_DIP_TOLERANCE_C = 0.5  # mid-band probe drop beyond this → a draw hit the probe → not comparable
 LOCAL_TZ = "Australia/Adelaide"
 DEFAULT_SINCE = "2026-05-28"  # Aquatech install date; earlier HA history is unrelated.
 HWC_POWER_ENTITY = (
@@ -241,6 +247,55 @@ def counter_cycle_kwh(energy_cumulative: pd.Series, cs, ce):
     return delta
 
 
+def band_cop_from_trace(tank_cycle, power, energy, *, sample_seconds=30,
+                        standing_loss_kw=STANDING_LOSS_KW,
+                        low=BAND_COP_LOW_C, high=BAND_COP_HIGH_C):
+    """Fixed-band efficiency index: COP over the probe's first ``low``→``high`` °C traversal.
+
+    Full-cycle COP credits only the probe delta, so electricity spent heating water below the
+    mid-tank probe (the post-draw cold slug that shows up as ``probe_lag_min``) or during the
+    compressor warm-up transient is charged with zero thermal credit — a post-draw cycle reads
+    spuriously low (e.g. 2026-07-15: lag 37 min, COP 1.86 vs an on-trend ~2.2). Measuring elec only
+    while the probe traverses a fixed band that every compared cycle passes through removes both
+    effects and compares the machine in the same condenser-temperature regime, so the tank-start
+    confounder largely drops out of A/B comparisons (fan speed etc.).
+
+    This is a *relative* index, not a true whole-cycle COP: concurrent warming of water below the
+    probe is ignored — identically for every cycle, which is what a comparison needs.
+
+    NaN when the cycle doesn't traverse the band from below (already ≥ ``low`` at the first
+    reading, or never reaches ``high``), when the probe dips mid-band (a hot-water draw hit the
+    probe → not comparable), or when no elec is measurable over the segment.
+    """
+    t = tank_cycle.dropna()
+    if t.empty or t.iloc[0] >= low:
+        return np.nan
+    in_band = t[t >= low]
+    if in_band.empty:
+        return np.nan
+    t_lo = in_band.index[0]
+    reached = t[(t.index >= t_lo) & (t >= high)]
+    if reached.empty:
+        return np.nan
+    t_hi = reached.index[0]
+    seg = t[(t.index >= t_lo) & (t.index <= t_hi)]
+    if (seg.cummax() - seg).max() > BAND_DIP_TOLERANCE_C:
+        return np.nan
+    elec = counter_cycle_kwh(energy, t_lo, t_hi)
+    if elec is None:
+        p_seg = power[(power.index >= t_lo) & (power.index <= t_hi)].dropna()
+        if p_seg.empty:
+            return np.nan
+        elec = p_seg.clip(lower=0).sum() * (sample_seconds / 3600) / 1000
+    if not elec > 0:
+        return np.nan
+    dur_h = (t_hi - t_lo).total_seconds() / 3600
+    # Credit the actual probe readings at the crossings (the probe can report sub-degree values,
+    # so the first reading ≥ high may be e.g. 59.2 — crediting the fixed band width would misstate).
+    therm = TANK_LITRES * C_WATER * float(seg.iloc[-1] - seg.iloc[0]) / 3600 + standing_loss_kw * dur_h
+    return therm / elec
+
+
 def stull_wet_bulb(t, rh):
     if pd.isna(t) or pd.isna(rh):
         return np.nan
@@ -356,6 +411,10 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
     h = humv.mean() if not humv.empty else np.nan
 
     tank_cycle = tank[cyc_mask].dropna()
+    band = band_cop_from_trace(
+        tank_cycle, P, _trace_col(trace, "energy_kwh"),
+        sample_seconds=sample_seconds, standing_loss_kw=standing_loss_kw,
+    )
     probe_rise = tank_cycle[tank_cycle >= t_start + 0.5]
     probe_lag_min = (
         (probe_rise.index[0] - cs).total_seconds() / 60 if not probe_rise.empty else np.nan
@@ -382,6 +441,7 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
         elec_source=elec_source,
         therm_kwh=round(therm, 2),
         cop=round(cop, 2) if pd.notna(cop) else np.nan,
+        band_cop=_round_or_nan(band, 2),
         hp_mean_w=round(hp_mean) if pd.notna(hp_mean) else np.nan,
         hp_p95_w=round(hp_p95) if pd.notna(hp_p95) else np.nan,
         probe_lag_min=_round_or_nan(probe_lag_min, 1),
@@ -404,7 +464,7 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
 
 _SUMMARY_FLOAT_COLS = [
     "start_ts", "start_local", "end_ts", "dur_min", "tank_start", "tank_end", "ambient",
-    "wet_bulb", "elec_kwh", "elec_source", "therm_kwh", "cop", "hp_mean_w", "hp_p95_w",
+    "wet_bulb", "elec_kwh", "elec_source", "therm_kwh", "cop", "band_cop", "hp_mean_w", "hp_p95_w",
     "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min", "probe_rise_90_min",
     "exhaust_start", "exhaust_max", "exhaust_end", "coil_mean", "return_air_mean", "inlet_mean",
 ]
@@ -550,7 +610,7 @@ def write_summary_markdown(
             "start", "dur_min", "tank_start", "tank_end", "ambient", "wet_bulb",
             "baseline_w", "hp_mean_w", "hp_p95_w", "power_source", "elec_kwh", "elec_source",
             "therm_kwh",
-            "cop", "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min",
+            "cop", "band_cop", "probe_lag_min", "probe_rise_10_min", "probe_rise_50_min",
             "probe_rise_90_min", "exhaust_start", "exhaust_max", "exhaust_end",
             "element_on", "defrost_on", "four_way_on", "fan_high_on", "clean",
         ]
