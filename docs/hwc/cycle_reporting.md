@@ -246,6 +246,13 @@ only ~12 W higher on fan-high, so the gain is real extra heat delivery, not powe
 Caveats: only 9 fan-high cycles, all in similar winter conditions — re-run at ~20 fan-high cycles
 and before drawing conclusions for milder ambients.
 
+*2026-07-15 refresh (12 fan-high cycles):* estimate softened to **+0.11 COP (~5%)**, t ≈ 1.95 —
+one weak Jul-15 cycle (52→60 at COP 1.86) accounts for most of the drop; fan-low has similar
+stragglers, so it reads as normal scatter. Matched 51.5–54 °C band is now 7 vs 7: 1.96 → 2.11.
+Direction unchanged in both bands; still borderline significance — recheck at ~20 fan-high cycles
+(~2026-07-22). The 2026-07-14 negative-price 75 °C override doesn't contaminate this: all cycles
+compared ended at ~60 °C.
+
 **Backfilling `fan_high_on` for pre-existing cycles (2026-07-04, one-off).** `fan` wasn't tracked
 before this feature landed, so every already-stored cycle had a null `fan_high_on`. Rather than leave
 it null, each cycle's window was checked against HA's own recorder history for
