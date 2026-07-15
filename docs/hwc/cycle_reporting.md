@@ -229,10 +229,10 @@ ever "high" at any point in the cycle (`cycle_metrics`' `_any_on("fan")`). The i
 carries the raw current reading as `fan_high` (no over-the-cycle classification exists yet for an open
 cycle). Tracked to let COP analysis be split by fan speed when evaluating the fan-speed threshold setting.
 
-**2026-07-04 09:55**: owner reverted the unit's fan-speed thresholds from the install-time custom
-setting towards factory defaults, expecting "high" to trigger more often (including on the typical
-mid-day run) — the intent is to observe the COP effect using `fan_high_on` on cycles from this point
-on. Cycles before this timestamp reflect the old (more conservative) threshold, so don't pool them
+**2026-07-04 09:55**: owner reverted the unit's fan-speed thresholds from the quiet settings
+documented in the manufacturer's manual (F30 25→10, F35 55→30) back towards factory defaults,
+expecting "high" to trigger more often (including on the typical mid-day run) — the intent is to
+observe the COP effect using `fan_high_on` on cycles from this point on. Cycles before this timestamp reflect the old (more conservative) threshold, so don't pool them
 with post-change cycles when comparing COP by fan speed.
 
 **2026-07-12 first read: fan-high is worth ~+0.15 COP (~7%).** Every daytime cycle since the
