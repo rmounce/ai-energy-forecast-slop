@@ -51,10 +51,18 @@ COP_CLEAN_MIN = 0.8        # below → broken/standby-dominated estimate
 COP_CLEAN_MAX = 3.3        # above → contamination (elec too low) / stratification-inflated thermal
 # Fixed probe-temperature band for ``band_cop``: chosen so every routine cycle (top-ups start
 # ≤ ~54.6 °C, target 60 °C) traverses it from below, and low enough that the compressor warm-up
-# transient has passed before entry (the probe-lag phase precedes the first rise).
+# transient has passed before entry (the probe-lag phase precedes the first rise). The top is the
+# full 60 °C target: the compressor really runs until 60 — the final tick only *appears* to land
+# after the off-edge because Local Tuya polls the values in an arbitrary order — so the caller
+# passes a tank series that includes the settle window (where that tick lands), and the counter
+# elec over the traversal is exact regardless of the reported edge.
 BAND_COP_LOW_C = 54.0
-BAND_COP_HIGH_C = 59.0
+BAND_COP_HIGH_C = 60.0
 BAND_DIP_TOLERANCE_C = 0.5  # mid-band probe drop beyond this → a draw hit the probe → not comparable
+# A reading within one probe tick (0.1 °C) of the top counts as reaching it: Local Tuya's polling
+# order can lose the final tick at the off-edge (a run "ending" at 59.9 really hit 60), and the
+# InfluxDB-seeded traces are grid-interpolated to just under the peak (e.g. 59.98).
+BAND_TOP_TOLERANCE_C = 0.1
 LOCAL_TZ = "Australia/Adelaide"
 DEFAULT_SINCE = "2026-05-28"  # Aquatech install date; earlier HA history is unrelated.
 HWC_POWER_ENTITY = (
@@ -266,6 +274,10 @@ def band_cop_from_trace(tank_cycle, power, energy, *, sample_seconds=30,
     NaN when the cycle doesn't traverse the band from below (already ≥ ``low`` at the first
     reading, or never reaches ``high``), when the probe dips mid-band (a hot-water draw hit the
     probe → not comparable), or when no elec is measurable over the segment.
+
+    ``tank_cycle`` should include the post-off settle samples: the final tick to the 60 °C target
+    can be *reported* after the compressor-off edge (Local Tuya polling order), but the compressor
+    genuinely runs to target, and the cumulative counter keeps the elec exact either way.
     """
     t = tank_cycle.dropna()
     if t.empty or t.iloc[0] >= low:
@@ -274,7 +286,7 @@ def band_cop_from_trace(tank_cycle, power, energy, *, sample_seconds=30,
     if in_band.empty:
         return np.nan
     t_lo = in_band.index[0]
-    reached = t[(t.index >= t_lo) & (t >= high)]
+    reached = t[(t.index >= t_lo) & (t >= high - BAND_TOP_TOLERANCE_C)]
     if reached.empty:
         return np.nan
     t_hi = reached.index[0]
@@ -411,8 +423,10 @@ def cycle_metrics(trace, *, edges=None, sample_seconds=30, standing_loss_kw=STAN
     h = humv.mean() if not humv.empty else np.nan
 
     tank_cycle = tank[cyc_mask].dropna()
+    # tank_window (not tank_cycle): the traversal must see the settle-window samples, where the
+    # final tick to target lands when Local Tuya reports the off-edge first.
     band = band_cop_from_trace(
-        tank_cycle, P, _trace_col(trace, "energy_kwh"),
+        tank_window, _trace_col(trace, "power_w"), _trace_col(trace, "energy_kwh"),
         sample_seconds=sample_seconds, standing_loss_kw=standing_loss_kw,
     )
     probe_rise = tank_cycle[tank_cycle >= t_start + 0.5]

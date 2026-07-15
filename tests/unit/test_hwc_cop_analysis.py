@@ -230,13 +230,13 @@ def test_cycle_metrics_flags_element_and_defrost_when_on():
 
 
 def test_cycle_metrics_band_cop_measures_only_the_band_traversal():
-    # Linear 45→60 over 60 min: probe hits 54.0 at sample 72/120 and 59.0 at 112/120, so the
-    # band consumes (112-72)/120 of the 1.0 kWh counter delta; therm credits the 5 °C band plus
-    # standing loss over the 20 min traversal.
+    # Linear 45→60 over 60 min: probe hits 54.0 at sample 72/120 and 60.0 at 120/120, so the
+    # band consumes (120-72)/120 of the 1.0 kWh counter delta; therm credits the 6 °C band plus
+    # standing loss over the 24 min traversal.
     m = hca.cycle_metrics(_trace(tank1=60.0, energy_total=1.0))
-    elec = 1.0 * (112 - 72) / 120
-    dur_h = (112 - 72) * 30 / 3600
-    therm = 225 * 4.186 * 5.0 / 3600 + 0.12 * dur_h
+    elec = 1.0 * (120 - 72) / 120
+    dur_h = (120 - 72) * 30 / 3600
+    therm = 225 * 4.186 * 6.0 / 3600 + 0.12 * dur_h
     assert abs(m["band_cop"] - therm / elec) < 0.01
 
 
@@ -253,8 +253,18 @@ def test_cycle_metrics_band_cop_ignores_pre_band_probe_lag_energy():
 
 
 def test_cycle_metrics_band_cop_nan_without_a_full_traversal_from_below():
-    assert np.isnan(hca.cycle_metrics(_trace(tank1=56.0))["band_cop"])       # never reaches 59
+    assert np.isnan(hca.cycle_metrics(_trace(tank1=59.5))["band_cop"])       # never reaches 60
     assert np.isnan(hca.cycle_metrics(_trace(tank0=55.0, tank1=60.0))["band_cop"])  # starts in-band
+
+
+def test_cycle_metrics_band_cop_uses_settle_window_for_the_final_tick():
+    # Local Tuya can report the compressor-off edge before the final tick to 60: with ce pinned
+    # one sample early the last in-cycle reading is 59.875, and the 60.0 lands in the settle
+    # window — the traversal must still complete rather than go NaN.
+    trace = _trace(tank1=60.0)
+    edges = {"cs": trace.index[0], "ce": trace.index[-2]}
+    m = hca.cycle_metrics(trace, edges=edges)
+    assert not np.isnan(m["band_cop"])
 
 
 def test_cycle_metrics_band_cop_nan_on_mid_band_probe_dip():

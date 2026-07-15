@@ -254,20 +254,24 @@ Direction unchanged in both bands; still borderline significance — recheck at 
 compared ended at ~60 °C. *Post-mortem:* the Jul-15 cycle turned out to be a measurement artifact,
 not a bad run — probe lag 37 min (vs the 13–21 min norm) from a below-probe cold slug after a
 morning draw; the lag-phase electricity earns no probe-delta credit, understating COP. Its
-`band_cop` (below) reads an on-trend 3.07.
+`band_cop` (below) reads an on-trend 2.93.
 
-### `band_cop`: fixed-band efficiency index (2026-07-15)
+### `band_cop`: fixed 54→60 °C band efficiency index (2026-07-15)
 
 Full-cycle COP charges *all* cycle electricity but credits only the mid-tank probe's ΔT, so a
 post-draw cycle (long `probe_lag_min` heating the below-probe cold slug) reads spuriously low.
 `band_cop` (`hwc_cop_analysis.band_cop_from_trace`, stored per cycle, computed inside
-`cycle_metrics`) instead measures elec only while the probe first traverses a **fixed 54→59 °C
+`cycle_metrics`) instead measures elec only while the probe first traverses a **fixed 54→60 °C
 band**, crediting the actual probe delta across the crossings plus standing loss. Every routine
-cycle passes through the band from below (top-ups start ≤ ~54.6 °C), entry happens after the
-warm-up transient (the probe-lag phase precedes the first rise), and 59 keeps the band inside
-steady compressor operation — the 59→60 tick often lands *after* compressor-off (the settle), and
-some cycles finish at 59.9. NaN when a cycle doesn't traverse the band from below, dips mid-band
-(a draw hit the probe → not comparable), or has no measurable elec. It is a **relative A/B index,
+cycle passes through the band from below (top-ups start ≤ ~54.6 °C), and entry happens after the
+warm-up transient (the probe-lag phase precedes the first rise). The top is the full 60 °C target:
+the compressor genuinely runs until 60 — when a run *appears* to stop at 59.9, or the final tick
+lands after the off-edge, that's Local Tuya polling the values in an arbitrary order, not an early
+stop — so the traversal reads the settle-window samples (where the delayed tick lands) and accepts
+a reading within one probe tick of the top (`BAND_TOP_TOLERANCE_C = 0.1`, which also admits the
+InfluxDB-seeded traces, grid-interpolated to just under the peak). NaN when a cycle doesn't
+traverse the band from below, dips mid-band (a draw hit the probe → not comparable), or has no
+measurable elec. It is a **relative A/B index,
 not a true COP**: concurrent below-probe warming is ignored, identically for every cycle. Note it
 is *not* free of tank-state dependence — cycles that started colder show higher `band_cop`
 (≈ −0.06/°C) because the condenser sees the whole tank, and a cooler below-probe mass means a lower
@@ -275,9 +279,9 @@ condensing temperature during the band; compare within tank-start strata (the de
 convex, so a pooled linear control underfits).
 
 *First read (19 fan-low vs 12 fan-high):* matched strata put fan-high ahead on `band_cop` —
-top-ups (51.5–54 °C start) 2.44 → 2.63 (**+0.19, ~8%**, 7 v 7); reheats (44–50.5 °C) 3.11 → 3.23
-(+0.12, 10 v 4). Consistent with (and cleaner than) the full-cycle read; per-cycle scatter is
-higher (sd ~0.35) so keep accumulating before treating the magnitude as settled.
+top-ups (51.5–54 °C start) 2.30 → 2.51 (**+0.21, ~9%**, 7 v 7); reheats (44–50.5 °C) 2.85 → 2.99
+(+0.14, 10 v 4). Consistent with (and cleaner than) the full-cycle read; per-cycle scatter is
+higher (sd ~0.3) so keep accumulating before treating the magnitude as settled.
 
 **Backfilling `fan_high_on` for pre-existing cycles (2026-07-04, one-off).** `fan` wasn't tracked
 before this feature landed, so every already-stored cycle had a null `fan_high_on`. Rather than leave

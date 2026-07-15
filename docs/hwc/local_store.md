@@ -69,7 +69,7 @@ runtime data, like `data/hwc_daemon_state.json`.
 start_ts REAL PK, start_local TEXT, end_ts REAL, dur_min INT,
 tank_start REAL, tank_end REAL, ambient REAL, wet_bulb REAL,
 elec_kwh REAL, elec_source TEXT, therm_kwh REAL, cop REAL NULL,
-band_cop REAL NULL,                -- fixed 54→59 °C band efficiency index (docs/hwc/cycle_reporting.md)
+band_cop REAL NULL,                -- fixed 54→60 °C band efficiency index (docs/hwc/cycle_reporting.md)
 hp_mean_w REAL, hp_p95_w REAL,
 probe_lag_min REAL NULL, probe_rise_10_min REAL NULL, probe_rise_50_min REAL NULL,
 probe_rise_90_min REAL NULL,
