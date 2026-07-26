@@ -409,6 +409,18 @@ actions:
             action: script.configure_sigen_ems_state
       - conditions:
           - condition: template
+            value_template: "{{ p_batt < 0 and p_grid == 0 }}"
+        sequence:
+          - data_template:
+              entity_id: input_text.emhass_battery_action
+              value: Charge surplus PV, prevent discharge
+            action: input_text.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              discharge_limit_kw: 0
+            action: script.configure_sigen_ems_state
+      - conditions:
+          - condition: template
             value_template: "{{ p_grid == 0 }}"
         sequence:
           - data_template:
