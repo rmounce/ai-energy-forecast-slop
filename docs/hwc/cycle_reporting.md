@@ -250,7 +250,7 @@ and before drawing conclusions for milder ambients.
 one weak Jul-15 cycle (52→60 at COP 1.86) accounts for most of the drop; fan-low has similar
 stragglers, so it reads as normal scatter. Matched 51.5–54 °C band is now 7 vs 7: 1.96 → 2.11.
 Direction unchanged in both bands; still borderline significance — recheck at ~20 fan-high cycles
-(~2026-07-22). The 2026-07-14 negative-price 75 °C override doesn't contaminate this: all cycles
+(~2026-07-22). The 2026-07-14 negative-price 70 °C override doesn't contaminate this: all cycles
 compared ended at ~60 °C. *Post-mortem:* the Jul-15 cycle turned out to be a measurement artifact,
 not a bad run — probe lag 37 min (vs the 13–21 min norm) from a below-probe cold slug after a
 morning draw; the lag-phase electricity earns no probe-delta credit, understating COP. Its

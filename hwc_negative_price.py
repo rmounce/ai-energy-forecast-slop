@@ -10,9 +10,9 @@ Full design + rationale: ``docs/hwc/surplus_negative_price.md``. In short:
 
 - The unit is on a 10 A plug, so the heat pump (~700 W) and element (1800 W) are **mutually
   exclusive** and 1800 W is its hard maximum draw.
-- **Compressor off** -> ``electric`` at 75 °C: nothing to interrupt, go straight to max draw.
-- **Compressor running** -> ``performance`` at 75 °C: the compressor runs on uninterrupted to
-  60 °C and the element then takes it 60->75 by itself. Interrupting a *running* compressor for
+- **Compressor off** -> ``electric`` at 70 °C: nothing to interrupt, go straight to max draw.
+- **Compressor running** -> ``performance`` at 70 °C: the compressor runs on uninterrupted to
+  60 °C and the element then takes it 60->70 by itself. Interrupting a *running* compressor for
   the element buys no extra heat (1800 W element ~= 1750 W thermal from the heat pump) — only
   Δ ~1.1 kW of paid draw — while costing a restart.
 - ...**unless the restart pays for itself**, i.e.
@@ -39,7 +39,8 @@ log = logging.getLogger(__name__)
 MODE_ELECTRIC = "electric"
 MODE_PERFORMANCE = "performance"
 
-DEFAULT_SETPOINT_C = 75.0
+# HA advertises 75 °C, but the Aquatech clamps a live request to 70 °C (confirmed 2026-07-27).
+DEFAULT_SETPOINT_C = 70.0
 DEFAULT_ELEMENT_POWER_W = 1800.0
 DEFAULT_HEAT_PUMP_POWER_W = 700.0
 DEFAULT_CONFIRM_SECONDS = 45.0
@@ -196,7 +197,7 @@ def decide(
     Returns ``(decision_or_None, new_state)``; ``None`` means "no override — use the DP plan".
 
     On exit (``price >= 0``) the caller must *actively re-assert* the plan, not merely stop
-    overriding: ``performance``'s 60->75 element leg is ungated and would keep importing at
+    overriding: ``performance``'s 60->70 element leg is ungated and would keep importing at
     1800 W to reach setpoint.
     """
     if not enabled(cfg) or price_aud_per_kwh is None or price_aud_per_kwh >= 0:

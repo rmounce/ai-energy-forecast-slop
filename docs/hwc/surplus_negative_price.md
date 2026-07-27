@@ -72,12 +72,13 @@ Grid connection ceiling ≈ 15 kW (`number.sigen_plant_grid_import_limitation` d
 
 ## Actuation primitive (Aquatech RAPID X6 modes)
 
-`water_heater.aquatech` operation modes (HA accepts setpoints 15–75 °C):
+`water_heater.aquatech` operation modes (HA advertises 15–75 °C, but the physical maximum is
+70 °C; confirmed 2026-07-27):
 
 - **`heat_pump`** — heat pump only, ~700 W, capped at 60 °C. COP ~2.4–3.0 (the 55→60 tail is
   ~1.75). Today's only mode.
-- **`electric`** — resistive element only, **1800 W, COP 1**, available at any temp up to 75 °C.
-- **`performance` (Hybrid+)** — heat pump to 60 °C, then element 60→75 (default 70).
+- **`electric`** — resistive element only, **1800 W, COP 1**, available at any temp up to 70 °C.
+- **`performance` (Hybrid+)** — heat pump to 60 °C, then element 60→70.
   **Element portion is ungated** (runs to setpoint regardless of available surplus), so we
   **do not** use it for surplus — see below. Self-managing `heat_pump` + `electric` gives the
   curtailment-gated control we want.
@@ -93,7 +94,7 @@ delivers ~1750 W thermal ≈ similar. The element is not *faster* — it is *ava
 and *cheaper to start* (no compressor short-cycle constraint).
 
 The executor currently issues only `heat_pump` / `off` (`setpoint_max_c: 60`). **Learning
-`electric` mode + setpoint-to-75 is shared groundwork for both phases.**
+`electric` mode + setpoint-to-70 is shared groundwork for both phases.**
 
 ## Design — negative price (executor override, reactive)
 
@@ -107,9 +108,9 @@ decision was unconditional `electric`):
 
 | Compressor state | Action | Why |
 |---|---|---|
-| **off** | **`electric` @ 75 °C** | nothing to interrupt; go straight to max draw (1800 W) |
-| **running** | **`performance` @ 75 °C** | keeps the compressor uninterrupted to 60 °C, then the element takes it 60→75 automatically — full dump on any event long enough to matter, no restart |
-| **running, deeply negative** | **`electric` @ 75 °C**, latched | only when the break-even below says the restart pays for itself |
+| **off** | **`electric` @ 70 °C** | nothing to interrupt; go straight to max draw (1800 W) |
+| **running** | **`performance` @ 70 °C** | keeps the compressor uninterrupted to 60 °C, then the element takes it 60→70 automatically — full dump on any event long enough to matter, no restart |
+| **running, deeply negative** | **`electric` @ 70 °C**, latched | only when the break-even below says the restart pays for itself |
 
 ### Why not unconditional `electric`
 
@@ -192,7 +193,7 @@ a conservative-negative read is strong evidence the confirmed price is negative 
   non-negative — do not re-evaluate and flip back to `heat_pump`/`performance` mid-event. A
   flip-back pays the very restart we were trying to avoid *and* gives up the dump.
 - **Exit:** when `price >= 0`, **actively revert to the DP plan's mode and setpoint** — do not
-  merely stop asserting the override. `performance`'s 60→75 element leg is **ungated**: left in
+  merely stop asserting the override. `performance`'s 60→70 element leg is **ungated**: left in
   place above 60 °C it will keep importing at 1800 W to reach setpoint. This is the one way the
   override can lose real money.
 
@@ -208,10 +209,10 @@ become emergent from the DP's costs.
 
 **Actions per step:** `{off, heat_pump, electric}`.
 - `heat_pump`: ~700 W, available < 60 °C, compressor start charged `transition_cost_aud` (0.05).
-- `electric`: 1800 W, available up to 75 °C, **start cost ~0** (no short-cycle constraint).
+- `electric`: 1800 W, available up to 70 °C, **start cost ~0** (no short-cycle constraint).
 - This reproduces "compressor commits, element bang-bangs" *emergently* — no thresholds.
 
-**State range:** extend 45 → **75 °C** (was capped at 60).
+**State range:** extend 45 → **70 °C** (was capped at 60).
 
 **Curtailment-aware pricing — the accounting, moved from reactive to planned.** For each
 action's electrical draw at step `t`:
@@ -278,7 +279,7 @@ standing loss is counted.
   - **Cycle reporting needs no change:** the reporter keys off compressor edges, and the
     compressor is off during `electric`, so no cycle opens and the COP stats stay clean.
 - **Phase 2 — DP curtailment + element modelling.** Add the `electric` action, extend state to
-  75 °C, ingest the curtailment forecast + Solcast PV-available + base-load series, apply
+  70 °C, ingest the curtailment forecast + Solcast PV-available + base-load series, apply
   curtailment-aware pricing with the budget + per-slot feasibility conditions. Reuses Phase 1's
   electric actuation. Target before spring.
 
@@ -315,8 +316,8 @@ Negative buy prices arrived earlier than expected, forcing Phase 1 to be built. 
   available), so `performance` is sequential and 1800 W is the unit's hard maximum draw.
 - Interrupting a running compressor for the element **gains no heat** (1800 W element ≈ 1750 W
   thermal from the heat pump) — only Δ 1.1 kW of paid draw — while costing a restart.
-- Therefore: compressor **off** → `electric` @ 75; compressor **running** → `performance` @ 75
-  (uninterrupted to 60, element 60→75), **unless** the break-even
+- Therefore: compressor **off** → `electric` @ 70; compressor **running** → `performance` @ 70
+  (uninterrupted to 60, element 60→70), **unless** the break-even
   `price < −transition_cost_aud / (1.1 × gain_hours)` passes, where
   `gain_hours = min(remaining_negative_window, time_to_60C)`.
 - The `electric` switch is **latched** for the event; on `price >= 0` the daemon **actively

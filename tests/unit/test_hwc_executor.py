@@ -89,3 +89,33 @@ def test_decide_caps_setpoint():
     )
 
     assert decision.setpoint_c == 60
+
+
+def test_apply_heat_uses_one_compound_mode_and_temperature_call(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        he, "_service_call", lambda cfg, service, payload: calls.append((service, payload))
+    )
+    cfg = {"hwc": {"actuation": {"water_heater_entity": "water_heater.aquatech"}}}
+
+    he.apply_decision(
+        cfg,
+        he.Decision(
+            action="heat",
+            reason="negative price",
+            setpoint_c=70,
+            mode="electric",
+            uses_compressor=False,
+        ),
+    )
+
+    assert calls == [
+        (
+            "set_temperature",
+            {
+                "entity_id": "water_heater.aquatech",
+                "temperature": 70,
+                "operation_mode": "electric",
+            },
+        )
+    ]

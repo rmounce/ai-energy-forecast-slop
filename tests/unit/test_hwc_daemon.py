@@ -179,6 +179,47 @@ def test_command_key_distinguishes_mode_so_override_is_not_dedup_skipped():
     )
 
 
+def test_command_confirmation_requires_observed_mode_and_target():
+    import services.hwc_daemon as hd
+    import hwc_executor as he
+
+    cfg = {"hwc": {"actuation": {"operation_mode": "heat_pump"}}}
+    electric = he.Decision(
+        action="heat", reason="negative price", setpoint_c=70.0, mode="electric"
+    )
+
+    assert hd.command_confirmed(
+        cfg,
+        electric,
+        {"state": "electric", "attributes": {"operation_mode": "electric", "temperature": 70}},
+    )
+    assert not hd.command_confirmed(
+        cfg,
+        electric,
+        {"state": "off", "attributes": {"operation_mode": "off", "temperature": 60}},
+    )
+    # Reproduced live: the back-to-back write reached electric mode but lost the requested
+    # target, leaving the previous 60 C setpoint. This must be retried, not dedup-skipped.
+    assert not hd.command_confirmed(
+        cfg,
+        electric,
+        {"state": "electric", "attributes": {"operation_mode": "electric", "temperature": 60}},
+    )
+
+
+def test_off_command_confirmation_uses_observed_state():
+    import services.hwc_daemon as hd
+    import hwc_executor as he
+
+    cfg = {"hwc": {"actuation": {"operation_mode": "heat_pump"}}}
+    off = he.Decision(action="off", reason="plan")
+
+    assert hd.command_confirmed(cfg, off, {"state": "off", "attributes": {"temperature": 60}})
+    assert not hd.command_confirmed(
+        cfg, off, {"state": "heat_pump", "attributes": {"temperature": 60}}
+    )
+
+
 def test_does_not_suppress_heat_or_expired_grace():
     assert not hd.should_suppress_off_after_heat(
         decision_action="heat",

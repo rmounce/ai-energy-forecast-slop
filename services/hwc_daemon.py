@@ -194,6 +194,30 @@ def command_key(config: dict, decision: hwc_executor.Decision):
     return (decision.action, setpoint, mode)
 
 
+def command_confirmed(
+    config: dict, decision: hwc_executor.Decision, entity_state: dict
+) -> bool:
+    """Whether HA has observed the requested Aquatech mode and target.
+
+    HTTP 200 only confirms that HA accepted a service call; Local Tuya may still lose a device
+    write. Deduplication is safe only after the entity reflects the requested command.
+    """
+    if decision.action == "off":
+        return entity_state.get("state") == "off"
+    if decision.action != "heat" or decision.setpoint_c is None:
+        return False
+
+    attrs = entity_state.get("attributes") or {}
+    observed_mode = attrs.get("operation_mode", entity_state.get("state"))
+    if observed_mode != hwc_executor.decision_mode(config, decision):
+        return False
+    try:
+        observed_setpoint = float(attrs["temperature"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return abs(observed_setpoint - float(decision.setpoint_c)) <= 0.1
+
+
 def should_suppress_off_after_heat(
     *,
     decision_action: str,
@@ -975,11 +999,38 @@ class HwcDaemon:
             elif key is None:
                 log.info("HWC executor no-op (%s); no command issued", decision.action)
             elif key == self.last_applied_command:
-                log.info(
-                    "HWC command unchanged (%s, setpoint=%s); skipping re-command",
+                try:
+                    observed = await asyncio.to_thread(
+                        hwc_executor._entity_state,
+                        self.config,
+                        act["water_heater_entity"],
+                    )
+                except Exception:
+                    log.exception("HWC command confirmation read failed; re-commanding")
+                    observed = {}
+                if command_confirmed(self.config, decision, observed):
+                    log.info(
+                        "HWC command unchanged and confirmed (%s, setpoint=%s); "
+                        "skipping re-command",
+                        decision.action,
+                        decision.setpoint_c,
+                    )
+                    log.info(
+                        "HWC executor completed in %.1fs: %s",
+                        time.monotonic() - started,
+                        decision.action,
+                    )
+                    return
+                log.warning(
+                    "HWC command unconfirmed (%s, setpoint=%s); retrying",
                     decision.action,
                     decision.setpoint_c,
                 )
+                try:
+                    await asyncio.to_thread(hwc_executor.apply_decision, self.config, decision)
+                except Exception:
+                    log.exception("HWC executor retry failed")
+                    return
             else:
                 try:
                     await asyncio.to_thread(hwc_executor.apply_decision, self.config, decision)
@@ -1015,7 +1066,7 @@ class HwcDaemon:
         Blocking (two HA reads); called via ``to_thread``. Any failure leaves the DP plan in
         force — the override is an opportunistic bonus, never a dependency.
 
-        On exit the plan is *re-asserted*, not merely un-overridden: ``performance``'s 60->75
+        On exit the plan is *re-asserted*, not merely un-overridden: ``performance``'s 60->70
         element leg is ungated, so leaving it in place above 60 °C would keep importing at
         1800 W. Returning the plan decision here re-commands it (the mode is part of
         ``command_key``, so the change is not dedup-skipped).

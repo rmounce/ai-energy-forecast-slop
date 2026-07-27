@@ -16,7 +16,7 @@ def _cfg(**overrides):
             "thermal": {"heat_rate_max_c_per_hour": 7.6},
             "negative_price": {
                 "enabled": True,
-                "setpoint_c": 75,
+                "setpoint_c": 70,
                 "element_power_w": 1800,
                 "heat_pump_power_w": 700,
                 "confirm_seconds": 45,
@@ -65,11 +65,11 @@ def test_no_override_when_price_non_negative_or_disabled():
     assert _decide(-0.10, compressor_on=False, cfg=cfg)[0] is None
 
 
-def test_compressor_idle_goes_straight_to_electric_at_75():
+def test_compressor_idle_goes_straight_to_electric_at_70():
     decision, state = _decide(-0.10, compressor_on=False)
     assert decision.action == "heat"
     assert decision.mode == np.MODE_ELECTRIC
-    assert decision.setpoint_c == 75
+    assert decision.setpoint_c == 70
     assert decision.uses_compressor is False
     assert state.latched_electric
 
@@ -79,7 +79,7 @@ def test_running_compressor_gets_performance_not_electric():
     costs a restart, so the default is to let it run on and let `performance` hand over at 60."""
     decision, state = _decide(-0.10, compressor_on=True, forecasts=_forecasts([-0.10] * 6))
     assert decision.mode == np.MODE_PERFORMANCE
-    assert decision.setpoint_c == 75
+    assert decision.setpoint_c == 70
     assert decision.uses_compressor is True
     assert not state.latched_electric
 

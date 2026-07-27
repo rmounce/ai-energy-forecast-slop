@@ -192,19 +192,15 @@ def apply_decision(cfg: dict, decision: Decision):
     if decision.action == "heat":
         mode = decision_mode(cfg, decision)
         logging.info(
-            "HWC command: set %s mode=%s setpoint=%sC (assuming off->heat starts promptly)",
+            "HWC command: set %s mode=%s setpoint=%sC in one compound request",
             entity,
             mode,
             f"{decision.setpoint_c:.1f}" if decision.setpoint_c is not None else "unknown",
         )
-        _service_call(
-            cfg,
-            "set_operation_mode",
-            {
-                "entity_id": entity,
-                "operation_mode": mode,
-            },
-        )
+        # The Aquatech/Local Tuya integration does not serialize consecutive writes. Sending
+        # set_operation_mode immediately before set_temperature can lose the temperature write
+        # while HA reports success for both calls (confirmed live 2026-07-27). A single compound
+        # request reliably applies both datapoints.
         _service_call(
             cfg,
             "set_temperature",

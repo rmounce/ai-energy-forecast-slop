@@ -79,6 +79,22 @@ Verified in use elsewhere:
 Nominal/unverified: `aquatech_pump`, `aquatech_running`, `aquatech_fluoride_cycle`,
 `aquatech_low_pressure_valve`, `aquatech_power`, `aquatech_problem`, `aquatech_connectivity`.
 
+## Actuation quirks
+
+Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circuit meter:
+
+- HA advertises a 75 °C maximum, but the physical controller clamps 75 °C to **70 °C** after
+  several seconds. Electric mode then runs normally at ~1.78 kW.
+- From off, one compound `water_heater.set_temperature` call containing both `temperature: 70`
+  and `operation_mode: electric` works.
+- Do not send `set_operation_mode` immediately followed by compound `set_temperature`.
+  Local Tuya reports success for both but can lose the second datapoint; reproduced result:
+  `electric/60` instead of requested `electric/70`.
+- HA state can lag physical element start by about a minute. HTTP success is not device
+  confirmation; verify observed mode + target and retry.
+- `turn_off` preserves the previous target in normal operation. One failed live sequence
+  produced `off/15`; this was not reproduced consistently.
+
 ## Proposed HA display-name renames
 
 To stop future confusion (set via HA UI → entity settings, or `customize.yaml`). Entity IDs
