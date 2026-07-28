@@ -179,6 +179,25 @@ def test_command_key_distinguishes_mode_so_override_is_not_dedup_skipped():
     )
 
 
+def test_matching_equipment_update_does_not_invalidate_command_key():
+    import services.hwc_daemon as hd
+
+    key = ("heat", 70.0, "electric")
+    assert hd.command_key_matches_state(
+        key,
+        {"state": "electric", "attributes": {"operation_mode": "electric", "temperature": 70}},
+    )
+    assert not hd.command_key_matches_state(
+        key,
+        {"state": "off", "attributes": {"operation_mode": "off", "temperature": 70}},
+    )
+    assert not hd.command_key_matches_state(
+        key,
+        {"state": "electric", "attributes": {"operation_mode": "electric", "temperature": 60}},
+    )
+    assert hd.command_key_matches_state(("off", None, None), {"state": "off", "attributes": {}})
+
+
 def test_command_confirmation_requires_observed_mode_and_target():
     import services.hwc_daemon as hd
     import hwc_executor as he
@@ -204,6 +223,20 @@ def test_command_confirmation_requires_observed_mode_and_target():
         cfg,
         electric,
         {"state": "electric", "attributes": {"operation_mode": "electric", "temperature": 60}},
+    )
+    assert not hd.command_confirmed(
+        cfg,
+        electric,
+        {"state": "electric", "attributes": {"operation_mode": "electric", "temperature": 70}},
+        require_element=True,
+        element_on=False,
+    )
+    assert hd.command_confirmed(
+        cfg,
+        electric,
+        {"state": "electric", "attributes": {"operation_mode": "electric", "temperature": 70}},
+        require_element=True,
+        element_on=True,
     )
 
 

@@ -10,7 +10,8 @@ Full design + rationale: ``docs/hwc/surplus_negative_price.md``. In short:
 
 - The unit is on a 10 A plug, so the heat pump (~700 W) and element (1800 W) are **mutually
   exclusive** and 1800 W is its hard maximum draw.
-- **Compressor off** -> ``electric`` at 70 °C: nothing to interrupt, go straight to max draw.
+- **Compressor off** -> ``electric`` at 70 °C: nothing to interrupt, arm maximum draw. The
+  controller may wait for its common element re-trigger threshold near 60 °C if already hotter.
 - **Compressor running** -> ``performance`` at 70 °C: the compressor runs on uninterrupted to
   60 °C and the element then takes it 60->70 by itself. Interrupting a *running* compressor for
   the element buys no extra heat (1800 W element ~= 1750 W thermal from the heat pump) — only

@@ -108,7 +108,7 @@ decision was unconditional `electric`):
 
 | Compressor state | Action | Why |
 |---|---|---|
-| **off** | **`electric` @ 70 °C** | nothing to interrupt; go straight to max draw (1800 W) |
+| **off** | **`electric` @ 70 °C** | nothing to interrupt; arm max draw. If already above ~60 °C, the common element hysteresis may delay restart until the probe falls to its trigger |
 | **running** | **`performance` @ 70 °C** | keeps the compressor uninterrupted to 60 °C, then the element takes it 60→70 automatically — full dump on any event long enough to matter, no restart |
 | **running, deeply negative** | **`electric` @ 70 °C**, latched | only when the break-even below says the restart pays for itself |
 
@@ -196,6 +196,11 @@ a conservative-negative read is strong evidence the confirmed price is negative 
   merely stop asserting the override. `performance`'s 60→70 element leg is **ungated**: left in
   place above 60 °C it will keep importing at 1800 W to reach setpoint. This is the one way the
   override can lose real money.
+- **Physical confirmation:** HA mode + target only prove that Local Tuya accepted the request.
+  After 60 s and at/below the 60 °C trigger, element-only commands must also have
+  `binary_sensor.aquatech_element == on`; otherwise retry. Above 60 °C, leave the accepted
+  command armed: fresh `electric`, `performance`, and likely `high_demand` share the element
+  controller's re-trigger hysteresis, and repeated writes may reset its start processing.
 
 Forecast negative prices (occasional) get optimal DP treatment automatically (price < 0 →
 negative cost → DP runs the element hard); the override is the safety net for the *un*forecast

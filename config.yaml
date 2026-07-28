@@ -392,6 +392,10 @@ hwc:
     # value (a false entry costs <1c); the compressor *interrupt* — the only decision that costs
     # a restart — waits for the price to have read negative across an update boundary.
     confirm_seconds: 45
+    # Mode + target are only HA acceptance. After this grace, at/below the 60 C trigger require
+    # the physical element sensor to be on or retry. Above it, leave the mode armed: all
+    # element-capable modes appear to share re-trigger hysteresis and repeated writes may reset it.
+    element_confirm_seconds: 60
     # Above this the element is running under `performance` anyway, so a switch buys nothing.
     element_handover_c: 60
     # Used when the forward price series is missing/unparseable: assume the shortest possible

@@ -95,6 +95,22 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
 - `turn_off` preserves the previous target in normal operation. One failed live sequence
   produced `off/15`; this was not reproduced consistently.
 
+### Negative-price incident record
+
+- **2026-07-27, 16:55–17:00:** daemon sent separate `set_operation_mode(electric)` then
+  `set_temperature(75, electric)`. HA returned success but the cylinder stayed off. Controlled
+  reproduction showed consecutive Local Tuya writes can lose the temperature datapoint
+  (`electric/60`); a single compound call works. Also confirmed physical maximum 70 °C.
+- **2026-07-28, 12:10 onward:** after an earlier element run ended with the tank at 61 °C,
+  repeated compound `electric/70` requests were reflected by HA but the element stayed off and
+  the circuit remained at ~1.9 W. The preceding successful run started via `performance` handover
+  at 60 °C and drew ~1.78 kW. A fresh `performance/70` selection at 61 °C also failed to start
+  the element. Current inference: element-capable modes share a re-trigger threshold/hysteresis
+  near 60 °C; keep the requested mode armed and avoid repeated writes while above the threshold.
+- Mode + target are therefore necessary but insufficient confirmation. After a start grace,
+  control requires the physical element sensor at/below the expected trigger. Above it, element
+  off is treated as armed hysteresis rather than an immediate command failure.
+
 ## Proposed HA display-name renames
 
 To stop future confusion (set via HA UI → entity settings, or `customize.yaml`). Entity IDs

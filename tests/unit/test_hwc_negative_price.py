@@ -74,6 +74,18 @@ def test_compressor_idle_goes_straight_to_electric_at_70():
     assert state.latched_electric
 
 
+def test_compressor_idle_above_handover_keeps_electric_armed():
+    """All element-capable modes appear to share the same re-trigger hysteresis. Keep the direct
+    electric request armed above 60 C and let the controller start it at its threshold."""
+    decision, state = _decide(-0.10, compressor_on=False, tank_c=61.0)
+
+    assert decision.action == "heat"
+    assert decision.mode == np.MODE_ELECTRIC
+    assert decision.setpoint_c == 70
+    assert decision.uses_compressor is False
+    assert state.latched_electric
+
+
 def test_running_compressor_gets_performance_not_electric():
     """Interrupting a running compressor buys no extra heat — only Δ1.1 kW of paid draw — and
     costs a restart, so the default is to let it run on and let `performance` hand over at 60."""
@@ -130,6 +142,22 @@ def test_electric_is_latched_for_the_event():
     # Shallow price that would otherwise fail the break-even, compressor reported running.
     decision, state = _decide(-0.01, compressor_on=True, state=latched, now=NOW + timedelta(minutes=5))
     assert decision.mode == np.MODE_ELECTRIC
+    assert state.latched_electric
+
+
+def test_latched_element_remains_electric_after_tank_crosses_handover():
+    latched = np.OverrideState(latched_electric=True, negative_since=NOW.timestamp())
+
+    decision, state = _decide(
+        -0.01,
+        compressor_on=False,
+        tank_c=61.0,
+        state=latched,
+        now=NOW + timedelta(minutes=5),
+    )
+
+    assert decision.mode == np.MODE_ELECTRIC
+    assert decision.uses_compressor is False
     assert state.latched_electric
 
 

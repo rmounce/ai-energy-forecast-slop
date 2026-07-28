@@ -194,8 +194,31 @@ def command_key(config: dict, decision: hwc_executor.Decision):
     return (decision.action, setpoint, mode)
 
 
+def command_key_matches_state(key, entity_state: dict) -> bool:
+    """Whether an equipment update merely reflects the cached command."""
+    if key is None:
+        return False
+    action, setpoint, mode = key
+    if action == "off":
+        return entity_state.get("state") == "off"
+    if action != "heat":
+        return False
+    attrs = entity_state.get("attributes") or {}
+    if attrs.get("operation_mode", entity_state.get("state")) != mode:
+        return False
+    try:
+        return abs(float(attrs["temperature"]) - float(setpoint)) <= 0.1
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def command_confirmed(
-    config: dict, decision: hwc_executor.Decision, entity_state: dict
+    config: dict,
+    decision: hwc_executor.Decision,
+    entity_state: dict,
+    *,
+    require_element: bool = False,
+    element_on: bool = False,
 ) -> bool:
     """Whether HA has observed the requested Aquatech mode and target.
 
@@ -215,7 +238,11 @@ def command_confirmed(
         observed_setpoint = float(attrs["temperature"])
     except (KeyError, TypeError, ValueError):
         return False
-    return abs(observed_setpoint - float(decision.setpoint_c)) <= 0.1
+    if abs(observed_setpoint - float(decision.setpoint_c)) > 0.1:
+        return False
+    if require_element and not element_on:
+        return False
+    return True
 
 
 def should_suppress_off_after_heat(
@@ -397,6 +424,7 @@ class HwcDaemon:
         self.last_heat_command_at = 0.0
         self.last_off_command_at = 0.0
         self.last_applied_command = None
+        self.last_applied_command_at = 0.0
         # last_command_action persists across cache invalidations (unlike last_applied_command),
         # so the planner's effective-running signal can tell a commanded stop from a defrost pause.
         self.last_command_action: str | None = None
@@ -405,10 +433,6 @@ class HwcDaemon:
         # mutually exclusive. This — not last_command_action — is what the compressor-state
         # signals must consult.
         self.last_compressor_command_action: str | None = None
-        # Element-only heating is invisible to the compressor sensor, so the SoC tracker would
-        # otherwise coast (and shed its draw prior) while the tank is actually gaining ~1800 W.
-        # False after a restart: the tracker then under-states V_hot, which is the safe direction.
-        self.element_running = False
         self.compressor_last_on_at = 0.0
         self._heat_unconfirmed_warned = False
         state = self._load_state()
@@ -526,7 +550,9 @@ class HwcDaemon:
                     log.exception("HWC reporter observe failed; control loop unaffected")
             if entity_id not in self.entities:
                 continue
-            self._invalidate_command_cache_on_equipment_change(entity_id)
+            self._invalidate_command_cache_on_equipment_change(
+                entity_id, data.get("new_state") or {}
+            )
             self._track_compressor_run_event(entity_id, data)
             self._track_target_temperature_event(entity_id, data, event_time)
             decision = classify_state_change(
@@ -918,7 +944,7 @@ class HwcDaemon:
                     seed = self._update_soc_tracker(
                         probe_c=probe,
                         heating=planner_config["hwc"]["compressor_initially_on_override"],
-                        element_on=self.element_running,
+                        element_on=bool(self.report_cache.get("element")),
                     )
                     if seed is not None:
                         planner_config["hwc"].setdefault("dp_planner", {})["_soc_state0"] = list(seed)
@@ -1008,10 +1034,38 @@ class HwcDaemon:
                 except Exception:
                     log.exception("HWC command confirmation read failed; re-commanding")
                     observed = {}
-                if command_confirmed(self.config, decision, observed):
+                element_only = decision.action == "heat" and not decision.uses_compressor
+                confirm_s = float(
+                    self.config["hwc"]
+                    .get("negative_price", {})
+                    .get("element_confirm_seconds", 60)
+                )
+                observed_tank_c = _coerce_float(
+                    (observed.get("attributes") or {}).get("current_temperature")
+                )
+                require_element = (
+                    element_only
+                    and self.last_applied_command_at > 0
+                    and time.monotonic() - self.last_applied_command_at >= confirm_s
+                    and observed_tank_c is not None
+                    and observed_tank_c
+                    <= float(
+                        self.config["hwc"]
+                        .get("negative_price", {})
+                        .get("element_handover_c", 60)
+                    )
+                )
+                if command_confirmed(
+                    self.config,
+                    decision,
+                    observed,
+                    require_element=require_element,
+                    element_on=bool(self.report_cache.get("element")),
+                ):
                     log.info(
-                        "HWC command unchanged and confirmed (%s, setpoint=%s); "
+                        "HWC command unchanged and %sconfirmed (%s, setpoint=%s); "
                         "skipping re-command",
+                        "physically " if require_element else "",
                         decision.action,
                         decision.setpoint_c,
                     )
@@ -1031,6 +1085,7 @@ class HwcDaemon:
                 except Exception:
                     log.exception("HWC executor retry failed")
                     return
+                self.last_applied_command_at = time.monotonic()
             else:
                 try:
                     await asyncio.to_thread(hwc_executor.apply_decision, self.config, decision)
@@ -1039,8 +1094,8 @@ class HwcDaemon:
                     log.exception("HWC executor apply failed")
                     return
                 self.last_applied_command = key
+                self.last_applied_command_at = time.monotonic()
                 self.last_command_action = decision.action
-                self.element_running = decision.action == "heat" and not decision.uses_compressor
                 if decision.action == "heat" and decision.uses_compressor:
                     self.last_compressor_command_action = "heat"
                     self.last_heat_command_at = time.monotonic()
@@ -1152,10 +1207,20 @@ class HwcDaemon:
             uses_compressor=decision.uses_compressor,
         )
 
-    def _invalidate_command_cache_on_equipment_change(self, entity_id: str) -> None:
+    def _invalidate_command_cache_on_equipment_change(
+        self, entity_id: str, new_state: dict
+    ) -> None:
         # Any change to the heater/compressor means our cached command may no longer reflect
         # reality (e.g. a manual mode change), so force the next executor pass to re-assert.
+        # A water-heater update that reflects the cached mode/target is confirmation, not a
+        # reason to send the same command again; reissuing during Local Tuya's delayed feedback
+        # can keep resetting the appliance's internal element-start process.
         act = self.config["hwc"].get("actuation", {})
+        if (
+            entity_id == act.get("water_heater_entity")
+            and command_key_matches_state(self.last_applied_command, new_state)
+        ):
+            return
         if entity_id in (act.get("water_heater_entity"), act.get("compressor_entity")):
             self.last_applied_command = None
 
