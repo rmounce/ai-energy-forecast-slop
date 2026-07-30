@@ -379,6 +379,8 @@ hwc:
     # the break-even compressor-interrupt does, so a mis-set Δ can only mis-time that one branch.
     enabled: true
     price_entity: sensor.amber_effective_general_price
+    # Confirmed current 5-minute price; at/above 60 C this controls release of the element.
+    confirmed_price_entity: sensor.amber_5min_current_general_price
     # 5-minute forward intervals, for the break-even's remaining-negative-window term.
     forecast_entity: sensor.amber_billing_interval_forecasts_general_price
     # HA advertises 75 °C, but the physical controller clamps it to 70 °C (confirmed 2026-07-27).

@@ -118,6 +118,7 @@ def watched_entities(config: dict) -> set[str]:
             entities.add(act[key])
     if hwc_negative_price.enabled(config):
         entities.add(hwc_negative_price.price_entity(config))
+        entities.add(hwc_negative_price.confirmed_price_entity(config))
     return entities
 
 
@@ -164,7 +165,10 @@ def classify_state_change(config: dict, entity_id: str, old_state: dict | None, 
     if entity_id in {act.get("water_heater_entity"), act.get("compressor_entity")}:
         return TriggerDecision(False, True, "equipment state changed")
 
-    if hwc_negative_price.enabled(config) and entity_id == hwc_negative_price.price_entity(config):
+    if hwc_negative_price.enabled(config) and entity_id in {
+        hwc_negative_price.price_entity(config),
+        hwc_negative_price.confirmed_price_entity(config),
+    }:
         # Execute, don't replan: the override is reactive and sits on top of the existing plan.
         # Every 5-minute price tick is a chance to enter/exit it, so this must not wait for the
         # periodic tick.
@@ -1123,8 +1127,10 @@ class HwcDaemon:
 
         On exit the plan is *re-asserted*, not merely un-overridden: ``performance``'s 60->70
         element leg is ungated, so leaving it in place above 60 °C would keep importing at
-        1800 W. Returning the plan decision here re-commands it (the mode is part of
-        ``command_key``, so the change is not dedup-skipped).
+        1800 W. Above 60 °C, the confirmed 5-minute price controls that exit; zero still holds
+        the negative-price event and only a strictly positive confirmed price releases it.
+        Returning the plan decision here re-commands it (the mode is part of ``command_key``, so
+        the change is not dedup-skipped).
         """
         if not hwc_negative_price.enabled(self.config):
             return decision
@@ -1132,6 +1138,11 @@ class HwcDaemon:
             price = _coerce_float(
                 hwc_executor._entity_state(
                     self.config, hwc_negative_price.price_entity(self.config)
+                ).get("state")
+            )
+            confirmed_price = _coerce_float(
+                hwc_executor._entity_state(
+                    self.config, hwc_negative_price.confirmed_price_entity(self.config)
                 ).get("state")
             )
             forecasts: list[dict] = []
@@ -1155,6 +1166,7 @@ class HwcDaemon:
             forecasts=forecasts,
             now=datetime.now(timezone.utc),
             state=self.negative_price_state,
+            confirmed_price_aud_per_kwh=confirmed_price,
         )
         if new_state != self.negative_price_state:
             self.negative_price_state = new_state

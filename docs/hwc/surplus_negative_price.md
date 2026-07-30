@@ -181,8 +181,10 @@ split by what a wrong call costs:
   decision that costs a restart. "Confirmed" is implemented as *negative across an update
   boundary* (two consecutive negative reads, or negative ≥ 45 s), not by trying to identify
   which update we are on. The delay barely affects `gain_hours`.
-- **Exit acts on the first value.** Reverting is cheap and it is what guards `performance`'s
-  ungated element leg.
+- **Exit below 60 °C acts on the first value.** Reverting is cheap and it is what guards
+  `performance`'s ungated element leg. At/above 60 °C, exit waits for the confirmed current
+  5-minute price (`sensor.amber_5min_current_general_price`) to be **strictly positive**;
+  confirmed zero continues the event.
 
 This assumes *conservative* means biased **high** for a buy price (pessimistic for the buyer), so
 a conservative-negative read is strong evidence the confirmed price is negative too.
@@ -190,12 +192,13 @@ a conservative-negative read is strong evidence the confirmed price is negative 
 ### Latching and exit
 
 - **Latch:** once switched to `electric` under the break-even, stay there until the price goes
-  non-negative — do not re-evaluate and flip back to `heat_pump`/`performance` mid-event. A
+  positive at/above 60 °C — do not re-evaluate and flip back to `heat_pump`/`performance` mid-event. A
   flip-back pays the very restart we were trying to avoid *and* gives up the dump.
-- **Exit:** when `price >= 0`, **actively revert to the DP plan's mode and setpoint** — do not
-  merely stop asserting the override. `performance`'s 60→70 element leg is **ungated**: left in
-  place above 60 °C it will keep importing at 1800 W to reach setpoint. This is the one way the
-  override can lose real money.
+- **Exit:** below 60 °C, the effective price may release the override at zero. At/above 60 °C,
+  only a **strictly positive confirmed current price** releases it; zero continues heating.
+  When released, **actively revert to the DP plan's mode and setpoint** — do not merely stop
+  asserting the override. `performance`'s 60→70 element leg is **ungated**: left in place above
+  60 °C it will keep importing at 1800 W to reach setpoint.
 - **Physical confirmation:** HA mode + target only prove that Local Tuya accepted the request.
   After 60 s and at/below the 60 °C trigger, element-only commands must also have
   `binary_sensor.aquatech_element == on`; otherwise retry. Above 60 °C, leave the accepted
@@ -325,6 +328,7 @@ Negative buy prices arrived earlier than expected, forcing Phase 1 to be built. 
   (uninterrupted to 60, element 60→70), **unless** the break-even
   `price < −transition_cost_aud / (1.1 × gain_hours)` passes, where
   `gain_hours = min(remaining_negative_window, time_to_60C)`.
-- The `electric` switch is **latched** for the event; on `price >= 0` the daemon **actively
-  reverts** to the DP plan (`performance`'s element leg is ungated and would import to setpoint).
+- The `electric` switch is **latched** for the event; at/above 60 °C the daemon actively reverts
+  to the DP plan only after the confirmed price is strictly positive (`performance`'s element
+  leg is ungated and would import to setpoint).
 - Still to verify: element draw really is 1800 W (Athom ch2, first time the element runs).

@@ -169,6 +169,41 @@ def test_latch_and_negative_since_clear_when_the_price_recovers():
     assert state.negative_since is None
 
 
+def test_at_handover_zero_confirmed_price_keeps_element_running():
+    state = np.OverrideState(latched_electric=True, negative_since=NOW.timestamp())
+    # The effective price has already moved positive, but confirmed zero is still eligible.
+    decision, new_state = np.decide(
+        _cfg(),
+        planned=PLANNED_OFF,
+        price_aud_per_kwh=0.01,
+        compressor_on=False,
+        tank_c=60.0,
+        forecasts=[],
+        now=NOW + timedelta(minutes=5),
+        state=state,
+        confirmed_price_aud_per_kwh=0.0,
+    )
+    assert decision.mode == np.MODE_ELECTRIC
+    assert new_state.negative_since == NOW.timestamp()
+
+
+def test_at_handover_positive_confirmed_price_releases_element():
+    state = np.OverrideState(latched_electric=True, negative_since=NOW.timestamp())
+    decision, new_state = np.decide(
+        _cfg(),
+        planned=PLANNED_OFF,
+        price_aud_per_kwh=0.01,
+        compressor_on=False,
+        tank_c=60.0,
+        forecasts=[],
+        now=NOW + timedelta(minutes=5),
+        state=state,
+        confirmed_price_aud_per_kwh=0.001,
+    )
+    assert decision is None
+    assert new_state == np.OverrideState()
+
+
 def test_gain_hours_is_capped_by_time_to_the_element_handover():
     """A nearly-hot tank reaches 60 °C in minutes, after which `performance` runs the element
     anyway — so a long negative window doesn't justify an interrupt."""

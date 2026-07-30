@@ -83,6 +83,12 @@ def price_entity(cfg: dict) -> str:
     return config(cfg).get("price_entity", "sensor.amber_effective_general_price")
 
 
+def confirmed_price_entity(cfg: dict) -> str:
+    return config(cfg).get(
+        "confirmed_price_entity", "sensor.amber_5min_current_general_price"
+    )
+
+
 def forecast_entity(cfg: dict) -> str:
     return config(cfg).get(
         "forecast_entity", "sensor.amber_billing_interval_forecasts_general_price"
@@ -192,20 +198,24 @@ def decide(
     forecasts: list[dict],
     now: datetime,
     state: OverrideState,
+    confirmed_price_aud_per_kwh: float | None = None,
 ) -> tuple[hwc_executor.Decision | None, OverrideState]:
     """Override ``planned`` while the buy price is negative.
 
     Returns ``(decision_or_None, new_state)``; ``None`` means "no override — use the DP plan".
 
-    On exit (``price >= 0``) the caller must *actively re-assert* the plan, not merely stop
-    overriding: ``performance``'s 60->70 element leg is ungated and would keep importing at
-    1800 W to reach setpoint.
+    Below the 60 C element handover, exit follows the effective price. At/above handover, the
+    confirmed 5-minute price is authoritative: zero still holds the active element event, and
+    only a strictly positive confirmed price releases it. On exit the caller must *actively
+    re-assert* the plan, not merely stop overriding: ``performance``'s 60->70 element leg is
+    ungated and would keep importing at 1800 W to reach setpoint.
     """
-    if not enabled(cfg) or price_aud_per_kwh is None or price_aud_per_kwh >= 0:
+    if not enabled(cfg) or price_aud_per_kwh is None:
         return None, OverrideState()
 
     ncfg = config(cfg)
     setpoint_c = float(ncfg.get("setpoint_c", DEFAULT_SETPOINT_C))
+    handover_c = float(ncfg.get("element_handover_c", DEFAULT_ELEMENT_HANDOVER_C))
     now_ts = now.timestamp()
     negative_since = state.negative_since if state.negative_since is not None else now_ts
 
@@ -218,6 +228,30 @@ def decide(
             compressor_on=planned.compressor_on,
             uses_compressor=False,
         )
+
+    # At/above the element trigger, the effective price is only a provisional interval value.
+    # Keep an active negative-price element event through zero and provisional positive values;
+    # the confirmed 5-minute price is authoritative for releasing it. A missing confirmed read
+    # is intentionally not treated as negative.
+    if tank_c is not None and tank_c >= handover_c and confirmed_price_aud_per_kwh is not None:
+        if confirmed_price_aud_per_kwh > 0:
+            return None, OverrideState()
+        if price_aud_per_kwh >= 0:
+            if state.negative_since is None:
+                return None, OverrideState()
+            return (
+                _electric(
+                    f"negative price event retained at {tank_c:.1f} C; "
+                    f"confirmed price {confirmed_price_aud_per_kwh:.3f} $/kWh"
+                ),
+                OverrideState(
+                    latched_electric=state.latched_electric,
+                    negative_since=state.negative_since,
+                ),
+            )
+
+    if price_aud_per_kwh >= 0:
+        return None, OverrideState()
 
     # Compressor already stopped: nothing to interrupt, go straight to maximum draw.
     if not compressor_on:
