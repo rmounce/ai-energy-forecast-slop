@@ -167,6 +167,25 @@ def test_subminimum_run_is_discarded(tmp_path, monkeypatch):
     conn.close()
 
 
+def test_unavailable_compressor_state_does_not_close_cycle(tmp_path, monkeypatch):
+    """HA restart transitions must not be interpreted as a compressor-off edge."""
+    monkeypatch.setattr(hwc_planner, "_ha_set_state", lambda *a, **k: None)
+    d = _reporter_daemon(tmp_path)
+    d.report_cache.update(tank=45.0, energy=100.0)
+    t0 = 1_750_000_000.0
+
+    async def flow():
+        await d._reporter_observe(ENTITIES["compressor"], {"state": "on"}, _evt(t0))
+        await d._reporter_observe(
+            ENTITIES["compressor"], {"state": "unavailable"}, _evt(t0 + 1800)
+        )
+        assert d.reporter_cycle is not None
+        assert "closed_at" not in d.reporter_cycle
+        assert d._reporter_prev_on is True
+
+    asyncio.run(flow())
+
+
 def test_humidity_cached_from_weather_attribute(tmp_path, monkeypatch):
     monkeypatch.setattr(hwc_planner, "_ha_set_state", lambda *a, **k: None)
     d = _reporter_daemon(tmp_path)

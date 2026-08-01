@@ -17,6 +17,7 @@ import asyncio
 import copy
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -492,6 +493,11 @@ class HwcDaemon:
                     await self._authenticate(ws)
                     await self._subscribe_state_changed(ws)
                     log.info("Subscribed to state_changed; watching %s", ", ".join(sorted(self.entities)))
+                    await self._reporter_resync_after_reconnect()
+                    # HA may have restarted without producing a relevant state_changed event.
+                    # Re-run both paths once the API/WebSocket is healthy again.
+                    self.replan_trigger.set()
+                    self.execute_trigger.set()
                     backoff = RECONNECT_BACKOFF_INITIAL
                     await self._read_events(ws)
             except (ConnectionClosed, OSError, InvalidStatus, asyncio.TimeoutError) as e:
@@ -699,6 +705,10 @@ class HwcDaemon:
         if role is None:
             return
         raw = new_state.get("state")
+        # HA commonly publishes unavailable/unknown while an integration or HA itself is
+        # restarting.  Those are not compressor edges; treating them as off splits a valid run.
+        if role == "compressor" and raw not in ("on", "off"):
+            return
         if role in ("compressor", "element", "defrost", "four_way"):
             value = raw == "on"
         elif role == "fan":
@@ -857,7 +867,14 @@ class HwcDaemon:
     async def _reporter_startup(self) -> None:
         """Seed the cache from current HA states, resolve an open cycle across a restart, publish."""
         await asyncio.to_thread(self._reporter_seed_cache)
-        compressor_on = bool(self.report_cache.get("compressor"))
+        compressor_state = self.report_cache.get("compressor")
+        if not isinstance(compressor_state, bool):
+            # Do not guess while HA is still restoring entities.  The reconnect reconciliation
+            # will resolve this once a definite on/off state is available.
+            self._reporter_prev_on = None
+            await self._reporter_publish()
+            return
+        compressor_on = compressor_state
         self._reporter_prev_on = compressor_on
         rc = self.reporter_cycle
         if rc is not None and "closed_at" in rc:
@@ -865,16 +882,47 @@ class HwcDaemon:
             # and the cache was just reseeded from the current state).
             await self._reporter_finalise()
         elif rc is not None and not compressor_on:
-            # A run ended while we were down — can't reconstruct precisely; drop it (forward-only).
-            await asyncio.to_thread(self._store_delete, rc["start_ts"])
-            log.info("HWC reporter: dropped an open cycle that ended during downtime")
-            self.reporter_cycle = None
-            self._save_state()
+            # The run ended while the daemon was down.  The exact stop edge is unknowable, but the
+            # cumulative meter and current tank reading let us retain a useful approximate close
+            # instead of deleting an otherwise recoverable run.
+            await self._reporter_close(time.time())
+            if self.reporter_cycle is not None and "closed_at" in self.reporter_cycle:
+                await self._reporter_finalise()
         elif rc is None and compressor_on:
             await self._reporter_open(time.time())
         await self._reporter_publish()
 
+    async def _reporter_resync_after_reconnect(self) -> None:
+        """Reconcile cycle edges after HA/WebSocket recovery.
+
+        State-change subscriptions do not replay history.  A REST snapshot closes a cycle that
+        ended during the outage or opens a best-effort cycle if the daemon missed its start edge.
+        Indeterminate HA states are ignored until a definite state is available.
+        """
+        if not self._report_enabled:
+            return
+        await asyncio.to_thread(self._reporter_seed_cache)
+        compressor_state = self.report_cache.get("compressor")
+        if not isinstance(compressor_state, bool):
+            return
+        previous = self._reporter_prev_on
+        if previous is None:
+            self._reporter_prev_on = compressor_state
+            if compressor_state and self.reporter_cycle is None:
+                await self._reporter_open(time.time())
+            return
+        if compressor_state == previous:
+            return
+        self._reporter_prev_on = compressor_state
+        if compressor_state:
+            await self._reporter_open(time.time())
+        else:
+            await self._reporter_close(time.time())
+
     def _reporter_seed_cache(self) -> None:
+        # A stale compressor value is unsafe during reconnect reconciliation; only a definite
+        # state may be used to infer a missed edge.
+        self.report_cache.pop("compressor", None)
         for role, eid in self.report_entities.items():
             try:
                 st = hwc_planner._ha_call(self.config, "GET", f"states/{eid}")
@@ -882,7 +930,8 @@ class HwcDaemon:
                 continue
             raw = st.get("state")
             if role in ("compressor", "element", "defrost", "four_way"):
-                self.report_cache[role] = raw == "on"
+                if raw in ("on", "off"):
+                    self.report_cache[role] = raw == "on"
             elif role == "fan":
                 self.report_cache[role] = isinstance(raw, str) and raw.lower() == "high"
             else:
@@ -1395,7 +1444,10 @@ class HwcDaemon:
         reporter_cycle = getattr(self, "reporter_cycle", None)
         if reporter_cycle is not None:
             payload["reporter_cycle"] = reporter_cycle
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        # Avoid leaving a truncated state file if the daemon is interrupted during persistence.
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, path)
 
     async def run(self) -> None:
         await self._seed_target_reached()

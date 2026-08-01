@@ -119,9 +119,18 @@ republishes the card so the live row's elapsed time and running kWh stay current
 **Startup / restart (`_reporter_startup`).** Seeds the cache from current HA states, seeds the
 previous-compressor-state from the live reading (so the first event is a real edge, not a phantom
 open), and resolves a persisted cycle: **finalise** it if it was settling when we went down (the
-probe has since settled); otherwise resume it if the compressor is still on, or drop it if the
-compressor is now off (the run ended during downtime and can't be reconstructed precisely —
-forward-only, gaps acceptable).
+probe has since settled); otherwise resume it if the compressor is still on. If the compressor is
+known off, the daemon closes and finalises the row using the current cumulative meter/tank values;
+the stop time is approximate, but the run is retained rather than discarded. If HA is still
+returning `unavailable`/`unknown`, the daemon leaves the open cycle unresolved until a definite
+state arrives.
+
+**HA reconnect.** After every WebSocket reconnect the daemon takes a REST state snapshot and
+reconciles the compressor edge, because WebSocket subscriptions do not replay missed history. A
+definite off/on snapshot closes or opens a missed edge; an indeterminate snapshot is ignored.
+Transient compressor `unavailable`/`unknown` events are never treated as off, so an HA restart
+cannot by itself split a valid run. A reconnect also triggers an immediate replan and execution
+pass.
 
 ### Persistence
 
