@@ -70,6 +70,9 @@ low-fan lock. Cold overnight recovery still invokes high fan.
 
 ## Suspected related products
 
+See `controller_family_manual_sweep.md` for the broader YT/Solareast/Airtherm/Ecostar/SIPH manual
+trail and its element Boost/sterilisation findings.
+
 Relationship confidence matters; shared parameter tables or Tuya datapoints do not prove identical
 compressors, plumbing, tuning or firmware.
 

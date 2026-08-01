@@ -72,6 +72,10 @@ Grid connection ceiling ≈ 15 kW (`number.sigen_plant_grid_import_limitation` d
 
 ## Actuation primitive (Aquatech RAPID X6 modes)
 
+Related-controller manual research found distinct panel **Boost** and **sterilisation** element
+requests that may bypass the ordinary mode's ~60 °C re-trigger hysteresis; these remain untested on
+the Aquatech. See `controller_family_manual_sweep.md`.
+
 `water_heater.aquatech` operation modes (HA advertises 15–75 °C, but the physical maximum is
 70 °C; confirmed 2026-07-27):
 
