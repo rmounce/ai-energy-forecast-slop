@@ -184,7 +184,8 @@ the engine-independent long pole — gather it regardless.
   This deliberately favours DH/MPC coherence and a stable 5-minute HWC block over using the
   freshest HWC plan between DH solves. If the snapshot is missing after HA restart, templates
   fall back to the live HWC plan until the next DH run refreshes the snapshot.
-- **Fan-speed regime:** fan reduced for quiet mode (F30 25→10, F35 55→30). COP calibration is
-  specific to this setting — confirm the change date before mixing cycles across regimes.
+- **Fan-speed regime:** quiet thresholds (F30 25→10, F35 55→30) were used until
+  **2026-07-04 09:55**, then moved back towards factory defaults so high fan triggered more often.
+  Do not pool cycles across regimes; see `docs/hwc/cycle_reporting.md` for the A/B observations.
 - **Sandbox:** `docker exec` and direct InfluxDB/EMHASS network calls need the command sandbox
   disabled (filesystem/network restrictions); plain repo edits/tests do not.
