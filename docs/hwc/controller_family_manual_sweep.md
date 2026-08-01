@@ -6,6 +6,15 @@ evidence map, not proof that commands or parameters are portable across products
 
 ## Main result
 
+The current Aquatech manual confirms that the apparent element threshold is intentional mode
+policy: its mode table lists `ELEMENT - 60 °C/70 °C` (trigger/target). The observed refusal to
+re-start the element above about 60 °C therefore matches the published factory behaviour.
+
+The hardware does not appear to require that restriction. Australian-certified 270 L units with
+the same 1.2 kW heat-pump input, 1.8 kW element, 14 A/3 kW combined maximum, R290/400 g charge,
+pressure ratings and 620 mm tank format expose direct element-only and Boost modes. Firmware and
+controller policy vary even where the refrigeration/electrical platform is a close match.
+
 The strongest trail is the **YT-200/250/300TB2** all-in-one HPWH family. The same model identifiers,
 physical format and controller vocabulary appear under Solareast/Sunrain, Airtherm Aqua, Ecostar,
 Sacon and Chameleon/SIPH. Hisense's AH-200/300NH4GHB manual retains YT model identifiers in some
@@ -37,15 +46,26 @@ Source: [Airtherm Aqua 1.2 manual, controller and operation sections pp. 19–24
 | **Ecostar YT-200/250/300TB2** | Exact identifiers and matching published specification table | Alternate distributor/support channel | Strong rebadge evidence |
 | **Chameleon SIPH-200/250/300TB2** | Manual names both YT and SIPH identifiers | Alternate manual/support channel | Strong rebadge evidence |
 | **Sacon YT-200TB2** | Exact identifier in supplier listing | Alternate brand/search term | Moderate; listing rather than service manual |
+| **Hisense AHS-270HF4GHB** | Exact 270 L electrical/refrigerant/pressure specification match under SAA-231065-EA | Current Australian manual and ConnectLife implementation | Very strong hardware-platform lead |
+| **Aether HP270** | Exact specification match under SAA-240641-EA; detailed 45-page manual | Explicit simultaneous Boost and direct element-only mode | Very strong hardware and alternate-firmware evidence |
+| **Power Bay PB-270RE** | Exact specification match under SAA-231203-EA; detailed manual | STAN/HYB1/ELE behaviour, Boost chord and diagnostics | Very strong hardware and alternate-controller evidence |
+| **Soltaro HPWSTR003** | Exact specification match under SAA-231204-EA; detailed manual | Five modes, direct ELE, Boost and sterilisation | Very strong hardware and alternate-controller evidence |
+| **Viessmann Vitocal 161-A 270 SOC/SO** | Exact ERAC specification match under SAA-241129-EA | Alternate service/support channel | Strong hardware lead; useful manual not located |
+| **Warmth WNZ270L-2in1** | Exact ERAC specification match under SAA-240388-EA | Alternate service/support channel | Strong hardware lead; useful manual not located |
 | **Emerald / Rinnai DemandDuo Tuya variants** | Similar T1–T5 and Tuya datapoint vocabulary only | Sensor/DP decoding leads | Weak for element logic |
 
 Selected sources:
 
+- [Current Aquatech RAPID/X6 and DYNAMIC/X8 manual](https://www.aquatechheatpumps.com.au/_files/ugd/228c32_84eb2f4659664c0e92f0dd0fe910d8fa.pdf)
 - [Solareast/Sunrain YT family catalog](https://marketdirectory.messefrankfurt.com/images/original/document_downloads/10000006202501/0015050370/1671769866768_1729264797.pdf)
 - [Ecostar YT product page](https://www.ecostar.com.tr/en/products/condensing-boilers/heat-pump/heat-pump)
 - [Chameleon YT/SIPH manual](https://chameleon.co.ke/wp-content/uploads/2025/08/CSL-R290-HEATPUMP-MANUAL.pdf)
 - [Hisense multilingual AH-200/300NH4GHB manual index](https://www.manualslib.de/manual/1034512/Hisense-Ah-200Nh4Ghb.html)
 - [Hisense SG Ready certification/model list](https://sgready.waermepumpe.de/database/?cHash=ea8e378a41fff7e3ef8686ddc329892f&tx_bwpsgreadydatabase_frontend%5Baction%5D=downloadLabel&tx_bwpsgreadydatabase_frontend%5Bcontroller%5D=Frontend&tx_bwpsgreadydatabase_frontend%5Blabel%5D=526)
+- [Aether HP200/HP270 manual](https://aetheraustralia.com.au/wp-content/uploads/2025/03/userManualFinals.pdf)
+- [Power Bay PB-270RE manual](https://powerbay.com.au/wp-content/uploads/2024/09/Power-Bay-PB270RE-Heat-Pump-User-Manual.pdf)
+- [Soltaro HPWSTR002/003 manual](https://australia.a.bigcontent.io/v1/static/14361239_1_P_PROD_DET_SoltaroASHPManual)
+- [Hisense AHS-270HF4GHB product/manual page](https://hisense.com.au/product/AHS-270HF4GHB/270l-heat-pump-hot-water)
 
 ## What the clearer manuals add
 
@@ -75,6 +95,31 @@ HI-WATER PDF. It documents:
 
 It appears to describe a newer touchscreen/firmware variant, so its key chords and mode semantics
 are leads, not Aquatech instructions.
+
+### Exact-spec Australian siblings
+
+The certification match is more probative than appearance alone. Aquatech Dynamic/X8 and the six
+270 L candidates above share the principal nameplate values. It does not prove identical PCB,
+sensor placement or firmware, but makes their manuals the best source of alternate control logic.
+
+- **Power Bay:** STAN is heat-pump-only; HYB1 says heat pump and element work together; ELE is
+  element-only with a 5 °C restart differential. Its text says a 15–75 °C range while the adjacent
+  summary chart says 15–70 °C, an internal manual inconsistency. Its Boost chord turns the element
+  on until target. Neither description imposes a 60 °C minimum before ELE or Boost can operate.
+- **Soltaro:** ECO has a 12 °C restart differential; HYB/HYB1 hand over from compressor to element at
+  60 °C; ELE is element-only from 15–70 °C with a 10 °C restart differential. A separate Boost chord
+  turns the element on until setpoint. This is especially useful: `ELE` hysteresis and the hybrid
+  60 °C handover are separate concepts, whereas Aquatech packages 60/70 as the Element mode.
+- **Aether:** factory STAN is 55 °C with 5 K deadband. The table says its 270 L element setting is
+  61 °C/5 K and is used below -7 °C. User-selectable `booS` runs heat pump and element together;
+  `ELE` is element-only, both with 15–75 °C target range. Non-standard modes revert within 24 hours.
+- **Hisense AHS:** current Australian product literature advertises multiple modes to 70 °C,
+  ConnectLife control and weekly sterilisation. The public 38-page installation guide was found,
+  but indexed copies expose less control detail than the manuals above.
+
+These mutually inconsistent policies on matching hardware are evidence that a controller command,
+firmware option or hidden datapoint could work around Aquatech's 60 °C trigger. They are not evidence
+that another brand's parameter values or firmware can safely be copied.
 
 ## Important non-equivalences
 
@@ -112,3 +157,29 @@ quick-heat parameters did not locate an indexed original Chinese service manual.
 Solareast trail is stronger than the Chinese search results: YT identifiers persist across catalogs
 and rebadged manuals. Future searches should use photographed PCB/controller identifiers rather than
 generic translated phrases.
+
+## Other desktop findings and dead ends
+
+- Aquatech's older *Hydrotherm & your Solar PV v2.0* describes timer scheduling against ordinary
+  hysteresis, not a PV/SG dry-contact or element override. It says Constant/Timer modes reheat below
+  55 °C and treats Element Booster as extra capacity for large loads.
+- An indexed `Dynamic X8 Gen 2 Settings Screen Manual` filename was found, but its original Aquatech
+  PDF URL no longer resolves through the public site. Archive/vendor recovery remains worthwhile.
+- No public YT-family Modbus register map, Aquatech Tuya schema, service firmware image, or original
+  Chinese controller manual was located.
+- The public certification records establish nameplate equivalence but do not identify the OEM,
+  PCB, controller supplier or firmware lineage. Hisense and Solareast remain strong trails, not a
+  proven manufacturer attribution for the installed Aquatech.
+- A SolarEast R290 Home Assistant integration found online is for a monobloc space-heating product;
+  its registers should not be assumed portable to this tank controller.
+
+### Best remaining no-device actions
+
+1. Recover the missing Aquatech `Dynamic X8 Gen 2 Settings Screen Manual` from web archives or
+   Aquatech/Hydrotherm support.
+2. Request service/controller manuals and Tuya datapoint lists for Aquatech X6/X8, Hisense
+   AHS-210/270HF4GHB, Aether HP270, PB-270RE and HPWSTR003. Ask specifically whether Boost/ELE may
+   start above 60 °C and whether output 16 is externally commandable.
+3. Request the YT-200/250/300TB2 Modbus register map from Solareast/Sunrain and distributors.
+4. When device access returns, identify the panel/PCB/program code before trying any sibling key
+   chord. That identifier is now more valuable than another broad model-name search.
