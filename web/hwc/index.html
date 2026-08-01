@@ -24,8 +24,9 @@
     .grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(280px,1fr); gap:16px; }
     .panel { padding:16px; min-width:0; }
     #plot { width:100%; height:510px; display:block; }
-    .legend { display:flex; gap:18px; color:var(--muted); margin:0 0 7px 50px; }
+    .legend { display:flex; gap:18px; color:var(--muted); margin:0 0 7px 50px; flex-wrap:wrap; }
     .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+    .line-key { display:inline-block; width:18px; border-top:2px dashed currentColor; margin:0 5px 3px 0; }
     table { width:100%; border-collapse:collapse; font-size:12px; }
     th, td { text-align:right; padding:7px 5px; border-bottom:1px solid var(--grid); white-space:nowrap; }
     th:first-child, td:first-child { text-align:left; }
@@ -68,7 +69,7 @@
   <section class="grid">
     <div class="panel">
       <h2 id="plot-title">Full-cycle COP vs wet bulb</h2>
-      <div class="legend"><span><i class="dot" style="background:var(--low)"></i>Low / quiet</span><span><i class="dot" style="background:var(--high)"></i>High / factory</span></div>
+      <div class="legend"><span><i class="dot" style="background:var(--low)"></i>Low / quiet</span><span><i class="dot" style="background:var(--high)"></i>High / factory</span><span class="low"><i class="line-key"></i>Low trend</span><span class="high"><i class="line-key"></i>High trend</span></div>
       <svg id="plot" role="img" aria-label="Efficiency scatter plot"></svg>
       <div class="subtle" id="note">Each point is one completed cycle. Hover a point for details.</div>
     </div>
@@ -142,10 +143,28 @@ function draw(data, xkey, ykey, yname, xname) {
   let out = `<g stroke="#374151" stroke-width="1">${line(margin.left,margin.top,margin.left,margin.top+h)}${line(margin.left,margin.top+h,margin.left+w,margin.top+h)}`;
   for(let i=0;i<=5;i++) { const x=margin.left+w*i/5, xv=xmin+(xmax-xmin)*i/5; const y=margin.top+h-h*i/5, yv=ymin+(ymax-ymin)*i/5; out += line(x,margin.top+h,x,margin.top+h+5)+line(margin.left-5,y,margin.left,y)+`<text x="${x}" y="${height-15}" text-anchor="middle" fill="#9ca3af" stroke="none">${xv.toFixed(1)}</text>`+`<text x="${margin.left-9}" y="${y+4}" text-anchor="end" fill="#9ca3af" stroke="none">${yv.toFixed(1)}</text>`; }
   out += `</g><text x="${margin.left+w/2}" y="${height-1}" text-anchor="middle" fill="#d1d5db">${esc(xname)} (°C)</text><text transform="translate(14 ${margin.top+h/2}) rotate(-90)" text-anchor="middle" fill="#d1d5db">${esc(yname)}</text>`;
+  ["low", "high"].forEach(regime => {
+    const points = data.filter(row => phase(row) === regime).map(row => [Number(row[xkey]), Number(row[ykey])]);
+    const fit = regression(points);
+    if (!fit) return;
+    const y1 = fit.slope * xmin + fit.intercept, y2 = fit.slope * xmax + fit.intercept;
+    const color = regime === "high" ? "#f59e0b" : "#60a5fa";
+    out += `<line x1="${sx(xmin)}" y1="${sy(y1)}" x2="${sx(xmax)}" y2="${sy(y2)}" stroke="${color}" stroke-width="2" stroke-dasharray="6 4" opacity="0.9"><title>${regime === "high" ? "High" : "Low"} fan trend: slope ${fit.slope.toFixed(3)}</title></line>`;
+  });
   data.forEach((row,i)=>{const x=sx(xs[i]),y=sy(ys[i]), color=phase(row)==="high"?"#f59e0b":"#60a5fa"; const title=`${row.start_local||""} · ${fanName(row)} · ${xname} ${fmt(xs[i],1)} · ${yname} ${fmt(ys[i])}`; out += `<circle cx="${x}" cy="${y}" r="5" fill="${color}" stroke="#111827" stroke-width="1.5" data-index="${i}"><title>${esc(title)}</title></circle>`; });
   svg.innerHTML=out;
   svg.querySelectorAll("circle").forEach(point=>point.addEventListener("mousemove", e=>{const row=data[Number(point.dataset.index)]; const tip=$("tooltip"); tip.innerHTML=`<b>${esc(row.start_local||"")}</b><br>Fan: ${fanName(row)}<br>Ambient: ${fmt(row.ambient,1)} °C<br>Wet bulb: ${fmt(row.wet_bulb,1)} °C<br>Tank: ${fmt(row.tank_start,1)} → ${fmt(row.tank_end,1)} °C<br>COP: ${fmt(row.cop)} · band: ${fmt(row.band_cop)}`; tip.style.display="block"; tip.style.left=(e.clientX+12)+"px"; tip.style.top=(e.clientY+12)+"px";}));
   svg.querySelectorAll("circle").forEach(point=>point.addEventListener("mouseleave",()=>$("tooltip").style.display="none"));
+}
+
+function regression(points) {
+  if (points.length < 2) return null;
+  const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const mx = mean(points.map(point => point[0])), my = mean(points.map(point => point[1]));
+  const denominator = points.reduce((sum, point) => sum + (point[0] - mx) ** 2, 0);
+  if (!denominator) return null;
+  const slope = points.reduce((sum, point) => sum + (point[0] - mx) * (point[1] - my), 0) / denominator;
+  return {slope, intercept: my - slope * mx};
 }
 
 function drawTable(data) {
