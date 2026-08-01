@@ -147,7 +147,8 @@ Fan speed was initially reduced via the back-end menu (F30 25→10, F35 55→30)
 operation. Per Aquatech this leaves capacity/recovery roughly unchanged (the compressor sets
 refrigerant flow) while cutting fan noise and power. On **2026-07-04 09:55** the owner moved the
 thresholds back towards factory defaults so high fan would trigger more often; see
-`cycle_reporting.md` for the recorded change and subsequent A/B observations. **COP calibration
+`fan_speed_controller.md` for parameter meanings/related models and `cycle_reporting.md` for the
+recorded change and subsequent A/B observations. **COP calibration
 must not pool cycles across these fan settings.** The calibration is also **seasonal**: the
 original metered cycles are June-2026 (winter mains, winter wet-bulb), so the
 fitted heat rates / power curve should be re-checked as ambient and mains temperatures rise
