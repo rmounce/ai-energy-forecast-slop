@@ -85,6 +85,69 @@ compressors, plumbing, tuning or firmware.
 Hydrotherm sources: [DYNAMIC/X8 owner manual](https://www.hydrothermhotwatersystems.com.au/wp-content/uploads/2024/02/HYD_DYNAMIC_USER_MANUAL_WEB.pdf),
 [older DYNAMIC/X8 manual](https://www.hydrothermhotwatersystems.com.au/wp-content/uploads/2020/03/Dynamic-X8-Owner-Manual-web.pdf).
 
+## HI-WATER/Hisense R90 factory-parameter backup
+
+Raw transcription of every entry in the manual's **Factory Parameters List** on 2026-08-01.
+Missing code numbers are missing in the source table; they are not transcription omissions. Wording,
+ranges and defaults are preserved except for whitespace/punctuation cleanup. This is a reference
+backup, **not an Aquatech configuration recommendation**. The manual says these parameters are for
+professional engineers; several control safety, defrost and refrigeration behaviour.
+
+| code | manual description / enumerated options | range | unit | default | remark |
+|---|---|---:|---|---:|---|
+| F01 | Set target heating temperature | 15–55 | °C | 55 | Adjustable |
+| F02 | Set target cooling temperature (N/A for DHW) | 7–30 | °C | 12 | Factory |
+| F03 | Water-temperature control difference | 1–15 | °C | 5 | Factory |
+| F04 | Heating-temperature setting range: `0` = 15–55; `1` = 15–75; `2` = 15–60; `3` = 15–40 | 0–3 | — | 0 | Factory; R134: F04=1, R290: F04=0 |
+| F05 | Temperature-setting deviation in automatic mode | -10–20 | °C | 0 | Factory |
+| F08 | Maximum tank temperature with heat pump only | 30–75 | °C | 60 | Factory |
+| F09 | Heat-pump lowest working ambient temperature | -15–5 | °C | -7 | Factory |
+| F10 | Auxiliary electric-heater starting ambient temperature | -10–35 | °C | 5 | Factory |
+| F11 | Tank-temperature sensor calibration value | -20–20 | °C | 0 | Factory |
+| F12 | Outlet-water-temperature sensor calibration value | -20–20 | °C | 0 | Factory |
+| F13 | Auto fast-heating mode: `0` = on; `1` = forbidden | 0–1 | — | 1 | Factory |
+| F14 | Auto fast-heating temperature difference | 2–70 | °C | 40 | Factory |
+| F15 | “Between setting temp. and real water temp.” (description incomplete in source) | 50–99 | °C | 68 | Factory |
+| F16 | Warning high temperature | 2–15 | °C | 5 | Factory |
+| F20 | Defrosting period | 1–90 | min | 40 | Factory |
+| F21 | Defrost time each time | 6–90 | min | 10 | Factory |
+| F22 | Maximum ambient temperature for defrosting | 0–50 | °C | 12 | Factory |
+| F23 | Defrost starting coil temperature | -30–30 | °C | -3 | Factory |
+| F24 | Defrost stopping coil temperature | 0–50 | °C | 18 | Factory |
+| F25 | Defrost temperature difference between ambient and coil | 0–15 | °C | 10 | Factory |
+| F26 | Compressor continuous-run time before defrosting | 0–40 | min | 6 | Factory |
+| F30 | Turn off fan motor ambient-temperature point | 10–40 | °C | 25 | Factory |
+| F32 | Turn off fan motor exhaust-temperature point | 10–125 | °C | 100 | Factory |
+| F33 | Turn on fan motor exhaust-temperature difference | 1–50 | °C | 5 | Factory |
+| F35 | High/low fan transfer tank temperature | 10–60 | °C | 48 | Factory |
+| F36 | Tank temperature when fan motor turns off | 15–75 | °C | 52 | Factory |
+| F37 | Coil temperature when fan motor turns off | 10–30 | °C | 18 | Factory |
+| F38 | Coil-temperature setting when fan restarts | 0–15 | °C | 7 | Factory |
+| F40 | Low-pressure switch: `0` = alarm when switch on; `1` = alarm when switch off; `2` = forbidden | 0–2 | — | 2 | Factory |
+| F43 | Low-voltage fault detection delay | 0–60 | min | 3 | Factory |
+| F44 | High-pressure switch: `0` = alarm when switch on; `1` = alarm when switch off; `2` = forbidden | 0–2 | — | 1 | Factory |
+| F45 | Maximum automatic recoveries from low/high-voltage faults | 0–10 | — | 3 | Factory |
+| F47 | Water-flow switch: `0` = switch on means failure; `1` = switch off means failure; `2` = forbidden | 0–2 | — | 2 | Factory |
+| F50 | Electronic expansion-valve (EEV) control cycle | 20–90 | sec | 30 | Factory |
+| F51 | Target superheat when ambient >15 °C | -8–15 | °C | 1 | Factory |
+| F52 | Expansion-valve allowed exhaust temperature | 70–120 | °C | 92 | Factory |
+| F53 | Defrost expansion-valve setting | 20–450 | P | 400 | Factory |
+| F54 | Minimum expansion-valve opening when ambient ≥5 °C | 80–250 | P | 100 | Factory |
+| F55 | Expansion-valve selection: `0` = automatic; `1` = manual | 0–1 | — | 0 | Factory |
+| F56 | Manual expansion-valve step count | 20–450 | P | 350 | Factory |
+| F60 | Exhaust high-temperature protection value | 50–110 | °C | 100 | Factory |
+| F61 | Tank-temperature compensation: `0` = automatic; `1` = cancel | 0–1 | — | 0 | Factory |
+| F62 | Cooling/heating selection: `0` = cooling; `1` = heating | 0–1 | — | 1 | Factory |
+| F63 | System working mode: `0` = manual; `1` = automatic | 0–1 | — | 0 | Factory |
+| F66 | Electric disinfection: `0` = disabled; `1` = enabled | 0–1 | — | 1 | Factory |
+| F68 | Low-temperature anti-freezing: `0` = disabled; `1` = enabled | 0–1 | — | 1 | Factory |
+| F70 | Menu password; `0` cancels password | 0–999 | — | 0 | Factory |
+| F92 | Temperature unit: `0` = Celsius; `1` = Fahrenheit (reserved) | 0–1 | — | 0 | Factory |
+| F93 | Ventilation function: `0` = heat pump preferred; `1` = ventilation priority | 0–1 | — | 0 | Factory |
+
+Primary backup source: [HI-WATER R90 PDF](https://www.energyduegi.com/schede_tecniche/Manuale%20d%27uso%20HI-WATER%20R90.pdf).
+Cross-check rendering: [Hisense R90 manual](https://manuals.plus/hisense/r90-heat-pump-water-heater-manual).
+
 ## Operational cautions
 
 - Record the timestamp and exact F30/F35 values whenever changing profiles.
