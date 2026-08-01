@@ -1,0 +1,14 @@
+[Unit]
+Description=HWC efficiency dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/src/ai-energy-forecast-slop
+ExecStart=%h/src/ai-energy-forecast-slop/.venv/bin/python %h/src/ai-energy-forecast-slop/services/hwc_web.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

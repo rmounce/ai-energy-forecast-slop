@@ -14,3 +14,4 @@ matplotlib
 holidays
 requests-cache
 websockets
+aiohttp

@@ -15,6 +15,7 @@ from the home battery. Live pipeline: `services/hwc_daemon.py` (replan + actuati
 | [emhass.md](emhass.md) | Original design/spec (EMHASS thermal-battery route; EMHASS retained as fallback planner) |
 | [surplus_negative_price.md](surplus_negative_price.md) | Curtailment → DP-planned (Phase 2, pending); negative price → executor override (Phase 1, live 2026-07-14) |
 | [local_store.md](local_store.md) | Cycle data on local SQLite (off InfluxDB); deployed 2026-07-01 |
+| [web_dashboard.md](web_dashboard.md) | Read-only efficiency dashboard/API and future HWC-repository boundary |
 | [cycle_reporting.md](cycle_reporting.md) | `sensor.hwc_cycles` Lovelace card + reporter |
 | [aquatech_entities.md](aquatech_entities.md) | Canonical, verified HA entity map (T1–T5 etc.) |
 | [2state_soc_model.md](2state_soc_model.md) | **Shelved 2026-06-27**: the `(V_hot, T_hot)` model — design record + why it lost to the taper |
