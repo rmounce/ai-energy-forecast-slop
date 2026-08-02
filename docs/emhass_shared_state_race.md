@@ -20,7 +20,7 @@ repo. This captures the problem + proposed fixes to seed that discussion.
 - PR #919 merged and shipped in official v0.17.6. Production upgraded from local image
   `emhass:metadata-race-20260601` to `ghcr.io/davidusb-geek/emhass:v0.17.9` on 2026-08-02.
   First post-upgrade MPC solve: optimal, all 11 `mpc_*` entities published, no errors.
-- Rollback snapshot: `/opt/dockerfiles/emhass/backups/20260802_pre_v0179/`.
+- Temporary file backup removed after validation; rollback remains available through ZFS snapshots.
 
 **Not yet done:** fixes #2 (return result in HTTP response) and #3 (prefix-scoped state
 files) below, and the "write once per publish" half of #1 (metadata is still written once per
