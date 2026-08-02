@@ -122,8 +122,10 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
   `M + Up` for three seconds beeped and briefly flashed the element icon, but no relay or power
   transition followed. The related-controller instructions require heating to already be active,
   so support remains unresolved. Holding `Power + Clock + Down` for five seconds also beeped, but
-  produced no visible change and no immediate or delayed HA relay/power transition. Manual
-  sterilisation was not started under the tested conditions.
+  produced no visible change and no immediate or delayed HA relay/power transition. Because the
+  related protocol inhibits sterilisation at an ordinary target of 70 °C, this was repeated with
+  the controller on in Standard/60 but idle at 61 °C. The corrected attempt produced no display or
+  power response. The matching-family manual-sterilisation chord is not observed on this Aquatech.
 - **2026-08-02 F66 enable boundary:** with the controller on in Standard/60 but idle at 61 °C,
   changing the documented legionella setting from `0` to `1` produced no visible response and no
   immediate or one-reporting-interval relay/power transition. F66 did not start an on-demand cycle

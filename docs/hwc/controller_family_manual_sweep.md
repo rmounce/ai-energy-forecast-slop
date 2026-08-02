@@ -127,9 +127,13 @@ With `electric/70` armed but idle at 61 °C, the owner performed both candidate 
   controller recognised the chord, but not a valid Boost test: the family instructions require an
   already-running heating cycle.
 - `Power + Clock + Down` for five seconds beeped without a visible display change. Immediate and
-  delayed HA checks remained `electric/70`, both relays off and around 1.9 W. It did not start manual
-  sterilisation under these conditions; the beep alone does not establish that Aquatech implements
-  the family function.
+  delayed HA checks remained `electric/70`, both relays off and around 1.9 W. This first attempt was
+  not a valid family-protocol discriminator because the related manuals inhibit sterilisation when
+  the ordinary target is at least 70 °C.
+- The owner repeated `Power + Clock + Down` with the controller on in STANDARD/60 but idle at
+  61 °C. There was no display or power response. This satisfies the related protocol's on-state and
+  target-below-70 preconditions but still did not start sterilisation. The matching-family chord is
+  therefore not an observed Aquatech command.
 
 The strongest next discriminator is `M + Up` during an active compressor cycle: a successful Boost
 must stop/suppress the compressor and start the element. Repeating it while idle cannot resolve
@@ -144,6 +148,8 @@ one-controller-interval HA checks remained at 61 °C with both relays off and ci
 weekly cadence enable, not an observed on-demand command; the result does not reveal whether its
 internal counter starts or resets when F66 is enabled.
 The owner then restored F66 to its installed value `0`; the controller remained idle.
+The panel exposes only time-of-day, not a calendar date or weekday, so there is no documented safe
+way to advance the weekly counter for an immediate test.
 
 ## Candidate family
 
