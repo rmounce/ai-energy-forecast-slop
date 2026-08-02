@@ -88,6 +88,17 @@ Known component origins:
 
 ### Controller/firmware — secondary
 
+Owner visual comparison on 2026-08-02 establishes two visible controller branches on the same
+mechanical platform:
+
+- **Hisense AHS and German Tech YT-200/270TD2:** control panel appears identical to the installed
+  Aquatech panel. Treat their controller manuals as especially relevant, subject to firmware and
+  parameter-default differences.
+- **Viessmann Vitocal 161-A:** uses a visibly different, colour touchscreen controller despite the
+  matching tank/heat-pump chassis. Its UI behaviour is not transferable to Aquatech.
+
+An identical panel does not by itself prove identical main PCB, firmware build or Tuya datapoints.
+
 Candidates, in order:
 
 1. **Sunrain/SolarEast in-house controller operation.** Its factory profile claims a controller
@@ -109,8 +120,9 @@ These are useful evidence of OEM customization, not competing manufacturer attri
 |---|---|
 | **Aquatech RAPID/X6, Dynamic/X8; Hydrotherm** | Direct Sunrain factory report. Current X6/X8 are customized size/performance/firmware branches. |
 | **SolarEast YT-200/270TD2** | OEM's own registered Australian model. |
-| **Viessmann Vitocal 161-A 210/270 SO/SOC** | Same 620 x 1518/1838 mm chassis and exact certification tuple. Owner visually identifies Aquatech tank/body match; trim differs. |
-| **Hisense AHS-210/270HF4GHB/C** | Same dimensions/specification and factory-style manual; official PDF retains SolarEast/Micoe-like internal document numbering. |
+| **Viessmann Vitocal 161-A 210/270 SO/SOC** | Same 620 x 1518/1838 mm chassis and exact certification tuple. Owner visually identifies the Aquatech tank/body, but Viessmann uses a different colour touchscreen. |
+| **Hisense AHS-210/270HF4GHB/C** | Same dimensions/specification; owner identifies the control panel as identical to Aquatech. Official PDF retains SolarEast/Micoe-like internal document numbering. |
+| **German Tech YT-200/270TD2** | Exact SolarEast model family; owner identifies the control panel as identical to Aquatech. |
 | **Aether HP200/HP270, Power Bay PB-270RE, Soltaro HPWSTR002/003, Warmth WNZ270L-2in1, Eurosun, Versopump** | Exact or near-exact Australian specification and mechanical platform; alternate controls/firmware exist. |
 
 The older European 308 L Vitocal 161-A is unrelated. Comparisons must use the current Australian

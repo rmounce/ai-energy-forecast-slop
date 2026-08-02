@@ -103,6 +103,12 @@ display layout, diagnostic indices 00–22 and five-mode vocabulary as Aquatech.
 
 Source: [official Hisense AHS-210/270HF4GHB installation guide, controller and operation pp. 19–24](https://dtc-aus-api.hisense.com/medias/AHS-210HF4GHB-IG.pdf?context=bWFzdGVyfG1hbnVhbHwzMDM0NjQ3fGFwcGxpY2F0aW9uL3BkZnxhR1ExTDJnM05pODRPRFkzT0RJd056WTFNakUwTDBGSVV5MHlNVEJJUmpSSFNFSXRTVWN1Y0dSbXw1NTE3M2MwZThiYWUxZDRmMWMxNWJiNjhiNjFkZmUxZDMyNmYyNTExYjlkOTU3ZGFmNmNmOTg3MjNlYjdmMmY3).
 
+On 2026-08-02 the owner visually confirmed that the current Australian Hisense AHS and German Tech
+YT-200/270TD2 panels appear identical to the installed Aquatech controller. The Australian
+Viessmann Vitocal 161-A shares the mechanical platform but uses a different colour touchscreen.
+Panel identity strengthens the Hisense/German Tech controller-document trail, but does not prove an
+identical PCB, firmware revision, parameter set or Tuya datapoint mapping.
+
 The Airtherm and Power Bay manuals independently document the same chords and state transitions on
 the same controller layout. Aquatech omits these chords and uses a different parameter-entry hold
 time, so they remain candidate firmware functions rather than Aquatech instructions. The visual,
@@ -195,11 +201,12 @@ Boost, sterilisation or direct-element command. F66 was restored to `0` after th
 | **Ecostar YT-200/250/300TB2** | Exact identifiers and matching published specification table | Alternate distributor/support channel | Strong rebadge evidence |
 | **Chameleon SIPH-200/250/300TB2** | Manual names both YT and SIPH identifiers | Alternate manual/support channel | Strong rebadge evidence |
 | **Sacon YT-200TB2** | Exact identifier in supplier listing | Alternate brand/search term | Moderate; listing rather than service manual |
-| **Hisense AHS-270HF4GHB** | Exact 270 L electrical/refrigerant/pressure specification match under SAA-231065-EA | Current Australian manual and ConnectLife implementation | Very strong hardware-platform lead |
+| **Hisense AHS-270HF4GHB** | Exact 270 L electrical/refrigerant/pressure specification match under SAA-231065-EA; owner confirms identical-looking panel | Current Australian manual and ConnectLife implementation | Very strong hardware and controller-panel lead |
+| **German Tech YT-200/270TD2** | Exact SolarEast TD2 platform; owner confirms identical-looking panel | Alternate manual/support channel | Very strong hardware and controller-panel lead |
 | **Aether HP270** | Exact specification match under SAA-240641-EA; detailed 45-page manual | Explicit simultaneous Boost and direct element-only mode | Very strong hardware and alternate-firmware evidence |
 | **Power Bay PB-270RE** | Exact specification match under SAA-231203-EA; detailed manual | STAN/HYB1/ELE behaviour, Boost chord and diagnostics | Very strong hardware and alternate-controller evidence |
 | **Soltaro HPWSTR003** | Exact specification match under SAA-231204-EA; detailed manual | Five modes, direct ELE, Boost and sterilisation | Very strong hardware and alternate-controller evidence |
-| **Viessmann Vitocal 161-A 270 SOC/SO** | Exact ERAC specification match under SAA-241129-EA | Alternate service/support channel | Strong hardware lead; useful manual not located |
+| **Viessmann Vitocal 161-A 270 SOC/SO** | Exact ERAC specification match under SAA-241129-EA; visibly different colour touchscreen | Mechanical/service support only | Strong hardware lead; weak for Aquatech UI behaviour |
 | **Warmth WNZ270L-2in1** | Exact ERAC specification match under SAA-240388-EA | Alternate service/support channel | Strong hardware lead; useful manual not located |
 | **Emerald / Rinnai DemandDuo Tuya variants** | Similar T1–T5 and Tuya datapoint vocabulary only | Sensor/DP decoding leads | Weak for element logic |
 
