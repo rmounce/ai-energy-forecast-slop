@@ -286,6 +286,22 @@ actions:
           - condition: template
             value_template: >-
               {{ soc >= soc_full_threshold and p_pv_curtailment > 0 and p_grid
+              == 0 and p_batt <= 0
+              and today_at('10:00') <= now() < today_at('16:00') }}
+        sequence:
+          - data_template:
+              entity_id: input_text.emhass_battery_action
+              value: Battery full, curtail PV export, prevent discharge
+            action: input_text.set_value
+          - data:
+              control_mode: Maximum Self Consumption
+              export_limit_kw: 0
+              discharge_limit_kw: 0
+            action: script.configure_sigen_ems_state
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ soc >= soc_full_threshold and p_pv_curtailment > 0 and p_grid
               == 0 and p_batt <= 0 }}
         sequence:
           - data_template:
