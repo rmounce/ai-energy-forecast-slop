@@ -6,6 +6,13 @@ evidence map, not proof that commands or parameters are portable across products
 
 ## Main result
 
+The installed Aquatech **does implement the matching-controller Boost chord**. At 61 °C, `M + Up`
+for three seconds latched Boost while the unit was on in STANDARD/60. Switching to HYBRID+/70 then
+closed the element relay immediately: compressor off, element on, about 1.795 kW. The latch survived
+remote mode changes, allowing HA to dispatch the element above 60 °C with HYBRID+/70 and suppress it
+with STANDARD/60. `turn_off` cleared the latch. The latch itself is controller-local and did not
+appear in any of the 50 reported Tuya DPs.
+
 The current Aquatech manual confirms that the apparent element threshold is intentional mode
 policy: its mode table lists `ELEMENT - 60 °C/70 °C` (trigger/target). The observed refusal to
 re-start the element above about 60 °C therefore matches the published factory behaviour.
@@ -36,9 +43,9 @@ commands distinct from ordinary `ELE`/hybrid modes:
 - **Manual sterilisation:** a three-key chord heats to 70 °C and holds 65–70 °C for 30 minutes,
   with a two-hour timeout if it cannot reach target.
 
-Either command could use a different internal request path from Aquatech's ordinary
-`electric @ 70` mode. A corresponding hidden Tuya datapoint is the best prospective automated
-workaround; a panel test above 60 °C is the best first discriminator.
+Boost uses a different internal request path from ordinary `electric @ 70` mode. It is now
+confirmed on Aquatech, although a physical chord is required to establish the hidden latch after
+each `turn_off`. Manual sterilisation remains unobserved.
 
 Source: [Airtherm Aqua 1.2 manual, controller and operation sections pp. 19–24](https://brookvent.ie/wp-content/uploads/2024/06/airtherm-aqua_1-2_manual-20.05.20241.pdf).
 
@@ -120,7 +127,7 @@ its inclusive 60 °C trigger and will not re-trigger at 61 °C.
 
 ### Live panel-chord result — 2026-08-02
 
-With `electric/70` armed but idle at 61 °C, the owner performed both candidate family chords:
+The owner performed both candidate family chords at an idle 61 °C:
 
 - `M + Up` for three seconds beeped and briefly flashed the element icon, then returned to idle.
   HA continued to report both relays off and circuit power around 1.9 W. This is evidence that the
@@ -135,9 +142,22 @@ With `electric/70` armed but idle at 61 °C, the owner performed both candidate 
   target-below-70 preconditions but still did not start sterilisation. The matching-family chord is
   therefore not an observed Aquatech command.
 
-The strongest next discriminator is `M + Up` during an active compressor cycle: a successful Boost
-must stop/suppress the compressor and start the element. Repeating it while idle cannot resolve
-whether Aquatech supports Boost.
+The first Boost attempt obscured the result because ELECTRIC already had a 70 °C target but did not
+retain the visible latch. A controlled retest established the actual state machine:
+
+| action/state | observed result |
+|---|---|
+| STANDARD/60 on and idle at 61 °C; hold `M + Up` 3 s | beep; element icon flashed continuously; no relay/power rise because target was already satisfied |
+| while latched, select HYBRID+/70 at panel | element icon solid and relay closed immediately; compressor off; element on; ~1.795 kW |
+| remote compound STANDARD/60 | element off and ~1.8 W; icon off, but hidden Boost latch persisted |
+| remote compound HYBRID+/70 | element restarted immediately at 61 °C; compressor remained off; ~1.795 kW |
+| remote `turn_off`, then re-arm HYBRID+/70 | first command stopped the element and cleared Boost; re-arm remained idle |
+
+This is a supported on-demand element path above the ordinary 60 °C trigger. For remote dispatch,
+Boost must first be latched physically while the controller is on. HA can then use STANDARD/60 as
+the no-element state and HYBRID+/70 as the element state while the tank is above 60 °C. Any
+`turn_off` clears the latch and requires the physical chord again. The latch is invisible through
+the reported Tuya DPs; infer it only from controlled transitions and verified element power.
 
 ### Live F66 enable result — 2026-08-02
 
@@ -258,11 +278,10 @@ Therefore copy **concepts and search vocabulary**, not factory values, wiring or
 
 ## Workaround leads, ranked
 
-1. **Panel Boost discriminator:** the Aquatech panel layout matches the official Hisense controller
-   that uses `M + Up` for Boost. If the owner later authorises a controlled test, use a tank just
-   above 60 °C and a target below the mechanical thermostat limit; observe the physical element
-   binary and circuit power. A changed/flashing element icon is supporting UI evidence, not proof of
-   load. Do not change service parameters.
+1. **Confirmed panel Boost:** `M + Up` establishes a controller-local latch. Remote STANDARD/60 and
+   HYBRID+/70 then suppress/start the element above 60 °C; `turn_off` clears the latch. The remaining
+   implementation question is whether an operational policy can safely avoid off while retaining
+   reliable normal heat-pump scheduling.
 2. **Aquatech F66 weekly cycle:** manufacturer-confirmed to request the element from current
    temperature to 70 °C, so it is the safest supported proof of an above-60 element path. It is
    scheduled rather than on demand; whether enabling F66 starts immediately or only after its
@@ -271,8 +290,9 @@ Therefore copy **concepts and search vocabulary**, not factory values, wiring or
    `Power + Clock + Down` for five seconds. It is less attractive than Boost because it deliberately
    targets 70 °C and holds temperature. Aquatech documents weekly sterilisation but not this manual
    chord. Verify tempering and cancellation behaviour before any later test.
-4. **Full Tuya DP inventory:** compare raw Aquatech datapoints before/during a successful panel Boost
-   or sterilisation event. Look for a momentary command/boolean not mapped by Local Tuya.
+4. **Tuya command discovery:** the full reported-DP inventory and live Boost/F66 diffs found no latch
+   DP. Further work requires an upstream command schema, protocol trace or controller documentation;
+   do not brute-force unknown writes.
 5. **Controller program code and PCB/display labels:** record diagnostic program code, firmware,
    PCB model and display-controller markings; search those exact identifiers across YT/Hisense docs.
 6. **Ask OEM/distributors:** request the YT-200/250/300TB2 Modbus map and controller service manual

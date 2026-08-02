@@ -19,7 +19,7 @@ from the home battery. Live pipeline: `services/hwc_daemon.py` (replan + actuati
 | [cycle_reporting.md](cycle_reporting.md) | `sensor.hwc_cycles` Lovelace card + reporter |
 | [fan_speed_controller.md](fan_speed_controller.md) | F30/F35 factory/quiet profiles, inferred transition logic, related controller-family manuals |
 | [aquatech-settings.csv](aquatech-settings.csv) | Installed controller's complete 2026-08-02 factory-value snapshot and quiet overrides |
-| [controller_family_manual_sweep.md](controller_family_manual_sweep.md) | Related/rebadged controller-manual sweep; Boost/sterilisation element-workaround leads |
+| [controller_family_manual_sweep.md](controller_family_manual_sweep.md) | Controller-family research; confirmed Boost state machine and remaining sterilisation/Tuya leads |
 | [aquatech_entities.md](aquatech_entities.md) | Canonical, verified HA entity map (T1–T5 etc.) |
 | [2state_soc_model.md](2state_soc_model.md) | **Shelved 2026-06-27**: the `(V_hot, T_hot)` model — design record + why it lost to the taper |
 | [handover.md](handover.md) | Implementer handover (predates the DP planner; reading order still useful) |

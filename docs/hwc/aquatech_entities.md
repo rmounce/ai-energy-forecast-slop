@@ -99,6 +99,10 @@ returned 50 DPs:
 - A timed raw snapshot/diff while the owner saved F66 `0→1` showed no DP change. Only DP20 and its
   duplicate DP25 changed naturally by 1 °C. F66 is controller-local and is not exposed through any
   currently reported Tuya DP. The owner restored F66 to `0` afterward.
+- A raw monitor around the confirmed `M + Up` Boost latch likewise found no command/state DP. While
+  Boost was latched but STANDARD/60 was already satisfied, raw status was indistinguishable from
+  ordinary idle. DP32 changed only when the element output actually energised. The hidden Boost
+  latch cannot currently be read or written through Tuya.
 
 ## Actuation quirks
 
@@ -115,6 +119,13 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
   confirmation; verify observed mode + target and retry.
 - `turn_off` preserves the previous target in normal operation. One failed live sequence
   produced `off/15`; this was not reproduced consistently.
+- **Confirmed Boost dispatch, 2026-08-02:** while on in Standard/60 and idle at 61 °C, hold panel
+  `M + Up` for three seconds. A flashing element icon means Boost is latched but target is already
+  satisfied. Selecting HYBRID+/70 then starts the element immediately above 60 °C (~1.795 kW) with
+  the compressor off. The latch survives remote compound mode changes even when the icon disappears:
+  remote Standard/60 stops the element and remote HYBRID+/70 restarts it. `turn_off` clears Boost;
+  re-arming HYBRID+/70 after off remains idle. The latch has no observed Tuya DP, so a physical
+  `M + Up` is required again after every off.
 
 ### Negative-price incident record
 
@@ -139,10 +150,9 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
   normally at 61 °C. Re-arming `electric/70` at 61 °C then remained idle at ~1.9 W for the observed
   interval. This establishes, at the controller's integer resolution, that Element mode starts at
   60 °C but not 61 °C; the published 60 °C trigger is inclusive.
-- **2026-08-02 candidate panel chords:** while `electric/70` was armed but idle at 61 °C, holding
-  `M + Up` for three seconds beeped and briefly flashed the element icon, but no relay or power
-  transition followed. The related-controller instructions require heating to already be active,
-  so support remains unresolved. Holding `Power + Clock + Down` for five seconds also beeped, but
+- **2026-08-02 candidate panel chords:** an initial `M + Up` attempt in Electric/70 was ambiguous,
+  but the controlled Standard/60 → latch → HYBRID+/70 sequence above confirmed Boost. Holding
+  `Power + Clock + Down` for five seconds also beeped, but
   produced no visible change and no immediate or delayed HA relay/power transition. Because the
   related protocol inhibits sterilisation at an ordinary target of 70 °C, this was repeated with
   the controller on in Standard/60 but idle at 61 °C. The corrected attempt produced no display or

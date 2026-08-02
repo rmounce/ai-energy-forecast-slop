@@ -72,20 +72,23 @@ Grid connection ceiling ≈ 15 kW (`number.sigen_plant_grid_import_limitation` d
 
 ## Actuation primitive (Aquatech RAPID X6 modes)
 
-Related-controller manual research found distinct panel **Boost** and **sterilisation** element
-requests that may bypass the ordinary mode's ~60 °C re-trigger hysteresis; these remain untested on
-the Aquatech. See `controller_family_manual_sweep.md`.
+**Boost is confirmed on the installed Aquatech (2026-08-02).** With the controller on, hold panel
+`M + Up` for three seconds to establish a hidden Boost latch. While latched, remote Standard/60
+suppresses the element and remote Hybrid+/70 starts it immediately above 60 °C. `turn_off` clears
+the latch. The latch is not present in any of the 50 raw Tuya DPs, so it cannot currently be created
+or observed remotely. Manual sterilisation remains unobserved. See
+`controller_family_manual_sweep.md`.
 
 `water_heater.aquatech` operation modes (HA advertises 15–75 °C, but the physical maximum is
 70 °C; confirmed 2026-07-27):
 
 - **`heat_pump`** — heat pump only, ~700 W, capped at 60 °C. COP ~2.4–3.0 (the 55→60 tail is
   ~1.75). Today's only mode.
-- **`electric`** — resistive element only, **1800 W, COP 1**, available at any temp up to 70 °C.
+- **`electric`** — resistive element only, **1800 W, COP 1**, target 70 °C; an ordinary new cycle
+  starts at the inclusive 60 °C trigger, not above it.
 - **`performance` (Hybrid+)** — heat pump to 60 °C, then element 60→70.
-  **Element portion is ungated** (runs to setpoint regardless of available surplus), so we
-  **do not** use it for surplus — see below. Self-managing `heat_pump` + `electric` gives the
-  curtailment-gated control we want.
+  Ordinary new-cycle trigger is 50 °C. With the physical Boost latch established, selecting this
+  mode starts the element directly above 60 °C and suppresses the compressor.
 
 **The two sources are mutually exclusive — physically, not just by mode logic.** The unit is on
 a 10 A plug (~2400 W) and heat pump + element together would be ~2500 W, so it can never run
@@ -99,6 +102,11 @@ and *cheaper to start* (no compressor short-cycle constraint).
 
 The executor currently issues only `heat_pump` / `off` (`setpoint_max_c: 60`). **Learning
 `electric` mode + setpoint-to-70 is shared groundwork for both phases.**
+
+The confirmed Boost primitive is not integrated into the executor. Exploiting it requires a policy
+that deliberately avoids `turn_off` while the latch must persist, uses a ≤60 °C mode as the idle
+state, verifies physical element power on every request, and treats any off/restart as requiring
+manual re-latching.
 
 ## Design — negative price (executor override, reactive)
 
