@@ -116,9 +116,24 @@ The owner authorised supported-mode experiments while the installed X6 was idle 
 
 This directly confirms the current Aquatech table's mode-specific whole-cycle interpretation:
 HYBRID+ does not start a new cycle at 60 °C because its trigger is 50 °C, whereas ELEMENT starts at
-its inclusive 60 °C trigger and will not re-trigger at 61 °C. It also creates a clean state for the
-next discriminator: `electric/70` armed at 61 °C with both heat sources off, followed by the
-candidate `M + Up` Boost chord. **That chord has not yet been attempted.**
+its inclusive 60 °C trigger and will not re-trigger at 61 °C.
+
+### Live panel-chord result — 2026-08-02
+
+With `electric/70` armed but idle at 61 °C, the owner performed both candidate family chords:
+
+- `M + Up` for three seconds beeped and briefly flashed the element icon, then returned to idle.
+  HA continued to report both relays off and circuit power around 1.9 W. This is evidence that the
+  controller recognised the chord, but not a valid Boost test: the family instructions require an
+  already-running heating cycle.
+- `Power + Clock + Down` for five seconds beeped without a visible display change. Immediate and
+  delayed HA checks remained `electric/70`, both relays off and around 1.9 W. It did not start manual
+  sterilisation under these conditions; the beep alone does not establish that Aquatech implements
+  the family function.
+
+The strongest next discriminator is `M + Up` during an active compressor cycle: a successful Boost
+must stop/suppress the compressor and start the element. Repeating it while idle cannot resolve
+whether Aquatech supports Boost.
 
 ## Candidate family
 

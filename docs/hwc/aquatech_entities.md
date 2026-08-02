@@ -118,6 +118,12 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
   normally at 61 °C. Re-arming `electric/70` at 61 °C then remained idle at ~1.9 W for the observed
   interval. This establishes, at the controller's integer resolution, that Element mode starts at
   60 °C but not 61 °C; the published 60 °C trigger is inclusive.
+- **2026-08-02 candidate panel chords:** while `electric/70` was armed but idle at 61 °C, holding
+  `M + Up` for three seconds beeped and briefly flashed the element icon, but no relay or power
+  transition followed. The related-controller instructions require heating to already be active,
+  so support remains unresolved. Holding `Power + Clock + Down` for five seconds also beeped, but
+  produced no visible change and no immediate or delayed HA relay/power transition. Manual
+  sterilisation was not started under the tested conditions.
 
 ## Proposed HA display-name renames
 
