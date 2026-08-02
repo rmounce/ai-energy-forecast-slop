@@ -25,8 +25,9 @@ Source: [Aquatech RAPID/X6 and DYNAMIC/X8 owner manual, p. 37](https://www.aquat
 On **2026-08-02**, the owner read every available parameter from the physical controller before
 restoring quiet mode. The complete as-found factory snapshot is in `aquatech-settings.csv`; its
 `Custom` column records F30 `10` and F35 `30`. This snapshot supersedes related-product defaults for
-the installed unit. F39 was absent from the menu and F70 displayed `998` (probably a password or
-password state; meaning unconfirmed).
+the installed unit. F39 was absent from the menu. F70 displayed `998`, matching the password the
+owner successfully used to enter the settings menu; this confirms the related manual's F70
+“menu password” description on the installed controller.
 
 ## Parameter meanings and likely rule
 
