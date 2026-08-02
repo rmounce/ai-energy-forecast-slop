@@ -436,9 +436,11 @@ This is the most complex HA file. It does:
 
 2. **`sensor.amber_effective_feed_in_price`** — same logic for feed-in (export) price.
 
-3. **`script.emhass_dayahead_optim` / `script.emhass_mpc`** — wrapper scripts that compute `soc_init_pct` and `soc_final_pct` from the prior DH plan plus the live SoC, persist the chosen soc_init to `input_number.dh_last_soc_init` / `input_number.mpc_last_soc_init`, then fire the corresponding `rest_command` with the values as parameters. **Automations must call these scripts, not the rest_commands directly.** See [docs/production_soc_policy.md](docs/production_soc_policy.md) for the formulas (DH self-correction chain, MPC plan-relative deviation, force-charge top-balance bias).
+3. **`sensor.emhass_current_pv_input_mode`** — classifies the live PV measurement as `measured`, `transition`, `pv_limit`, or `export_limit` from applied Sigenergy limits and physical power flows. MPC reconstructs available PV with `max(measured, Solcast)` only during a limit/telemetry transition or while a limit is physically binding. A prior EMHASS curtailment plan, negative import price, and battery SoC alone are not curtailment evidence. The classifier is tariff-time-independent; the separate 10:00–16:00 grid-import preference remains downstream execution policy.
 
-4. **`rest_command.emhass_dayahead_optim` / `rest_command.emhass_mpc`** — build a JSON payload via Jinja2 and POST to the EMHASS endpoint. The payload includes:
+4. **`script.emhass_dayahead_optim` / `script.emhass_mpc`** — wrapper scripts that compute `soc_init_pct` and `soc_final_pct` from the prior DH plan plus the live SoC, persist the chosen soc_init to `input_number.dh_last_soc_init` / `input_number.mpc_last_soc_init`, then fire the corresponding `rest_command` with the values as parameters. **Automations must call these scripts, not the rest_commands directly.** See [docs/production_soc_policy.md](docs/production_soc_policy.md) for the formulas (DH self-correction chain, MPC plan-relative deviation, force-charge top-balance bias).
+
+5. **`rest_command.emhass_dayahead_optim` / `rest_command.emhass_mpc`** — build a JSON payload via Jinja2 and POST to the EMHASS endpoint. The payload includes:
    - `soc_init` / `soc_final` — passed in as `soc_init_pct` / `soc_final_pct` parameters from the wrapping script.
    - PV forecast: Solcast p10/p50/p90 blended by `input_number.emhass_weight_pv_forecast`, with 65W fixed loss applied
    - Load forecast: base load from `sensor.ai_load_forecast_high` (p65 model), plus planned

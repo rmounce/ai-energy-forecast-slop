@@ -119,6 +119,83 @@ template:
         step_minutes: "{{ [states('input_number.emhass_charge_ramp_step_minutes') | int(5), 1] | max }}"
         step_weight: "{{ states('input_number.emhass_charge_ramp_step_weight') | float(0.0002) }}"
 
+    - name: 'EMHASS Current PV Input Mode'
+      unique_id: emhass_current_pv_input_mode
+      state: >-
+        {# Applied limits are authoritative. A prior EMHASS curtailment plan and
+           battery SoC alone do not prove that live PV is being clipped. #}
+        {% set export_limit_kw = states('number.sigen_plant_grid_export_limitation') | float(10) %}
+        {% set pv_limit_kw = states('number.sigen_plant_pv_max_power_limit') | float(100) %}
+        {% set charge_limit_kw = states('number.sigen_plant_ess_max_charging_limit') | float(21) %}
+        {% set charge_cutoff_soc = states('number.sigen_plant_ess_charge_cut_off_state_of_charge') | float(100) %}
+        {% set plant_pv_w = states('sensor.sigen_plant_pv_power') | float(0) %}
+        {% set grid_w = states('sensor.sigen_plant_grid_active_power') | float(0) %}
+        {% set battery_w = states('sensor.sigen_plant_battery_power') | float(0) %}
+        {% set soc = states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) %}
+
+        {# Named engineering tolerances. These classify physical saturation; they
+           are unrelated to tariff-time execution policy. #}
+        {% set unrestricted_export_limit_kw = 9.99 %}
+        {% set unrestricted_pv_limit_kw = 99 %}
+        {% set full_curtailment_pv_limit_kw = 0.1 %}
+        {% set pv_cap_tolerance_w = 30 %}
+        {% set grid_boundary_tolerance_w = 150 %}
+        {% set charge_limit_tolerance_w = 150 %}
+        {% set battery_discharge_tolerance_w = 150 %}
+        {% set soc_tolerance_pct = 0.1 %}
+        {% set transition_timeout_s = 10 %}
+
+        {# A limit write and MQTT power telemetry are not atomic. Until all fast
+           power observations have updated after the latest relevant limit change,
+           retain the conservative max(measured, Solcast) reconstruction. #}
+        {% set limit_states = expand(
+          'number.sigen_plant_grid_export_limitation',
+          'number.sigen_plant_pv_max_power_limit',
+          'number.sigen_plant_ess_max_charging_limit') | list %}
+        {% set power_states = expand(
+          'sensor.sigen_power_pv_gross',
+          'sensor.sigen_plant_pv_power',
+          'sensor.sigen_plant_grid_active_power',
+          'sensor.sigen_plant_battery_power') | list %}
+        {% set latest_limit_change = limit_states | map(attribute='last_changed') | map('as_timestamp') | max %}
+        {% set oldest_power_update = power_states | map(attribute='last_updated') | map('as_timestamp') | min %}
+        {% set limit_change_age_s = as_timestamp(now()) - latest_limit_change %}
+        {% set transition = oldest_power_update <= latest_limit_change and limit_change_age_s < transition_timeout_s %}
+
+        {% set full_pv_limit = pv_limit_kw <= full_curtailment_pv_limit_kw %}
+        {% set partial_pv_limit_binding =
+          pv_limit_kw < unrestricted_pv_limit_kw
+          and plant_pv_w >= (pv_limit_kw * 1000 - pv_cap_tolerance_w) %}
+        {% set battery_at_charge_limit =
+          charge_limit_kw <= 0.1
+          or battery_w >= (charge_limit_kw * 1000 - charge_limit_tolerance_w) %}
+        {% set battery_cannot_absorb =
+          soc >= (charge_cutoff_soc - soc_tolerance_pct)
+          or battery_at_charge_limit %}
+        {% set export_limit_binding =
+          export_limit_kw < unrestricted_export_limit_kw
+          and ((grid_w + export_limit_kw * 1000) | abs) <= grid_boundary_tolerance_w
+          and battery_w >= -battery_discharge_tolerance_w
+          and battery_cannot_absorb %}
+
+        {% if transition %}transition
+        {% elif full_pv_limit or partial_pv_limit_binding %}pv_limit
+        {% elif export_limit_binding %}export_limit
+        {% else %}measured
+        {% endif %}
+      icon: mdi:solar-power-variant
+      attributes:
+        export_limit_kw: "{{ states('number.sigen_plant_grid_export_limitation') | float(10) }}"
+        pv_limit_kw: "{{ states('number.sigen_plant_pv_max_power_limit') | float(100) }}"
+        charge_limit_kw: "{{ states('number.sigen_plant_ess_max_charging_limit') | float(21) }}"
+        charge_cutoff_soc: "{{ states('number.sigen_plant_ess_charge_cut_off_state_of_charge') | float(100) }}"
+        gross_pv_w: "{{ states('sensor.sigen_power_pv_gross') | float(0) | round(1) }}"
+        plant_pv_w: "{{ states('sensor.sigen_plant_pv_power') | float(0) | round(1) }}"
+        grid_w: "{{ states('sensor.sigen_plant_grid_active_power') | float(0) | round(1) }}"
+        battery_w: "{{ states('sensor.sigen_plant_battery_power') | float(0) | round(1) }}"
+        battery_soc: "{{ states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) | round(2) }}"
+        effective_feed_in_price: "{{ states('sensor.amber_effective_feed_in_price') | float(0) | round(6) }}"
+
     - name: 'Amber Effective General Price'
       unit_of_measurement: "$/kWh"
       device_class: monetary
@@ -777,20 +854,10 @@ rest_command:
         {%- set uncovered_loss = [0, fixed_loss_to_account - gross_pv_now] | max %}
         {%- set net_load_now = gross_load_now + uncovered_loss %}
 
-        {# 3. Handle Curtailment Override (on the Net PV value) #}
-        {%- set pv_curtailment = namespace(value=(states('sensor.mpc_p_pv_curtailment') | float(0))) %}
-        {%- for item in state_attr('sensor.mpc_p_pv_curtailment', 'forecasts') or [] %}
-          {%- if as_datetime(item.date) <= utc_now %}
-            {% set pv_curtailment.value = item.mpc_p_pv_curtailment %}
-          {%- endif %}
-        {%- endfor %}
-        
-        {# Check curtailment conditions #}
-        {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float(0) %}
-        {%- set actual_soc_now = states('sensor.sigen_plant_battery_state_of_charge_derived') | float(0) %}
-        {%- set pv_currently_curtailed = (pv_curtailment.value | int(0) > 0) or (load_cost_now < 0) or (actual_soc_now >= 99.9) %}
-        
-        {%- if pv_currently_curtailed %}
+        {# 3. Reconstruct available PV only while an applied limit is binding, or
+               briefly while power telemetry catches up with a limit change. #}
+        {%- set pv_input_mode = states('sensor.emhass_current_pv_input_mode') %}
+        {%- if pv_input_mode in ['transition', 'pv_limit', 'export_limit'] %}
           {# Solcast provides Gross, so we must apply the 140W subtraction to the Solcast Now estimate too #}
           {%- set k_pv = states('input_number.emhass_weight_pv_forecast') | float(0) %}
           {%- set p50_now = state_attr('sensor.solcast_pv_forecast_power_now', 'estimate') | float(0) %}
