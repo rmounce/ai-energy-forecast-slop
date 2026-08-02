@@ -124,6 +124,11 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
   so support remains unresolved. Holding `Power + Clock + Down` for five seconds also beeped, but
   produced no visible change and no immediate or delayed HA relay/power transition. Manual
   sterilisation was not started under the tested conditions.
+- **2026-08-02 F66 enable boundary:** with the controller on in Standard/60 but idle at 61 °C,
+  changing the documented legionella setting from `0` to `1` produced no visible response and no
+  immediate or one-reporting-interval relay/power transition. F66 did not start an on-demand cycle
+  when enabled in this state; its weekly counter start/reset semantics remain unknown.
+  F66 was restored to its installed value `0` immediately after the observation.
 
 ## Proposed HA display-name renames
 

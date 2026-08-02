@@ -135,6 +135,16 @@ The strongest next discriminator is `M + Up` during an active compressor cycle: 
 must stop/suppress the compressor and start the element. Repeating it while idle cannot resolve
 whether Aquatech supports Boost.
 
+### Live F66 enable result — 2026-08-02
+
+The owner enabled the documented F66 legionella setting (`0` to `1`) while the controller was on in
+STANDARD/60 but thermally idle at 61 °C. There was no visible panel response. Immediate and
+one-controller-interval HA checks remained at 61 °C with both relays off and circuit power around
+1.9 W. Enabling F66 therefore does not immediately start disinfection in this state. It remains a
+weekly cadence enable, not an observed on-demand command; the result does not reveal whether its
+internal counter starts or resets when F66 is enabled.
+The owner then restored F66 to its installed value `0`; the controller remained idle.
+
 ## Candidate family
 
 | branding/model | evidence | manual value | confidence/relevance |
