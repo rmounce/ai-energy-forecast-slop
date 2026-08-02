@@ -102,6 +102,24 @@ time, so they remain candidate firmware functions rather than Aquatech instructi
 diagnostic and behavioural match nevertheless makes `M + Up` the strongest read-only-observation /
 controlled-test lead for an immediate element request.
 
+### Live trigger-boundary result — 2026-08-02
+
+The owner authorised supported-mode experiments while the installed X6 was idle at a displayed
+60 °C. The event-driven HWC daemon was stopped first so it could not overwrite commands.
+
+| initial state | single compound command | observed result |
+|---|---|---|
+| off, 60 °C, both relays off, ~1.8 W | `performance @ 70 °C` | accepted but remained idle |
+| performance armed, 60 °C, still idle | `electric @ 70 °C` | element on; compressor off; ~1.79–1.81 kW |
+| electric running at 60 °C | change target to 61 °C | normal element cut-out at displayed 61 °C |
+| electric idle at 61 °C | re-arm `electric @ 70 °C` | accepted but remained idle at ~1.9 W |
+
+This directly confirms the current Aquatech table's mode-specific whole-cycle interpretation:
+HYBRID+ does not start a new cycle at 60 °C because its trigger is 50 °C, whereas ELEMENT starts at
+its inclusive 60 °C trigger and will not re-trigger at 61 °C. It also creates a clean state for the
+next discriminator: `electric/70` armed at 61 °C with both heat sources off, followed by the
+candidate `M + Up` Boost chord. **That chord has not yet been attempted.**
+
 ## Candidate family
 
 | branding/model | evidence | manual value | confidence/relevance |

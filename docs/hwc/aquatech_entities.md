@@ -110,6 +110,14 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
 - Mode + target are therefore necessary but insufficient confirmation. After a start grace,
   control requires the physical element sensor at/below the expected trigger. Above it, element
   off is treated as armed hysteresis rather than an immediate command failure.
+- **2026-08-02 controlled boundary test:** with the HWC daemon temporarily stopped, the tank was
+  idle at an integer probe reading of 60 °C. A fresh compound `performance/70` command remained
+  idle at ~1.8 W, consistent with HYBRID+'s published 50 °C whole-cycle trigger. A fresh compound
+  `electric/70` at the same 60 °C reading started the element, compressor stayed off, and circuit
+  power stabilised around 1.79–1.81 kW. Changing the active target to 61 °C let the controller stop
+  normally at 61 °C. Re-arming `electric/70` at 61 °C then remained idle at ~1.9 W for the observed
+  interval. This establishes, at the controller's integer resolution, that Element mode starts at
+  60 °C but not 61 °C; the published 60 °C trigger is inclusive.
 
 ## Proposed HA display-name renames
 
