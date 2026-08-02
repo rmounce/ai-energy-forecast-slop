@@ -190,7 +190,8 @@ Boost, sterilisation or direct-element command. F66 was restored to `0` after th
 | **Hydrotherm DYNAMIC/X8** | Manuals name Aquatech Solar Technologies as authority; repo history records shared X6/X8 electronics | Australian sibling documentation and service clues | High, but firmware revision may differ |
 | **Hisense AH-200NH4GHB / AH-300NH4GHB** and `C` variants | Full F-code table; same diagnostics 00–16; certified/distributed by Hisense | Parameter meanings, quick heat, disinfection, multilingual newer manual, SG Ready | Strong controller-family evidence |
 | **Airtherm Aqua 1.2 200/250/300 L** | Internal model table says YT-200/250/300TB2; same controller diagnostics and key-chord functions | Clearest operational description found | Strong command/state evidence; hardware differs |
-| **Solareast/Sunrain YT-200/250/300TB2** | Manufacturer/product catalog uses the YT identifiers; R290, 620 mm cylinder, element, Wi-Fi/PV/Modbus features | Likely upstream product/OEM trail | Strong product-family lead; no register map found |
+| **Solareast/Sunrain YT-200/250/300TB2** | Manufacturer/product catalog uses the YT identifiers; R290, 620 mm cylinder, element, Wi-Fi/PV/Modbus features | Related controller branch | Strong controller-family lead; mechanical platform differs |
+| **SolarEast/Sunrain YT-200/270TD2; SIHP-200/270TD2** | Exact Australian hardware tuple; SolarEast ERAC/WaterMark registrations and Sunrain OEM listing | Upstream complete-unit OEM trail | Very strong; see `oem_manufacturer_research.md` |
 | **Ecostar YT-200/250/300TB2** | Exact identifiers and matching published specification table | Alternate distributor/support channel | Strong rebadge evidence |
 | **Chameleon SIPH-200/250/300TB2** | Manual names both YT and SIPH identifiers | Alternate manual/support channel | Strong rebadge evidence |
 | **Sacon YT-200TB2** | Exact identifier in supplier listing | Alternate brand/search term | Moderate; listing rather than service manual |
@@ -246,9 +247,12 @@ are leads, not Aquatech instructions.
 
 ### Exact-spec Australian siblings
 
-The certification match is more probative than appearance alone. Aquatech Dynamic/X8 and the six
-270 L candidates above share the principal nameplate values. It does not prove identical PCB,
-sensor placement or firmware, but makes their manuals the best source of alternate control logic.
+The certification match is more probative than appearance alone. Aquatech Dynamic/X8 and the
+270 L candidates above share the principal nameplate values. More decisively, a 2020 Aquatech TÜV
+report names Guangdong Sunrain Air Source Energy Co., Ltd. as the RAPID/X6 and Dynamic/X8 factory,
+while SolarEast registers the exact YT-200/270TD2 platform in Australia. This establishes the
+complete-unit OEM trail, but not identical PCBs, sensor placement or firmware across every rebadge.
+See `oem_manufacturer_research.md`.
 
 - **Power Bay:** STAN is heat-pump-only; HYB1 says heat pump and element work together; ELE is
   element-only with a 5 °C restart differential. Its text says a 15–75 °C range while the adjacent
@@ -323,9 +327,10 @@ generic translated phrases.
   PDF URL no longer resolves through the public site. Archive/vendor recovery remains worthwhile.
 - No public YT-family Modbus register map, Aquatech Tuya schema, service firmware image, or original
   Chinese controller manual was located.
-- The public certification records establish nameplate equivalence but do not identify the OEM,
-  PCB, controller supplier or firmware lineage. Hisense and Solareast remain strong trails, not a
-  proven manufacturer attribution for the installed Aquatech.
+- Hardware OEM attribution is now strong: an original Aquatech TÜV report names Guangdong Sunrain,
+  and SolarEast registers the exact YT-200/270TD2 Australian platform. The installed unit's current-
+  batch factory, PCB supplier and firmware lineage remain unverified; see
+  `oem_manufacturer_research.md`.
 - A SolarEast R290 Home Assistant integration found online is for a monobloc space-heating product;
   its registers should not be assumed portable to this tank controller.
 
