@@ -151,6 +151,13 @@ The owner then restored F66 to its installed value `0`; the controller remained 
 The panel exposes only time-of-day, not a calendar date or weekday, so there is no documented safe
 way to advance the weekly counter for an immediate test.
 
+A subsequent read-only raw Tuya diff captured all 50 DPs reported by the device while F66 was saved
+from `0` to `1`. No DP changed; only two duplicate temperature signals moved naturally by 1 °C.
+F66 is therefore not represented in the currently reported local DP set. The official Tuya cloud
+schema likewise exposes only power, target temperature, temperature-unit and defrost writes—no
+Boost, sterilisation or direct-element command. F66 was restored to `0` after the capture. See
+`aquatech_entities.md` for the raw inventory and unmapped-DP notes.
+
 ## Candidate family
 
 | branding/model | evidence | manual value | confidence/relevance |

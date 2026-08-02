@@ -79,6 +79,27 @@ Verified in use elsewhere:
 Nominal/unverified: `aquatech_pump`, `aquatech_running`, `aquatech_fluoride_cycle`,
 `aquatech_low_pressure_valve`, `aquatech_power`, `aquatech_problem`, `aquatech_connectivity`.
 
+## Raw Tuya inventory — 2026-08-02
+
+The Aquatech's protocol-3.5 local key was read from HA's `tuya_local` config entry and used for a
+read-only `tinytuya` status query. The key was not printed or stored in this repo. The device
+returned 50 DPs:
+
+`1,2,4,6,7,14–35,37–41,101–110` (with gaps inside those ranges).
+
+- HA's selected `hydrotherm_dynamic_x8_water_heaterv6` profile maps the supported mode/target and
+  the existing diagnostic entities. The official Tuya cloud schema advertises only four writable
+  functions: power, target temperature, C/F unit and defrost. It exposes no Boost, sterilisation or
+  direct-element command.
+- Cloud labels are not authoritative for this OEM firmware: for example it calls DP14 a countdown,
+  while local behaviour/profile identifies it as EEV position. Prefer observed local behaviour.
+- The otherwise-unmapped numeric DPs mostly duplicate known telemetry: DP34=`60` matched target
+  DP4; DP35=`61` matched tank DP16; DP25 changed 20→21 exactly with DP20; DP38 matched DP26; and
+  DP39 matched DP24. DP37=`0` and DP110=`true` remain unidentified.
+- A timed raw snapshot/diff while the owner saved F66 `0→1` showed no DP change. Only DP20 and its
+  duplicate DP25 changed naturally by 1 °C. F66 is controller-local and is not exposed through any
+  currently reported Tuya DP. The owner restored F66 to `0` afterward.
+
 ## Actuation quirks
 
 Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circuit meter:
