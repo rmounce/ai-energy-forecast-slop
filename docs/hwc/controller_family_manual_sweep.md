@@ -151,13 +151,17 @@ retain the visible latch. A controlled retest established the actual state machi
 | while latched, select HYBRID+/70 at panel | element icon solid and relay closed immediately; compressor off; element on; ~1.795 kW |
 | remote compound STANDARD/60 | element off and ~1.8 W; icon off, but hidden Boost latch persisted |
 | remote compound HYBRID+/70 | element restarted immediately at 61 °C; compressor remained off; ~1.795 kW |
+| while latched in HYBRID+/60, target-only change 60→70 | target was accepted and icon kept flashing, but relay/power remained off; target change alone did not re-evaluate Boost |
+| then remote STANDARD/60 → HYBRID+/70 | icon went flashing→off in STANDARD, then solid in HYBRID+ as the relay closed and element started (~1.775 kW), proving the hidden latch persisted |
 | remote `turn_off`, then re-arm HYBRID+/70 | first command stopped the element and cleared Boost; re-arm remained idle |
 
 This is a supported on-demand element path above the ordinary 60 °C trigger. For remote dispatch,
 Boost must first be latched physically while the controller is on. HA can then use STANDARD/60 as
 the no-element state and HYBRID+/70 as the element state while the tank is above 60 °C. Any
 `turn_off` clears the latch and requires the physical chord again. The latch is invisible through
-the reported Tuya DPs; infer it only from controlled transitions and verified element power.
+the reported Tuya DPs; infer it only from controlled transitions and verified element power. A
+target-only increase does not dispatch the latched element: use a genuine mode transition into
+HYBRID+/70.
 
 ### Live F66 enable result — 2026-08-02
 

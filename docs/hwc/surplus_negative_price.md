@@ -76,7 +76,8 @@ Grid connection ceiling ≈ 15 kW (`number.sigen_plant_grid_import_limitation` d
 `M + Up` for three seconds to establish a hidden Boost latch. While latched, remote Standard/60
 suppresses the element and remote Hybrid+/70 starts it immediately above 60 °C. `turn_off` clears
 the latch. The latch is not present in any of the 50 raw Tuya DPs, so it cannot currently be created
-or observed remotely. Manual sterilisation remains unobserved. See
+or observed remotely. A target-only 60→70 change within Hybrid+ does not start the element; dispatch
+requires a real mode transition from Standard/60 into Hybrid+/70. Manual sterilisation remains unobserved. See
 `controller_family_manual_sweep.md`.
 
 `water_heater.aquatech` operation modes (HA advertises 15–75 °C, but the physical maximum is

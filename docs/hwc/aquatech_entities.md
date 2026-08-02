@@ -125,7 +125,12 @@ Confirmed locally 2026-07-27 through HA service calls and the dedicated HWC circ
   the compressor off. The latch survives remote compound mode changes even when the icon disappears:
   remote Standard/60 stops the element and remote HYBRID+/70 restarts it. `turn_off` clears Boost;
   re-arming HYBRID+/70 after off remains idle. The latch has no observed Tuya DP, so a physical
-  `M + Up` is required again after every off.
+  `M + Up` is required again after every off. While latched in HYBRID+/60, a target-only 60→70
+  write changed the displayed target but did not start the element; the icon continued flashing.
+  On the subsequent STANDARD/60 → HYBRID+/70 transition, the icon changed flashing→off in Standard,
+  then solid in HYBRID+ as the relay closed and element started (~1.775 kW). Dispatch therefore
+  requires a mode transition, not merely raising the target inside HYBRID+; an absent icon in the
+  satisfied Standard state does not mean the hidden latch was cleared.
 
 ### Negative-price incident record
 
