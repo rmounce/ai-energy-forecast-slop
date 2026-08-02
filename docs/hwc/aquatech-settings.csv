@@ -1,118 +1,117 @@
-﻿
-F-number,Factory,Custom,Note
-1,60,,
-2,12,,
-3,5,,
-4,2,,
-5,0,,
-6,0,,
-7,3,,
-8,60,,
-9,-7,,
-10,-10,,
-11,0,,
-12,0,,
-13,1,,
-14,40,,
-15,80,,
-16,5,,
-17,2,,
-18,3,,
-19,0,,
-20,40,,
-21,10,,
-22,23,,
-23,-3,,
-24,18,,
-25,10,,
-26,6,,
-27,1,,
-28,60,,
-29,3,,
-30,25,10,
-31,50,,
-32,100,,
-33,5,,
-34,-30,,
-35,55,30,
-36,60,,
-37,18,,
-38,7,,
-39,N/A,,Skipped in list
-40,2,,
-41,3,,
-42,60,,
-43,3,,
-44,1,,
-45,3,,
-46,60,,
-47,2,,
-48,0,,
-49,0,,
-50,30,,
-51,1,,
-52,92,,
-53,400,,
-54,80,,
-55,0,,
-56,350,,
-57,1,,
-58,1,,
-59,1,,
-60,100,,
-61,0,,
-62,2,,
-63,0,,
-64,1,,
-65,0,,
-66,0,,
-67,0,,
-68,1,,
-69,7,,
-70,998,,Settings-menu password; confirmed by successful access
-71,0,,
-72,80,,
-73,2,,
-74,2,,
-75,2,,
-76,3,,
-77,15,,
-78,0,,
-79,35,,
-80,5,,
-81,2,,
-82,1,,
-83,12,,
-84,1,,
-85,60,,
-86,12,,
-87,20,,
-88,10,,
-89,1,,
-90,0,,
-91,0,,
-92,0,,
-93,0,,
-94,1,,
-95,30,,
-96,5,,
-97,80,,
-98,25,,
-99,1,,
-100,0,,
-101,150,,
-102,200,,
-103,250,,
-104,300,,
-105,350,,
-106,400,,
-107,365,,
-108,400,,
-109,420,,
-110,440,,
-111,460,,
-112,400,,
-113,430,,
-114,450,,
-115,470,,
-116,500
+﻿F-number,Factory,Custom,Note,Related-manual description,Aquatech meaning status,Evidence
+1,60,,,Set target heating temperature,Unconfirmed,HI-WATER/Hisense R90 family manual
+2,12,,,Set target cooling temperature; not applicable to DHW,Unconfirmed,HI-WATER/Hisense R90 family manual
+3,5,,,Water-temperature control difference,Unconfirmed,HI-WATER/Hisense R90 family manual
+4,2,,,Heating-temperature setting range selector,Unconfirmed,HI-WATER/Hisense R90 family manual
+5,0,,,Automatic-mode temperature-setting deviation,Unconfirmed,HI-WATER/Hisense R90 family manual
+6,0,,,,,
+7,3,,,,,
+8,60,,,Maximum tank temperature with heat pump only,Unconfirmed,HI-WATER/Hisense R90 family manual
+9,-7,,,Lowest heat-pump working ambient temperature,Unconfirmed,HI-WATER/Hisense R90 family manual
+10,-10,,,Auxiliary element starting ambient temperature,Unconfirmed,HI-WATER/Hisense R90 family manual; Aquatech value differs materially
+11,0,,,Tank-temperature sensor calibration,Unconfirmed,HI-WATER/Hisense R90 family manual
+12,0,,,Outlet-water-temperature sensor calibration,Unconfirmed,HI-WATER/Hisense R90 family manual
+13,1,,,Automatic fast-heating enable/disable,Unconfirmed,HI-WATER/Hisense R90 family manual
+14,40,,,Automatic fast-heating temperature difference,Unconfirmed,HI-WATER/Hisense R90 family manual
+15,80,,,Incomplete source description: between setting and real water temperature,Unconfirmed,HI-WATER/Hisense R90 family manual; source wording unclear
+16,5,,,High-temperature warning differential,Unconfirmed,HI-WATER/Hisense R90 family manual
+17,2,,,,,
+18,3,,,,,
+19,0,,,,,
+20,40,,,Defrosting period,Unconfirmed,HI-WATER/Hisense R90 family manual
+21,10,,,Maximum duration of each defrost,Unconfirmed,HI-WATER/Hisense R90 family manual
+22,23,,,Maximum ambient temperature for defrosting,Unconfirmed,HI-WATER/Hisense R90 family manual; Aquatech value differs materially
+23,-3,,,Defrost starting coil temperature,Unconfirmed,HI-WATER/Hisense R90 family manual
+24,18,,,Defrost stopping coil temperature,Unconfirmed,HI-WATER/Hisense R90 family manual
+25,10,,,Defrost ambient-to-coil temperature difference,Unconfirmed,HI-WATER/Hisense R90 family manual
+26,6,,,Compressor continuous-run time before defrosting,Unconfirmed,HI-WATER/Hisense R90 family manual
+27,1,,,,,
+28,60,,,,,
+29,3,,,,,
+30,25,10,,Fan ambient-temperature changeover point,Partly confirmed,Aquatech manual confirms high/low fan parameter and 25→10 quiet setting; exact state logic inferred from family manual and telemetry
+31,50,,,,,
+32,100,,,Fan exhaust-temperature stop point,Unconfirmed,HI-WATER/Hisense R90 family manual
+33,5,,,Fan exhaust-temperature restart differential,Unconfirmed,HI-WATER/Hisense R90 family manual
+34,-30,,,,,
+35,55,30,,High/low fan transfer tank temperature,Partly confirmed,Aquatech manual confirms high/low fan parameter and 55→30 quiet setting; exact state logic inferred from family manual and telemetry
+36,60,,,Tank temperature at which fan stops,Unconfirmed,HI-WATER/Hisense R90 family manual
+37,18,,,Coil temperature at which fan stops,Unconfirmed,HI-WATER/Hisense R90 family manual
+38,7,,,Coil-temperature setting at which fan restarts,Unconfirmed,HI-WATER/Hisense R90 family manual
+39,N/A,,Skipped in list,,,
+40,2,,,Low-pressure-switch alarm polarity/disable selector,Unconfirmed,HI-WATER/Hisense R90 family manual
+41,3,,,,,
+42,60,,,,,
+43,3,,,Low-voltage fault detection delay,Unconfirmed,HI-WATER/Hisense R90 family manual
+44,1,,,High-pressure-switch alarm polarity/disable selector,Unconfirmed,HI-WATER/Hisense R90 family manual
+45,3,,,Maximum automatic recoveries from pressure faults,Unconfirmed,HI-WATER/Hisense R90 family manual
+46,60,,,,,
+47,2,,,Water-flow-switch alarm polarity/disable selector,Unconfirmed,HI-WATER/Hisense R90 family manual
+48,0,,,,,
+49,0,,,,,
+50,30,,,Electronic expansion-valve control cycle,Unconfirmed,HI-WATER/Hisense R90 family manual
+51,1,,,Target superheat above 15 °C ambient,Unconfirmed,HI-WATER/Hisense R90 family manual
+52,92,,,Expansion-valve allowed exhaust temperature,Unconfirmed,HI-WATER/Hisense R90 family manual
+53,400,,,Defrost expansion-valve setting,Unconfirmed,HI-WATER/Hisense R90 family manual
+54,80,,,Minimum expansion-valve opening at or above 5 °C ambient,Unconfirmed,HI-WATER/Hisense R90 family manual
+55,0,,,Expansion-valve automatic/manual selection,Unconfirmed,HI-WATER/Hisense R90 family manual
+56,350,,,Manual expansion-valve step count,Unconfirmed,HI-WATER/Hisense R90 family manual
+57,1,,,,,
+58,1,,,,,
+59,1,,,,,
+60,100,,,Exhaust high-temperature protection value,Unconfirmed,HI-WATER/Hisense R90 family manual
+61,0,,,Tank-temperature compensation automatic/cancel selector,Unconfirmed,HI-WATER/Hisense R90 family manual
+62,2,,,Cooling/heating selection,Unconfirmed,HI-WATER/Hisense R90 family manual; Aquatech value is outside related manual's documented 0–1 range
+63,0,,,System manual/automatic working-mode selector,Unconfirmed,HI-WATER/Hisense R90 family manual
+64,1,,,,,
+65,0,,,,,
+66,0,,,Electric disinfection enable/disable,Unconfirmed,HI-WATER/Hisense R90 family manual
+67,0,,,,,
+68,1,,,Low-temperature anti-freezing enable/disable,Unconfirmed,HI-WATER/Hisense R90 family manual
+69,7,,,,,
+70,998,,Settings-menu password; confirmed by successful access,Menu password; 0 cancels password,Confirmed,Owner used 998 to enter Aquatech settings menu; meaning also matches HI-WATER/Hisense R90 family manual
+71,0,,,,,
+72,80,,,,,
+73,2,,,,,
+74,2,,,,,
+75,2,,,,,
+76,3,,,,,
+77,15,,,,,
+78,0,,,,,
+79,35,,,,,
+80,5,,,,,
+81,2,,,,,
+82,1,,,,,
+83,12,,,,,
+84,1,,,,,
+85,60,,,,,
+86,12,,,,,
+87,20,,,,,
+88,10,,,,,
+89,1,,,,,
+90,0,,,,,
+91,0,,,,,
+92,0,,,Temperature-unit selector: Celsius/Fahrenheit,Unconfirmed,HI-WATER/Hisense R90 family manual
+93,0,,,Ventilation priority selector: heat pump/ventilation,Unconfirmed,HI-WATER/Hisense R90 family manual
+94,1,,,,,
+95,30,,,,,
+96,5,,,,,
+97,80,,,,,
+98,25,,,,,
+99,1,,,,,
+100,0,,,,,
+101,150,,,,,
+102,200,,,,,
+103,250,,,,,
+104,300,,,,,
+105,350,,,,,
+106,400,,,,,
+107,365,,,,,
+108,400,,,,,
+109,420,,,,,
+110,440,,,,,
+111,460,,,,,
+112,400,,,,,
+113,430,,,,,
+114,450,,,,,
+115,470,,,,,
+116,500,,,,,

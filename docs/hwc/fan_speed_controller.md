@@ -29,6 +29,13 @@ the installed unit. F39 was absent from the menu. F70 displayed `998`, matching 
 owner successfully used to enter the settings menu; this confirms the related manual's F70
 “menu password” description on the installed controller.
 
+The CSV cross-references descriptions available in the related HI-WATER/Hisense R90 manual. Its
+status column is deliberately conservative: `Unconfirmed` means only that the same F-number exists
+in the family manual, even when the recorded value also matches; `Partly confirmed` means Aquatech
+documents the broad purpose but not the detailed state logic; `Confirmed` requires Aquatech-specific
+documentation or direct observation. Blank descriptions have no sufficiently close published match
+yet.
+
 ## Parameter meanings and likely rule
 
 The matching HI-WATER/Hisense R90 R290 factory table identifies:
