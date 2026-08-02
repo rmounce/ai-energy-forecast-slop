@@ -88,14 +88,17 @@ Known component origins:
 
 ### Controller/firmware — secondary
 
-Owner visual comparison on 2026-08-02 establishes two visible controller branches on the same
-mechanical platform:
+Owner visual comparison on 2026-08-02 separates controller appearance from mechanical-platform
+identity:
 
 - **Hisense AHS and German Tech YT-200/270TD2:** control panel appears identical to the installed
   Aquatech panel. Treat their controller manuals as especially relevant, subject to firmware and
   parameter-default differences.
 - **Viessmann Vitocal 161-A:** uses a visibly different, colour touchscreen controller despite the
   matching tank/heat-pump chassis. Its UI behaviour is not transferable to Aquatech.
+- **Emerald:** uses an apparently identical controller panel on a visibly different, squarer tank
+  and heat-pump chassis. It is therefore a controller-family lead, not evidence of a shared complete-
+  appliance OEM.
 
 An identical panel does not by itself prove identical main PCB, firmware build or Tuya datapoints.
 
@@ -124,6 +127,7 @@ These are useful evidence of OEM customization, not competing manufacturer attri
 | **Hisense AHS-210/270HF4GHB/C** | Same dimensions/specification; owner identifies the control panel as identical to Aquatech. Official PDF retains SolarEast/Micoe-like internal document numbering. |
 | **German Tech YT-200/270TD2** | Exact SolarEast model family; owner identifies the control panel as identical to Aquatech. |
 | **Aether HP200/HP270, Power Bay PB-270RE, Soltaro HPWSTR002/003, Warmth WNZ270L-2in1, Eurosun, Versopump** | Exact or near-exact Australian specification and mechanical platform; alternate controls/firmware exist. |
+| **Emerald** | Owner identifies the same controller panel, but a distinctly squarer tank/chassis. Controller-family evidence only; not an Aquatech mechanical-platform sibling. |
 
 The older European 308 L Vitocal 161-A is unrelated. Comparisons must use the current Australian
 200/270 L product.

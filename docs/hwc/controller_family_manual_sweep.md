@@ -106,8 +106,9 @@ Source: [official Hisense AHS-210/270HF4GHB installation guide, controller and o
 On 2026-08-02 the owner visually confirmed that the current Australian Hisense AHS and German Tech
 YT-200/270TD2 panels appear identical to the installed Aquatech controller. The Australian
 Viessmann Vitocal 161-A shares the mechanical platform but uses a different colour touchscreen.
-Panel identity strengthens the Hisense/German Tech controller-document trail, but does not prove an
-identical PCB, firmware revision, parameter set or Tuya datapoint mapping.
+Emerald uses an apparently identical controller on a visibly different, squarer tank/chassis. Panel
+identity strengthens the Hisense/German Tech/Emerald controller-document trail, but does not prove
+an identical PCB, firmware revision, parameter set, Tuya mapping or complete-appliance OEM.
 
 The Airtherm and Power Bay manuals independently document the same chords and state transitions on
 the same controller layout. Aquatech omits these chords and uses a different parameter-entry hold
@@ -208,7 +209,8 @@ Boost, sterilisation or direct-element command. F66 was restored to `0` after th
 | **Soltaro HPWSTR003** | Exact specification match under SAA-231204-EA; detailed manual | Five modes, direct ELE, Boost and sterilisation | Very strong hardware and alternate-controller evidence |
 | **Viessmann Vitocal 161-A 270 SOC/SO** | Exact ERAC specification match under SAA-241129-EA; visibly different colour touchscreen | Mechanical/service support only | Strong hardware lead; weak for Aquatech UI behaviour |
 | **Warmth WNZ270L-2in1** | Exact ERAC specification match under SAA-240388-EA | Alternate service/support channel | Strong hardware lead; useful manual not located |
-| **Emerald / Rinnai DemandDuo Tuya variants** | Similar T1–T5 and Tuya datapoint vocabulary only | Sensor/DP decoding leads | Weak for element logic |
+| **Emerald** | Owner confirms identical-looking controller panel; tank/chassis is visibly different and squarer | Controller and sensor/DP decoding leads only | Strong panel-family lead; weak mechanical/OEM evidence |
+| **Rinnai DemandDuo Tuya variants** | Similar T1–T5 and Tuya datapoint vocabulary | Sensor/DP decoding leads | Weak for element logic |
 
 Selected sources:
 
