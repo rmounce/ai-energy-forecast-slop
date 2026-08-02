@@ -319,6 +319,27 @@ Therefore copy **concepts and search vocabulary**, not factory values, wiring or
 Do not use tank-sensor calibration, protection thresholds or direct element rewiring as a dump-load
 workaround. Those paths can defeat temperature/safety control and are outside this research scope.
 
+## Candidate-search stopping point — 2026-08-02
+
+The useful controller-panel candidate set is now sufficient:
+
+- Aquatech/Hydrotherm is the exact installed DP/platform lineage;
+- Hisense AHS and German Tech TD2 match both the mechanical platform and visible controller;
+- Airtherm/Ecostar/Chameleon/Sacon provide clearer manuals for the related YT controller family;
+- Emerald shows that the panel also appears on a different tank/chassis;
+- Viessmann shows that the same mechanical platform can carry a different controller.
+
+Additional rebadge names are unlikely to improve the settings map unless they publish a full
+F01–F116 table, controller/PCB identifier, service manual, Modbus register map or Tuya product
+schema. Visual similarity alone has reached diminishing returns.
+
+Tuya DPs are product-schema-specific, not controller-face-specific. The installed Aquatech reports
+DPs only through 110 and its live Boost/F66 diffs exposed no command or latch state. By contrast,
+the local Tuya profile for Rinnai Enviroflo assigns a Boost status to DP117 and disinfection to
+DP113 in a substantially different schema. Those numbers must not be tried on Aquatech. The next
+useful evidence is the display/main-PCB identifier or an OEM/product-schema document, not another
+brand catalogue.
+
 ## Chinese-language search result
 
 Searches for the F30/F35 Chinese concepts, AH model identifiers and likely translations of the

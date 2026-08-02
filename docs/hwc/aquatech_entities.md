@@ -41,10 +41,11 @@ do **not** match that convention; the table below maps them.
 - **Product:** `current_temperature_local` (tank water).
 
 ### Why `return_air` is T4 Suction (not air, not a second coil probe)
-1. **Cross-vendor mapping:** the Rinnai DemandDuo (same OEM platform) Tuya DPs expose
+1. **Cross-vendor mapping:** the Rinnai DemandDuo/Enviroflo Tuya DPs expose the related
    Ambient / Discharge / Tank / Evaporator / **Suction line**, and explicitly *no* "return air"
-   sensor — the cold-side gas reading is the suction line (refrigerant returning from the coil).
-   These units don't have a return-air probe, so HA's "return_air" is the suction sensor.
+   sensor — corroborating that the cold-side gas reading is the suction line (refrigerant returning
+   from the coil). Its DP numbering is substantially different, so this is shared sensor vocabulary,
+   not evidence of an identical controller or Tuya product schema.
 2. **Steady state:** suction gas sits right at the evaporating temperature → `return_air` ≈ `coil`
    ±1 °C, exactly as observed. (Bulk air-off would also be impossible here: it sits ~1 °C *below*
    `coil`, and air cannot be colder than the coil that chills it.)
@@ -103,6 +104,9 @@ returned 50 DPs:
   Boost was latched but STANDARD/60 was already satisfied, raw status was indistinguishable from
   ordinary idle. DP32 changed only when the element output actually energised. The hidden Boost
   latch cannot currently be read or written through Tuya.
+- Cross-brand DP numbers are not portable. For example, the local Rinnai Enviroflo profile exposes
+  Boost status as DP117 and disinfection as DP113, whereas the installed Aquatech reports no DP117
+  or DP113. Do not probe those write addresses on Aquatech.
 
 ## Actuation quirks
 
@@ -193,6 +197,6 @@ Recommend **disabling** `outlet_temperature` (dead) and **hiding** `inlet_temper
 - Unit's own manual schematic: T1 Coil, T2 Ambient, T3 Exhaust, T4 Suction, T5 Inlet.
 - Same T1–T5 convention cross-checked against the [Emerald all-in-one HPWH troubleshooting
   guide](https://www.emerald.com.au/wp-content/uploads/2025/03/Emerald-Heat-Pump-All-In-One-troubleshooting-guide.pdf).
-- [Rinnai DemandDuo / Enviroflo Tuya DP mapping](https://community.home-assistant.io/t/rinnai-enviroflo-heat-pump-hot-water-cylinder-tuya-mapping/1007674)
-  (same OEM platform): exposes Ambient / Discharge / Tank / Evaporator / Suction-line, and
+- [Rinnai DemandDuo / Enviroflo Tuya DP mapping](https://community.home-assistant.io/t/rinnai-enviroflo-heat-pump-hot-water-cylinder-tuya-mapping/1007674):
+  exposes Ambient / Discharge / Tank / Evaporator / Suction-line, and
   **no** "return air" sensor — confirming `return_air_temperature` is the suction-line probe.
