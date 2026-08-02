@@ -265,6 +265,11 @@ not a bad run — probe lag 37 min (vs the 13–21 min norm) from a below-probe 
 morning draw; the lag-phase electricity earns no probe-delta credit, understating COP. Its
 `band_cop` (below) reads an on-trend 2.93.
 
+**2026-08-02:** after reading and recording all controller factory parameters in
+`aquatech-settings.csv`, the owner restored quiet F30=`10`, F35=`30`. The efficiency loss appeared
+small while the noise reduction was noticeable. The exact change time was not recorded, so exclude
+or manually classify cycles spanning this date when comparing fan regimes.
+
 ### `band_cop`: fixed 54→60 °C band efficiency index (2026-07-15)
 
 Full-cycle COP charges *all* cycle electricity but credits only the mid-tank probe's ΔT, so a

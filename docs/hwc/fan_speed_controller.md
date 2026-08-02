@@ -1,6 +1,7 @@
 # HWC fan-speed controller family and thresholds
 
-Understanding of the Aquatech RAPID/X6 fan controls, recorded 2026-08-01. The threshold logic is
+Understanding of the Aquatech RAPID/X6 fan controls, recorded 2026-08-01 and updated 2026-08-02.
+The threshold logic is
 partly black-box: parameter meanings come from a closely matching R290 controller manual; transition
 direction and persistence come from this unit's telemetry. Treat the inferred Boolean rule as strong,
 not vendor-confirmed firmware documentation.
@@ -20,6 +21,12 @@ or the transition state machine. Its quiet procedure changes F30 `25→10` and F
 manufacturer-supported profile, not an installer-invented setting.
 
 Source: [Aquatech RAPID/X6 and DYNAMIC/X8 owner manual, p. 37](https://www.aquatechheatpumps.com.au/_files/ugd/228c32_84eb2f4659664c0e92f0dd0fe910d8fa.pdf).
+
+On **2026-08-02**, the owner read every available parameter from the physical controller before
+restoring quiet mode. The complete as-found factory snapshot is in `aquatech-settings.csv`; its
+`Custom` column records F30 `10` and F35 `30`. This snapshot supersedes related-product defaults for
+the installed unit. F39 was absent from the menu and F70 displayed `998` (probably a password or
+password state; meaning unconfirmed).
 
 ## Parameter meanings and likely rule
 
@@ -64,6 +71,10 @@ The 30-second fan trace in `data/hwc_cycles.sqlite` supports the model:
 - After the owner moved the thresholds back towards factory defaults on **2026-07-04 09:55**, every
   analysed winter daytime cycle ran high fan. That is expected when ambient `11–17 °C` is below a
   `25 °C` F30 threshold, even as the tank approaches `60 °C`.
+- On **2026-08-02**, after recording the full factory parameter set, the owner restored quiet
+  F30=`10`, F35=`30`: the measured efficiency penalty was considered small and the noise reduction
+  noticeable. Treat cycles from this date as quiet-profile cycles again; exact change time was not
+  recorded.
 
 The trace therefore explains the remembered behaviour: quiet mode **prefers** low fan but is not a
 low-fan lock. Cold overnight recovery still invokes high fan.
