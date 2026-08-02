@@ -1,14 +1,13 @@
 # EMHASS shared-state race — handoff brief (for the EMHASS source discussion)
 
 **Discovered:** 2026-06-01, while bringing up the HWC planner (`docs/hwc/emhass.md`).
-**EMHASS version:** v0.17.5 (`ghcr.io/davidusb-geek/emhass`; custom images also built —
-`emhass:rmounce`, `emhass:fix`).
+**Discovered on:** EMHASS v0.17.5. **Production:** official v0.17.9 since 2026-08-02.
 **Scope of this brief:** the fix belongs upstream in EMHASS, not as a workaround in this
 repo. This captures the problem + proposed fixes to seed that discussion.
 
-## Status (updated 2026-06-01)
+## Status (updated 2026-08-02)
 
-**Fix #1 (atomic metadata writes) is implemented, tested, and deployed locally.**
+**Fix #1 (atomic metadata writes) is upstream and deployed in the official image.**
 
 - The shared `entities/metadata.json` read-modify-write in `retrieve_hass.py:post_data` is
   now serialised by a process-wide `asyncio.Lock` and committed atomically via temp-file +
@@ -18,12 +17,14 @@ repo. This captures the problem + proposed fixes to seed that discussion.
   [davidusb-geek/emhass#919](https://github.com/davidusb-geek/emhass/pull/919)** (one squashed
   commit). 27 `test_retrieve_hass` tests pass incl. a concurrency regression test that
   reproduces the original `JSONDecodeError` / `FileNotFoundError` against pre-fix code.
-- Built as the local image `emhass:metadata-race-20260601` (full EMHASS master + the fix) and
-  **running on the production `emhass` container** (per `/opt/dockerfiles/emhass/docker-compose.yml`).
+- PR #919 merged and shipped in official v0.17.6. Production upgraded from local image
+  `emhass:metadata-race-20260601` to `ghcr.io/davidusb-geek/emhass:v0.17.9` on 2026-08-02.
+  First post-upgrade MPC solve: optimal, all 11 `mpc_*` entities published, no errors.
+- Rollback snapshot: `/opt/dockerfiles/emhass/backups/20260802_pre_v0179/`.
 
 **Not yet done:** fixes #2 (return result in HTTP response) and #3 (prefix-scoped state
 files) below, and the "write once per publish" half of #1 (metadata is still written once per
-entity, now each write atomic + lock-serialised). PR #919 is awaiting upstream review/merge.
+entity, now each write atomic + lock-serialised).
 
 ## Symptom
 
@@ -89,9 +90,7 @@ efficiency + decoupling improvement on top.
 ## Re-enabling HWC
 
 The HWC planner (`hwc_planner.py`) and its timer are **still disabled** in this repo. The
-corruption race they would trigger is now fixed in the deployed build
-(`emhass:metadata-race-20260601`, fix #1 above), so the original blocker is resolved on the
-running instance. Before re-enabling per `docs/hwc/emhass.md`, confirm the EMHASS instance is
-running a build that includes the fix (it is, as of 2026-06-01) — do **not** re-enable against
-a stock image that predates it. Longer term, prefer the upstream release once PR #919 merges,
-or move HWC to a dedicated instance.
+corruption race they would trigger is fixed upstream and present in the deployed official
+v0.17.9 image. Before re-enabling per `docs/hwc/emhass.md`, confirm EMHASS is v0.17.6 or
+newer; do **not** re-enable against an older stock image. A dedicated HWC instance remains
+the stronger isolation option.

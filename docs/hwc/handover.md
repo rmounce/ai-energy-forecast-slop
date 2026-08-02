@@ -25,7 +25,7 @@ Dedicated Athom metering is live for the HWC compressor circuit.
 |---|---|
 | `services/hwc_daemon.py` | event-driven planner/executor daemon, **enabled/active** |
 | old `ai-energy-hwc.{service,timer}` | **obsolete/removed**; daemon owns HWC planning now |
-| EMHASS metadata race | **fixed + deployed** (`emhass:metadata-race-20260601`); see race doc |
+| EMHASS metadata race | **fixed upstream + deployed** (official v0.17.9; PR #919 shipped in v0.17.6); see race doc |
 | COP characterisation | updated through `2026-06-18`; 12/14 clean cycles, five recent Athom-metered cycles |
 | Engine decision (EMHASS vs custom) | custom DP planner is the default; EMHASS kept as fallback |
 | DP planner | **default and only optimiser** (`hwc.planner = "dp"`); ~350 ms vs removed block 12 s/225 s; see `docs/hwc/dp_planner.md` |

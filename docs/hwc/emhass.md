@@ -77,12 +77,13 @@ It publishes the same HA entities as the former EMHASS path:
 
 ## EMHASS thermal-battery model (fallback)
 
-**EMHASS is v0.17.5** (standalone docker `ghcr.io/davidusb-geek/emhass`, config in
-`/opt/dockerfiles/emhass/`). Verified that this version ships the **new physics-based
+**EMHASS is v0.17.9** (standalone docker `ghcr.io/davidusb-geek/emhass:v0.17.9`, config in
+`/opt/dockerfiles/emhass/`; upgraded 2026-08-02). This version ships the **new physics-based
 thermal model** (Carnot COP, `draw_off_demand`, `volume`, `thermal_loss`) under
 `def_load_config[k]["thermal_battery"]`, and that it runs in **`naive-mpc-optim`** (the
 thermal logic lives in the shared `perform_optimization` core, dispatched on
-`params["type"] == "thermal_battery"`). **No EMHASS upgrade required.**
+`params["type"] == "thermal_battery"`). It also includes the shared metadata race fix from
+PR #919, released in v0.17.6.
 
 COP per timestep: `COP = carnot_efficiency × T_supply_K / (T_supply_K − T_outdoor_K)`,
 clamped ≥ 1. Tank dynamics:
