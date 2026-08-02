@@ -64,7 +64,7 @@
 63,0,,,System manual/automatic working-mode selector,Unconfirmed,HI-WATER/Hisense R90 family manual
 64,1,,,,,
 65,0,,,,,
-66,0,,,Electric disinfection enable/disable,Unconfirmed,HI-WATER/Hisense R90 family manual
+66,0,,Aquatech-supported weekly 70 °C legionella-cycle enable; owner manual says 0→1 enables element heating from current temperature and a 32-minute hold,Electric disinfection enable/disable,Confirmed,Aquatech RAPID/X6 and DYNAMIC/X8 owner manual pp. 33–34; installed factory value 0 matches the manual procedure
 67,0,,,,,
 68,1,,,Low-temperature anti-freezing enable/disable,Unconfirmed,HI-WATER/Hisense R90 family manual
 69,7,,,,,

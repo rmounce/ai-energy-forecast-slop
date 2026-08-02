@@ -10,6 +10,14 @@ The current Aquatech manual confirms that the apparent element threshold is inte
 policy: its mode table lists `ELEMENT - 60 °C/70 °C` (trigger/target). The observed refusal to
 re-start the element above about 60 °C therefore matches the published factory behaviour.
 
+The same Aquatech manual also confirms a separate controller-supported element path: F66 enables a
+weekly legionella cycle that heats **from the current tank temperature to 70 °C with the element**
+and then holds at temperature for 32 minutes. That does not provide on-demand dispatch by itself,
+but it proves this Aquatech firmware can request the element independently of Element mode's 60 °C
+whole-cycle trigger. F66 is now confirmed in `aquatech-settings.csv`; its installed factory value is
+`0` (disabled). Enabling it is a documented configuration change, not authorised by this research
+pass.
+
 The hardware does not appear to require that restriction. Australian-certified 270 L units with
 the same 1.2 kW heat-pump input, 1.8 kW element, 14 A/3 kW combined maximum, R290/400 g charge,
 pressure ratings and 620 mm tank format expose direct element-only and Boost modes. Firmware and
@@ -33,6 +41,66 @@ Either command could use a different internal request path from Aquatech's ordin
 workaround; a panel test above 60 °C is the best first discriminator.
 
 Source: [Airtherm Aqua 1.2 manual, controller and operation sections pp. 19–24](https://brookvent.ie/wp-content/uploads/2024/06/airtherm-aqua_1-2_manual-20.05.20241.pdf).
+
+## Aquatech factory modes and parameter hypotheses — 2026-08-02
+
+The Aquatech table describes the trigger as the tank temperature that starts a **new heating
+cycle**, not the temperature where one heat source hands over to another. It also warns that a
+timer-interrupted cycle will not begin again until the selected mode's trigger is reached. This
+explains why accepting a new Element/70 command above 60 °C need not energise the element.
+
+| mode | factory target | whole-cycle trigger | target minus trigger | heat-source sequence |
+|---|---:|---:|---:|---|
+| ECO | 60 °C | 48 °C | 12 K | heat pump only to 60 °C |
+| STANDARD | 60 °C | 55 °C | 5 K | heat pump only to 60 °C |
+| HYBRID | 65 °C | 55 °C | 10 K | heat pump to 60 °C, then element to 65 °C |
+| HYBRID+ | 70 °C | 50 °C | 20 K | heat pump to 60 °C, then element to 70 °C |
+| ELEMENT | 70 °C | 60 °C | 10 K | element only to 70 °C |
+
+Primary sources: [current Aquatech owner manual, heating-mode table pp. 29–30](https://www.aquatechheatpumps.com.au/_files/ugd/228c32_84eb2f4659664c0e92f0dd0fe910d8fa.pdf),
+[Aquatech RAPID/X6 design document, controller section pp. 33–34](https://www.aquatechheatpumps.com.au/_files/ugd/228c32_d38fa4bab7d74dbe8380bf3856f37858.pdf).
+
+The table helps interpret the installed F-code snapshot, but does **not** produce a defensible
+mode-to-F-code map yet:
+
+- F01=`60`, F03=`5` and F08=`60` align with the related service table's global target, global
+  water-control differential and heat-pump maximum respectively. They also align with STANDARD's
+  60/55 behaviour. This is family-manual support, not proof that F03 governs every Aquatech mode.
+- The differences `12`, `5`, `10` and `20` all occur in F71–F100, including F83/F86=`12`,
+  F80/F96=`5`, F88=`10` and F87=`20`. The repetitions and many unrelated controller settings with
+  the same ordinary values make a positional assignment unsafe. Treat the matches as search
+  fingerprints only.
+- F69=`7` and F95=`30` superficially match related firmware's seven-day disinfection interval and
+  30-minute hold. Aquatech documents a 32-minute hold, and the related manuals identify F67—not
+  F69—as an automatic-disinfection setting. These are low-confidence coincidences until a complete
+  table or controlled observation supports them.
+- F101–F116 split naturally into 6/5/5 monotonic groups, and their `150–500` magnitude resembles
+  EEV opening steps (the controller diagnostics expose roughly `100–480`; known F53/F56 EEV values
+  are `400`/`350`). They are therefore more plausibly refrigeration lookup curves than mode
+  temperatures. This is a moderate structural hypothesis, not a parameter interpretation.
+
+Changing the user target does not yet discriminate fixed trigger tables from target-relative
+deadbands. Hydrotherm's matching Tuya guide says the set temperature overrides a mode preset while
+the tank temperature triggers reheating “based on the mode”, which leans toward mode-specific fixed
+triggers. Direct Aquatech behaviour at altered targets remains the authority.
+
+## Stronger panel-command evidence — 2026-08-02
+
+The current official Hisense AHS-210/270HF4GHB manual shows the same five-button controller face,
+display layout, diagnostic indices 00–22 and five-mode vocabulary as Aquatech. It explicitly assigns:
+
+- **`M + Up`, hold 3 seconds while heating:** toggle Boost; compressor stops or stays off and the
+  element turns on until target.
+- **`Power + Clock + Down`, hold 5 seconds while on:** toggle manual sterilisation; heat to 70 °C,
+  hold 65–70 °C for 30 minutes, then exit (two-hour failure timeout).
+
+Source: [official Hisense AHS-210/270HF4GHB installation guide, controller and operation pp. 19–24](https://dtc-aus-api.hisense.com/medias/AHS-210HF4GHB-IG.pdf?context=bWFzdGVyfG1hbnVhbHwzMDM0NjQ3fGFwcGxpY2F0aW9uL3BkZnxhR1ExTDJnM05pODRPRFkzT0RJd056WTFNakUwTDBGSVV5MHlNVEJJUmpSSFNFSXRTVWN1Y0dSbXw1NTE3M2MwZThiYWUxZDRmMWMxNWJiNjhiNjFkZmUxZDMyNmYyNTExYjlkOTU3ZGFmNmNmOTg3MjNlYjdmMmY3).
+
+The Airtherm and Power Bay manuals independently document the same chords and state transitions on
+the same controller layout. Aquatech omits these chords and uses a different parameter-entry hold
+time, so they remain candidate firmware functions rather than Aquatech instructions. The visual,
+diagnostic and behavioural match nevertheless makes `M + Up` the strongest read-only-observation /
+controlled-test lead for an immediate element request.
 
 ## Candidate family
 
@@ -134,16 +202,24 @@ Therefore copy **concepts and search vocabulary**, not factory values, wiring or
 
 ## Workaround leads, ranked
 
-1. **Panel Boost test:** with Aquatech tank just above 60 °C and target 70 °C, invoke the matching
-   Boost chord if the physical panel/manual layout supports it. Observe element binary + circuit
-   power. Do not change service parameters.
-2. **Panel sterilisation test:** if Boost is absent/blocked, test the documented sterilisation chord.
-   Be ready to cancel it; verify tempering and safe maximum temperature first.
-3. **Full Tuya DP inventory:** compare raw Aquatech datapoints before/during a successful panel Boost
+1. **Panel Boost discriminator:** the Aquatech panel layout matches the official Hisense controller
+   that uses `M + Up` for Boost. If the owner later authorises a controlled test, use a tank just
+   above 60 °C and a target below the mechanical thermostat limit; observe the physical element
+   binary and circuit power. A changed/flashing element icon is supporting UI evidence, not proof of
+   load. Do not change service parameters.
+2. **Aquatech F66 weekly cycle:** manufacturer-confirmed to request the element from current
+   temperature to 70 °C, so it is the safest supported proof of an above-60 element path. It is
+   scheduled rather than on demand; whether enabling F66 starts immediately or only after its
+   internal interval is unknown. No change is authorised here.
+3. **Panel manual-sterilisation discriminator:** the matching-controller chord is
+   `Power + Clock + Down` for five seconds. It is less attractive than Boost because it deliberately
+   targets 70 °C and holds temperature. Aquatech documents weekly sterilisation but not this manual
+   chord. Verify tempering and cancellation behaviour before any later test.
+4. **Full Tuya DP inventory:** compare raw Aquatech datapoints before/during a successful panel Boost
    or sterilisation event. Look for a momentary command/boolean not mapped by Local Tuya.
-4. **Controller program code and PCB/display labels:** record diagnostic program code, firmware,
+5. **Controller program code and PCB/display labels:** record diagnostic program code, firmware,
    PCB model and display-controller markings; search those exact identifiers across YT/Hisense docs.
-5. **Ask OEM/distributors:** request the YT-200/250/300TB2 Modbus map and controller service manual
+6. **Ask OEM/distributors:** request the YT-200/250/300TB2 Modbus map and controller service manual
    from Solareast, Airtherm/Brookvent, Ecostar or Chameleon. Phrase the request around Boost,
    sterilisation and element output 16.
 
