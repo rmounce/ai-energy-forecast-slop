@@ -5,10 +5,8 @@ How the heat-pump hot-water (HWC) unit should exploit **PV surplus / curtailment
 (battery, A/C, dump-load fan heaters). Design + phased plan. Read alongside
 `docs/hwc/handover.md`, `docs/hwc/dp_planner.md`, `docs/hwc/aquatech_entities.md`.
 
-Status: **design agreed 2026-06-28; negative-price rule amended, Phase 1 implemented and
-**enabled** 2026-07-14.** Negative buy prices arrived earlier than expected, so the
-negative-price override was brought forward and switched on to catch the next event. Phase 2 (DP
-curtailment modelling) still has runway to spring.
+Status: **negative-price override enabled 2026-07-14; reactive surplus-element override enabled
+2026-08-03.** The longer-term DP curtailment model below remains optional future work.
 
 **Watch on the first live event:** element power is still *assumed* (1800 W) — confirm it from
 the Athom ch2 circuit, since it sets the break-even's Δ. The default paths (`performance` while
@@ -222,7 +220,27 @@ Forecast negative prices (occasional) get optimal DP treatment automatically (pr
 negative cost → DP runs the element hard); the override is the safety net for the *un*forecast
 ones.
 
-## Design — surplus / curtailment (DP, forecast-driven)
+## Design — surplus / curtailment
+
+### Implemented first: reactive element event
+
+The daemon gives HWC first claim on a large current surplus without duplicating EMHASS's
+curtailment calculation. `sensor.mpc_p_pv_curtailment >= 2200 W` for 120 s, tank `<= 60 C`,
+valid non-adverse power telemetry, and both compressor and element off starts `electric @ 70 C`.
+It does not interrupt a planned heat-pump cycle.
+
+Once started, the event ignores the curtailment value: the new 1800 W load naturally consumes
+the signal that caused entry. It exits after either grid import exceeds 400 W or battery power
+is below -400 W (discharging) continuously for 180 s, or when the tank reaches 69.8 C. Missing
+grid/battery telemetry is adverse while active and blocks entry. Negative-price control has
+higher precedence and clears any surplus latch. State persists across daemon restarts.
+
+This deliberately needs no Boost latch. The ordinary electric cycle is initiated at or below
+the confirmed inclusive 60 C trigger, then runs toward 70 C. HVAC remains independently
+controlled and absorbs smaller residual surplus; explicit cross-repo arbitration is deferred
+until observations show it is needed.
+
+### Future option: forecast-driven DP integration
 
 Model curtailment in the DP so the optimal plan emerges rather than being hand-coded. Most of
 the earlier reactive thresholds (2 kWh / 0.5 kWh / instantaneous gates) **disappear** — they

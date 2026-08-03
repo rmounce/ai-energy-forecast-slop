@@ -405,6 +405,23 @@ hwc:
     fallback_window_minutes: 5
     max_window_hours: 4
 
+  # Reactive use of otherwise-curtailed PV. The current MPC curtailment value qualifies entry;
+  # after the element starts, physical import/discharge latches the event because the added load
+  # naturally consumes (and can erase) the curtailment signal that triggered it.
+  surplus:
+    enabled: true
+    curtailment_entity: sensor.mpc_p_pv_curtailment
+    grid_import_entity: sensor.sigen_plant_grid_import_power
+    # Sigenergy convention: positive = charging, negative = discharging.
+    battery_power_entity: sensor.sigen_plant_battery_power
+    start_curtailment_w: 2200       # 1800 W element + 400 W entry margin
+    start_seconds: 120
+    exit_import_or_discharge_w: 400
+    exit_seconds: 180
+    max_entry_temp_c: 60
+    setpoint_c: 70
+    completion_temp_c: 69.8
+
   daemon:
     state_file: data/hwc_daemon_state.json
     debounce_seconds: 2

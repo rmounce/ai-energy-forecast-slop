@@ -59,6 +59,8 @@ docs/hwc_questions_for_previous_implementer.md
 HANDOVER.md
 
 # Personal shell/editor/tool dotfiles (not project config)
+.DS_Store
+._.DS_Store
 .bash_profile
 .bashrc
 .profile

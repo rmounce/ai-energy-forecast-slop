@@ -42,6 +42,7 @@ import hwc_executor  # noqa: E402
 import hwc_negative_price  # noqa: E402
 import hwc_planner  # noqa: E402
 import hwc_soc_tracker  # noqa: E402
+import hwc_surplus  # noqa: E402
 from config_utils import load_config  # noqa: E402
 
 RECONNECT_BACKOFF_INITIAL = 1
@@ -120,6 +121,8 @@ def watched_entities(config: dict) -> set[str]:
     if hwc_negative_price.enabled(config):
         entities.add(hwc_negative_price.price_entity(config))
         entities.add(hwc_negative_price.confirmed_price_entity(config))
+    if hwc_surplus.enabled(config):
+        entities |= hwc_surplus.watched_entities(config)
     return entities
 
 
@@ -174,6 +177,9 @@ def classify_state_change(config: dict, entity_id: str, old_state: dict | None, 
         # Every 5-minute price tick is a chance to enter/exit it, so this must not wait for the
         # periodic tick.
         return TriggerDecision(False, True, "live buy price changed")
+
+    if hwc_surplus.enabled(config) and entity_id in hwc_surplus.watched_entities(config):
+        return TriggerDecision(False, True, "surplus power flow changed")
 
     if entity_id in plan_entities:
         return TriggerDecision(False, True, "published plan changed")
@@ -447,6 +453,7 @@ class HwcDaemon:
         self.negative_price_state = hwc_negative_price.OverrideState.from_dict(
             state.get("negative_price")
         )
+        self.surplus_state = hwc_surplus.OverrideState.from_dict(state.get("surplus"))
         # Two-state (V_hot, T_hot) tracker state ({v_hot, t_hot, updated_at}); None until seeded.
         self.soc: dict | None = state.get("soc")
         # Cycle-reporting state (publish-only; firewalled from the control loop). The SQLite store
@@ -1028,8 +1035,15 @@ class HwcDaemon:
                     return
                 log.warning("Using HWC fallback decision: %s (%s)", decision.action, decision.reason)
 
+            planned_decision = decision
             decision = await asyncio.to_thread(
                 self._apply_negative_price_override, decision, effective_on
+            )
+            decision = await asyncio.to_thread(
+                self._apply_surplus_override,
+                decision,
+                negative_price_active=decision is not planned_decision,
+                compressor_on=effective_on,
             )
 
             log.info(
@@ -1248,6 +1262,74 @@ class HwcDaemon:
             compressor_on=compressor_state.get("state") == "on",
         )
 
+    def _apply_surplus_override(
+        self,
+        decision: hwc_executor.Decision,
+        *,
+        negative_price_active: bool,
+        compressor_on: bool,
+    ) -> hwc_executor.Decision:
+        """Latch element heating from current EMHASS curtailment, then exit on paid supply."""
+        if not hwc_surplus.enabled(self.config):
+            return decision
+        scfg = hwc_surplus.config(self.config)
+        try:
+            def read(entity: str) -> float | None:
+                return _coerce_float(
+                    hwc_executor._entity_state(self.config, entity).get("state")
+                )
+
+            tank_c = hwc_planner.get_tank_temperature(self.config)
+            curtailment_w = read(
+                scfg.get("curtailment_entity", "sensor.mpc_p_pv_curtailment")
+            )
+            grid_import_w = read(
+                scfg.get("grid_import_entity", "sensor.sigen_plant_grid_import_power")
+            )
+            battery_power_w = read(
+                scfg.get("battery_power_entity", "sensor.sigen_plant_battery_power")
+            )
+            element_entity = self.report_entities.get(
+                "element", "binary_sensor.aquatech_element"
+            )
+            element_raw = hwc_executor._entity_state(
+                self.config, element_entity
+            ).get("state")
+            element_on = (
+                True if element_raw == "on" else False if element_raw == "off" else None
+            )
+        except Exception:
+            log.exception("HWC surplus override could not read inputs; using the current decision")
+            return decision
+
+        override, new_state = hwc_surplus.decide(
+            self.config,
+            planned=decision,
+            now_ts=time.time(),
+            tank_c=tank_c,
+            curtailment_w=curtailment_w,
+            grid_import_w=grid_import_w,
+            battery_power_w=battery_power_w,
+            element_on=element_on,
+            compressor_on=compressor_on,
+            state=self.surplus_state,
+            permit=not negative_price_active,
+        )
+        if new_state != self.surplus_state:
+            self.surplus_state = new_state
+            self._save_state()
+        if override is None:
+            return decision
+        log.warning(
+            "HWC surplus override active: curtailment=%.0f W grid_import=%.0f W "
+            "battery=%.0f W (%s)",
+            curtailment_w,
+            grid_import_w,
+            battery_power_w,
+            override.reason,
+        )
+        return override
+
     def _should_suppress_off_after_heat(self, decision: hwc_executor.Decision) -> bool:
         grace = float(self.config["hwc"].get("daemon", {}).get("heat_command_grace_seconds", 600))
         return should_suppress_off_after_heat(
@@ -1438,6 +1520,9 @@ class HwcDaemon:
         negative_price = getattr(self, "negative_price_state", None)
         if negative_price is not None:
             payload["negative_price"] = negative_price.to_dict()
+        surplus = getattr(self, "surplus_state", None)
+        if surplus is not None:
+            payload["surplus"] = surplus.to_dict()
         soc = getattr(self, "soc", None)  # getattr: tolerate __new__'d daemons in unit tests
         if soc is not None:
             payload["soc"] = soc
