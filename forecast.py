@@ -2206,7 +2206,7 @@ def _execute_pd_direct_prediction(historical_df, future_covariates_df):
     Live values will be very close to but not identical to the eval framework's OOF
     debiased values — the eval correctly uses OOF for leakage-free historical comparison;
     live correctly uses the final model trained on all data. See
-    docs/price/pd_direct_publish_rfc.md for the expected delta and audit guidance.
+    docs/archive/price_forecast_2026/pd_direct_publish_rfc.md for the expected delta and audit guidance.
     """
     # Lazy import so the eval module's parquet load only happens when this path runs.
     sys.path.insert(0, str(Path(__file__).resolve().parent))

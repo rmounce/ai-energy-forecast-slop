@@ -11,7 +11,7 @@ Related repo entry points:
 - [docs/roadmap.md](../../roadmap.md)
 - [docs/data_sources.md](../../data_sources.md)
 - [eval/README.md](../../../eval/README.md)
-- [docs/price/training_runs.md](../training_runs.md)
+- [docs/archive/price_forecast_2026/training_runs.md](../training_runs.md)
 - [forecast.py](../forecast.py)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
@@ -256,10 +256,10 @@ If helpful, a reasonable order is:
 6. [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 Optional deeper context:
-- [docs/price/training_runs.md](../training_runs.md)
-- [docs/price/tft_price_forecast.md](../tft_price_forecast.md)
-- [docs/price/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
-- [docs/price/option_b_plan_2026-04-22.md](../option_b_plan_2026-04-22.md)
+- [docs/archive/price_forecast_2026/training_runs.md](../training_runs.md)
+- [docs/archive/price_forecast_2026/tft_price_forecast.md](../tft_price_forecast.md)
+- [docs/archive/price_forecast_2026/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
+- [docs/archive/price_forecast_2026/option_b_plan_2026-04-22.md](../option_b_plan_2026-04-22.md)
 
 ---
 

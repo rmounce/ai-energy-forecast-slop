@@ -13,13 +13,13 @@ Primary repo entry points:
 - [eval/README.md](../../../eval/README.md)
 - [forecast.py](../forecast.py)
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
-- [docs/price/training_runs.md](../training_runs.md)
+- [docs/archive/price_forecast_2026/training_runs.md](../training_runs.md)
 
 Recent review / experiment notes:
-- [docs/price/reviews/independent_review_brief_2026-04-21.md](./independent_review_brief_2026-04-21.md)
-- [docs/price/reviews/holistic_independent_review_brief_2026-04-22.md](./holistic_independent_review_brief_2026-04-22.md)
-- [docs/price/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
-- [docs/price/reviews/codex_review_response_2026-04-23.md](./codex_review_response_2026-04-23.md)
+- [docs/archive/price_forecast_2026/reviews/independent_review_brief_2026-04-21.md](./independent_review_brief_2026-04-21.md)
+- [docs/archive/price_forecast_2026/reviews/holistic_independent_review_brief_2026-04-22.md](./holistic_independent_review_brief_2026-04-22.md)
+- [docs/archive/price_forecast_2026/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
+- [docs/archive/price_forecast_2026/reviews/codex_review_response_2026-04-23.md](./codex_review_response_2026-04-23.md)
 
 ---
 
@@ -211,7 +211,7 @@ Current repo reading:
   diagnosing the residual Amber gap more directly
 
 See:
-- [docs/price/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
+- [docs/archive/price_forecast_2026/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
 
 ---
 
@@ -283,6 +283,6 @@ If helpful, a reasonable order is:
 6. [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 Then, for recent context:
-- [docs/price/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
-- [docs/price/reviews/holistic_independent_review_brief_2026-04-22.md](./holistic_independent_review_brief_2026-04-22.md)
-- [docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
+- [docs/archive/price_forecast_2026/dynamic_bridge_results_2026-04-24.md](../dynamic_bridge_results_2026-04-24.md)
+- [docs/archive/price_forecast_2026/reviews/holistic_independent_review_brief_2026-04-22.md](./holistic_independent_review_brief_2026-04-22.md)
+- [docs/archive/price_forecast_2026/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)

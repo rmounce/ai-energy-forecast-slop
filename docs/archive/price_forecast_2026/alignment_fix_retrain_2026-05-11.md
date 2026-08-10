@@ -67,7 +67,7 @@ side-by-side for comparison.
    without a side-by-side. Same `train/train_pd_debiaser.py` has the same merge
    pattern — apply the same `--actuals-shift-min` flag pattern.
 3. **TFT shadow** (already on 2026-06-05 sunset clock): the structural critique
-   documented in `docs/price/tft_price_forecast.md` says TFT compresses peaks and
+   documented in `docs/archive/price_forecast_2026/tft_price_forecast.md` says TFT compresses peaks and
    regresses toward the encoder median regardless of training-target alignment.
    Alignment fix unlikely to rescue TFT; deferred.
 4. **Residual band table** (`models/pd_residual/residual_bands.parquet`): built

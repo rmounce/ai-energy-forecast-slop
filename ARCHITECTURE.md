@@ -292,7 +292,7 @@ InfluxDB, thresholds set by Phase 6). **Both must pass before Phase 5 sub-tasks 
 > The 2026-05-05 `run011b_active_15` retrain was rejected on Window A/B `netload_tariffed`
 > gates. No further TFT training is to be launched until a no-ML "PD-direct" baseline has
 > been measured through the same gates. Full plan in `docs/roadmap.md` (top section,
-> 2026-05-05 Strategic Pivot); structural critique in `docs/price/tft_price_forecast.md`.
+> 2026-05-05 Strategic Pivot); structural critique in `docs/archive/price_forecast_2026/tft_price_forecast.md`.
 
 The TFT price, tactical Tier 1, and PD-direct tracks have all produced useful
 evidence, but they are no longer active production/shadow publishers. The active
@@ -301,7 +301,7 @@ price path is the APF/LightGBM extrapolation surfaced through
 scripts, and helper functions remain for explicit revival/comparison work only;
 normal production runs should not consume `p5min_tactical`, `pd_direct`,
 `model_a_hybrid`, or `lgbm_strategic` when evaluating APF extrapolation. Full
-TFT price rationale is documented in **[docs/price/tft_price_forecast.md](docs/price/tft_price_forecast.md)**;
+TFT price rationale is documented in **[docs/archive/price_forecast_2026/tft_price_forecast.md](docs/archive/price_forecast_2026/tft_price_forecast.md)**;
 longer-term speculative ideas are captured in **[docs/ideas.md](docs/ideas.md)**.
 
 **Summary:**
@@ -336,7 +336,7 @@ longer-term speculative ideas are captured in **[docs/ideas.md](docs/ideas.md)**
 **Phase 4 (conformal calibration):**
 8. `train/calibrate_conformal.py` → conditional conformal δ corrections; `models/lgbm_tactical/conformal_deltas.json`
 
-**Status (2026-04-20):** Phases 1–9 + Phase 6 + Phase 8 complete. All financial gates pass — `tier1_tier2_hybrid` (Run 011b + binary spike routing) overall +9.7% vs amber_apf_lgbm baseline ✅. Active production model: Run 011b checkpoint. Phase 7 decoder expansion has now been trained twice: Run 014 (18-feature checkpoint) failed the interim holistic eval (**−35.3% overall vs amber_apf_lgbm**), and the follow-up flat-wMAPE ablation Run 015 failed even harder (**−65.9% overall**). Run 011b therefore remains the incumbent, and flat horizon weighting is not promoted. See `docs/roadmap.md`, `docs/price/tft_price_forecast.md`, and `docs/price/training_runs.md`.
+**Status (2026-04-20):** Phases 1–9 + Phase 6 + Phase 8 complete. All financial gates pass — `tier1_tier2_hybrid` (Run 011b + binary spike routing) overall +9.7% vs amber_apf_lgbm baseline ✅. Active production model: Run 011b checkpoint. Phase 7 decoder expansion has now been trained twice: Run 014 (18-feature checkpoint) failed the interim holistic eval (**−35.3% overall vs amber_apf_lgbm**), and the follow-up flat-wMAPE ablation Run 015 failed even harder (**−65.9% overall**). Run 011b therefore remains the incumbent, and flat horizon weighting is not promoted. See `docs/roadmap.md`, `docs/archive/price_forecast_2026/tft_price_forecast.md`, and `docs/archive/price_forecast_2026/training_runs.md`.
 
 ---
 

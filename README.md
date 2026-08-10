@@ -150,7 +150,7 @@ about APF extrapolation.
 The current price-forecast source contract lives in
 `docs/price/price_forecast_sources.md` and `eval/price_source_contracts.py`.
 Historical APF-free plans and abandonment notes live in `docs/roadmap.md`.
-Structural critique of the TFT line is in `docs/price/tft_price_forecast.md`.
+Structural critique of the TFT line is in `docs/archive/price_forecast_2026/tft_price_forecast.md`.
 
 Near-term work, in order:
 

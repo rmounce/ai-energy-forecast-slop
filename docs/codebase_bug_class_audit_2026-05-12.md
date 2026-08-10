@@ -20,7 +20,7 @@ AEMO run tags and publish a stale curve that still looks fresh.
 ### 2. Timestamp convention drift
 
 Current promoted PD-direct / PD7Day debias artifacts include the 2026-05-11
-alignment fix and are documented in `docs/price/alignment_fix_retrain_2026-05-11.md`.
+alignment fix and are documented in `docs/archive/price_forecast_2026/alignment_fix_retrain_2026-05-11.md`.
 The canonical HA publish surfaces use UTC interval-start timestamps.
 
 Deferred risks remain in archived or non-production paths:

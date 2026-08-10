@@ -171,7 +171,7 @@ source is not currently exercised by the production EMHASS path, so it's
 purely diagnostic.
 
 **2026-05-14 follow-up — bias audit of the actual strategic sources**:
-`docs/price/price_forecast_bias_audit_2026-05-14.md` audits LGBM (the
+`docs/archive/price_forecast_2026/price_forecast_bias_audit_2026-05-14.md` audits LGBM (the
 `amber_apf_lgbm` strategic curve) and TFT (the `model_a_hybrid` strategic
 curve) the same way this doc audits PD-direct. LGBM over-forecasts
 overnight by +$14.73/MWh, evening by +$11.97, and 24h+ horizons by +$6.37
@@ -192,7 +192,7 @@ PD-direct.
 ## Cross-references
 
 - `docs/roadmap.md` §4 — TFT load / PD-direct production status
-- `docs/price/alignment_fix_retrain_2026-05-11.md` — the May 11 promotion this audit
+- `docs/archive/price_forecast_2026/alignment_fix_retrain_2026-05-11.md` — the May 11 promotion this audit
   is segmented around
 - `docs/price/production_forecast_switch_plan.md` — production cadence including the
   2026-05-13 `publish-pd-direct` chained refresh

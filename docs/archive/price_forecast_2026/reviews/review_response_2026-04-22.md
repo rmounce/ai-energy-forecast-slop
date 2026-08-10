@@ -1,17 +1,17 @@
 # Response To Holistic Review — 2026-04-22
 
 Purpose: record the architectural implications of the holistic review in
-[docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
+[docs/archive/price_forecast_2026/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 and how it changes current priorities.
 
 This note is not a rebuttal. It is a compact statement of what the review appears to
 change in the repo's working roadmap.
 
 Related:
-- [docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
+- [docs/archive/price_forecast_2026/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
 - [docs/roadmap.md](../../roadmap.md)
-- [docs/price/option_b_plan_2026-04-22.md](../option_b_plan_2026-04-22.md)
-- [docs/price/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
+- [docs/archive/price_forecast_2026/option_b_plan_2026-04-22.md](../option_b_plan_2026-04-22.md)
+- [docs/archive/price_forecast_2026/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
 
 ---
 

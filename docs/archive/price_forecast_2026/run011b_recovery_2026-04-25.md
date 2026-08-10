@@ -12,7 +12,7 @@ Source snapshot:
 - `~/.zfs/snapshot/autosnap_2026-04-17_00:00:10_daily/src/ai-energy-forecast-slop/models/tft_price/scalers.pkl`
 
 Why this appears to be the correct Run 011b-era asset:
-- checkpoint metadata matches the documented Run 011b note in [docs/price/training_runs.md](./training_runs.md):
+- checkpoint metadata matches the documented Run 011b note in [docs/archive/price_forecast_2026/training_runs.md](./training_runs.md):
   - epoch `5`
   - val loss `0.053756...`
   - quantiles `[0.05, 0.10, 0.50, 0.90, 0.95, 0.99]`

@@ -151,7 +151,7 @@ SUMMER_FEED_IN_OVERRIDES: dict[str, float] = {
 
 # LGBM price-forecast bias correction by Adelaide-local time-of-day bucket.
 # Values are signed bias in $/MWh (pred - actual) measured by
-# `docs/price/price_forecast_bias_audit_2026-05-14.md` over 2026-04-01 -> 2026-05-13,
+# `docs/archive/price_forecast_2026/price_forecast_bias_audit_2026-05-14.md` over 2026-04-01 -> 2026-05-13,
 # n=254,589. The corrected forecast = raw - bias[bucket], which centres each
 # bucket's mean error at zero. Applied to `amber_expanded` (the
 # `amber_apf_lgbm` strategic curve) when `--lgbm-bias-calibration` is set.

@@ -10,7 +10,7 @@ Related repo documents:
 - [ARCHITECTURE.md](../../../ARCHITECTURE.md)
 - [docs/roadmap.md](../../roadmap.md)
 - [eval/README.md](../../../eval/README.md)
-- [docs/price/training_runs.md](../training_runs.md)
+- [docs/archive/price_forecast_2026/training_runs.md](../training_runs.md)
 
 ---
 

@@ -58,7 +58,7 @@ a) `--terminal-energy-value-mwh <window-mean wholesale price>`
 b) `--strategic-soc-handoff --strategic-target-mode exact`
    - Production-equivalent path. Strategic optimiser handles terminal SoC
      via the 72h forward solve. This is what
-     `docs/price/dynamic_bridge_experiment_plan_2026-04-23.md` uses for all the
+     `docs/archive/price_forecast_2026/dynamic_bridge_experiment_plan_2026-04-23.md` uses for all the
      6-week MPC sweeps.
    - Pros: comparable to historic eval results; closer to live behaviour.
    - Cons: adds dependency on strategic solve which may interact with the

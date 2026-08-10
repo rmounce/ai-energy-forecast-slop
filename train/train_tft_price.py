@@ -21,7 +21,7 @@ Masked loss: y_mask [N, 144] indicates which decoder steps have valid covariates
   Steps 1–56  (28h): ~8.5K samples (47.9% of PREDISPATCH runs)
   Steps 57–144 (72h): ~1K samples  (PD7Day backfill 2026-02-09 → 2026-04-11, growing)
 
-See data/build_training_dataset.py and docs/price/tft_price_forecast.md for full design rationale.
+See data/build_training_dataset.py and docs/archive/price_forecast_2026/tft_price_forecast.md for full design rationale.
 
 Input data: pre-built numpy arrays from data/build_training_dataset.py
   data/parquet/X_encoder.npy     [N, 96,  20]  — normalised encoder features

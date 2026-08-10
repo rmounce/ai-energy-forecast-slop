@@ -6,8 +6,8 @@ long-run evaluation shape that was tried.
 
 Related:
 - [docs/roadmap.md](../roadmap.md)
-- [docs/price/reviews/codex_review_response_2026-04-23.md](reviews/codex_review_response_2026-04-23.md)
-- [docs/price/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md)
+- [docs/archive/price_forecast_2026/reviews/codex_review_response_2026-04-23.md](reviews/codex_review_response_2026-04-23.md)
+- [docs/archive/price_forecast_2026/option_b_sweep_results_2026-04-23.md](./option_b_sweep_results_2026-04-23.md)
 
 ---
 
@@ -205,7 +205,7 @@ nice -n19 python eval/rolling_mpc_eval.py \
 ## 5. Outcome Of The First Batch
 
 The completed results are summarized in
-[docs/price/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md).
+[docs/archive/price_forecast_2026/dynamic_bridge_results_2026-04-24.md](./dynamic_bridge_results_2026-04-24.md).
 
 Headline outcome:
 - the handoff-enabled baseline remained at **$2.2706/day** for `model_a_hybrid`

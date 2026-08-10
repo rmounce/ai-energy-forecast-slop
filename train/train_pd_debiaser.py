@@ -103,7 +103,7 @@ def build_features(pd_df: pd.DataFrame, actuals: pd.DataFrame,
     the *adjacent* half-hour (the canonical training convention, ship-stable).
     Setting it to 30 shifts the actuals' time forward so it represents
     interval-end aligned to the forecast — gives the correctly-aligned
-    training pair. See `docs/price/alignment_fix_retrain_2026-05-11.md` for the
+    training pair. See `docs/archive/price_forecast_2026/alignment_fix_retrain_2026-05-11.md` for the
     PD7Day side-by-side that motivates this flag.
     """
     print("  Joining PREDISPATCH forecasts with actuals...")

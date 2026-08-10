@@ -1,14 +1,14 @@
 # Codex Review Response — 2026-04-23
 
 Purpose: respond directly to the follow-up brief in
-[docs/price/reviews/codex_holistic_review_followup_2026-04-23.md](./codex_holistic_review_followup_2026-04-23.md)
+[docs/archive/price_forecast_2026/reviews/codex_holistic_review_followup_2026-04-23.md](./codex_holistic_review_followup_2026-04-23.md)
 after the strategic-handoff rerun and the fixed-blend Option B sweep.
 
 Related:
-- [docs/price/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
-- [docs/price/reviews/codex_holistic_review_followup_2026-04-23.md](./codex_holistic_review_followup_2026-04-23.md)
-- [docs/price/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
-- [docs/price/option_b_sweep_results_2026-04-23.md](../option_b_sweep_results_2026-04-23.md)
+- [docs/archive/price_forecast_2026/reviews/codex_holistic_review_draft_2026-04-22.md](./codex_holistic_review_draft_2026-04-22.md)
+- [docs/archive/price_forecast_2026/reviews/codex_holistic_review_followup_2026-04-23.md](./codex_holistic_review_followup_2026-04-23.md)
+- [docs/archive/price_forecast_2026/track10a_handoff_analysis_2026-04-22.md](../track10a_handoff_analysis_2026-04-22.md)
+- [docs/archive/price_forecast_2026/option_b_sweep_results_2026-04-23.md](../option_b_sweep_results_2026-04-23.md)
 
 ---
 

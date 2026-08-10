@@ -385,7 +385,7 @@ Current CSV (`holistic_eval_results.csv`) contains `tier1_tier2_hybrid` as the p
 
 *Debiaser configuration: OOF debiased `pd_rrp` at steps 0–55; upstream LightGBM spike
 classifier (`models/spike_classifier/lgbm_spike_clf.pkl`, threshold=0.65) routes each
-run_time to debiaser or raw PREDISPATCH passthrough. See `docs/price/reviews/review_debiaser_spike_guard.md`.*
+run_time to debiaser or raw PREDISPATCH passthrough. See `docs/archive/price_forecast_2026/reviews/review_debiaser_spike_guard.md`.*
 
 *Reproducibility: results use `eval/results/holistic_eval_actuals.parquet` (frozen from
 InfluxDB 2026-04-19). Run `eval/export_holistic_actuals.py` to refresh the snapshot.*
@@ -411,7 +411,7 @@ Gate thresholds and primary results remain price-only (matching the established 
 **Gate status (2026-04-19): ALL GATES PASS ✅.** Phase 5 remainder unblocked.
 
 Previous results (scalar 1000 $/MWh spike guard): normal −21.7% ❌. Root cause and
-resolution documented in `docs/price/reviews/review_debiaser_spike_guard.md`.
+resolution documented in `docs/archive/price_forecast_2026/reviews/review_debiaser_spike_guard.md`.
 
 ---
 
@@ -700,7 +700,7 @@ Interpretation:
   likely production design endpoint
 
 Independent review checkpoint (2026-04-21):
-- an external review, based on the standalone briefing in `docs/price/reviews/independent_review_brief_2026-04-21.md`,
+- an external review, based on the standalone briefing in `docs/archive/price_forecast_2026/reviews/independent_review_brief_2026-04-21.md`,
   judged the static terminal-value win most likely to be an **eval surrogate** for the missing
   strategic `14h` SoC boundary condition
 - on that reading, the next priority is to align the rolling eval with the described production
