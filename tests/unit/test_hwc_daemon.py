@@ -140,6 +140,25 @@ def test_suppresses_off_inside_heat_command_grace():
     )
 
 
+def test_element_handover_does_not_suppress_negative_price_exit(monkeypatch):
+    import hwc_executor as he
+
+    daemon = hd.HwcDaemon.__new__(hd.HwcDaemon)
+    daemon.config = _config()
+    daemon.last_heat_command_at = 100.0
+    monkeypatch.setattr(hd.time, "monotonic", lambda: 110.0)
+
+    daemon.last_compressor_command_action = "heat"
+    assert daemon._should_suppress_off_after_heat(
+        he.Decision(action="off", reason="planner changed during compressor start")
+    )
+
+    daemon.last_compressor_command_action = "off"
+    assert not daemon._should_suppress_off_after_heat(
+        he.Decision(action="off", reason="negative-price event ended")
+    )
+
+
 def test_command_key_dedups_identical_commands_and_ignores_noops():
     import services.hwc_daemon as hd
     import hwc_executor as he

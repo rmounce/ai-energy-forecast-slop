@@ -1331,6 +1331,11 @@ class HwcDaemon:
         return override
 
     def _should_suppress_off_after_heat(self, decision: hwc_executor.Decision) -> bool:
+        # The grace protects only a compressor start that has not registered yet.  Electric
+        # heating is a compressor stop; after a Hybrid+ -> element handover the old heat-command
+        # timestamp must not delay a negative-price exit (observed live 2026-08-10).
+        if self.last_compressor_command_action != "heat":
+            return False
         grace = float(self.config["hwc"].get("daemon", {}).get("heat_command_grace_seconds", 600))
         return should_suppress_off_after_heat(
             decision_action=decision.action,

@@ -209,7 +209,10 @@ a conservative-negative read is strong evidence the confirmed price is negative 
   only a **strictly positive confirmed current price** releases it; zero continues heating.
   When released, **actively revert to the DP plan's mode and setpoint** — do not merely stop
   asserting the override. `performance`'s 60→70 element leg is **ungated**: left in place above
-  60 °C it will keep importing at 1800 W to reach setpoint.
+  60 °C it will keep importing at 1800 W to reach setpoint. The compressor-start confirmation
+  grace does not apply after the sequential handover has recorded the compressor command state
+  as off; this prevents a stale Hybrid+ start timestamp delaying the element exit (fixed after
+  the first live handover on 2026-08-10).
 - **Physical confirmation:** HA mode + target only prove that Local Tuya accepted the request.
   After 60 s and at/below the 60 °C trigger, element-only commands must also have
   `binary_sensor.aquatech_element == on`; otherwise retry. Above 60 °C, leave the accepted
