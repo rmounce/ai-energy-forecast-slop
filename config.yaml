@@ -226,6 +226,7 @@ models:
     primary_model_key: p5min_price
     forecast_horizon: 12
 paths:
+  production_bundle_root: models/production
   stpasa_regionsolution_file: data/parquet/aemo_stpasa_regionsolution_sa1.parquet
   price_p30_model_file: price_p30_model.pkl
   price_p30_params_file: price_p30_params.json
@@ -274,5 +275,7 @@ adjusters:
 adjuster_history_days: 30
 training_history_days: 730
 prediction_history_days: 10
+production:
+  apf_max_age_minutes: 180
 timezone: Australia/Adelaide
 gst_rate: 1.1

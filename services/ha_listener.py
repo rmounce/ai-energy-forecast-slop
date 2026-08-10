@@ -35,6 +35,7 @@ DEBOUNCE_SECONDS = 1.0
 HEARTBEAT_SECONDS = 30 * 60
 HEARTBEAT_POLL_SECONDS = 30
 SUBPROCESS_TIMEOUT_SECONDS = 120
+FAILURE_RETRY_SECONDS = 5 * 60
 RECONNECT_BACKOFF_INITIAL = 1
 RECONNECT_BACKOFF_CAP = 30
 HEALTHCHECK_TIMEOUT = 5
@@ -64,8 +65,10 @@ class Listener:
         self.healthcheck_url = os.environ.get("HC_PREDICT_URL")
         self.trigger = asyncio.Event()
         self.run_lock = asyncio.Lock()
-        self.last_run_at = 0.0  # monotonic
+        self.last_run_at: float | None = None  # monotonic; validated successful publish only
         self.shutdown = asyncio.Event()
+        self._retry_task: asyncio.Task | None = None
+        self._retry_not_before = 0.0
         self._next_msg_id = 1
 
     def _msg_id(self) -> int:
@@ -157,6 +160,16 @@ class Listener:
             # Any extra events that arrived during the debounce are
             # satisfied by this run; clear before firing.
             self.trigger.clear()
+            remaining = self._retry_not_before - time.monotonic()
+            if remaining > 0:
+                log.info("retry cadence active; waiting %.1fs", remaining)
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self.shutdown.wait(), timeout=remaining)
+                if self.shutdown.is_set():
+                    return
+                # Consume either the timer-generated retry trigger or an APF
+                # event that arrived during the bounded wait.
+                self.trigger.clear()
             await self._run_predict_price()
 
     async def _wait_for_trigger_or_shutdown(self) -> None:
@@ -175,6 +188,8 @@ class Listener:
         async with self.run_lock:
             started = time.monotonic()
             log.info("Running: %s", " ".join(PREDICT_PRICE_CMD))
+            proc = None
+            stream_task = None
             try:
                 # PYTHONUNBUFFERED=1 so the child's stdout is line-buffered
                 # when piped; without it Python block-buffers and we only
@@ -191,24 +206,58 @@ class Listener:
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=SUBPROCESS_TIMEOUT_SECONDS)
                 except asyncio.TimeoutError:
-                    log.error("predict-price exceeded %ss; killing", SUBPROCESS_TIMEOUT_SECONDS)
-                    proc.kill()
-                    await proc.wait()
-                    stream_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await stream_task
+                    log.error("prediction timeout after %ss", SUBPROCESS_TIMEOUT_SECONDS)
+                    await self._terminate_child(proc, stream_task)
+                    self._schedule_failure_retry()
                     return
                 # Drain any final lines buffered after process exit.
                 await stream_task
                 elapsed = time.monotonic() - started
-                self.last_run_at = time.monotonic()
                 if proc.returncode == 0:
                     log.info("predict-price succeeded in %.1fs", elapsed)
+                    self.last_run_at = time.monotonic()
+                    self._retry_not_before = 0.0
                     await self._ping_healthcheck()
                 else:
-                    log.error("predict-price failed rc=%s after %.1fs", proc.returncode, elapsed)
+                    log.error("generation/publication failure rc=%s after %.1fs", proc.returncode, elapsed)
+                    self._schedule_failure_retry()
             except Exception:
-                log.exception("predict-price subprocess raised")
+                log.exception("prediction subprocess raised")
+                self._schedule_failure_retry()
+            finally:
+                if proc is not None and proc.returncode is None:
+                    await self._terminate_child(proc, stream_task)
+
+    @staticmethod
+    async def _terminate_child(proc, stream_task=None) -> None:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+        if stream_task is not None and not stream_task.done():
+            stream_task.cancel()
+        if stream_task is not None:
+            with suppress(asyncio.CancelledError):
+                await stream_task
+
+    def _schedule_failure_retry(self) -> None:
+        """Retry once on the bounded cadence; trigger remains coalesced."""
+        if self.shutdown.is_set():
+            return
+        # A trigger that arrived during the failed run is represented by this
+        # retry; clearing it prevents an immediate tight-loop rerun.
+        self.trigger.clear()
+        self._retry_not_before = time.monotonic() + FAILURE_RETRY_SECONDS
+        log.info("retry scheduled in %ss", FAILURE_RETRY_SECONDS)
+
+        async def arm() -> None:
+            try:
+                await asyncio.wait_for(self.shutdown.wait(), timeout=FAILURE_RETRY_SECONDS)
+            except asyncio.TimeoutError:
+                if not self.shutdown.is_set():
+                    self.trigger.set()
+
+        if self._retry_task is None or self._retry_task.done():
+            self._retry_task = asyncio.create_task(arm())
 
     async def _stream_subprocess_output(self, proc) -> None:
         assert proc.stdout is not None
@@ -234,13 +283,12 @@ class Listener:
         # Mark startup so the first heartbeat-driven run isn't immediate;
         # the WebSocket will usually deliver an event well within the
         # heartbeat window in normal operation.
-        self.last_run_at = time.monotonic()
         while not self.shutdown.is_set():
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self.shutdown.wait(), timeout=HEARTBEAT_POLL_SECONDS)
             if self.shutdown.is_set():
                 return
-            idle = time.monotonic() - self.last_run_at
+            idle = float("inf") if self.last_run_at is None else time.monotonic() - self.last_run_at
             if idle >= HEARTBEAT_SECONDS:
                 log.warning(
                     "No predict-price run in %.0fs (>= %ss heartbeat); firing fallback",
@@ -251,10 +299,16 @@ class Listener:
     # ---- Orchestration ----
 
     async def run(self) -> None:
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.consume_websocket())
-            tg.create_task(self.worker())
-            tg.create_task(self.heartbeat())
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self.consume_websocket())
+                tg.create_task(self.worker())
+                tg.create_task(self.heartbeat())
+        finally:
+            if self._retry_task and not self._retry_task.done():
+                self._retry_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._retry_task
 
 
 def _install_signal_handlers(listener: Listener, loop: asyncio.AbstractEventLoop) -> None:

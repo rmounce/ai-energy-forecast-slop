@@ -143,6 +143,7 @@ models:
       enabled: true
       half_life_days: 90
 paths:
+  production_bundle_root: models/production
   price_model_file: price_model.pkl
   price_params_file: price_params.json
   price_importance_file: price_importance.json
@@ -173,5 +174,7 @@ adjusters:
 adjuster_history_days: 30
 training_history_days: 730
 prediction_history_days: 10
+production:
+  apf_max_age_minutes: 180
 timezone: Australia/Sydney
 gst_rate: 1.1

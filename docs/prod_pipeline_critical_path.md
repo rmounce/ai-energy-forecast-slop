@@ -7,7 +7,7 @@
 tactical), the AEMO PREDISPATCH/PD7Day/SEVENDAYOUTLOOK ingest paths (retained
 for data collection/eval only), the daily housekeeping
 (`update-tariffs`, `update-adjusters`, `backfill-actuals`), and weekly
-model training. Those run but are not load-bearing for dispatch *today*.
+candidate model training. Those run but are not load-bearing for dispatch *today*.
 
 Pipeline checked 2026-08-10, after the APF-free price/load shadow surfaces were
 soft-archived and STPASA covariates were promoted into the production APF extrapolator.
@@ -62,9 +62,14 @@ EMHASS day-ahead optimises 72 hours ahead and needs both:
 4. `forecast.py`: startup + data fetch (Solcast, weather, AEMO 5MIN
    future-covariate API, local STPASA parquet, InfluxDB price history, Amber)
    → LGBM quantile inference → tariff application.
-5. Publishes `sensor.ai_price_forecast`, `..._low`, `..._high` (the
+5. Validates the complete 144-point p30/p50/p70 family and publishes
+   `sensor.ai_price_forecast`, `..._low`, `..._high` (the
    "Legacy LGBM publish: …s (prod-critical fast path)" line in the
    journal marks this point).
+
+Missing/stale APF, incomplete quantiles, or any required HA write makes the
+child exit nonzero. The listener healthcheck is pinged only after validated
+success; failures retry on a five-minute cadence.
 
 **Latency from Amber publish → `sensor.ai_price_forecast` updated**:
 ~7-8s end-to-end. ~6-7s of that is `forecast.py` startup + multi-source

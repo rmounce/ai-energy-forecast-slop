@@ -24,6 +24,10 @@ from aemo_session import make_aemo_session
 from influxdb import InfluxDBClient
 import time
 import pickle
+import tempfile
+import copy
+import hashlib
+import subprocess
 
 import io
 import re
@@ -40,6 +44,9 @@ from tariff_utils import (
     tariffed_price_frame_from_wholesale_mwh,
 )
 from eval.retro_tier1_inference import build_feature_dict as build_tier1_feature_dict, build_long_matrix_for_model as build_tier1_long_matrix
+from production_contract import ForecastContractError, PredictionOutcome, validate_apf, validate_forecast_family
+from model_bundles import BundleError, BundleStore
+from candidate_quality import evaluate_eligibility
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -88,6 +95,51 @@ _aemo_session = make_aemo_session()
 
 # Set to True by --debug-tft flag to print TFT input/output diagnostic table
 _DEBUG_TFT = False
+_PREDICTION_BUNDLE_PATHS = None
+_PREDICTION_BUNDLE_IDS = None
+_PREDICTION_APF_AGES = None
+
+
+def _production_bundle_store() -> BundleStore:
+    configured = CONFIG.get("paths", {}).get("production_bundle_root", "models/production")
+    path = Path(configured)
+    return BundleStore(path if path.is_absolute() else ROOT / path)
+
+
+def _prediction_model_paths(base_model_name: str) -> dict[str, Path]:
+    """Resolve one active family exactly once for a prediction run."""
+    global _PREDICTION_BUNDLE_PATHS, _PREDICTION_BUNDLE_IDS
+    if _PREDICTION_BUNDLE_PATHS is not None and base_model_name in _PREDICTION_BUNDLE_PATHS:
+        return _PREDICTION_BUNDLE_PATHS[base_model_name]
+    paths = {}
+    try:
+        bundle_id, bundle_path = _production_bundle_store().resolve_active(base_model_name)
+        if _PREDICTION_BUNDLE_IDS is None:
+            _PREDICTION_BUNDLE_IDS = {}
+        _PREDICTION_BUNDLE_IDS[base_model_name] = bundle_id
+        logging.info("Resolved %s model bundle %s", base_model_name, bundle_id)
+        for model_name in CONFIG["models"][base_model_name].get("quantile_models", {}):
+            paths[model_name] = {
+                "model": bundle_path / f"{model_name}_model.pkl",
+                "params": bundle_path / f"{model_name}_params.json",
+            }
+    except BundleError:
+        if _production_bundle_store().active_pointer(base_model_name).exists():
+            raise
+        # Root files are the pre-migration installation. The explicit migration
+        # command creates the active pointer; until then preserve current runtime.
+        for model_name in CONFIG["models"][base_model_name].get("quantile_models", {}):
+            paths[model_name] = {
+                "model": Path(CONFIG["paths"][f"{model_name}_model_file"]),
+                "params": Path(CONFIG["paths"][f"{model_name}_params_file"]),
+            }
+        if _PREDICTION_BUNDLE_IDS is None:
+            _PREDICTION_BUNDLE_IDS = {}
+        _PREDICTION_BUNDLE_IDS[base_model_name] = "legacy-root"
+    if _PREDICTION_BUNDLE_PATHS is None:
+        _PREDICTION_BUNDLE_PATHS = {}
+    _PREDICTION_BUNDLE_PATHS[base_model_name] = paths
+    return paths
 
 # --------------------------------------------------------------------------- #
 # 4. DATA FETCHING & PROCESSING FUNCTIONS
@@ -1094,6 +1146,7 @@ def train_single_model(model_name, quantile_info=None):
         with open(CONFIG['paths'][f'{model_name}_params_file'], 'w') as f:
             json.dump(params, f, indent=4)
         logging.info("Model and parameters saved successfully.")
+        return len(model_data)
 
     finally:
         client.close()
@@ -1108,14 +1161,15 @@ def train_models(base_model_name):
 
     if not quantile_models_config:
         logging.warning(f"No 'quantile_models' defined for '{base_model_name}'. Training a single model.")
-        train_single_model(model_name=base_model_name)
-        return
+        return train_single_model(model_name=base_model_name)
 
+    row_count = 0
     for model_name, quantile_info in quantile_models_config.items():
         logging.info(f"\n*** Training sub-model: {model_name} ***")
-        train_single_model(model_name=model_name, quantile_info=quantile_info)
+        row_count = max(row_count, train_single_model(model_name=model_name, quantile_info=quantile_info) or 0)
 
     logging.info(f"--- All '{base_model_name}' models trained successfully ---")
+    return row_count
 
 def _predict_simple(model, params, historical_df, future_covariates_ts, model_config):
     from darts import TimeSeries
@@ -1144,13 +1198,7 @@ def _predict_with_dynamic_handoff(model, params, historical_df, future_covariate
     
     # The function now receives the amber_advanced_df instead of fetching it.
     if amber_advanced_df.empty:
-        logging.warning("No advanced Amber data provided. Falling back to simple prediction.")
-        future_covariates_ts = TimeSeries.from_dataframe(
-            future_covariates_df, 
-            value_cols=model_config['feature_cols'], 
-            freq='30min'
-        )
-        return _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
+        raise ForecastContractError("dynamic handoff requires a non-empty Amber APF")
         
     last_good_amber_index = amber_advanced_df.index.max()
     logging.info(f"Using provided advanced forecast for {len(amber_advanced_df) / 2} hours (up to {last_good_amber_index}).")
@@ -1196,14 +1244,15 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
     model_config = CONFIG['models'][base_model_name]
     quantile_models_config = model_config.get('quantile_models', {})
     raw_forecasts = {}
+    resolved_paths = _prediction_model_paths(base_model_name)
 
     for model_name, quantile_info in quantile_models_config.items():
         logging.info(f"--- Processing forecast for sub-model: {model_name} ---")
-        model_file_path = CONFIG['paths'][f'{model_name}_model_file']
+        model_file_path = resolved_paths[model_name]["model"]
 
         try:
             model = joblib.load(model_file_path)
-            with open(CONFIG['paths'][f'{model_name}_params_file'], 'r') as f:
+            with open(resolved_paths[model_name]["params"], 'r') as f:
                 params = json.load(f)
             logging.info(f"Loaded model '{model_name}' successfully.")
         except FileNotFoundError:
@@ -1215,8 +1264,13 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
             amber_price_key = quantile_info.get('price_key', 'advanced_price_predicted')
             amber_df = get_amber_advanced_forecast(price_key=amber_price_key)
             if amber_df.empty:
-                logging.warning(f"No advanced Amber data for price key '{amber_price_key}'. Skipping.")
-                continue
+                raise ForecastContractError(f"No advanced Amber data for price key '{amber_price_key}'")
+            apf_age = validate_apf(
+                amber_df,
+                max_age_minutes=float(CONFIG.get("production", {}).get("apf_max_age_minutes", 180.0)),
+            )
+            if _PREDICTION_APF_AGES is not None:
+                _PREDICTION_APF_AGES[model_name] = apf_age
             pred_df = _predict_with_dynamic_handoff(model, params, historical_df, adjusted_covariates_for_prediction, model_config, amber_df)
         else:
             future_covariates_ts = TimeSeries.from_dataframe(
@@ -1228,8 +1282,7 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
             raw_forecasts[model_name] = pred_df.rename(columns={model_config['target_column']: model_name})
 
     if not raw_forecasts:
-        logging.error(f"Failed to generate any forecasts for '{base_model_name}'.")
-        return {}
+        raise ForecastContractError(f"Failed to generate any forecasts for '{base_model_name}'")
 
     if base_model_name == 'price' and len(raw_forecasts) > 1:
         logging.info("Applying sorting to prevent price quantile crossing...")
@@ -1242,8 +1295,7 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
             final_forecasts = {key: sorted_df[[key]] for key in sorted_keys}
             return final_forecasts
         else:
-            logging.warning("Could not generate all price forecasts. Using raw forecasts without sorting.")
-            return raw_forecasts
+            raise ForecastContractError("Could not generate all price forecasts")
     else:
         return raw_forecasts
 
@@ -3075,9 +3127,11 @@ def _publish_lgbm_model_to_hass(base_model_name, result_data):
     """
     model_config = CONFIG['models'][base_model_name]
     target_col = model_config['target_column']
+    failures = []
     for key, forecast_df in result_data['forecasts'].items():
         entity_id_check = CONFIG['home_assistant']['publish_entities'].get(key)
         if not entity_id_check:
+            failures.append(key)
             continue
         logging.info(f"Processing and publishing '{key}' to '{entity_id_check}'...")
         publish_df = forecast_df.copy()
@@ -3087,7 +3141,10 @@ def _publish_lgbm_model_to_hass(base_model_name, result_data):
             apply_tariffs_to_forecast(publish_df)
         else:
             publish_df.rename(columns={publish_df.columns[0]: target_col}, inplace=True)
-        publish_forecast_to_hass(key, publish_df)
+        if not publish_forecast_to_hass(key, publish_df):
+            failures.append(CONFIG['home_assistant']['publish_entities'].get(key, key))
+    if failures:
+        raise RuntimeError(f"HA publication failed for entities: {', '.join(failures)}")
 
 
 def _execute_single_prediction(model_name, historical_df, adjusted_covariates_for_prediction, use_dynamic_handoff):
@@ -3123,6 +3180,11 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     ORCHESTRATOR: Fetches data, runs predictions for all specified model families,
     and then handles all logging, saving, and publishing.
     """
+    global _PREDICTION_BUNDLE_PATHS, _PREDICTION_BUNDLE_IDS, _PREDICTION_APF_AGES
+    _PREDICTION_BUNDLE_PATHS = None
+    _PREDICTION_BUNDLE_IDS = None
+    _PREDICTION_APF_AGES = {}
+    run_started = time.monotonic()
     logging.info(f"--- Prediction Orchestrator started for models: {models_to_run} ---")
 
     # 1. Fetch and process data ONCE (This part is unchanged)
@@ -3175,9 +3237,6 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     original_covariates_for_log = combined_covariates_df.copy()
 
     adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
-    if publish_covariates:
-        publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
-        publish_adjusted_covariates_to_hass(publish_df)
     adjusted_covariates_for_prediction = adjusted_covariates_df.copy()
     adjusted_covariates_for_prediction.ffill(inplace=True)
     adjusted_covariates_for_prediction.bfill(inplace=True)
@@ -3198,14 +3257,25 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     # 2. Loop, execute predictions, and COLLECT results (This part is unchanged)
     all_results = {}
     for model_name in models_to_run:
-        forecasts, prediction_type = _execute_single_prediction(
-            model_name=model_name,
-            historical_df=historical_df,
-            adjusted_covariates_for_prediction=adjusted_covariates_for_prediction,
-            use_dynamic_handoff=use_dynamic_handoff
-        )
-        if forecasts:
+        try:
+            forecasts, prediction_type = _execute_single_prediction(
+                model_name=model_name,
+                historical_df=historical_df,
+                adjusted_covariates_for_prediction=adjusted_covariates_for_prediction,
+                use_dynamic_handoff=use_dynamic_handoff
+            )
+            validate_forecast_family(forecasts, model_name, expected_start=forecast_start_time)
             all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
+        except Exception as exc:
+            logging.error("Prediction validation failed for %s: %s", model_name, exc, exc_info=True)
+            raise
+
+    if not all_results or any(model not in all_results for model in models_to_run):
+        raise ForecastContractError("no complete production prediction family was generated")
+
+    if publish_covariates:
+        publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
+        publish_adjusted_covariates_to_hass(publish_df)
 
     # 2a. EARLY PUBLISH — legacy LGBM quantile outputs (prod-critical fast path).
     # Done here, before the shadow stack (tactical / PD-direct / TFT-load) runs,
@@ -3220,6 +3290,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 _publish_lgbm_model_to_hass(base_model_name, all_results[base_model_name])
             except Exception as e:
                 logging.error(f"FATAL ERROR in legacy {base_model_name} publish: {e}", exc_info=True)
+                raise
         logging.info(
             f"Legacy LGBM publish: {time.monotonic() - legacy_publish_start:.1f}s "
             f"(prod-critical fast path)"
@@ -3270,8 +3341,12 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         final_output_json[f'{model_name}_forecast'] = output_df.to_dict('records')
         final_output_json[f'{model_name}_last_updated'] = datetime.now(pytz.UTC).isoformat()
 
-    with open(CONFIG['paths']['prediction_output_file'], 'w') as f:
+    output_path = Path(CONFIG['paths']['prediction_output_file'])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_output = output_path.with_name(f".{output_path.name}.tmp")
+    with open(temporary_output, 'w') as f:
         json.dump(final_output_json, f, indent=4)
+    os.replace(temporary_output, output_path)
     logging.info(f"All forecasts saved to {CONFIG['paths']['prediction_output_file']}.")
 
     # 4. Shadow publish intentionally disabled. Legacy LGBM models already went
@@ -3294,7 +3369,8 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         for forecast_key in keys_to_log:
             model_version = "N/A"
             try:
-                mod_time = os.path.getmtime(CONFIG['paths'][f'{forecast_key}_model_file'])
+                model_path = _prediction_model_paths(model_name)[forecast_key]["model"]
+                mod_time = os.path.getmtime(model_path)
                 model_version = datetime.fromtimestamp(mod_time, tz=pytz.UTC).isoformat()
             except (FileNotFoundError, KeyError): pass
 
@@ -3308,7 +3384,30 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
                 original_covariates_for_log,
             )
 
+    elapsed_seconds = time.monotonic() - run_started
+    apf_ages = list((_PREDICTION_APF_AGES or {}).values())
+    bundle_ids = {_PREDICTION_BUNDLE_IDS.get(model, "unknown") for model in models_to_run}
+    outcome = PredictionOutcome(
+        family=",".join(models_to_run),
+        source="amber_apf_lgbm" if "price" in models_to_run and use_dynamic_handoff else "lgbm",
+        model_bundle_id=next(iter(bundle_ids)) if len(bundle_ids) == 1 else ",".join(sorted(bundle_ids)),
+        forecasts={key: frame for result in all_results.values() for key, frame in result["forecasts"].items()},
+        apf_age_minutes=max(apf_ages) if apf_ages else None,
+        publication_result="published" if publish_hass else "local_only",
+    )
+    logging.info(json.dumps({
+        "event": "prediction_summary", "run_id": outcome.run_id,
+        "family": outcome.family, "source": outcome.source,
+        "model_bundle_id": outcome.model_bundle_id,
+        "apf_age_minutes": outcome.apf_age_minutes,
+        "point_counts": outcome.point_counts,
+        "target_start": min(frame.index[0].isoformat() for frame in outcome.forecasts.values()),
+        "target_end": max(frame.index[-1].isoformat() for frame in outcome.forecasts.values()),
+        "publication_result": outcome.publication_result,
+        "elapsed_seconds": round(elapsed_seconds, 3),
+    }, sort_keys=True))
     logging.info("--- Prediction Orchestrator finished ---")
+    return outcome
 
 
 def run_tactical_publish(publish_hass, max_tier2_cache_age_minutes):
@@ -3550,7 +3649,7 @@ def publish_forecast_to_hass(model_key, forecast_df):
     entity_id = CONFIG['home_assistant']['publish_entities'].get(model_key)
     if not entity_id:
         logging.warning(f"No publish entity found for key '{model_key}'.")
-        return
+        return False
         
     logging.info(f"Publishing {model_key} forecast to Home Assistant entity: {entity_id}")
     forecast_df.index.name = 'timestamp'
@@ -3572,8 +3671,12 @@ def publish_forecast_to_hass(model_key, forecast_df):
     state = round(forecast_df.iloc[0][state_col], 4)
     
     payload = {"state": state, "attributes": attributes}
-    call_ha_api('POST', f"states/{entity_id}", payload=payload)
+    response = call_ha_api('POST', f"states/{entity_id}", payload=payload)
+    if response is None:
+        logging.error(f"HA publication failed for {entity_id}; local forecast remains valid.")
+        return False
     logging.info(f"Successfully published state '{state}' and attributes to {entity_id}.")
+    return True
 
 
 def _fetch_amber_leg(entity_id):
@@ -4072,7 +4175,9 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
     """
     logging.info("Publishing adjusted covariates to Home Assistant...")
     if 'adjusters' not in CONFIG:
-        return
+        return True
+
+    failures = []
 
     for cov_name, adjuster_config in CONFIG['adjusters'].items():
         entity_id = adjuster_config.get('publish_entity_id')
@@ -4113,14 +4218,146 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
         
         if response:
             logging.info(f"Successfully published state '{state}' and attributes to {entity_id}.")
+        else:
+            failures.append(entity_id)
+            logging.error("Adjusted covariate publication failed for %s", entity_id)
+    if failures:
+        raise RuntimeError(f"HA publication failed for adjusted covariates: {', '.join(failures)}")
+    return True
 
 # --------------------------------------------------------------------------- #
-# 6. MAIN EXECUTION BLOCK
+# 6. VERSIONED CANDIDATE BUNDLES
+# --------------------------------------------------------------------------- #
+
+def _candidate_report(family: str, bundle_id: str, artifact_names: list[str]) -> dict:
+    decision = evaluate_eligibility(family, {
+        "structural": True,
+        "inference": False,
+    }, comparable=False)
+    return {
+        "bundle_id": bundle_id,
+        "family": family,
+        **decision,
+        "eligibility_reasons": decision["eligibility_reasons"] + [
+            "historical training uses realised PV/weather/demand and selects STPASA differently from live inference",
+        ],
+        "metrics": {},
+        "smoke_result": False,
+        "artifacts": artifact_names,
+        "evidence_scope": "screening evidence, not causal promotion proof",
+    }
+
+
+def train_candidate_family(family: str) -> Path:
+    """Train all quantiles into an isolated bundle; never touches active files."""
+    global CONFIG
+    bundle_id = datetime.now(pytz.UTC).strftime("%Y%m%dT%H%M%SZ") + "-candidate"
+    store = _production_bundle_store()
+    training_start = datetime.now(pytz.UTC)
+    with tempfile.TemporaryDirectory(prefix=f"{family}-training-") as temp_name:
+        temp = Path(temp_name)
+        isolated = copy.deepcopy(CONFIG)
+        for model_name in CONFIG["models"][family].get("quantile_models", {}):
+            isolated["paths"][f"{model_name}_model_file"] = str(temp / f"{model_name}_model.pkl")
+            isolated["paths"][f"{model_name}_params_file"] = str(temp / f"{model_name}_params.json")
+            isolated["paths"][f"{model_name}_importance_file"] = str(temp / f"{model_name}_importance.json")
+        old_config = CONFIG
+        CONFIG = isolated
+        try:
+            row_count = train_models(family)
+        finally:
+            CONFIG = old_config
+        names = sorted(path.name for path in temp.iterdir() if path.is_file())
+        model_names = list(CONFIG["models"][family].get("quantile_models", {}))
+        required = [f"{name}_model.pkl" for name in model_names] + [f"{name}_params.json" for name in model_names]
+        missing = [name for name in required if not (temp / name).is_file()]
+        if missing:
+            raise BundleError(f"candidate training incomplete: {', '.join(missing)}")
+        artifacts = {name: (temp / name).read_bytes() for name in names}
+        report = _candidate_report(family, bundle_id, names)
+        artifacts["candidate_report.json"] = json.dumps(report, indent=2, sort_keys=True).encode()
+        try:
+            git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        except (OSError, subprocess.CalledProcessError):
+            git_commit = "unknown"
+        config_digest = hashlib.sha256(
+            json.dumps(CONFIG["models"][family], sort_keys=True, default=str).encode()
+        ).hexdigest()
+        shifts = {}
+        for name in model_names:
+            params_path = temp / f"{name}_params.json"
+            shifts[name] = json.loads(params_path.read_text()).get("shift_value")
+        manifest = {
+            "git_commit": git_commit,
+            "config_digest": config_digest,
+            "training_start_utc": training_start.isoformat(),
+            "training_end_utc": datetime.now(pytz.UTC).isoformat(),
+            "row_count": row_count,
+            "requested_quantiles": model_names,
+            "feature_list": CONFIG["models"][family].get("feature_cols", []),
+            "lightgbm_parameters": CONFIG["models"][family].get("lgbm_params", {}),
+            "shift_values": shifts,
+            "producing_command": f"./forecast.py train-{family}-candidate",
+            "parent_bundle_id": None,
+        }
+        return store.write_candidate(family, bundle_id, artifacts, manifest)
+
+
+def migrate_root_family(family: str) -> str:
+    store = _production_bundle_store()
+    model_names = list(CONFIG["models"][family].get("quantile_models", {}))
+    paths = [
+        Path(CONFIG["paths"][f"{name}_{suffix}"])
+        for name in model_names
+        for suffix in ("model_file", "params_file", "importance_file")
+    ]
+    if not all(path.is_file() for path in paths):
+        raise BundleError(f"migration requires all root artifacts for {family}")
+    bundle_id = "initial-root-" + datetime.now(pytz.UTC).strftime("%Y%m%dT%H%M%SZ")
+    store.migrate_root_artifacts(family, bundle_id, paths)
+    manifest_path = store.bundle_dir(family, bundle_id) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["requested_quantiles"] = model_names
+    manifest["feature_list"] = CONFIG["models"][family].get("feature_cols", [])
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    store.promote(family, bundle_id, report={"eligible_for_manual_promotion": True})
+    return bundle_id
+
+
+def validate_bundle_command(family: str, bundle_id: str) -> dict:
+    store = _production_bundle_store()
+    manifest = store.validate(family, bundle_id)
+    bundle_path = store.bundle_dir(family, bundle_id)
+    for artifact in manifest.get("artifacts", {}):
+        if artifact.endswith("_model.pkl"):
+            joblib.load(bundle_path / artifact)
+        elif artifact.endswith("_params.json"):
+            json.loads((bundle_path / artifact).read_text())
+    expected_quantiles = list(CONFIG["models"][family].get("quantile_models", {}))
+    expected_features = CONFIG["models"][family].get("feature_cols", [])
+    if manifest.get("requested_quantiles") != expected_quantiles:
+        raise BundleError("bundle quantile contract does not match current configuration")
+    if manifest.get("feature_list") != expected_features:
+        raise BundleError("bundle feature contract does not match current configuration")
+    report_path = store.bundle_dir(family, bundle_id) / "candidate_report.json"
+    if report_path.exists():
+        report = json.loads(report_path.read_text())
+        if report.get("smoke_result") is False:
+            raise BundleError("candidate inference smoke did not pass")
+        manifest["eligible_for_manual_promotion"] = report.get("eligible_for_manual_promotion", False)
+    return manifest
+
+
+# --------------------------------------------------------------------------- #
+# 7. MAIN EXECUTION BLOCK
 # --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="Energy Price & Load Forecasting Pipeline")
     parser.add_argument('mode', choices=[
         'train-price', 'train-load',
+        'train-price-candidate', 'train-load-candidate',
+        'migrate-price-bundle', 'migrate-load-bundle',
+        'validate-bundle', 'promote-bundle', 'rollback-bundle',
         'predict-price', 'predict-load', 'predict-all',
         'publish-tactical', 'publish-pd-direct',
         'update-tariffs', 'backfill-actuals', 'update-adjusters'
@@ -4133,11 +4370,43 @@ def main():
     parser.add_argument('--max-tier2-cache-age-minutes', type=float, default=180.0,
                         help="Maximum age for cached Tier 2 curve used by publish-tactical.")
     parser.add_argument('--config', default='config.yaml', help="Path to the configuration file.")
+    parser.add_argument('--family', choices=['price', 'load'], help="Bundle family for bundle commands.")
+    parser.add_argument('--bundle', help="Bundle ID for validate/promote.")
     args = parser.parse_args()
 
     global CONFIG, _DEBUG_TFT
     CONFIG = load_config(args.config)
     _DEBUG_TFT = getattr(args, "debug_tft", False)
+
+    if args.mode in {'train-price-candidate', 'train-load-candidate'}:
+        family = args.mode.split('-')[1]
+        logging.info("Candidate bundle created at %s", train_candidate_family(family))
+        return
+    if args.mode in {'migrate-price-bundle', 'migrate-load-bundle'}:
+        family = args.mode.split('-')[1]
+        logging.info("Migrated and activated %s bundle %s", family, migrate_root_family(family))
+        return
+    if args.mode == 'validate-bundle':
+        if not args.family or not args.bundle:
+            parser.error('validate-bundle requires --family and --bundle')
+        print(json.dumps(validate_bundle_command(args.family, args.bundle), indent=2, sort_keys=True))
+        return
+    if args.mode == 'promote-bundle':
+        if not args.family or not args.bundle:
+            parser.error('promote-bundle requires --family and --bundle')
+        store = _production_bundle_store()
+        validate_bundle_command(args.family, args.bundle)
+        report_path = store.bundle_dir(args.family, args.bundle) / 'candidate_report.json'
+        if not report_path.exists():
+            raise BundleError(f"candidate report missing: {report_path}")
+        store.promote(args.family, args.bundle, report=json.loads(report_path.read_text()))
+        logging.info("Promoted %s/%s", args.family, args.bundle)
+        return
+    if args.mode == 'rollback-bundle':
+        if not args.family:
+            parser.error('rollback-bundle requires --family')
+        logging.info("Rolled back %s to %s", args.family, _production_bundle_store().rollback(args.family))
+        return
 
     if args.mode.startswith('predict-'):
         models = []

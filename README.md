@@ -14,8 +14,8 @@ forecast publishers.
 - Day-ahead load: 72h × 30-min; LightGBM base-load p65, with planned HWC load added by HA.
 - Price refresh: HA WebSocket event via `ai-energy-listener.service`; 30-min idle heartbeat.
 - Load refresh: `ai-energy-predict.timer` at `:01` and `:31`.
-- Weekly training currently overwrites live model files directly. Hardening is planned; see
-  [docs/price/production_hardening_plan_2026-08-10.md](docs/price/production_hardening_plan_2026-08-10.md).
+- Weekly training creates versioned candidates and never auto-promotes them. See the
+  [production runbook](docs/price/production_hardening_runbook.md).
 
 Canonical current-state reference:
 [docs/prod_pipeline_critical_path.md](docs/prod_pipeline_critical_path.md).
@@ -94,11 +94,14 @@ python3 forecast.py update-tariffs
 #### 2. Train the Models
 Train the models using your historical data. This can take some time. Run this once initially, and then schedule it to run weekly or monthly.
 ```bash
-# Train the price model
-python3 forecast.py train-price
+# Train isolated candidates (the weekly timer uses these commands)
+./forecast.py train-price-candidate
+./forecast.py train-load-candidate
 
-# Train the load model
-python3 forecast.py train-load
+# Promotion is an explicit operator decision; inspect the candidate report first.
+./forecast.py validate-bundle --family price --bundle <id>
+./forecast.py promote-bundle --family price --bundle <id>
+./forecast.py rollback-bundle --family price
 ```
 
 #### 3. Run Predictions
@@ -160,8 +163,8 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
   matrix; see [docs/price/README.md](docs/price/README.md).
 - TFT-load is a suspended historical candidate, not a live shadow; see
   [docs/tft_load_forecast.md](docs/tft_load_forecast.md).
-- Next implementation track: production outcome validation, candidate artifact bundles, atomic
-  promotion/rollback, and tests. See the production-hardening plan linked above.
+- Remaining hardening risk: candidate quality reports are deliberately ineligible until identical-row
+  incumbent metrics and inference smoke evidence are supplied. See the production runbook.
 
 ## Acknowledgements
 The initial version of the core `forecast.py` script was generated with assistance from Google's Gemini.

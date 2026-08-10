@@ -38,13 +38,13 @@ Rollback to timer-driven price publication requires an explicit unit/code change
 - Listener process failure: systemd restarts it.
 - HA/WebSocket failure: listener reconnects; heartbeat still runs inside the same process.
 - Prediction timeout: child is killed and logged.
-- Nonzero prediction exit: no healthcheck ping.
+- Nonzero prediction exit: no healthcheck ping; a retry is scheduled on a five-minute cadence.
+- `last_run_at` advances only after validated generation and successful publication.
+- APF events received while a child runs coalesce into one follow-up run.
 - Healthcheck failure: logged; forecast run remains successful.
 
-Known gap: `predict-price` can currently exit zero without publishing a complete fresh price
-triplet, for example when Amber APF retrieval returns no rows. The listener cannot distinguish
-that from success and may ping its healthcheck. Fix and tests are specified in
-[production_hardening_plan_2026-08-10.md](production_hardening_plan_2026-08-10.md).
+Prediction validation now rejects missing/stale APF, incomplete or malformed quantile families,
+and failed HA writes before the listener reports success.
 
 ## Non-Goals
 

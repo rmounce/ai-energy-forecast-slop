@@ -140,6 +140,15 @@ Dead code removed: `_publish_covariates_helper` (never called) and `model/` (01â
 
 #### Model Details
 
+### Production bundle lifecycle
+
+Production artifacts live under `models/production/<family>/bundles/<bundle_id>/`. A candidate is
+written to a temporary directory, hashed in its manifest, and atomically renamed. `active.json`
+is an atomic pointer; prediction resolves it once per family per run, so a pointer change cannot
+mix quantile generations. `promote-bundle` and `rollback-bundle` are explicit operator commands.
+Prediction exits nonzero on contract or publication failure; local output replacement occurs only
+after a complete family validates.
+
 - **Framework:** Darts (time series library) + LightGBM quantile regression
 - **Horizon:** 144 steps = 72 hours at 30-minute resolution
 - **Active price quantiles:** p30, p50 (median), p70 â€” configured in `config.yaml`
@@ -506,13 +515,12 @@ Current implementation priority:
 
 ## Known Pain Points
 
-1. **Training overwrites live model artifacts directly.** There is no versioned candidate bundle,
-   atomic promotion, or one-command rollback. The hardening plan makes weekly training
-   candidate-only before any broader model work.
+1. **Candidate quality evidence is incomplete.** Candidate bundles, atomic promotion, rollback,
+   and candidate-only weekly training are implemented, but reports remain ineligible until
+   identical-row metrics and inference smoke evidence are supplied.
 
-2. **Prediction success is not yet an end-to-end publication contract.** A command can finish
-   without proving that every required quantile was valid and published. The listener healthcheck
-   currently trusts the child exit code.
+2. **HA publication is not transactional.** A later entity POST can fail after earlier entities
+   changed; the command reports the potentially changed entity IDs and exits nonzero.
 
 3. **Historical/live covariates differ.** Training uses realised PV/weather/demand and historical
    STPASA selection does not exactly reproduce live forecast issuance. Existing screening results
