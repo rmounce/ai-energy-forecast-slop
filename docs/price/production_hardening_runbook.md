@@ -3,6 +3,14 @@
 The weekly timer creates isolated candidate bundles. It never promotes them.
 Prediction resolves one active price/load bundle at the start of each run.
 
+Run commands from the repository root with the project virtual environment active:
+
+```bash
+source .venv/bin/activate
+```
+
+Without this step, `./forecast.py` may select the system Python and fail on project dependencies.
+
 ## One-time migration
 
 Run from the repository root after reviewing the root artifacts:
