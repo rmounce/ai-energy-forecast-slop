@@ -100,6 +100,7 @@ Train the models using your historical data. This can take some time. Run this o
 
 # Promotion is an explicit operator decision; inspect the candidate report first.
 ./forecast.py validate-bundle --family price --bundle <id>
+# screening.json identifies a SHA-256-hashed CSV/Parquet row file; see the runbook.
 ./forecast.py screen-bundle --family price --bundle <id> --metrics screening.json
 ./forecast.py promote-bundle --family price --bundle <id>
 ./forecast.py rollback-bundle --family price

@@ -153,6 +153,11 @@ Both price and load quantile families use the same alpha-ordered monotonic rearr
 the 144-point contract check. The identical policy is used by live inference and bundle smoke;
 crossing independently trained curves therefore cannot make those two paths disagree.
 
+Candidate promotion evidence is derived from a SHA-256-identified CSV/Parquet row set containing
+candidate, incumbent, and actual values on identical issue/target rows. Fixed family horizon
+buckets, finite values, units, MAE, bias, pinball loss, and empirical coverage are validated in
+code; operator-supplied summary claims are ignored.
+
 - **Framework:** Darts (time series library) + LightGBM quantile regression
 - **Horizon:** 144 steps = 72 hours at 30-minute resolution
 - **Active price quantiles:** p30, p50 (median), p70 — configured in `config.yaml`

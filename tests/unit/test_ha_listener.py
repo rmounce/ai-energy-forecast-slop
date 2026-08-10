@@ -37,6 +37,25 @@ class RunProc(Proc):
         return self.returncode
 
 
+class HangingProc(Proc):
+    def __init__(self):
+        super().__init__()
+        self.stdout = Output()
+        self.started = asyncio.Event()
+        self.terminated = asyncio.Event()
+
+    def kill(self):
+        super().kill()
+        self.terminated.set()
+
+    async def wait(self):
+        self.waited = True
+        self.started.set()
+        if self.returncode is None:
+            await self.terminated.wait()
+        return self.returncode
+
+
 def test_terminate_child_kills_reaps_and_drains():
     async def run():
         proc = Proc()
@@ -98,5 +117,103 @@ def test_nonzero_child_does_not_ping_and_schedules_retry():
             listener._retry_task.cancel()
             with suppress(asyncio.CancelledError):
                 await listener._retry_task
+
+    asyncio.run(run())
+
+
+def test_timeout_kills_child_suppresses_ping_and_schedules_retry():
+    async def run():
+        listener = Listener({"home_assistant": {
+            "url": "http://ha", "token": "x", "amber_billing_entity": "sensor.x",
+        }})
+        proc = HangingProc()
+        with patch.object(listener_module, "SUBPROCESS_TIMEOUT_SECONDS", 0.001), \
+             patch.object(listener_module.asyncio, "create_subprocess_exec", return_value=proc), \
+             patch.object(listener, "_ping_healthcheck", new_callable=AsyncMock) as ping:
+            await listener._run_predict_price()
+        assert proc.killed and proc.waited
+        ping.assert_not_awaited()
+        assert listener._retry_not_before > 0
+        listener.shutdown.set()
+        if listener._retry_task:
+            listener._retry_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await listener._retry_task
+
+    asyncio.run(run())
+
+
+def test_cancellation_kills_and_reaps_running_child():
+    async def run():
+        listener = Listener({"home_assistant": {
+            "url": "http://ha", "token": "x", "amber_billing_entity": "sensor.x",
+        }})
+        proc = HangingProc()
+        with patch.object(listener_module.asyncio, "create_subprocess_exec", return_value=proc):
+            task = asyncio.create_task(listener._run_predict_price())
+            await proc.started.wait()
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        assert proc.killed and proc.waited
+
+    asyncio.run(run())
+
+
+def test_event_during_retry_wait_coalesces_with_timer_into_one_run():
+    async def run():
+        listener = Listener({"home_assistant": {
+            "url": "http://ha", "token": "x", "amber_billing_entity": "sensor.x",
+        }})
+        calls = []
+
+        async def predicted_once():
+            calls.append("run")
+            listener.shutdown.set()
+
+        with patch.object(listener_module, "DEBOUNCE_SECONDS", 0), \
+             patch.object(listener_module, "FAILURE_RETRY_SECONDS", 0.02), \
+             patch.object(listener, "_run_predict_price", side_effect=predicted_once):
+            listener._schedule_failure_retry()
+            worker = asyncio.create_task(listener.worker())
+            await asyncio.sleep(0.005)
+            listener.trigger.set()  # APF event before the timer deadline
+            await asyncio.wait_for(worker, timeout=1)
+        assert calls == ["run"]
+        if listener._retry_task and not listener._retry_task.done():
+            listener._retry_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await listener._retry_task
+
+    asyncio.run(run())
+
+
+def test_event_during_child_creates_exactly_one_follow_up():
+    async def run():
+        listener = Listener({"home_assistant": {
+            "url": "http://ha", "token": "x", "amber_billing_entity": "sensor.x",
+        }})
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = []
+
+        async def prediction():
+            calls.append("run")
+            if len(calls) == 1:
+                first_started.set()
+                await release_first.wait()
+            else:
+                listener.shutdown.set()
+
+        with patch.object(listener_module, "DEBOUNCE_SECONDS", 0), \
+             patch.object(listener, "_run_predict_price", side_effect=prediction):
+            listener.trigger.set()
+            worker = asyncio.create_task(listener.worker())
+            await first_started.wait()
+            listener.trigger.set()
+            listener.trigger.set()
+            release_first.set()
+            await asyncio.wait_for(worker, timeout=1)
+        assert calls == ["run", "run"]
 
     asyncio.run(run())

@@ -3166,6 +3166,35 @@ def _execute_single_prediction(model_name, historical_df, adjusted_covariates_fo
 
     return all_forecasts, prediction_type
 
+
+def _prepare_prediction_covariates(models_to_run, historical_df, future_sources):
+    """Build the shared adjusted covariate surface without external side effects."""
+    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
+    all_feature_cols = set()
+    for model_name in models_to_run:
+        if model_name in CONFIG['models']:
+            all_feature_cols.update(CONFIG['models'][model_name]['feature_cols'])
+
+    available_cols = [col for col in all_feature_cols if col in historical_df.columns]
+    historical_covariates_df = historical_df[available_cols]
+    combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
+    for col in sorted(all_feature_cols):
+        if col not in combined_covariates_df.columns:
+            logging.warning("Requested feature column '%s' is missing; filling with NaN before adjustment.", col)
+            combined_covariates_df[col] = np.nan
+
+    logging.info("Enforcing UTC DatetimeIndex on combined covariates (DST safety).")
+    combined_covariates_df.index = pd.to_datetime(combined_covariates_df.index, utc=True)
+    combined_covariates_df = combined_covariates_df[
+        ~combined_covariates_df.index.duplicated(keep='last')
+    ].sort_index()
+    combined_covariates_df = add_time_features(combined_covariates_df)
+    original_covariates_for_log = combined_covariates_df.copy()
+    adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
+    adjusted_covariates_for_prediction = adjusted_covariates_df.copy().ffill().bfill()
+    return original_covariates_for_log, adjusted_covariates_df, adjusted_covariates_for_prediction
+
+
 def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_covariates):
     """
     ORCHESTRATOR: Fetches data, runs predictions for all specified model families,
@@ -3212,44 +3241,13 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     finally:
         client.close()
     
-    future_covariates_df = pd.concat(future_sources.values(), axis=1).sort_index()
-    all_feature_cols = set()
-    for model_name in models_to_run:
-        if model_name in CONFIG['models']:
-            all_feature_cols.update(CONFIG['models'][model_name]['feature_cols'])
-    
-    available_cols = [col for col in all_feature_cols if col in historical_df.columns]
-    historical_covariates_df = historical_df[available_cols]
-
-    # Combine history and future
-    combined_covariates_df = pd.concat([historical_covariates_df, future_covariates_df])
-    for col in sorted(all_feature_cols):
-        if col not in combined_covariates_df.columns:
-            logging.warning("Requested feature column '%s' is missing; filling with NaN before adjustment.", col)
-            combined_covariates_df[col] = np.nan
-
-    # ----------------------------------------------------------------------- #
-    # --- DST FIX START ----------------------------------------------------- #
-    # During DST transitions, pd.concat might degrade the index from
-    # DatetimeIndex to a generic object Index if inputs aren't perfectly
-    # aligned timezone-wise. We must force it back to UTC DatetimeIndex
-    # so that .index.time works later.
-    logging.info("Enforcing UTC DatetimeIndex on combined covariates (DST safety).")
-    combined_covariates_df.index = pd.to_datetime(combined_covariates_df.index, utc=True)
-    # --- DST FIX END ------------------------------------------------------- #
-    # ----------------------------------------------------------------------- #
-
-    # Deduplicate and sort
-    combined_covariates_df = combined_covariates_df[~combined_covariates_df.index.duplicated(keep='last')].sort_index()
-    
-    combined_covariates_df = add_time_features(combined_covariates_df)
-
-    original_covariates_for_log = combined_covariates_df.copy()
-
-    adjusted_covariates_df = apply_covariate_adjustments(combined_covariates_df)
-    adjusted_covariates_for_prediction = adjusted_covariates_df.copy()
-    adjusted_covariates_for_prediction.ffill(inplace=True)
-    adjusted_covariates_for_prediction.bfill(inplace=True)
+    try:
+        original_covariates_for_log, adjusted_covariates_df, adjusted_covariates_for_prediction = (
+            _prepare_prediction_covariates(models_to_run, historical_df, future_sources)
+        )
+    except Exception as exc:
+        log_failure("covariate_preparation", exc)
+        raise
     amber_spot_df = pd.DataFrame()
 
     if 'price' in models_to_run:
@@ -4254,7 +4252,15 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
 # 6. VERSIONED CANDIDATE BUNDLES
 # --------------------------------------------------------------------------- #
 
-def _candidate_report(family: str, bundle_id: str, artifact_names: list[str], *, smoke_seconds: float) -> dict:
+def _candidate_report(
+    family: str,
+    bundle_id: str,
+    artifact_names: list[str],
+    *,
+    artifact_sizes: dict[str, int],
+    smoke_metadata: dict,
+    smoke_seconds: float,
+) -> dict:
     decision = evaluate_eligibility(family, {
         "structural": True,
         "inference": True,
@@ -4269,7 +4275,9 @@ def _candidate_report(family: str, bundle_id: str, artifact_names: list[str], *,
         "metrics": {},
         "smoke_result": True,
         "inference_smoke_seconds": smoke_seconds,
+        "smoke_metadata": smoke_metadata,
         "artifacts": artifact_names,
+        "artifact_sizes_bytes": artifact_sizes,
         "evidence_scope": "screening evidence, not causal promotion proof",
     }
 
@@ -4299,9 +4307,17 @@ def train_candidate_family(family: str) -> Path:
         missing = [name for name in required if not (temp / name).is_file()]
         if missing:
             raise BundleError(f"candidate training incomplete: {', '.join(missing)}")
-        smoke_forecasts, smoke_seconds = run_bundle_smoke(family, temp)
+        smoke_forecasts, smoke_seconds, smoke_metadata = run_bundle_smoke(family, temp)
         artifacts = {name: (temp / name).read_bytes() for name in names}
-        report = _candidate_report(family, bundle_id, names, smoke_seconds=smoke_seconds)
+        artifact_sizes = {name: (temp / name).stat().st_size for name in names}
+        report = _candidate_report(
+            family,
+            bundle_id,
+            names,
+            artifact_sizes=artifact_sizes,
+            smoke_metadata=smoke_metadata,
+            smoke_seconds=smoke_seconds,
+        )
         artifacts["candidate_report.json"] = json.dumps(report, indent=2, sort_keys=True).encode()
         try:
             git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -4312,18 +4328,31 @@ def train_candidate_family(family: str) -> Path:
         for name in model_names:
             params_path = temp / f"{name}_params.json"
             shifts[name] = json.loads(params_path.read_text()).get("shift_value")
+        parent_bundle_id = None
+        pointer = store.active_pointer(family)
+        if pointer.exists():
+            try:
+                parent_bundle_id = json.loads(pointer.read_text()).get("bundle_id")
+            except (json.JSONDecodeError, OSError):
+                parent_bundle_id = None
         manifest = {
             "git_commit": git_commit,
             "config_digest": config_digest,
             "training_start_utc": training_start.isoformat(),
             "training_end_utc": datetime.now(pytz.UTC).isoformat(),
+            "training_data_start_utc": min(
+                item["training_start_utc"] for item in smoke_metadata["models"].values()
+            ),
+            "training_data_end_utc": max(
+                item["training_end_utc"] for item in smoke_metadata["models"].values()
+            ),
             "row_count": row_count,
             "requested_quantiles": model_names,
             "feature_list": CONFIG["models"][family].get("feature_cols", []),
             "lightgbm_parameters": CONFIG["models"][family].get("lgbm_params", {}),
             "shift_values": shifts,
             "producing_command": f"./forecast.py train-{family}-candidate",
-            "parent_bundle_id": None,
+            "parent_bundle_id": parent_bundle_id,
         }
         return store.write_candidate(family, bundle_id, artifacts, manifest)
 
@@ -4368,18 +4397,31 @@ def _runtime_config_digest(family: str) -> str:
     }, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def run_bundle_smoke(family: str, bundle_path: Path) -> tuple[dict[str, pd.DataFrame], float]:
+def run_bundle_smoke(family: str, bundle_path: Path) -> tuple[dict[str, pd.DataFrame], float, dict]:
     """Run every bundled quantile through a deterministic 144-step inference smoke."""
     from darts import TimeSeries
 
     started = time.monotonic()
     forecasts = {}
+    smoke_metadata = {"models": {}}
     for model_name in CONFIG["models"][family].get("quantile_models", {}):
         model = joblib.load(bundle_path / f"{model_name}_model.pkl")
         params = json.loads((bundle_path / f"{model_name}_params.json").read_text())
         covariates = model.future_covariate_series
         if covariates is None or model.training_series is None:
             raise BundleError(f"{model_name}: serialized training state unavailable for smoke")
+        covariate_values = np.asarray(covariates.values(), dtype=float)
+        coverage = np.isfinite(covariate_values).mean(axis=0)
+        smoke_metadata["models"][model_name] = {
+            "training_start_utc": model.training_series.start_time().isoformat(),
+            "training_end_utc": model.training_series.end_time().isoformat(),
+            "training_points": len(model.training_series),
+            "future_covariate_points": len(covariates),
+            "future_covariate_finite_coverage": {
+                str(component): float(coverage[position])
+                for position, component in enumerate(covariates.components)
+            },
+        }
         # Extend the final observed covariate row through the decoder window.
         extension = np.repeat(covariates.values()[-1:, :], 148, axis=0)
         smoke_covariates = covariates.append_values(extension)
@@ -4392,7 +4434,7 @@ def run_bundle_smoke(family: str, bundle_path: Path) -> tuple[dict[str, pd.DataF
     ordered = sorted(keys, key=lambda key: CONFIG["models"][family]["quantile_models"][key]["alpha"])
     forecasts = rearrange_quantile_family(forecasts, family, tuple(ordered))
     validate_forecast_family(forecasts, family)
-    return forecasts, time.monotonic() - started
+    return forecasts, time.monotonic() - started, smoke_metadata
 
 
 def validate_bundle_command(family: str, bundle_id: str) -> dict:
@@ -4412,7 +4454,7 @@ def validate_bundle_command(family: str, bundle_id: str) -> dict:
         raise BundleError("bundle feature contract does not match current configuration")
     if manifest.get("config_digest") != _runtime_config_digest(family):
         raise BundleError("bundle runtime config digest does not match current configuration")
-    _, smoke_seconds = run_bundle_smoke(family, bundle_path)
+    _, smoke_seconds, smoke_metadata = run_bundle_smoke(family, bundle_path)
     report_name = manifest.get("report_filename", "candidate_report.json")
     report_path = store.bundle_dir(family, bundle_id) / report_name
     if report_path.exists():
@@ -4425,7 +4467,38 @@ def validate_bundle_command(family: str, bundle_id: str) -> dict:
     elif manifest.get("migration") != "root-artifacts":
         raise BundleError("candidate report is missing")
     manifest["smoke_seconds"] = smoke_seconds
+    manifest["smoke_metadata"] = smoke_metadata
     return manifest
+
+
+def screen_bundle_command(family: str, bundle_id: str, metrics_path: str | Path) -> dict:
+    """Derive screening evidence from identified rows and install its report."""
+    manifest = validate_bundle_command(family, bundle_id)
+    descriptor_path = Path(metrics_path).resolve()
+    payload = json.loads(descriptor_path.read_text())
+    metrics = derive_screening_metrics(
+        payload,
+        family=family,
+        base_dir=descriptor_path.parent,
+    )
+    decision = evaluate_eligibility(
+        family,
+        {**metrics, "structural": True, "inference": True},
+        comparable=metrics["comparable"],
+    )
+    report = {
+        "family": family,
+        "bundle_id": bundle_id,
+        **decision,
+        "metrics": metrics,
+        "smoke_result": True,
+        "inference_smoke_seconds": manifest.get("smoke_seconds"),
+        "smoke_metadata": manifest.get("smoke_metadata"),
+        "evidence_scope": "screening evidence, not causal promotion proof",
+        "causal_limitation": "historical training uses realised PV/weather/demand and selects STPASA differently from live inference",
+    }
+    _production_bundle_store().replace_candidate_report(family, bundle_id, report)
+    return report
 
 
 # --------------------------------------------------------------------------- #
@@ -4452,7 +4525,7 @@ def main():
     parser.add_argument('--config', default='config.yaml', help="Path to the configuration file.")
     parser.add_argument('--family', choices=['price', 'load'], help="Bundle family for bundle commands.")
     parser.add_argument('--bundle', help="Bundle ID for validate/promote.")
-    parser.add_argument('--metrics', help="JSON screening metrics for screen-bundle.")
+    parser.add_argument('--metrics', help="JSON descriptor for hashed screening rows used by screen-bundle.")
     args = parser.parse_args()
 
     global CONFIG, _DEBUG_TFT
@@ -4475,21 +4548,7 @@ def main():
     if args.mode == 'screen-bundle':
         if not args.family or not args.bundle or not args.metrics:
             parser.error('screen-bundle requires --family, --bundle, and --metrics')
-        manifest = validate_bundle_command(args.family, args.bundle)
-        metrics = derive_screening_metrics(json.loads(Path(args.metrics).read_text()))
-        decision = evaluate_eligibility(
-            args.family, {**metrics, "structural": True, "inference": True},
-            comparable=bool(metrics.get("comparable", False)),
-        )
-        store = _production_bundle_store()
-        report = {
-            "family": args.family, "bundle_id": args.bundle,
-            **decision, "metrics": metrics, "smoke_result": True,
-            "inference_smoke_seconds": manifest.get("smoke_seconds"),
-            "evidence_scope": "screening evidence, not causal promotion proof",
-            "causal_limitation": "historical training uses realised PV/weather/demand and selects STPASA differently from live inference",
-        }
-        store.replace_candidate_report(args.family, args.bundle, report)
+        screen_bundle_command(args.family, args.bundle, args.metrics)
         logging.info("Updated screening report for %s/%s", args.family, args.bundle)
         return
     if args.mode == 'promote-bundle':

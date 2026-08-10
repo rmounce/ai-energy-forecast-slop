@@ -76,3 +76,27 @@ def test_interrupted_report_install_preserves_previous_valid_report(tmp_path):
             store.replace_candidate_report("price", "one", {**old, "revision": 2})
     assert store.validate("price", "one")["bundle_id"] == "one"
     assert json.loads((path / "candidate_report.json").read_text()) == old
+
+
+def test_interrupted_candidate_write_leaves_active_bundle_unchanged(tmp_path):
+    store = BundleStore(tmp_path / "models")
+    store.write_candidate("price", "active", {"model.pkl": b"active"}, {})
+    store.promote("price", "active", report=report())
+    original_write = __import__("pathlib").Path.write_bytes
+
+    def fail_second_artifact(path, content):
+        if path.name == "second.pkl":
+            raise OSError("injected artifact interruption")
+        return original_write(path, content)
+
+    with patch("pathlib.Path.write_bytes", autospec=True, side_effect=fail_second_artifact):
+        with pytest.raises(OSError, match="artifact interruption"):
+            store.write_candidate(
+                "price",
+                "candidate",
+                {"first.pkl": b"one", "second.pkl": b"two"},
+                {},
+            )
+
+    assert store.resolve_active("price")[0] == "active"
+    assert not store.bundle_dir("price", "candidate").exists()

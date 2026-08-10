@@ -41,15 +41,26 @@ The built-in candidate report is conservatively ineligible until screening metri
 
 The screening report records that historical training uses realised PV/weather/demand and selects
 STPASA differently from live inference. Metrics are screening evidence, not causal promotion proof.
-`screen-bundle` runs the independent 144-point smoke first, then atomically replaces the report
-and refreshes its manifest hash from the supplied machine-readable metrics. It is the supported
-way to add screening evidence; do not edit bundle JSON by hand.
+`screen-bundle` runs the independent 144-point smoke first, verifies a SHA-256-identified row file,
+derives every metric on identical candidate/incumbent rows, then atomically switches the manifest
+to a versioned report. Do not edit bundle JSON by hand.
 
-The metrics file supplies `comparable: true`, `primary_regressions` (fractional values), and
-either `bias_worsening_mwh` for price or `p65_coverage` for load. The report applies the versioned
-thresholds: regression ≤ 0.05, price bias worsening ≤ 10 $/MWh, and load p65 coverage 0.55–0.85.
-Missing evidence remains ineligible.
+The descriptor JSON contains `schema_version: 1`, `family`, `units`, `row_count`, and provenance
+fields `command`, `rows_file`, and `rows_sha256`. `rows_file` is resolved relative to the descriptor
+and may be CSV or Parquet. Required row columns are:
 
-The evidence file must also contain `provenance.command`, `provenance.rows_file`, a positive
-`row_count`, and bucket records with `candidate_primary`, `incumbent_primary`, and the relevant
-component bias fields. Summary values are derived from these components.
+```text
+forecast_issue_time, forecast_target_time, actual
+price: candidate_p30/p50/p70, incumbent_p30/p50/p70
+load:  candidate_p50/p65/p75, incumbent_p50/p65/p75
+```
+
+Rows must be unique by issue/target time, finite, half-hour aligned, and within 0–72h. Price uses
+fixed 0–16.5h, 16.5–28h, 28–48h, and 48–72h buckets; load uses 0–24h, 24–48h, and 48–72h. Every
+bucket must contain rows. The report derives MAE, bias, pinball loss, empirical coverage, incumbent
+regressions, and evaluation ranges. Eligibility requires regression ≤ 0.05, price absolute-bias
+worsening ≤ 10 $/MWh, and load p65 coverage 0.55–0.85. Missing, non-finite, hash-mismatched, or
+wrong-unit evidence fails closed.
+
+Candidate creation also records artifact sizes, serialized training-series ranges, and finite
+coverage for every stored future covariate (including STPASA price features), alongside smoke time.
