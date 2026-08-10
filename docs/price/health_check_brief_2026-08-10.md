@@ -40,3 +40,9 @@ production during the review.
 - Preserve a result manifest for any new evaluation: command, source/model artifact, window,
   inputs, and output paths.
 - Keep production source selectors unchanged until a candidate clears the agreed gate.
+
+## Outcome
+
+The review retained `amber_apf_lgbm` and prioritised production reliability over source research.
+Implementation handoff:
+[production_hardening_plan_2026-08-10.md](production_hardening_plan_2026-08-10.md).

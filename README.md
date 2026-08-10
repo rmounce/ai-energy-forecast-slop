@@ -2,11 +2,27 @@
 
 Fittingly, most of this code was also AI generated.
 
-This project provides a comprehensive forecasting pipeline for home energy management. It leverages a LightGBM machine learning model (baseline) and a Temporal Fusion Transformer (TFT, in development) to predict future energy load and electricity prices. The script integrates deeply with Home Assistant and InfluxDB to gather data, train models, and publish actionable forecasts back to Home Assistant entities. This enables smarter home automation, such as optimizing battery charging/discharging or running high-consumption appliances during low-price periods.
+This project provides the price and household-load forecasts used by an EMHASS home-energy
+optimisation stack. Production uses LightGBM quantile models. Historical TFT, PD-direct, tactical,
+and other APF-free experiments remain in the repository as evaluation evidence, but are not active
+forecast publishers.
+
+## Production Summary — 2026-08-10
+
+- MPC: 14h × 5-min; reads Amber forecasts directly. No AI price inference.
+- Day-ahead price: 72h × 30-min; Amber APF near horizon, LightGBM extrapolation to 72h.
+- Day-ahead load: 72h × 30-min; LightGBM base-load p65, with planned HWC load added by HA.
+- Price refresh: HA WebSocket event via `ai-energy-listener.service`; 30-min idle heartbeat.
+- Load refresh: `ai-energy-predict.timer` at `:01` and `:31`.
+- Weekly training currently overwrites live model files directly. Hardening is planned; see
+  [docs/price/production_hardening_plan_2026-08-10.md](docs/price/production_hardening_plan_2026-08-10.md).
+
+Canonical current-state reference:
+[docs/prod_pipeline_critical_path.md](docs/prod_pipeline_critical_path.md).
 
 ## Features
 
-*   **Dual Forecasting Models:** Independently predicts both household energy consumption (load) and wholesale electricity prices.
+*   **Dual Forecasting Surfaces:** Independently predicts household base load and the 72-hour wholesale-price curve.
 *   **Dynamic Price Forecasting:** Features a unique "dynamic handoff" mode that seeds the price forecast with Amber Electric's high-resolution advanced forecast, using the ML model to predict beyond Amber's horizon.
 *   **Rich Data Integration:**
     *   Fetches historical data from an **InfluxDB v1** database.
@@ -24,7 +40,7 @@ The system operates in a cyclical fashion:
 
 1.  **Data Collection (Past):** Historical data for energy load, PV generation, weather, and AEMO prices is stored in InfluxDB. Continuous Queries are used to automatically downsample raw data into 30-minute averages for training.
 2.  **Data Collection (Future):** For predictions, the script calls the Home Assistant API to get the latest forecast data from Solcast, BOM, and Amber Electric.
-3.  **Training:** In `train` mode, the script loads years of historical data from InfluxDB to train the LightGBM models for price and load. The trained models (`.pkl`) and their parameters are saved locally. This should be run periodically (e.g., weekly or monthly) to keep the models current.
+3.  **Training:** The weekly systemd job loads up to two years of historical data from InfluxDB and trains the LightGBM price and load quantiles. The current implementation writes the live `.pkl` artifacts directly; do not treat a completed retrain as proof of improvement.
 4.  **Prediction:** In `predict` mode, the script:
     *   Loads the pre-trained model.
     *   Gathers the latest future data from Home Assistant.
@@ -139,40 +155,13 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
 
 ## Status and Next Work
 
-**2026-06-15.** Production price source is the APF/LightGBM incumbent
-(`amber_apf_lgbm`, logged in `price_forecast_log.csv` as `model_name='price'`).
-Work on the other price paths (`p5min_tactical`, `pd_direct`,
-`model_a_hybrid`, `lgbm_strategic`) is suspended, not fully abandoned. They
-remain in the repo for reference and possible deliberate revival, but they are
-not currently trusted as replacement paths and should not be used as evidence
-about APF extrapolation.
-
-The current price-forecast source contract lives in
-`docs/price/price_forecast_sources.md` and `eval/price_source_contracts.py`.
-Historical APF-free plans and abandonment notes live in `docs/roadmap.md`.
-Structural critique of the TFT line is in `docs/archive/price_forecast_2026/tft_price_forecast.md`.
-
-Near-term work, in order:
-
--   **APF-tail residual work:** evaluate improvements to the existing
-    APF-backed extrapolation path, currently the STPASA tail residual-correction
-    probe over `28.5-72h`.
--   **Source-contract hygiene:** keep eval scripts explicit about whether they
-    are scoring `amber_apf_lgbm` or an APF-free suspended path.
--   **Production switchability:** keep the HA price-source plumbing useful for
-    controlled comparisons, but do not treat suspended paths as promotion
-    candidates without a fresh trust/revival decision.
-
-Older infrastructure work that remains relevant regardless of which forecast wins:
-
--   **Holistic dispatch simulation (Phase 6):** the eval framework (`rolling_mpc_eval.py`,
-    Window A/B tariffed gates, Amber yardstick) is what grades all of the above.
--   **Test framework (Phase 8):** regression tests against canned fixtures.
--   **Event-driven service (Phase 7):** ~~replace systemd timers with a persistent process
-    using HA WebSocket subscriptions.~~ **Initial scope landed 2026-05-27** as
-    `ai-energy-listener.service`, which drives `predict-price` on Amber APF state changes;
-    see [docs/price/event_driven_predict_price_plan.md](docs/price/event_driven_predict_price_plan.md).
-    Remaining work would be event-driving more of the pipeline if a use-case emerges.
+- Keep `amber_apf_lgbm` as the production price source.
+- APF-free price research is paused. Revival requires a written hypothesis and fixed evaluation
+  matrix; see [docs/price/README.md](docs/price/README.md).
+- TFT-load is a suspended historical candidate, not a live shadow; see
+  [docs/tft_load_forecast.md](docs/tft_load_forecast.md).
+- Next implementation track: production outcome validation, candidate artifact bundles, atomic
+  promotion/rollback, and tests. See the production-hardening plan linked above.
 
 ## Acknowledgements
 The initial version of the core `forecast.py` script was generated with assistance from Google's Gemini.

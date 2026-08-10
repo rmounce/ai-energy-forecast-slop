@@ -9,9 +9,12 @@ for data collection/eval only), the daily housekeeping
 (`update-tariffs`, `update-adjusters`, `backfill-actuals`), and weekly
 model training. Those run but are not load-bearing for dispatch *today*.
 
-Pipeline written as it stands 2026-06-18, after the APF-free price/load shadow
-surfaces were soft-archived and STPASA covariates were promoted into the
-production APF extrapolator.
+Pipeline checked 2026-08-10, after the APF-free price/load shadow surfaces were
+soft-archived and STPASA covariates were promoted into the production APF extrapolator.
+
+This is the canonical description of live routing. Historical roadmaps and experiment plans do
+not override it. Known hardening work is tracked in
+`docs/price/production_hardening_plan_2026-08-10.md`.
 
 ## MPC tier — 14h horizon
 

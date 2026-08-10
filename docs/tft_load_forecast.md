@@ -1,8 +1,10 @@
-# TFT Load Forecast: Design and Run History
+# TFT Load Forecast: Suspended Design And Run History
 
-Shadow branch for household load prediction. Replaces the existing Darts/LightGBM load
-model in `forecast.py`. Currently in shadow mode — publishes alongside (not instead of)
-the legacy model.
+> **Status — 2026-08-10:** TFT-load publication was disabled on 2026-06-15. Production
+> consumes the LightGBM `load_p65` surface through `sensor.ai_load_forecast_high`.
+> This document records historical design/results and known defects; statements below about
+> "current", "future logs", or "next run" are point-in-time experiment notes, not active work.
+> Revival requires a fresh training/evaluation plan and shadow-only deployment.
 
 ---
 
@@ -32,7 +34,8 @@ weather + time — cleaner architecture. Target is positive-and-bounded so no lo
 | 004 | Temporal decay weights | 230.5W | −45W | No improvement — gradient cliff |
 | 005 | horizon-decay tau=48 | 234.2W | −24W (q50 mean 364W vs actual 388W) | Best checkpoint (epoch 32) |
 
-**Current production checkpoint:** `models/tft_load/checkpoint_best.pt` (Run 005, epoch 32)
+**Retained checkpoint:** `models/tft_load/checkpoint_best.pt` (Run 005, epoch 32). It is not
+loaded by the production prediction path.
 
 ---
 

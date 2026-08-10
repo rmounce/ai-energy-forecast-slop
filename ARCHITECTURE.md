@@ -497,30 +497,45 @@ HC_PREDICT_URL=https://hc-ping.com/<your-uuid>
 
 ## Roadmap
 
-See **[docs/roadmap.md](docs/roadmap.md)** for: phase status, design principles, CI/CD gate
-design, training weighting methodology, execution layer (tail-risk overrides), and known
-open issues.
+Current implementation priority:
+[production forecast hardening](docs/price/production_hardening_plan_2026-08-10.md).
+
+`docs/roadmap.md` is historical experiment context, not the active implementation plan.
 
 ---
 
 ## Known Pain Points
 
-1. **`forecast.py` is a monolith.** At ~3,500 lines it handles training, prediction, tariff management, logging, bias correction, HA publishing, and both Tier 1/Tier 2 inference. The natural module boundaries are clear (see table above) but the code is not yet split. Hard to navigate and test. Refactoring is gated on Phase 8 (test framework) to avoid regressions.
+1. **Training overwrites live model artifacts directly.** There is no versioned candidate bundle,
+   atomic promotion, or one-command rollback. The hardening plan makes weekly training
+   candidate-only before any broader model work.
 
-2. **`hass/packages/emhass.yaml` Jinja complexity.** The EMHASS REST command payload is built entirely in Jinja2 template syntax inside a YAML string. It's ~350 lines of logic that is hard to debug, diff, and maintain.
+2. **Prediction success is not yet an end-to-end publication contract.** A command can finish
+   without proving that every required quantile was valid and published. The listener healthcheck
+   currently trusts the child exit code.
 
-3. **Ad-hoc ingest scripts are disconnected.** The manual/historical backfill scripts (`ingest-ha-data.py`, `ingest-nem-data.py`, etc.) are run ad-hoc with no systemd timers. The automated ingest scripts (predispatch, p5min, pd7day, sevendayoutlook) all use `config_utils.load_config()` and run via systemd.
+3. **Historical/live covariates differ.** Training uses realised PV/weather/demand and historical
+   STPASA selection does not exactly reproduce live forecast issuance. Existing screening results
+   remain useful, but are not fully causal promotion evidence.
 
-4. **HA backups require manual redaction.** Every time `hass/` files are committed, any private hostnames or URLs must be manually redacted. This creates friction and risk.
+4. **`forecast.py` is a monolith.** It handles training, prediction, tariff management, logging,
+   bias correction, HA publishing, and archived inference paths. Refactor only behind behavioural
+   tests; do not combine broad decomposition with production hardening.
 
-5. **Forecast log CSVs are very large.** `price_forecast_log.csv` and `load_forecast_log.csv` are each ~330–340MB and growing. They live outside the repo (git-ignored) but are depended on by `backfill-actuals` and `update-adjusters`.
+5. **`hass/packages/emhass.yaml` Jinja complexity.** The EMHASS REST command payload is built
+   entirely in Jinja2 template syntax inside YAML strings and is hard to debug, diff, and maintain.
 
-6. **Stale model files on disk.** Experimental quantile variants (price: p10, p20, p50, p80, p90; load: p60) are no longer referenced by `config.yaml` and consume ~1.3GB.
+6. **Ad-hoc ingest scripts are disconnected.** The manual/historical backfill scripts (`ingest-ha-data.py`, `ingest-nem-data.py`, etc.) are run ad-hoc with no systemd timers. The automated ingest scripts (predispatch, p5min, pd7day, sevendayoutlook) all use `config_utils.load_config()` and run via systemd.
 
-7. **`analyse.ipynb`** is a 36MB notebook with embedded output data committed to the repo. Should either have outputs stripped or be moved outside the repo.
+7. **HA backups require manual redaction.** Every time `hass/` files are committed, any private hostnames or URLs must be manually redacted. This creates friction and risk.
 
-8. ~~**`_publish_covariates_helper()`** is defined in `forecast.py` but never called~~ — removed (75c5c84).
-9. ~~**`model/` scripts are out of sync.**~~ — removed (75c5c84).
+8. **Forecast log CSVs are very large.** `price_forecast_log.csv` is over 1GB and
+   `load_forecast_log.csv` is over 800MB as of 2026-08-10. They are git-ignored but remain runtime
+   dependencies for actual backfill, adjusters, and evaluation.
+
+9. **Historical model artifacts are bulky.** TFT checkpoints and suspended LightGBM/debiaser
+   bundles remain useful as evidence but need explicit retention rules; do not confuse them with
+   active production artifacts.
 
 ---
 
@@ -528,7 +543,7 @@ open issues.
 
 | Layer | Technology |
 |---|---|
-| ML framework | [Darts](https://unit8co.github.io/darts/) + LightGBM (existing); PyTorch LSTM encoder-decoder (TFT, in development) |
+| ML framework | [Darts](https://unit8co.github.io/darts/) + LightGBM (production); retained PyTorch TFT experiments (suspended) |
 | Time series DB | InfluxDB v1.x |
 | Home automation | Home Assistant |
 | Energy optimiser | EMHASS (MPC mode) |
