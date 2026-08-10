@@ -1352,7 +1352,7 @@ automation:
   # offset unchanged.
   #
   # History: this lived in the HA UI ("EMHASS - Calculate and Set Target SOC
-  # Offset", archived at hass/automation-emhass-target-soc-offset.yaml.bak).
+  # Offset") before consolidation into this package.
   # Briefly squashed into script.emhass_dayahead_optim on 2026-05-29, but that
   # added one cycle of lag to the feedback loop and caused visible ~1.2pp
   # sawtooth oscillations at every 30-min load-forecast boundary. Restored as
