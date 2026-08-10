@@ -81,13 +81,12 @@
 </main>
 <div id="tooltip"></div>
 <script>
-const CHANGE = "2026-07-04T09:55";
 let cycles = [];
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 const fmt = (value, digits=2) => value == null ? "—" : Number(value).toFixed(digits);
 const fanName = row => row.fan_high_on ? "High" : "Low";
-const phase = row => row.start_local < CHANGE ? "low" : "high";
+const phase = row => row.fan_high_on ? "high" : "low";
 
 async function load() {
   try {
