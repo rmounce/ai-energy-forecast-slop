@@ -5,8 +5,6 @@
 # Trained model
 *.pkl
 *.log
-TransformerApplicationNEM/
-
 # Python
 __pycache__/
 *.pyc
