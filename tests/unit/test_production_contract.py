@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from production_contract import ForecastContractError, validate_apf, validate_forecast_family
+from production_contract import ForecastContractError, rearrange_quantile_family, validate_apf, validate_forecast_family
 
 
 def family(family_name="price", points=144):
@@ -66,3 +66,13 @@ def test_load_quantile_crossing_fails():
     data["load"].iloc[0, 0] = 1
     with pytest.raises(ForecastContractError, match="cross"):
         validate_forecast_family(data, "load")
+
+
+def test_shared_rearrangement_makes_load_smoke_and_runtime_policy_identical():
+    data = family("load")
+    data["load"].iloc[0, 0] = 3
+    data["load_p65"].iloc[0, 0] = 1
+    data["load_p75"].iloc[0, 0] = 2
+    ordered = rearrange_quantile_family(data, "load", ("load", "load_p65", "load_p75"))
+    validate_forecast_family(ordered, "load")
+    assert [ordered[key].iloc[0, 0] for key in ("load", "load_p65", "load_p75")] == [1, 2, 3]

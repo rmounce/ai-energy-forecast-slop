@@ -127,18 +127,25 @@ class BundleStore:
         return previous
 
     def replace_candidate_report(self, family: str, bundle_id: str, report: dict) -> None:
-        """Atomically replace screening evidence and refresh its manifest hash."""
+        """Install a versioned report with one atomic manifest-pointer update."""
         self.validate(family, bundle_id)
         bundle = self.bundle_dir(family, bundle_id)
-        report_path = bundle / "candidate_report.json"
         if report.get("family") != family or report.get("bundle_id") != bundle_id:
             raise BundleError("candidate report identity mismatch")
-        report_tmp = bundle / ".candidate_report.json.tmp"
+        revision = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        report_name = f"candidate_report.{revision}.json"
+        report_path = bundle / report_name
+        report_tmp = bundle / f".{report_name}.tmp"
         manifest_path = bundle / "manifest.json"
         manifest_tmp = bundle / ".manifest.json.tmp"
         report_tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         manifest = json.loads(manifest_path.read_text())
-        manifest.setdefault("artifacts", {})["candidate_report.json"] = sha256(report_tmp)
+        artifacts = manifest.setdefault("artifacts", {})
+        for name in list(artifacts):
+            if name.startswith("candidate_report"):
+                del artifacts[name]
+        artifacts[report_name] = sha256(report_tmp)
+        manifest["report_filename"] = report_name
         manifest_tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         os.replace(report_tmp, report_path)
         os.replace(manifest_tmp, manifest_path)

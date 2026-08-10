@@ -8,6 +8,39 @@ LOAD_P65_COVERAGE_MIN = 0.55
 LOAD_P65_COVERAGE_MAX = 0.85
 
 
+def derive_screening_metrics(payload: dict) -> dict:
+    """Derive comparison values from bucket-level components, never bare claims."""
+    required = {"provenance", "row_count", "buckets", "comparable"}
+    missing = required - set(payload)
+    if missing:
+        raise ValueError(f"screening evidence missing fields: {', '.join(sorted(missing))}")
+    if not isinstance(payload["provenance"], dict) or not payload["provenance"].get("command"):
+        raise ValueError("screening provenance.command is required")
+    if not isinstance(payload["row_count"], int) or payload["row_count"] <= 0:
+        raise ValueError("screening row_count must be positive")
+    buckets = payload["buckets"]
+    if not isinstance(buckets, list) or not buckets:
+        raise ValueError("screening buckets are required")
+    regressions = []
+    bias_worsening = []
+    for bucket in buckets:
+        for key in ("candidate_primary", "incumbent_primary"):
+            if key not in bucket:
+                raise ValueError(f"screening bucket missing {key}")
+        incumbent = float(bucket["incumbent_primary"])
+        candidate = float(bucket["candidate_primary"])
+        if incumbent == 0:
+            raise ValueError("screening incumbent primary metric cannot be zero")
+        regressions.append((candidate - incumbent) / abs(incumbent))
+        if "candidate_bias_mwh" in bucket and "incumbent_bias_mwh" in bucket:
+            bias_worsening.append(abs(float(bucket["candidate_bias_mwh"])) - abs(float(bucket["incumbent_bias_mwh"])))
+    result = dict(payload)
+    result["primary_regressions"] = regressions
+    if bias_worsening:
+        result["bias_worsening_mwh"] = bias_worsening
+    return result
+
+
 def evaluate_eligibility(family: str, metrics: dict | None, *, comparable: bool) -> dict:
     """Return machine-readable screening decisions; missing evidence is a failure."""
     metrics = metrics or {}

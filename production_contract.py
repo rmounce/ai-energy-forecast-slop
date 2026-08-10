@@ -83,6 +83,20 @@ def validate_forecast_family(
         raise ForecastContractError(f"{family}: quantiles cross")
 
 
+def rearrange_quantile_family(forecasts: Mapping[str, pd.DataFrame], family: str, quantile_order: tuple[str, ...] | None = None) -> dict[str, pd.DataFrame]:
+    """Apply the production monotonic-rearrangement policy to a family."""
+    keys, _, _ = _expected(family)
+    ordered = tuple(quantile_order or keys)
+    if set(ordered) != set(keys):
+        raise ForecastContractError(f"{family}: quantile rearrangement keys do not match contract")
+    matrix = np.column_stack([forecasts[key].iloc[:, 0].to_numpy(dtype=float) for key in ordered])
+    matrix = np.sort(matrix, axis=1)
+    return {
+        key: pd.DataFrame({key: matrix[:, position]}, index=forecasts[key].index)
+        for position, key in enumerate(ordered)
+    }
+
+
 def validate_apf(
     frame: pd.DataFrame,
     *,

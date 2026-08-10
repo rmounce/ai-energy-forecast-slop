@@ -44,9 +44,9 @@ from tariff_utils import (
     tariffed_price_frame_from_wholesale_mwh,
 )
 from eval.retro_tier1_inference import build_feature_dict as build_tier1_feature_dict, build_long_matrix_for_model as build_tier1_long_matrix
-from production_contract import ForecastContractError, PredictionOutcome, validate_apf, validate_forecast_family
+from production_contract import ForecastContractError, PredictionOutcome, rearrange_quantile_family, validate_apf, validate_forecast_family
 from model_bundles import BundleError, BundleStore
-from candidate_quality import evaluate_eligibility
+from candidate_quality import derive_screening_metrics, evaluate_eligibility
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -1284,20 +1284,11 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
     if not raw_forecasts:
         raise ForecastContractError(f"Failed to generate any forecasts for '{base_model_name}'")
 
-    if base_model_name == 'price' and len(raw_forecasts) > 1:
-        logging.info("Applying sorting to prevent price quantile crossing...")
-        sorted_keys = sorted(quantile_models_config.keys(), key=lambda k: quantile_models_config[k]['alpha'])
-        
-        if all(key in raw_forecasts for key in sorted_keys):
-            combined_raw_df = pd.concat([raw_forecasts[key] for key in sorted_keys], axis=1)
-            sorted_values = np.sort(combined_raw_df.values, axis=1)
-            sorted_df = pd.DataFrame(sorted_values, index=combined_raw_df.index, columns=sorted_keys)
-            final_forecasts = {key: sorted_df[[key]] for key in sorted_keys}
-            return final_forecasts
-        else:
-            raise ForecastContractError("Could not generate all price forecasts")
-    else:
-        return raw_forecasts
+    if len(raw_forecasts) == len(quantile_models_config):
+        sorted_keys = tuple(sorted(quantile_models_config.keys(), key=lambda k: quantile_models_config[k]['alpha']))
+        logging.info("Applying monotonic quantile rearrangement for %s", base_model_name)
+        return rearrange_quantile_family(raw_forecasts, base_model_name, sorted_keys)
+    raise ForecastContractError(f"Could not generate all {base_model_name} forecasts")
 
 
 def _get_influx_pd_prices(client, start_time, end_time):
@@ -3201,7 +3192,11 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
 
     # 1. Fetch and process data ONCE (This part is unchanged)
     logging.info("Fetching all future covariate and recent historical data...")
-    future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast(), 'aemo': get_aemo_forecast()}
+    try:
+        future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast(), 'aemo': get_aemo_forecast()}
+    except Exception as exc:
+        log_failure("source_acquisition", exc)
+        raise
     now = datetime.now(pytz.UTC)
     minute = 30 if now.minute >= 30 else 0
     forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
@@ -3210,7 +3205,10 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
         history_end = forecast_start_time - timedelta(minutes=30)
         historical_df = get_historical_data(client, history_start, history_end)
-        if historical_df.empty: raise SystemExit("Aborting: Failed to get recent history for prediction.")
+        if historical_df.empty:
+            exc = RuntimeError("failed to get recent history for prediction")
+            log_failure("history_acquisition", exc)
+            raise exc
     finally:
         client.close()
     
@@ -3288,7 +3286,11 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
 
     if publish_covariates:
         publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
-        publish_adjusted_covariates_to_hass(publish_df)
+        try:
+            publish_adjusted_covariates_to_hass(publish_df)
+        except Exception as exc:
+            log_failure("covariate_publication", exc, "failed")
+            raise
 
     # 2a. EARLY PUBLISH — legacy LGBM quantile outputs (prod-critical fast path).
     # Done here, before the shadow stack (tactical / PD-direct / TFT-load) runs,
@@ -3358,9 +3360,13 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     output_path = Path(CONFIG['paths']['prediction_output_file'])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_output = output_path.with_name(f".{output_path.name}.tmp")
-    with open(temporary_output, 'w') as f:
-        json.dump(final_output_json, f, indent=4)
-    os.replace(temporary_output, output_path)
+    try:
+        with open(temporary_output, 'w') as f:
+            json.dump(final_output_json, f, indent=4)
+        os.replace(temporary_output, output_path)
+    except Exception as exc:
+        log_failure("prediction_output_replacement", exc, "not_published" if not publish_hass else "published")
+        raise
     logging.info(f"All forecasts saved to {CONFIG['paths']['prediction_output_file']}.")
 
     # 4. Shadow publish intentionally disabled. Legacy LGBM models already went
@@ -3390,13 +3396,17 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
 
             pred_df_for_log = result_data['forecasts'][forecast_key].copy()
             log_model_name = forecast_key if model_name in {'load', 'tft_load'} else model_name
-            log_forecast_data(
-                log_model_name,
-                model_version,
-                result_data['type'],
-                pred_df_for_log,
-                original_covariates_for_log,
-            )
+            try:
+                log_forecast_data(
+                    log_model_name,
+                    model_version,
+                    result_data['type'],
+                    pred_df_for_log,
+                    original_covariates_for_log,
+                )
+            except Exception as exc:
+                log_failure("forecast_log_append", exc, "published" if publish_hass else "local_only")
+                raise
 
     elapsed_seconds = time.monotonic() - run_started
     apf_ages = list((_PREDICTION_APF_AGES or {}).values())
@@ -4344,6 +4354,9 @@ def migrate_root_family(family: str) -> str:
         "parent_bundle_id": None,
     }
     store.migrate_root_artifacts(family, bundle_id, paths, manifest=manifest)
+    # Migration may install an unreferenced candidate directory, but it may not
+    # change active state until the same full checks used by promotion pass.
+    validate_bundle_command(family, bundle_id)
     store.promote(family, bundle_id, report={"eligible_for_manual_promotion": True})
     return bundle_id
 
@@ -4375,13 +4388,9 @@ def run_bundle_smoke(family: str, bundle_path: Path) -> tuple[dict[str, pd.DataF
         ).to_dataframe()
         values = np.exp(prediction.iloc[:, 0].to_numpy(dtype=float)) - float(params.get("shift_value", 0))
         forecasts[model_name] = pd.DataFrame({model_name: values}, index=prediction.index)
-    if family == "price":
-        keys = list(CONFIG["models"][family].get("quantile_models", {}))
-        ordered = sorted(keys, key=lambda key: CONFIG["models"][family]["quantile_models"][key]["alpha"])
-        matrix = np.column_stack([forecasts[key].iloc[:, 0].to_numpy() for key in ordered])
-        matrix = np.sort(matrix, axis=1)
-        for column, key in enumerate(ordered):
-            forecasts[key].iloc[:, 0] = matrix[:, column]
+    keys = list(CONFIG["models"][family].get("quantile_models", {}))
+    ordered = sorted(keys, key=lambda key: CONFIG["models"][family]["quantile_models"][key]["alpha"])
+    forecasts = rearrange_quantile_family(forecasts, family, tuple(ordered))
     validate_forecast_family(forecasts, family)
     return forecasts, time.monotonic() - started
 
@@ -4404,7 +4413,8 @@ def validate_bundle_command(family: str, bundle_id: str) -> dict:
     if manifest.get("config_digest") != _runtime_config_digest(family):
         raise BundleError("bundle runtime config digest does not match current configuration")
     _, smoke_seconds = run_bundle_smoke(family, bundle_path)
-    report_path = store.bundle_dir(family, bundle_id) / "candidate_report.json"
+    report_name = manifest.get("report_filename", "candidate_report.json")
+    report_path = store.bundle_dir(family, bundle_id) / report_name
     if report_path.exists():
         report = json.loads(report_path.read_text())
         if report.get("family") != family or report.get("bundle_id") != bundle_id:
@@ -4466,7 +4476,7 @@ def main():
         if not args.family or not args.bundle or not args.metrics:
             parser.error('screen-bundle requires --family, --bundle, and --metrics')
         manifest = validate_bundle_command(args.family, args.bundle)
-        metrics = json.loads(Path(args.metrics).read_text())
+        metrics = derive_screening_metrics(json.loads(Path(args.metrics).read_text()))
         decision = evaluate_eligibility(
             args.family, {**metrics, "structural": True, "inference": True},
             comparable=bool(metrics.get("comparable", False)),

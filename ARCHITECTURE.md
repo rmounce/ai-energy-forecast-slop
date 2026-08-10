@@ -149,6 +149,10 @@ mix quantile generations. `promote-bundle` and `rollback-bundle` are explicit op
 Prediction exits nonzero on contract or publication failure; local output replacement occurs only
 after a complete family validates.
 
+Both price and load quantile families use the same alpha-ordered monotonic rearrangement before
+the 144-point contract check. The identical policy is used by live inference and bundle smoke;
+crossing independently trained curves therefore cannot make those two paths disagree.
+
 - **Framework:** Darts (time series library) + LightGBM quantile regression
 - **Horizon:** 144 steps = 72 hours at 30-minute resolution
 - **Active price quantiles:** p30, p50 (median), p70 — configured in `config.yaml`

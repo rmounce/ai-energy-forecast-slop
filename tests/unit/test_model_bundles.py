@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -48,5 +49,30 @@ def test_report_replacement_refreshes_manifest_hash(tmp_path):
     path = store.write_candidate("price", "one", {"price_model.pkl": b"model"}, {})
     report = {"family": "price", "bundle_id": "one", "smoke_result": True}
     store.replace_candidate_report("price", "one", report)
-    assert json.loads((path / "candidate_report.json").read_text())["smoke_result"] is True
+    manifest = store.validate("price", "one")
+    report_names = [name for name in manifest["artifacts"] if name.startswith("candidate_report")]
+    assert len(report_names) == 1
+    assert json.loads((path / report_names[0]).read_text())["smoke_result"] is True
+    assert manifest["bundle_id"] == "one"
+
+
+def test_interrupted_report_install_preserves_previous_valid_report(tmp_path):
+    store = BundleStore(tmp_path / "models")
+    old = {"family": "price", "bundle_id": "one", "smoke_result": True}
+    path = store.write_candidate("price", "one", {
+        "price_model.pkl": b"model", "candidate_report.json": json.dumps(old).encode(),
+    }, {})
+    original_replace = __import__("model_bundles").os.replace
+    calls = {"n": 0}
+
+    def fail_manifest(source, target):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("injected manifest interruption")
+        return original_replace(source, target)
+
+    with patch("model_bundles.os.replace", side_effect=fail_manifest):
+        with pytest.raises(OSError):
+            store.replace_candidate_report("price", "one", {**old, "revision": 2})
     assert store.validate("price", "one")["bundle_id"] == "one"
+    assert json.loads((path / "candidate_report.json").read_text()) == old

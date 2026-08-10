@@ -1,6 +1,6 @@
 import pytest
 
-from candidate_quality import evaluate_eligibility
+from candidate_quality import derive_screening_metrics, evaluate_eligibility
 
 
 def passing(family):
@@ -39,3 +39,21 @@ def test_load_coverage_upper_boundary_and_overage():
 def test_missing_comparable_evidence_fails_closed():
     result = evaluate_eligibility("price", passing("price"), comparable=False)
     assert not result["eligible_for_manual_promotion"]
+
+
+def test_screening_metrics_are_derived_from_bucket_components():
+    payload = {
+        "provenance": {"command": "eval.py", "rows_file": "rows.parquet"},
+        "row_count": 10,
+        "comparable": True,
+        "buckets": [{"candidate_primary": 10.5, "incumbent_primary": 10.0,
+                     "candidate_bias_mwh": 4, "incumbent_bias_mwh": 1}],
+    }
+    result = derive_screening_metrics(payload)
+    assert result["primary_regressions"] == [pytest.approx(0.05)]
+    assert result["bias_worsening_mwh"] == [pytest.approx(3)]
+
+
+def test_screening_rejects_bare_summary_claims():
+    with pytest.raises(ValueError, match="missing fields"):
+        derive_screening_metrics({"primary_regressions": [0]})

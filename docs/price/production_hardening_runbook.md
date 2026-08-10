@@ -49,3 +49,7 @@ The metrics file supplies `comparable: true`, `primary_regressions` (fractional 
 either `bias_worsening_mwh` for price or `p65_coverage` for load. The report applies the versioned
 thresholds: regression ≤ 0.05, price bias worsening ≤ 10 $/MWh, and load p65 coverage 0.55–0.85.
 Missing evidence remains ineligible.
+
+The evidence file must also contain `provenance.command`, `provenance.rows_file`, a positive
+`row_count`, and bucket records with `candidate_primary`, `incumbent_primary`, and the relevant
+component bias fields. Summary values are derived from these components.
