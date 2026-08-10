@@ -20,6 +20,7 @@ It is not run by deployment automation.
 
 ```bash
 ./forecast.py validate-bundle --family price --bundle <id>
+./forecast.py screen-bundle --family price --bundle <id> --metrics screening.json
 ./forecast.py promote-bundle --family price --bundle <id>
 ./forecast.py rollback-bundle --family price
 ```
@@ -40,3 +41,11 @@ The built-in candidate report is conservatively ineligible until screening metri
 
 The screening report records that historical training uses realised PV/weather/demand and selects
 STPASA differently from live inference. Metrics are screening evidence, not causal promotion proof.
+`screen-bundle` runs the independent 144-point smoke first, then atomically replaces the report
+and refreshes its manifest hash from the supplied machine-readable metrics. It is the supported
+way to add screening evidence; do not edit bundle JSON by hand.
+
+The metrics file supplies `comparable: true`, `primary_regressions` (fractional values), and
+either `bias_worsening_mwh` for price or `p65_coverage` for load. The report applies the versioned
+thresholds: regression ≤ 0.05, price bias worsening ≤ 10 $/MWh, and load p65 coverage 0.55–0.85.
+Missing evidence remains ineligible.

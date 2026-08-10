@@ -41,3 +41,12 @@ def test_migration_refuses_partial_and_is_idempotent(tmp_path):
     assert json.loads((path / "manifest.json").read_text())["family"] == "load"
     with pytest.raises(BundleError, match="already exists"):
         store.migrate_root_artifacts("load", "initial", [existing, params])
+
+
+def test_report_replacement_refreshes_manifest_hash(tmp_path):
+    store = BundleStore(tmp_path / "models")
+    path = store.write_candidate("price", "one", {"price_model.pkl": b"model"}, {})
+    report = {"family": "price", "bundle_id": "one", "smoke_result": True}
+    store.replace_candidate_report("price", "one", report)
+    assert json.loads((path / "candidate_report.json").read_text())["smoke_result"] is True
+    assert store.validate("price", "one")["bundle_id"] == "one"

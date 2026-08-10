@@ -3185,6 +3185,18 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     _PREDICTION_BUNDLE_IDS = None
     _PREDICTION_APF_AGES = {}
     run_started = time.monotonic()
+    run_id = datetime.now(pytz.UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    def log_failure(stage, error, publication_result="not_published"):
+        logging.error(json.dumps({
+            "event": "prediction_failure", "run_id": run_id,
+            "family": ",".join(models_to_run),
+            "source": "amber_apf_lgbm" if "price" in models_to_run and use_dynamic_handoff else "lgbm",
+            "model_bundle_id": ",".join(sorted((_PREDICTION_BUNDLE_IDS or {}).values())) or "unknown",
+            "apf_age_minutes": max((_PREDICTION_APF_AGES or {}).values(), default=None),
+            "failure_stage": stage, "publication_result": publication_result,
+            "elapsed_seconds": round(time.monotonic() - run_started, 3),
+            "error": str(error),
+        }, sort_keys=True))
     logging.info(f"--- Prediction Orchestrator started for models: {models_to_run} ---")
 
     # 1. Fetch and process data ONCE (This part is unchanged)
@@ -3267,6 +3279,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             validate_forecast_family(forecasts, model_name, expected_start=forecast_start_time)
             all_results[model_name] = {'forecasts': forecasts, 'type': prediction_type}
         except Exception as exc:
+            log_failure("generation_or_validation", exc)
             logging.error("Prediction validation failed for %s: %s", model_name, exc, exc_info=True)
             raise
 
@@ -3289,6 +3302,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
             try:
                 _publish_lgbm_model_to_hass(base_model_name, all_results[base_model_name])
             except Exception as e:
+                log_failure("publication", e, "partial_or_failed")
                 logging.error(f"FATAL ERROR in legacy {base_model_name} publish: {e}", exc_info=True)
                 raise
         logging.info(
@@ -3388,6 +3402,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     apf_ages = list((_PREDICTION_APF_AGES or {}).values())
     bundle_ids = {_PREDICTION_BUNDLE_IDS.get(model, "unknown") for model in models_to_run}
     outcome = PredictionOutcome(
+        run_id=run_id,
         family=",".join(models_to_run),
         source="amber_apf_lgbm" if "price" in models_to_run and use_dynamic_handoff else "lgbm",
         model_bundle_id=next(iter(bundle_ids)) if len(bundle_ids) == 1 else ",".join(sorted(bundle_ids)),
@@ -4229,10 +4244,10 @@ def publish_adjusted_covariates_to_hass(adjusted_covariates_df):
 # 6. VERSIONED CANDIDATE BUNDLES
 # --------------------------------------------------------------------------- #
 
-def _candidate_report(family: str, bundle_id: str, artifact_names: list[str]) -> dict:
+def _candidate_report(family: str, bundle_id: str, artifact_names: list[str], *, smoke_seconds: float) -> dict:
     decision = evaluate_eligibility(family, {
         "structural": True,
-        "inference": False,
+        "inference": True,
     }, comparable=False)
     return {
         "bundle_id": bundle_id,
@@ -4242,7 +4257,8 @@ def _candidate_report(family: str, bundle_id: str, artifact_names: list[str]) ->
             "historical training uses realised PV/weather/demand and selects STPASA differently from live inference",
         ],
         "metrics": {},
-        "smoke_result": False,
+        "smoke_result": True,
+        "inference_smoke_seconds": smoke_seconds,
         "artifacts": artifact_names,
         "evidence_scope": "screening evidence, not causal promotion proof",
     }
@@ -4273,16 +4289,15 @@ def train_candidate_family(family: str) -> Path:
         missing = [name for name in required if not (temp / name).is_file()]
         if missing:
             raise BundleError(f"candidate training incomplete: {', '.join(missing)}")
+        smoke_forecasts, smoke_seconds = run_bundle_smoke(family, temp)
         artifacts = {name: (temp / name).read_bytes() for name in names}
-        report = _candidate_report(family, bundle_id, names)
+        report = _candidate_report(family, bundle_id, names, smoke_seconds=smoke_seconds)
         artifacts["candidate_report.json"] = json.dumps(report, indent=2, sort_keys=True).encode()
         try:
             git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         except (OSError, subprocess.CalledProcessError):
             git_commit = "unknown"
-        config_digest = hashlib.sha256(
-            json.dumps(CONFIG["models"][family], sort_keys=True, default=str).encode()
-        ).hexdigest()
+        config_digest = _runtime_config_digest(family)
         shifts = {}
         for name in model_names:
             params_path = temp / f"{name}_params.json"
@@ -4314,14 +4329,61 @@ def migrate_root_family(family: str) -> str:
     if not all(path.is_file() for path in paths):
         raise BundleError(f"migration requires all root artifacts for {family}")
     bundle_id = "initial-root-" + datetime.now(pytz.UTC).strftime("%Y%m%dT%H%M%SZ")
-    store.migrate_root_artifacts(family, bundle_id, paths)
-    manifest_path = store.bundle_dir(family, bundle_id) / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["requested_quantiles"] = model_names
-    manifest["feature_list"] = CONFIG["models"][family].get("feature_cols", [])
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    manifest = {
+        "migration": "root-artifacts",
+        "git_commit": "unknown",
+        "config_digest": _runtime_config_digest(family),
+        "training_start_utc": None,
+        "training_end_utc": None,
+        "row_count": None,
+        "requested_quantiles": model_names,
+        "feature_list": CONFIG["models"][family].get("feature_cols", []),
+        "lightgbm_parameters": CONFIG["models"][family].get("lgbm_params", {}),
+        "shift_values": {},
+        "producing_command": f"./forecast.py migrate-{family}-bundle",
+        "parent_bundle_id": None,
+    }
+    store.migrate_root_artifacts(family, bundle_id, paths, manifest=manifest)
     store.promote(family, bundle_id, report={"eligible_for_manual_promotion": True})
     return bundle_id
+
+
+def _runtime_config_digest(family: str) -> str:
+    return hashlib.sha256(json.dumps({
+        "models": CONFIG["models"][family],
+        "quantiles": list(CONFIG["models"][family].get("quantile_models", {})),
+    }, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def run_bundle_smoke(family: str, bundle_path: Path) -> tuple[dict[str, pd.DataFrame], float]:
+    """Run every bundled quantile through a deterministic 144-step inference smoke."""
+    from darts import TimeSeries
+
+    started = time.monotonic()
+    forecasts = {}
+    for model_name in CONFIG["models"][family].get("quantile_models", {}):
+        model = joblib.load(bundle_path / f"{model_name}_model.pkl")
+        params = json.loads((bundle_path / f"{model_name}_params.json").read_text())
+        covariates = model.future_covariate_series
+        if covariates is None or model.training_series is None:
+            raise BundleError(f"{model_name}: serialized training state unavailable for smoke")
+        # Extend the final observed covariate row through the decoder window.
+        extension = np.repeat(covariates.values()[-1:, :], 148, axis=0)
+        smoke_covariates = covariates.append_values(extension)
+        prediction = model.predict(
+            n=144, series=model.training_series, future_covariates=smoke_covariates,
+        ).to_dataframe()
+        values = np.exp(prediction.iloc[:, 0].to_numpy(dtype=float)) - float(params.get("shift_value", 0))
+        forecasts[model_name] = pd.DataFrame({model_name: values}, index=prediction.index)
+    if family == "price":
+        keys = list(CONFIG["models"][family].get("quantile_models", {}))
+        ordered = sorted(keys, key=lambda key: CONFIG["models"][family]["quantile_models"][key]["alpha"])
+        matrix = np.column_stack([forecasts[key].iloc[:, 0].to_numpy() for key in ordered])
+        matrix = np.sort(matrix, axis=1)
+        for column, key in enumerate(ordered):
+            forecasts[key].iloc[:, 0] = matrix[:, column]
+    validate_forecast_family(forecasts, family)
+    return forecasts, time.monotonic() - started
 
 
 def validate_bundle_command(family: str, bundle_id: str) -> dict:
@@ -4339,12 +4401,20 @@ def validate_bundle_command(family: str, bundle_id: str) -> dict:
         raise BundleError("bundle quantile contract does not match current configuration")
     if manifest.get("feature_list") != expected_features:
         raise BundleError("bundle feature contract does not match current configuration")
+    if manifest.get("config_digest") != _runtime_config_digest(family):
+        raise BundleError("bundle runtime config digest does not match current configuration")
+    _, smoke_seconds = run_bundle_smoke(family, bundle_path)
     report_path = store.bundle_dir(family, bundle_id) / "candidate_report.json"
     if report_path.exists():
         report = json.loads(report_path.read_text())
-        if report.get("smoke_result") is False:
+        if report.get("family") != family or report.get("bundle_id") != bundle_id:
+            raise BundleError("candidate report identity mismatch")
+        if report.get("smoke_result") is not True:
             raise BundleError("candidate inference smoke did not pass")
         manifest["eligible_for_manual_promotion"] = report.get("eligible_for_manual_promotion", False)
+    elif manifest.get("migration") != "root-artifacts":
+        raise BundleError("candidate report is missing")
+    manifest["smoke_seconds"] = smoke_seconds
     return manifest
 
 
@@ -4357,7 +4427,7 @@ def main():
         'train-price', 'train-load',
         'train-price-candidate', 'train-load-candidate',
         'migrate-price-bundle', 'migrate-load-bundle',
-        'validate-bundle', 'promote-bundle', 'rollback-bundle',
+        'validate-bundle', 'promote-bundle', 'rollback-bundle', 'screen-bundle',
         'predict-price', 'predict-load', 'predict-all',
         'publish-tactical', 'publish-pd-direct',
         'update-tariffs', 'backfill-actuals', 'update-adjusters'
@@ -4372,6 +4442,7 @@ def main():
     parser.add_argument('--config', default='config.yaml', help="Path to the configuration file.")
     parser.add_argument('--family', choices=['price', 'load'], help="Bundle family for bundle commands.")
     parser.add_argument('--bundle', help="Bundle ID for validate/promote.")
+    parser.add_argument('--metrics', help="JSON screening metrics for screen-bundle.")
     args = parser.parse_args()
 
     global CONFIG, _DEBUG_TFT
@@ -4390,6 +4461,26 @@ def main():
         if not args.family or not args.bundle:
             parser.error('validate-bundle requires --family and --bundle')
         print(json.dumps(validate_bundle_command(args.family, args.bundle), indent=2, sort_keys=True))
+        return
+    if args.mode == 'screen-bundle':
+        if not args.family or not args.bundle or not args.metrics:
+            parser.error('screen-bundle requires --family, --bundle, and --metrics')
+        manifest = validate_bundle_command(args.family, args.bundle)
+        metrics = json.loads(Path(args.metrics).read_text())
+        decision = evaluate_eligibility(
+            args.family, {**metrics, "structural": True, "inference": True},
+            comparable=bool(metrics.get("comparable", False)),
+        )
+        store = _production_bundle_store()
+        report = {
+            "family": args.family, "bundle_id": args.bundle,
+            **decision, "metrics": metrics, "smoke_result": True,
+            "inference_smoke_seconds": manifest.get("smoke_seconds"),
+            "evidence_scope": "screening evidence, not causal promotion proof",
+            "causal_limitation": "historical training uses realised PV/weather/demand and selects STPASA differently from live inference",
+        }
+        store.replace_candidate_report(args.family, args.bundle, report)
+        logging.info("Updated screening report for %s/%s", args.family, args.bundle)
         return
     if args.mode == 'promote-bundle':
         if not args.family or not args.bundle:

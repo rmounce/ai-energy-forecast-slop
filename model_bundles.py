@@ -126,7 +126,24 @@ class BundleStore:
         self.promote(family, previous, report={"eligible_for_manual_promotion": True})
         return previous
 
-    def migrate_root_artifacts(self, family: str, bundle_id: str, files: Iterable[Path]) -> Path:
+    def replace_candidate_report(self, family: str, bundle_id: str, report: dict) -> None:
+        """Atomically replace screening evidence and refresh its manifest hash."""
+        self.validate(family, bundle_id)
+        bundle = self.bundle_dir(family, bundle_id)
+        report_path = bundle / "candidate_report.json"
+        if report.get("family") != family or report.get("bundle_id") != bundle_id:
+            raise BundleError("candidate report identity mismatch")
+        report_tmp = bundle / ".candidate_report.json.tmp"
+        manifest_path = bundle / "manifest.json"
+        manifest_tmp = bundle / ".manifest.json.tmp"
+        report_tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        manifest = json.loads(manifest_path.read_text())
+        manifest.setdefault("artifacts", {})["candidate_report.json"] = sha256(report_tmp)
+        manifest_tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        os.replace(report_tmp, report_path)
+        os.replace(manifest_tmp, manifest_path)
+
+    def migrate_root_artifacts(self, family: str, bundle_id: str, files: Iterable[Path], *, manifest: dict | None = None) -> Path:
         """Import existing root artifacts once; refuse partial/conflicting state."""
         destination = self.bundle_dir(family, bundle_id)
         if destination.exists() or self.active_pointer(family).exists():
@@ -135,7 +152,7 @@ class BundleStore:
         if not paths or not all(path.is_file() for path in paths):
             raise BundleError("migration requires every root artifact to exist")
         artifacts = {path.name: path.read_bytes() for path in paths}
-        return self.write_candidate(family, bundle_id, artifacts, {
+        default_manifest = {
             "migration": "root-artifacts",
             "git_commit": "unknown",
             "config_digest": "unknown",
@@ -148,4 +165,7 @@ class BundleStore:
             "shift_values": {},
             "producing_command": "./forecast.py migrate-<family>-bundle",
             "parent_bundle_id": None,
-        })
+        }
+        if manifest:
+            default_manifest.update(manifest)
+        return self.write_candidate(family, bundle_id, artifacts, default_manifest)
