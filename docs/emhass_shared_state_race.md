@@ -1,6 +1,7 @@
 # EMHASS shared-state race — handoff brief (for the EMHASS source discussion)
 
-**Discovered:** 2026-06-01, while bringing up the HWC planner (`docs/hwc/emhass.md`).
+**Discovered:** 2026-06-01, while bringing up the HWC planner. The HWC controller moved to
+the sibling `../hwc` repository on 2026-08-10; this is retained as historical EMHASS context.
 **Discovered on:** EMHASS v0.17.5. **Production:** official v0.17.9 since 2026-08-02.
 **Scope of this brief:** the fix belongs upstream in EMHASS, not as a workaround in this
 repo. This captures the problem + proposed fixes to seed that discussion.
@@ -89,8 +90,7 @@ efficiency + decoupling improvement on top.
 
 ## Re-enabling HWC
 
-The HWC planner (`hwc_planner.py`) and its timer are **still disabled** in this repo. The
-corruption race they would trigger is fixed upstream and present in the deployed official
-v0.17.9 image. Before re-enabling per `docs/hwc/emhass.md`, confirm EMHASS is v0.17.6 or
-newer; do **not** re-enable against an older stock image. A dedicated HWC instance remains
-the stronger isolation option.
+The old EMHASS-backed HWC planner discussed here is retired. The live controller is the
+separate sibling `../hwc` repository and does not use this `naive-mpc-optim` path. If that
+path is ever reconsidered, confirm the deployed EMHASS image contains the upstream fix
+before enabling any additional frequent publisher.

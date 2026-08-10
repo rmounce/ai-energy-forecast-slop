@@ -62,7 +62,7 @@ differently across the battery and the HWC planner:
   optimiser's *cheapest block* move.** This is what the manual lever does, and
   what this controller automates.
 
-The HWC DP planner (`hwc_dp_planner.py`) carries a per-start `transition_cost_aud`
+The HWC DP planner (now in the sibling `../hwc` repository) carries a per-start `transition_cost_aud`
 ($0.05/start, no hard minimum-runtime — 2026-06-20 decision) and is **immune to
 Trigger A by design**: a single 5-min cheap step would have to be ~$0.81/kWh
 cheaper than heating elsewhere to justify a dedicated start (0.74 kW × 5 min =

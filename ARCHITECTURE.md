@@ -387,6 +387,10 @@ Neither notebook imports from `forecast.py`. They are standalone exploratory too
 
 These files live in HA but are backed up here. They are **not loaded directly from this directory** — they must be manually imported/updated in HA. URLs are redacted before committing.
 
+The hot-water controller moved to the sibling `../hwc` repository on 2026-08-10. This
+repository consumes its published `sensor.hwc_power_plan` as a Home Assistant contract;
+the controller code, runtime state, dashboard, and HWC-specific HA configuration live there.
+
 > Production terminal-SoC policy (DH offset feedback, MPC inheritance, eval-vs-production
 > correspondence): see [docs/production_soc_policy.md](docs/production_soc_policy.md).
 
