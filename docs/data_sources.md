@@ -41,7 +41,7 @@
 | Source | InfluxDB measurement | RP | Fields | CQ from |
 |--------|---------------------|-----|--------|---------|
 | Household load | `power_load_5m`, `power_load_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | Gross HA consumed power; retained for history |
-| Household load without deferrable loads | `power_load_without_deferrable_5m`, `power_load_without_deferrable_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA `sensor.power_consumed_without_deferrable_loads` → `rp_raw` → CQs |
+| Household load without deferrable loads | `power_load_without_deferrable_5m`, `power_load_without_deferrable_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA `sensor.power_consumed_without_deferrable_loads` → `rp_raw` → CQs; excludes both HWC heat sources (heat-pump compressor and resistive element) and fan-heater dump loads |
 | Solar PV | `power_pv_5m`, `power_pv_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQs |
 | Dump load | `power_dump_load_30m` | `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQ |
 | Temperature | `temperature_adelaide` | `rp_30m` | `mean_value` (°C) | HA sensor → `rp_raw` → CQ |

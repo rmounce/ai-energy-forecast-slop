@@ -245,7 +245,7 @@ Database: `hass`, InfluxDB v1.x
 | Measurement | Fields |
 |---|---|
 | `power_load_30m` | `mean_value`, `min_value`, `max_value` — gross site consumed power, retained for history |
-| `power_load_without_deferrable_30m` | `mean_value`, `min_value`, `max_value` — preferred model load input from HA `sensor.power_consumed_without_deferrable_loads`; excludes HWC heat pump and dump load |
+| `power_load_without_deferrable_30m` | `mean_value`, `min_value`, `max_value` — preferred model load input from HA `sensor.power_consumed_without_deferrable_loads`; excludes both HWC heat sources (heat-pump compressor and resistive element) and the fan-heater dump loads |
 | `power_dump_load_30m` | `mean_value`, `min_value`, `max_value` — estimated dump load (2×2000W heaters on smart switches, no power monitoring); retained for fallback subtraction against older `power_load_30m` history |
 | `power_dump_load_5m` | `mean_value`, `min_value`, `max_value` — intermediate 5m aggregation fed by CQ |
 | `power_pv_30m` | `mean_value`, `min_value`, `max_value` |
@@ -467,8 +467,10 @@ This is the most complex HA file. It does:
    - PV forecast: Solcast p10/p50/p90 blended by `input_number.emhass_weight_pv_forecast`, with 65W fixed loss applied
    - Load forecast: base load from `sensor.ai_load_forecast_high` (p65 model), plus planned
      HWC compressor power from `sensor.hwc_power_plan` added in the day-ahead EMHASS payload.
-     The load model itself uses `power_load_without_deferrable_30m` so scheduled HWC demand is
-     not learned as ordinary household load.
+     The load model itself uses `power_load_without_deferrable_30m`, which excludes both the
+     HWC heat-pump compressor and resistive element, so HWC demand is not learned as ordinary
+     household load. Only the planned compressor load is added back to the EMHASS forecast;
+     reactive resistive-element events are not forecast loads.
    - Price forecast: from `sensor.ai_price_forecast` (p50), blended with p30/p70 by `input_number.emhass_weight_buy_forecast`
    - Battery charge ramp: DH and MPC both read `sensor.emhass_charge_ramp_config`, which is derived from the `input_datetime.emhass_charge_ramp_*` and `input_number.emhass_charge_ramp_*` helpers.
 
