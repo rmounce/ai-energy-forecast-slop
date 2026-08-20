@@ -234,16 +234,40 @@ template:
         {% endif %}
         {{ ns.value | round(6) }}
 
+    - name: 'Amber Adjusted Confirmed Feed In Price'
+      unique_id: amber_adjusted_confirmed_feed_in_price
+      unit_of_measurement: "$/kWh"
+      device_class: monetary
+      availability: >-
+        {{ states('sensor.amber_5min_current_feed_in_price') not in ['unknown', 'unavailable']
+           and state_attr('sensor.amber_5min_current_feed_in_price', 'end_time') is not none }}
+      state: >-
+        {% set raw_price = states('sensor.amber_5min_current_feed_in_price') | float %}
+        {% set allowance = states('input_number.sapn_free_exports') | float(0) %}
+        {% set adjustment = 0.01 if 10 <= now().hour < 16 and allowance > 0 else 0 %}
+        {{ (raw_price + adjustment) | round(6) }}
+      attributes:
+        raw_price: >-
+          {{ states('sensor.amber_5min_current_feed_in_price') | float(0) | round(6) }}
+        confirmed_end_time: >-
+          {{ state_attr('sensor.amber_5min_current_feed_in_price', 'end_time') }}
+        export_allowance_adjustment: >-
+          {% set allowance = states('input_number.sapn_free_exports') | float(0) %}
+          {{ 0.01 if 10 <= now().hour < 16 and allowance > 0 else 0 }}
+        adjustments: >-
+          {% set allowance = states('input_number.sapn_free_exports') | float(0) %}
+          {{ ['sapn_free_export_allowance'] if 10 <= now().hour < 16 and allowance > 0 else [] }}
+
     - name: 'Amber Effective Feed In Price'
       unit_of_measurement: "$/kWh"
       device_class: monetary
       state: >
-        {% set ns = namespace(value='unknown') %}
-        {% set base_price = 0 %}
+        {% set ns = namespace(value='unknown', confirmed=false, forecast_time=none) %}
 
-        {# First, get the base price from either the current sensor or the next forecast #}
+        {# Prefer the locally adjusted confirmed price; otherwise use the next forecast. #}
         {% if as_datetime(state_attr('sensor.amber_5min_current_feed_in_price', 'end_time')) > utcnow() %}
-          {% set base_price = states('sensor.amber_5min_current_feed_in_price') | float(0) %}
+          {% set ns.value = states('sensor.amber_adjusted_confirmed_feed_in_price') | float(0) %}
+          {% set ns.confirmed = true %}
         {% else %}
           {% for item in state_attr('sensor.amber_5min_forecasts_feed_in_price', 'Forecasts') %}
             {% if ns.value == 'unknown' and as_datetime(item.end_time) > utcnow() %}
@@ -264,27 +288,19 @@ template:
               
               {# Safeguard: Use the lower (more pessimistic) of the blended price or the raw per_kwh forecast #}
               {% set ns.value = [adjusted_price, -item.per_kwh] | min %}
+              {% set ns.forecast_time = as_local(as_datetime(item.end_time)) %}
             {% endif %}
           {% endfor %}
-          {% set base_price = ns.value %}
         {% endif %}
 
-        {# ================================================================= #}
-        {#               START: DNSP FREE TIER ADJUSTMENT                    #}
-        {# ================================================================= #}
-        {% set final_base_price = base_price | float(0) %}
+        {# Forecasts need the same local adjustment already applied by the confirmed entity. #}
         {% set allowance = states('input_number.sapn_free_exports') | float(0) %}
-        {% set current_hour = now().hour %}
-
-        {# If we are in the 10am-4pm window AND have allowance, add 1c ($0.01) #}
-        {% if 10 <= current_hour < 16 and allowance > 0 %}
-          {{ (final_base_price + 0.01) | round(6) }}
+        {% if not ns.confirmed and ns.forecast_time is not none
+              and 10 <= ns.forecast_time.hour < 16 and allowance > 0 %}
+          {{ ((ns.value | float(0)) + 0.01) | round(6) }}
         {% else %}
-          {{ final_base_price | round(6) }}
+          {{ ns.value | round(6) }}
         {% endif %}
-        {# ================================================================= #}
-        {#                END: DNSP FREE TIER ADJUSTMENT                     #}
-        {# ================================================================= #}
 
     - name: 'EMHASS Selected MPC Price Source'
       state: "{{ states('input_select.emhass_mpc_price_source') }}"
@@ -729,17 +745,8 @@ rest_command:
         {#               3. DYNAMIC PRICE FORECASTING & FINAL PARAMETERS                           #}
         {# ========================================================================================= #}
         {%- set load_cost_now = states('sensor.amber_5min_current_general_price') | float(0) %}
-        {%- set prod_price_now = states('sensor.amber_5min_current_feed_in_price') | float(0) %}
-        
-        {#- Adjust CURRENT price for DNSP allowance #}
-        {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
+        {%- set adjusted_prod_price_now = states('sensor.amber_adjusted_confirmed_feed_in_price') | float(0) %}
         {%- set current_time_local = now() %}
-
-        {%- if 10 <= current_time_local.hour < 16 and current_allowance > 0 %}
-          {%- set adjusted_prod_price_now = prod_price_now + 0.01 %}
-        {%- else %}
-          {%- set adjusted_prod_price_now = prod_price_now %}
-        {%- endif %}
         
         {#- --- CONFIGURATION: Relative Panic Curve --- #}
         {#- Battery charge ramp config from HA helpers via sensor.emhass_charge_ramp_config. #}

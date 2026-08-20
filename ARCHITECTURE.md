@@ -456,7 +456,7 @@ This is the most complex HA file. It does:
 
 1. **`sensor.amber_effective_general_price`** — blends current Amber spot price with a risk-weighted advanced forecast (controlled by `input_number.emhass_weight_buy_forecast`, range −1 to +1). Adds DNSP free-tier adjustment (+1c during 10:00–16:00 if allowance > 0).
 
-2. **`sensor.amber_effective_feed_in_price`** — same logic for feed-in (export) price.
+2. **`sensor.amber_adjusted_confirmed_feed_in_price` / `sensor.amber_effective_feed_in_price`** — separates confirmed Amber export history with local economic adjustments from the control price. The effective sensor uses the adjusted confirmed value while valid, then falls back to the weighted and adjusted next forecast.
 
 3. **`sensor.emhass_current_pv_input_mode`** — classifies the live PV measurement as `measured`, `transition`, `pv_limit`, or `export_limit` from applied Sigenergy limits and physical power flows. Battery absorption headroom uses the lower of the configured EMS charge limit and `sensor.sigen_inverter_max_battery_charge_power`, so the inverter's top-of-charge capability taper can establish a binding export limit before derived SoC reaches the fallback threshold. MPC reconstructs available PV with `max(measured, Solcast)` only during a limit/telemetry transition or while a limit is physically binding. A prior EMHASS curtailment plan, negative import price, and battery SoC alone are not curtailment evidence. The classifier is tariff-time-independent; the separate 10:00–16:00 grid-import preference remains downstream execution policy.
 
