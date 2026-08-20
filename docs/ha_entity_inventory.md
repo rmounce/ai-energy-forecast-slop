@@ -150,6 +150,8 @@ Archived/disabled as of 2026-06-15:
 
 ## HA template sensors (emhass.yaml)
 
+Hot-reload procedure: [ha_hot_reload.md](ha_hot_reload.md).
+
 Derived sensors computed by HA template engine. Recalculate on state change.
 
 | Entity | Description | Depends on |
