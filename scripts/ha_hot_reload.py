@@ -7,17 +7,19 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 import requests
 import websockets
-import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from config_utils import load_config
 
 
 def load_ha_config(path: Path) -> tuple[str, str]:
-    with path.open() as handle:
-        config = yaml.safe_load(handle)
+    config = load_config(path)
     ha = config["home_assistant"]
     token = os.environ.get("HA_TOKEN") or str(ha.get("token") or "")
     if not token:
