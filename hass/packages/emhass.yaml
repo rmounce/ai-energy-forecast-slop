@@ -483,7 +483,7 @@ rest_command:
         "publish_prefix":"mpc_",
         
         {#- soc_init / soc_final are computed by the wrapping script
-            (script.emhass_mpc), which applies the force-charge bias and lock-in lead
+            (script.emhass_mpc), which applies the plan-relative deviation and lock-in lead
             using the prior DH plan, then persists the chosen soc_init to
             input_number.mpc_last_soc_init. Call this rest_command via that script,
             not directly. #}
@@ -1028,17 +1028,15 @@ script:
   # script.emhass_mpc
   #
   # Wrapper around rest_command.emhass_mpc that applies plan-relative
-  # soc_init/soc_final using the prior DH plan, plus the force-charge top-balance
-  # bias. Writes the chosen soc_init to input_number.mpc_last_soc_init for
+  # soc_init/soc_final using the prior DH plan and live SoC. Writes the chosen
+  # soc_init to input_number.mpc_last_soc_init for
   # diagnostics, then fires the rest_command.
   #
   # Call this script from automations instead of calling rest_command directly.
   #
   # MPC FORMULA:
   #
-  #   bias_pct          = clamp((real_soc - 90) / (99.99 - 90), 0, 1) * 0.20
-  #   effective_soc_pct = 100 if real_soc >= 100 else max(0, real_soc - bias_pct)
-  #   deviation         = effective_soc_pct - planned_soc_at_now    (signed)
+  #   deviation         = real_soc - planned_soc_at_now              (signed)
   #   positive_only     = max(deviation, 0)
   #   soc_init          = clamp(planned_soc_at_boundary + deviation, 0, 100)
   #   soc_final         = clamp(planned_soc_at_future + positive_only, 0, 100)
@@ -1058,39 +1056,8 @@ script:
   # doesn't cover the queried timestamp, the interpolation falls back to
   # actual_soc_now via the lookup default.
   #
-  # ---------------------------------------------------------------------------
-  # FORCE-CHARGE TOP-BALANCE BIAS (ramped, 2026-05-29)
-  #
-  # `effective_soc_pct` deflates the live SoC by a ramped bias that scales
-  # linearly from 0pp at SoC ≤ 90% to 0.20pp at SoC ≥ 99.99% (and is pinned at
-  # the 100% reporting ceiling above 100%). That deflation feeds the deviation
-  # calc, and the deviation in turn feeds both soc_init and soc_final — so the
-  # bias propagates through both anchors. When active near the top of the
-  # window the result is a small synthetic energy deficit (~60 Wh on a 30 kWh
-  # battery) that EMHASS must close somewhere in its 14h horizon.
-  #
-  # Why it's there (two intertwined purposes):
-  # 1. Top-balance: at very high SoC (e.g. 99.9%) EMHASS would otherwise plan
-  #    only a tiny charge in the final 5-min interval to reach 100% — but the
-  #    battery cells need slightly more power than the strict SoC math implies
-  #    in order to top-balance. The bias inflates the headroom and gives EMHASS
-  #    more power budget in those final moments.
-  # 2. Reaching 100% at all: under the pre-2026-09-15 battery PWL stress penalty,
-  #    EMHASS spread charging across the day, then pivoted from "charge from PV"
-  #    to "export to grid" before reaching 100%. Battery PWL stress is now off and
-  #    EMHASS 0.17.7+ prefers later curtailment among economically equivalent plans.
-  #    Retain this bias during the trial until sunny-day top balancing confirms it
-  #    is no longer needed. The "nearly full" execution handling remains active.
-  #
-  # Why the ramp (chosen 2026-05-29): the flat 0.20pp always-on bias caused a
-  # persistent small-import side effect during pure-self-consume periods (~50
-  # Wh/cycle) even when SoC sat far from the top-balance window. Confining the
-  # bias to the high-SoC ramp eliminates the side effect at low/mid SoC while
-  # preserving the LP nudge through the charge→export pivot. The 90% lower
-  # endpoint was chosen to ramp in before the typical late-afternoon pivot
-  # point. If the SoC-reaches-100% behaviour regresses on sunny days, the lower
-  # endpoint may need to drop further (e.g. 85%); empirical validation needed.
-  # ---------------------------------------------------------------------------
+  # The former synthetic high-SoC deflation was removed 2026-09-15. Near-full
+  # top balancing is execution policy in automation-sigenergy-emhass.yaml.
   emhass_mpc:
     alias: EMHASS MPC Optimisation
     sequence:
@@ -1195,14 +1162,6 @@ script:
             {{ {'at_boundary': vb.value, 'at_now': vn.value, 'at_future': vf.value} | tojson }}
       - variables:
           real_soc: "{{ actual_soc_now | float(0) }}"
-          effective_soc_pct: >-
-            {%- set rs = actual_soc_now | float(0) -%}
-            {%- set ramp_lo = 90.0 -%}
-            {%- set ramp_hi = 99.99 -%}
-            {%- set bias_max = 0.20 -%}
-            {%- set frac = [[(rs - ramp_lo) / (ramp_hi - ramp_lo), 0.0] | max, 1.0] | min -%}
-            {%- set bias = frac * bias_max -%}
-            {{ 100.0 if rs >= 100 else ([0, rs - bias] | max) }}
           # HA's script-variable engine auto-parses native-looking output, so
           # `interpolated` ends up as a dict — access the fields directly rather
           # than re-parsing via from_json (which only accepts strings).
@@ -1210,8 +1169,8 @@ script:
           planned_at_now: "{{ interpolated.at_now | float }}"
           planned_at_future: "{{ interpolated.at_future | float }}"
       - variables:
-          deviation_pct: "{{ ((effective_soc_pct | float) - (planned_at_now | float)) | round(6) }}"
-          positive_deviation_only: "{{ [((effective_soc_pct | float) - (planned_at_now | float)), 0] | max | round(6) }}"
+          deviation_pct: "{{ ((real_soc | float) - (planned_at_now | float)) | round(6) }}"
+          positive_deviation_only: "{{ [((real_soc | float) - (planned_at_now | float)), 0] | max | round(6) }}"
       - variables:
           soc_init_pct: >-
             {{ ([0, (planned_at_boundary | float) + (deviation_pct | float), 100] | sort)[1] | round(4) }}
