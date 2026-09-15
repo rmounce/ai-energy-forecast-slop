@@ -37,7 +37,9 @@ needed.
    `input_number.mpc_last_soc_init` (diagnostic), then fires
    `rest_command.emhass_mpc` with the values as parameters → EMHASS
    computes battery plan → `rest_command.emhass_publish_data_mpc`
-   publishes results. See `docs/production_soc_policy.md` for the formula.
+   publishes results. At a reported 100% SoC, `soc_init_pct` is saturated at
+   100% so boundary reconstruction cannot create artificial charge headroom.
+   See `docs/production_soc_policy.md` for the formula.
 5. Automation triggers
    `automation.battery_ems_control_based_on_emhass_forecasts` → Sigenergy
    script writes battery setpoints.

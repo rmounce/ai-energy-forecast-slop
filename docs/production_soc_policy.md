@@ -155,7 +155,8 @@ adjustments at the start and end of its 14h horizon:
 real_soc          = live SoC from sensor.sigen_plant_battery_state_of_charge_derived
 deviation         = real_soc − planned_soc_at_now             (signed)
 positive_only     = max(deviation, 0)
-soc_init          = clamp(planned_soc_at_boundary + deviation, 0, 100%)
+soc_init          = 100% when real_soc >= 100%; otherwise
+                    clamp(planned_soc_at_boundary + deviation, 0, 100%)
 soc_final         = clamp(planned_soc_at_future + positive_only, 0, 100%)
 ```
 
@@ -178,6 +179,14 @@ Equivalently, when the plan slope is flat over the partial interval
 the pre-self-correction behaviour. The `soc_final` keeps the original positive-only
 lock-in lead: lift the planned future SoC only when we're ahead of plan; never
 lower the target.
+
+**Full-SoC saturation guard (2026-09-15):** when live SoC reports 100% or
+higher, MPC passes 100% directly as `soc_init`. The normal boundary-aligned
+reconstruction is retained below 100%. Without this guard, a rising DH trajectory
+makes the reconstructed boundary SoC lower than the live value; at full SoC that
+turns historical headroom, already filled during the elapsed part of the block,
+into apparently available headroom and causes artificial first-interval charging.
+The terminal deviation and positive-only lock-in calculation are unchanged.
 
 **Important consequence:** the +14h MPC target is **not** itself anchored at any
 particular value (high or low). It is whatever the offset-adjusted DH trajectory

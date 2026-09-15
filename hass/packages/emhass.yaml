@@ -1038,7 +1038,8 @@ script:
   #
   #   deviation         = real_soc - planned_soc_at_now              (signed)
   #   positive_only     = max(deviation, 0)
-  #   soc_init          = clamp(planned_soc_at_boundary + deviation, 0, 100)
+  #   soc_init          = 100 when real_soc >= 100, otherwise
+  #                       clamp(planned_soc_at_boundary + deviation, 0, 100)
   #   soc_final         = clamp(planned_soc_at_future + positive_only, 0, 100)
   #
   # where:
@@ -1055,6 +1056,11 @@ script:
   # when the helper is at its initial 0 value (cold start); when the prior plan
   # doesn't cover the queried timestamp, the interpolation falls back to
   # actual_soc_now via the lookup default.
+  #
+  # At a reported 100% SoC, use the live value directly. Backdating through a
+  # rising DH trajectory would otherwise expose historical headroom as if it
+  # were still available, causing artificial first-interval charging. Below
+  # 100%, retain the boundary-aligned reconstruction.
   #
   # The former synthetic high-SoC deflation was removed 2026-09-15. Near-full
   # top balancing is execution policy in automation-sigenergy-emhass.yaml.
@@ -1173,7 +1179,11 @@ script:
           positive_deviation_only: "{{ [((real_soc | float) - (planned_at_now | float)), 0] | max | round(6) }}"
       - variables:
           soc_init_pct: >-
-            {{ ([0, (planned_at_boundary | float) + (deviation_pct | float), 100] | sort)[1] | round(4) }}
+            {%- if (real_soc | float) >= 100 -%}
+              100
+            {%- else -%}
+              {{ ([0, (planned_at_boundary | float) + (deviation_pct | float), 100] | sort)[1] | round(4) }}
+            {%- endif -%}
           soc_final_pct: >-
             {{ ([0, (planned_at_future | float) + (positive_deviation_only | float), 100] | sort)[1] | round(4) }}
       - service: input_number.set_value
