@@ -193,7 +193,7 @@ The former MPC synthetic SoC deflation (up to 0.20pp across 90–99.99% SoC) was
 removed on 2026-09-15. It altered optimisation state to compensate for execution
 throttling and was no longer justified after removal of the battery PWL stress
 penalty. Near-full top balancing is handled directly by the execution automation's
-`soc_full_threshold` branches (99.8% as of 2026-09-15), which use Maximum Self
+`soc_full_threshold` branches (99.5% as of 2026-09-15), which use Maximum Self
 Consumption without copying EMHASS's final partial-interval charge power into a
 battery charge limit.
 

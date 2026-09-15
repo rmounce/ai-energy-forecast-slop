@@ -60,7 +60,7 @@ actions:
       soc: >
         {{ states('sensor.sigen_plant_battery_state_of_charge_derived') |
         float('unknown') }}
-      soc_full_threshold: 99.8
+      soc_full_threshold: 99.5
       planned_pv_curtailment_kwh: >
         {#- next 10 hours #} {{ state_attr('sensor.mpc_p_pv_curtailment',
         'forecasts')[:120]|map(attribute='mpc_p_pv_curtailment')|map('float')|sum
