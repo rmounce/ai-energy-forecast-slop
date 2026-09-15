@@ -94,3 +94,21 @@ The old EMHASS-backed HWC planner discussed here is retired. The live controller
 separate sibling `../hwc` repository and does not use this `naive-mpc-optim` path. If that
 path is ever reconsidered, confirm the deployed EMHASS image contains the upstream fix
 before enabling any additional frequent publisher.
+
+## Restart republish limitation — confirmed 2026-09-15
+
+- Context: EMHASS `0.17.9`; HA restarted while EMHASS retained its data volume.
+- HA lost the REST-created `dh_*` and `mpc_*` entities, as expected until republished.
+- `POST /action/publish-data` with `publish_prefix: all` did not restore them.
+- EMHASS reported no saved entity JSON files in `/data/entities`, fell back to the single
+  `/data/opt_res_latest.csv`, inferred that result as 5-minute data, then tried to assign the
+  configured 30-minute frequency. Pandas rejected the mismatch:
+  `Inferred frequency 5min ... does not conform to passed frequency 30min`.
+- A prefix-only DH republish hit the same fallback because the retained latest result was MPC.
+- Operational conclusion: a shared EMHASS instance serving 30-minute DH and 5-minute MPC
+  cannot use the generic latest-result fallback as reliable HA-restart recovery. Reseed the
+  upstream HA forecasts and let each optimization republish its own prefix.
+- A manual MPC trigger before reseeding `sensor.ai_load_forecast_high` omitted the intended
+  runtime load array. EMHASS fell back to its internal ML forecaster, whose persisted
+  `ForecasterRecursive` model was incompatible with the newer installed `skforecast`
+  (`exog_dtypes_out_` missing). Preflight required runtime forecast entities first.

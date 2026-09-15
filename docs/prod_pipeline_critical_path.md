@@ -124,6 +124,11 @@ models use these covariates materially.
 **Latency from forecast publish → DH plan ready**: a couple of seconds
 inside EMHASS plus the 1s defensive action delay.
 
+After an HA restart, explicitly reseed the production load/price publishers before manually
+triggering EMHASS. The ordered recovery procedure and entity checks are in
+[`docs/ha_hot_reload.md`](ha_hot_reload.md). Generic EMHASS `publish-data all` is not a safe
+substitute for rerunning both mixed-resolution plans on v0.17.9.
+
 **Note:** the automation also still writes
 `input_number.sigen_plant_battery_state_of_charge → input_number.emhass_dayahead_soc_init`
 before calling the script. The write is now a no-op (the script reads the live
