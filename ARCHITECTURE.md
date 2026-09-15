@@ -472,7 +472,9 @@ This is the most complex HA file. It does:
      household load. Only the planned compressor load is added back to the EMHASS forecast;
      reactive resistive-element events are not forecast loads.
    - Price forecast: from `sensor.ai_price_forecast` (p50), blended with p30/p70 by `input_number.emhass_weight_buy_forecast`
-   - Battery charge ramp: DH and MPC both read `sensor.emhass_charge_ramp_config`, which is derived from the `input_datetime.emhass_charge_ramp_*` and `input_number.emhass_charge_ramp_*` helpers.
+   - Battery costs: scalar zero charge weight; HA-supplied discharge weight. EMHASS
+     `0.17.7+` breaks economically equivalent solutions toward later PV curtailment.
+     Battery-power PWL stress is disabled; inverter AC-power PWL stress remains enabled.
 
 ---
 

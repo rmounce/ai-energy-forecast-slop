@@ -213,12 +213,12 @@ EMHASS must close somewhere in its 14h horizon.
    need slightly more power than the strict SoC math implies in order to top-balance.
    The bias inflates the headroom and gives EMHASS more power budget in those final
    moments.
-2. **Reaching 100% at all:** without the bias, EMHASS would happily spread charging
-   across the day (quadratic power cost penalty rewards flattening), then pivot
-   from "charge from PV" to "export to grid" as late-afternoon prices rise — often
-   before the battery reaches 100%. The synthetic deficit keeps the LP on the
-   "charge" side of that corner for longer, so SoC actually tops out at 100% on
-   most sunny days.
+2. **Reaching 100% at all:** under the pre-2026-09-15 battery PWL stress penalty,
+   EMHASS spread charging across the day, then pivoted from "charge from PV" to
+   "export to grid" as late-afternoon prices rose — often before the battery reached
+   100%. The battery PWL penalty is now disabled and EMHASS `0.17.7+` prefers later
+   curtailment among economically equivalent plans. Keep the synthetic deficit during
+   the trial until sunny-day top balancing confirms it is no longer needed.
 
 **Why the ramp** (chosen 2026-05-29): the previous flat 0.20pp always-on bias
 caused a persistent small-import side effect (~50 Wh/cycle, ~$0.01-0.02/cycle,
@@ -229,7 +229,7 @@ charge→export pivot. The 90% lower endpoint was chosen to ramp in before the
 typical late-afternoon pivot point. If the SoC-reaches-100% behaviour regresses
 on sunny days, the lower endpoint may need to drop further (e.g. 85%);
 empirical validation is needed before relying on the ramp in winter conditions
-or after any change to the EMHASS power-cost penalty.
+and after the 2026-09-15 removal of the battery PWL stress penalty.
 
 ## Persistence helpers
 

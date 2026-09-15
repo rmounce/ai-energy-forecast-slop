@@ -14,19 +14,6 @@ input_select:
       - amber_lgbm_extrapolated
     initial: amber_lgbm_extrapolated
 
-input_datetime:
-  emhass_charge_ramp_start_time:
-    name: EMHASS Charge Ramp Start
-    has_date: false
-    has_time: true
-    initial: "14:30:00"
-
-  emhass_charge_ramp_stop_time:
-    name: EMHASS Charge Ramp Stop
-    has_date: false
-    has_time: true
-    initial: "21:00:00"
-
 input_number:
   # soc_init values passed to the most recent DH / MPC EMHASS runs. Written by
   # script.emhass_dayahead_optim and script.emhass_mpc respectively. Used to
@@ -49,26 +36,6 @@ input_number:
     step: 0.01
     unit_of_measurement: "%"
     icon: mdi:battery-sync
-
-  emhass_charge_ramp_step_minutes:
-    name: EMHASS Charge Ramp Step Minutes
-    min: 1
-    max: 60
-    step: 1
-    initial: 5
-    mode: box
-    unit_of_measurement: min
-    icon: mdi:timer-outline
-
-  emhass_charge_ramp_step_weight:
-    name: EMHASS Charge Ramp Step Weight
-    min: 0
-    max: 0.01
-    step: 0.0001
-    initial: 0.0002
-    mode: box
-    unit_of_measurement: "$/kWh"
-    icon: mdi:chart-line
 
 input_text:
   # Compact UTC key for the most recent 30-minute DH quantization block where
@@ -103,22 +70,6 @@ template:
           deferrables_schedule_json: "{{ state_attr('sensor.hwc_power_plan', 'deferrables_schedule') | default([], true) | tojson }}"
 
   - sensor:
-    - name: 'EMHASS Charge Ramp Config'
-      state: configured
-      attributes:
-        start_time: "{{ states('input_datetime.emhass_charge_ramp_start_time') }}"
-        stop_time: "{{ states('input_datetime.emhass_charge_ramp_stop_time') }}"
-        start_min: >
-          {% set ramp_start_state = states('input_datetime.emhass_charge_ramp_start_time') %}
-          {% set ramp_start_parts = ramp_start_state.split(':') if ':' in ramp_start_state else ['14', '30'] %}
-          {{ (ramp_start_parts[0] | int(14)) * 60 + (ramp_start_parts[1] | int(30)) }}
-        stop_min: >
-          {% set ramp_stop_state = states('input_datetime.emhass_charge_ramp_stop_time') %}
-          {% set ramp_stop_parts = ramp_stop_state.split(':') if ':' in ramp_stop_state else ['21', '00'] %}
-          {{ (ramp_stop_parts[0] | int(21)) * 60 + (ramp_stop_parts[1] | int(0)) }}
-        step_minutes: "{{ [states('input_number.emhass_charge_ramp_step_minutes') | int(5), 1] | max }}"
-        step_weight: "{{ states('input_number.emhass_charge_ramp_step_weight') | float(0.0002) }}"
-
     - name: 'EMHASS Current PV Input Mode'
       unique_id: emhass_current_pv_input_mode
       state: >-
@@ -437,16 +388,10 @@ rest_command:
         {%- set discharge_weight = states('input_number.emhass_weight_battery_discharge') | float(0.02) %}
 
         {#- Prepare empty lists to store the new forecasts. #}
-        {%- set data = namespace(load_cost_list=[], prod_price_list=[], weight_charge_list=[]) %}
+        {%- set data = namespace(load_cost_list=[], prod_price_list=[]) %}
 
         {#- Get the current allowance state ONCE before the loop. #}
         {%- set current_allowance = states('input_number.sapn_free_exports') | float(0) %}
-
-        {#- Battery charge ramp config from HA helpers via sensor.emhass_charge_ramp_config. #}
-        {%- set charge_ramp_start_min = state_attr('sensor.emhass_charge_ramp_config', 'start_min') | int(0) %}
-        {%- set charge_ramp_stop_min = state_attr('sensor.emhass_charge_ramp_config', 'stop_min') | int(0) %}
-        {%- set charge_ramp_step_min = [state_attr('sensor.emhass_charge_ramp_config', 'step_minutes') | int(5), 1] | max %}
-        {%- set charge_ramp_step_weight = state_attr('sensor.emhass_charge_ramp_config', 'step_weight') | float(0) %}
 
         {#- APF-backed source: APF-derived p50/low/high forecasts with user quantile knobs. #}
         {%- set p50_forecasts = state_attr('sensor.ai_price_forecast', 'forecasts') %}
@@ -491,27 +436,11 @@ rest_command:
 
           {%- set data.prod_price_list = data.prod_price_list + [final_sell_price | round(4)] %}
 
-          {#- --- Process Dynamic BATTERY CHARGE WEIGHT --- #}
-          {#- 00:00-ramp start = 0.0 | ramp window = +0.0002 per 5 mins | after ramp stop = 0.0 #}
-          {#- Use END of period time. Add 30 minutes to start time. #}
-          {%- set end_time = forecast_time_local + timedelta(minutes=30) %}
-          {%- set m = end_time.hour * 60 + end_time.minute %}
-
-          {#- Use > start so the first period ending after ramp start picks up an initial weight. #}
-          {#- Use <= stop because the exact stop time is the peak of the ramp. #}
-          {%- if charge_ramp_start_min < m <= charge_ramp_stop_min %}
-             {%- set charge_ramp_steps = (m - charge_ramp_start_min) / charge_ramp_step_min %}
-             {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
-          {%- else %}
-             {%- set w_charge = 0.0 %}
-          {%- endif %}
-          {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
-
         {%- endfor %}
         "load_cost_forecast": {{ data.load_cost_list | tojson }},
         "prod_price_forecast": {{ data.prod_price_list | tojson }},
         "weight_battery_discharge": {{ discharge_weight }},
-        "weight_battery_charge": {{ data.weight_charge_list | tojson }},
+        "weight_battery_charge": 0,
 
         {#- ========================================================================================= #}
         {#-             END: DAY-AHEAD TWO-KNOB DYNAMIC PRICING LOGIC                     -#}
@@ -748,34 +677,12 @@ rest_command:
         {%- set adjusted_prod_price_now = states('sensor.amber_adjusted_confirmed_feed_in_price') | float(0) %}
         {%- set current_time_local = now() %}
         
-        {#- --- CONFIGURATION: Relative Panic Curve --- #}
-        {#- Battery charge ramp config from HA helpers via sensor.emhass_charge_ramp_config. #}
-        {%- set charge_ramp_start_min = state_attr('sensor.emhass_charge_ramp_config', 'start_min') | int(0) %}
-        {%- set charge_ramp_stop_min = state_attr('sensor.emhass_charge_ramp_config', 'stop_min') | int(0) %}
-        {%- set charge_ramp_step_min = [state_attr('sensor.emhass_charge_ramp_config', 'step_minutes') | int(5), 1] | max %}
-        {%- set charge_ramp_step_weight = state_attr('sensor.emhass_charge_ramp_config', 'step_weight') | float(0) %}
-        
-        {#- Calculate NOW (minutes from midnight, end of current 5min block) #}
+        {#- Calculate the current 5-minute planning boundary. #}
         {%- set snapped_minute = (current_time_local.minute // 5) * 5 %}
         {%- set start_of_period = current_time_local.replace(minute=snapped_minute, second=0, microsecond=0) %}
-        {%- set end_of_period = start_of_period + timedelta(minutes=5) %}
-        {%- set m_now = end_of_period.hour * 60 + end_of_period.minute %}
-        
-        {#- Dynamic Start: The ramp starts at the configured start OR Now, whichever is later. #}
-        {#- This ensures the cost at 'Now' is always 0, preventing disincentive to charge immediately. #}
-        {%- set ramp_start = [charge_ramp_start_min, m_now] | max %}
-        
-        {#- Calculate Weight for NOW (Always 0 based on logic above) #}
-        {#- But we keep the check for safety to ensure we don't return negative numbers #}
-        {%- if ramp_start < m_now <= charge_ramp_stop_min %}
-           {%- set charge_ramp_steps = (m_now - ramp_start) / charge_ramp_step_min %}
-           {%- set w_charge_now = charge_ramp_step_weight * charge_ramp_steps %}
-        {%- else %}
-           {%- set w_charge_now = 0.0 %}
-        {%- endif %}
-        
-        {#- Initialize the lists with the correctly adjusted CURRENT price and CURRENT weight #}
-        {%- set data = namespace(load_cost_list=[load_cost_now], prod_price_list=[adjusted_prod_price_now], weight_charge_list=[w_charge_now]) %}
+
+        {#- Initialize the lists with the correctly adjusted current prices. #}
+        {%- set data = namespace(load_cost_list=[load_cost_now], prod_price_list=[adjusted_prod_price_now]) %}
 
         {#- Get the weights which now range from -1.0 to 1.0 #}
         {%- set k_buy = states('input_number.emhass_weight_buy_forecast') | float(0) %}
@@ -803,16 +710,6 @@ rest_command:
 
             {%- set data.load_cost_list = data.load_cost_list + [final_buy_price | round(4)] %}
 
-            {%- set forecast_start = as_local(as_datetime(item.start_time)) %}
-            {%- set forecast_end = forecast_start + timedelta(minutes=5) %}
-            {%- set m = forecast_end.hour * 60 + forecast_end.minute %}
-            {%- if ramp_start < m <= charge_ramp_stop_min %}
-              {%- set charge_ramp_steps = (m - ramp_start) / charge_ramp_step_min %}
-              {%- set w_charge = charge_ramp_step_weight * charge_ramp_steps %}
-            {%- else %}
-              {%- set w_charge = 0.0 %}
-            {%- endif %}
-            {%- set data.weight_charge_list = data.weight_charge_list + [w_charge | round(5)] %}
           {%- endif %}
         {%- endfor %}
 
@@ -850,7 +747,7 @@ rest_command:
 
         "load_cost_forecast": {{ data.load_cost_list[:168] | tojson }},
         "prod_price_forecast": {{ data.prod_price_list[:168] | tojson }},
-        "weight_battery_charge": {{ data.weight_charge_list[:168] | tojson }},
+        "weight_battery_charge": 0,
 
         {# ========================================================================================= #}
         {#      START: PREPARE NET CURRENT VALUES & COMBINE WITH NET FORECAST                        #}
@@ -1178,14 +1075,12 @@ script:
   #    battery cells need slightly more power than the strict SoC math implies
   #    in order to top-balance. The bias inflates the headroom and gives EMHASS
   #    more power budget in those final moments.
-  # 2. Reaching 100% at all: without the bias, EMHASS would happily spread
-  #    charging across the day (quadratic power cost penalty rewards flattening),
-  #    then pivot from "charge from PV" to "export to grid" as late-afternoon
-  #    prices rise — often before the battery reaches 100%. The synthetic deficit
-  #    keeps the LP on the "charge" side of that corner for longer, so SoC
-  #    actually tops out at 100% on most sunny days. This needs to work in
-  #    concert with the "nearly full" handling in automation-sigenergy-emhass.yaml;
-  #    both mitigations have been empirically necessary.
+  # 2. Reaching 100% at all: under the pre-2026-09-15 battery PWL stress penalty,
+  #    EMHASS spread charging across the day, then pivoted from "charge from PV"
+  #    to "export to grid" before reaching 100%. Battery PWL stress is now off and
+  #    EMHASS 0.17.7+ prefers later curtailment among economically equivalent plans.
+  #    Retain this bias during the trial until sunny-day top balancing confirms it
+  #    is no longer needed. The "nearly full" execution handling remains active.
   #
   # Why the ramp (chosen 2026-05-29): the flat 0.20pp always-on bias caused a
   # persistent small-import side effect during pure-self-consume periods (~50

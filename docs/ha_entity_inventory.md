@@ -156,7 +156,6 @@ Derived sensors computed by HA template engine. Recalculate on state change.
 
 | Entity | Description | Depends on |
 |---|---|---|
-| `sensor.emhass_charge_ramp_config` | Parsed battery charge ramp config for DH and MPC EMHASS payloads: start/stop minutes, step minutes, and per-step weight | `input_datetime.emhass_charge_ramp_start_time`, `input_datetime.emhass_charge_ramp_stop_time`, `input_number.emhass_charge_ramp_step_minutes`, `input_number.emhass_charge_ramp_step_weight` |
 | `sensor.amber_effective_general_price` | Two-knob blended import price — blends `advanced_price_predicted/high/low` toward buy weight, then takes max of blended vs `per_kwh`. Used as spot reference for automations. | `sensor.amber_5min_current_general_price`, `sensor.amber_5min_forecasts_general_price`, `input_number.emhass_weight_buy_forecast` |
 | `sensor.amber_adjusted_confirmed_feed_in_price` | Confirmed Amber feed-in price with local economic adjustments. Currently adds $0.01/kWh in the 10:00–16:00 SAPN free-export window while allowance remains. Never substitutes a forecast. Attributes identify the raw price and applied adjustment. | `sensor.amber_5min_current_feed_in_price`, `input_number.sapn_free_exports` |
 | `sensor.amber_effective_feed_in_price` | Price currently used for export control: adjusted confirmed price while the current Amber interval is valid; otherwise the two-knob blended and locally adjusted next forecast. | `sensor.amber_adjusted_confirmed_feed_in_price`, `sensor.amber_5min_forecasts_feed_in_price`, `input_number.emhass_weight_sell_forecast`, `input_number.sapn_free_exports` |
@@ -211,10 +210,6 @@ the `forecasts` attribute.
 | `input_number.emhass_weight_battery_discharge` | Battery discharge cost penalty in EMHASS objective | 0.0+ |
 | `input_number.emhass_weight_forecast_probability` | EMHASS stochastic optimisation probability weight | 0–1 |
 | `input_number.emhass_day_ahead_forecast_probability_weight` | DH probability weight | 0–1 |
-| `input_datetime.emhass_charge_ramp_start_time` | Battery charge ramp start time used by DH and MPC EMHASS payloads | time |
-| `input_datetime.emhass_charge_ramp_stop_time` | Battery charge ramp stop time used by DH and MPC EMHASS payloads | time |
-| `input_number.emhass_charge_ramp_step_minutes` | Battery charge ramp step size in minutes | 1–60 min |
-| `input_number.emhass_charge_ramp_step_weight` | Battery charge ramp increment added per step | 0–0.01 $/kWh |
 | `input_number.emhass_target_soc_offset` | Offset added to EMHASS-derived target SoC. Adjusted after every DH plan publish by the `"EMHASS — Update target SoC offset"` automation in `hass/packages/emhass.yaml` (see `docs/production_soc_policy.md`) | — |
 | `input_number.emhass_dayahead_soc_init` | **Legacy**, written by an older DH automation but no longer consumed by `rest_command.emhass_dayahead_optim` after the script-wrapper refactor. Retained for diagnostics only | % |
 | `input_number.dh_last_soc_init` | soc_init actually passed to the most recent DH run. Written by `script.emhass_dayahead_optim`. Used by both DH (next run's chain anchor) and MPC (prior plan's start anchor for interpolation, because the published `dh_soc_batt_forecast` only carries end-of-interval values) | % |
