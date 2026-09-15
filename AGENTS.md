@@ -22,6 +22,8 @@
 - Document confirmed black-box behaviour promptly.
 - Cover device/API quirks, HA entity lifecycle, mode/setpoint semantics, operational limits.
 - Record concrete facts: date/context, command/service, observed state, remaining uncertainty.
+- Home Assistant: prefer domain hot reloads through the HA API whenever supported; restart
+  HA only when the changed configuration cannot be reloaded. Follow `docs/ha_hot_reload.md`.
 
 ## Plans And Memory
 
