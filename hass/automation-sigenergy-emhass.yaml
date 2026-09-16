@@ -62,9 +62,11 @@ actions:
         float('unknown') }}
       soc_full_threshold: 99.5
       planned_pv_curtailment_kwh: >
-        {#- next 10 hours #} {{ state_attr('sensor.mpc_p_pv_curtailment',
-        'forecasts')[:120]|map(attribute='mpc_p_pv_curtailment')|map('float')|sum
-        / 12000 }}
+        {{ states('sensor.planned_pv_curtailment_remaining_today') |
+        float('unknown') }}
+      proactive_pv_curtailment_threshold_kwh: >
+        {{ states('input_number.curtailment_proactive_pv_threshold') |
+        float('unknown') }}
       max_grid_import: 14999
       max_grid_export: -9999
       max_inverter_discharge: 9979
@@ -155,7 +157,10 @@ actions:
           - condition: template
             value_template: >-
               {{ (states('sensor.amber_effective_general_price') | float) < 0
-              and planned_pv_curtailment_kwh > 0 and (p_grid >= max_grid_import
+              and is_state('binary_sensor.curtailment_threshold_order_valid', 'on')
+              and has_value('sensor.planned_pv_curtailment_remaining_today')
+              and planned_pv_curtailment_kwh > proactive_pv_curtailment_threshold_kwh
+              and (p_grid >= max_grid_import
               or p_hybrid_inverter <= max_inverter_charge) }}
         sequence:
           - data_template:
@@ -173,7 +178,10 @@ actions:
           - condition: template
             value_template: >-
               {{ (states('sensor.amber_effective_general_price') | float) < 0
-              and planned_pv_curtailment_kwh > 0 and p_grid > 0 and p_batt < 0
+              and is_state('binary_sensor.curtailment_threshold_order_valid', 'on')
+              and has_value('sensor.planned_pv_curtailment_remaining_today')
+              and planned_pv_curtailment_kwh > proactive_pv_curtailment_threshold_kwh
+              and p_grid > 0 and p_batt < 0
               and p_hybrid_inverter < 0 }}
         sequence:
           - data_template:

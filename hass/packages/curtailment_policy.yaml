@@ -1,0 +1,137 @@
+# Shared policy for allocating forecast PV curtailment to useful/flexible loads.
+# Lower thresholds enter first as forecast spill rises and remain active longer as it falls.
+
+input_number:
+  curtailment_hwc_compressor_threshold:
+    name: Curtailment - HWC compressor
+    min: 0
+    max: 10
+    step: 0.125
+    initial: 0.375
+    mode: box
+    unit_of_measurement: kWh
+    icon: mdi:heat-pump
+
+  curtailment_hwc_element_threshold:
+    name: Curtailment - HWC element
+    min: 0
+    max: 10
+    step: 0.125
+    initial: 0.75
+    mode: box
+    unit_of_measurement: kWh
+    icon: mdi:water-boiler
+
+  curtailment_dump_load_threshold:
+    name: Curtailment - aggressive dump load
+    min: 0
+    max: 10
+    step: 0.125
+    initial: 1.0
+    mode: box
+    unit_of_measurement: kWh
+    icon: mdi:radiator
+
+  curtailment_proactive_pv_threshold:
+    name: Curtailment - proactive full PV curtailment
+    min: 0
+    max: 10
+    step: 0.125
+    initial: 1.25
+    mode: box
+    unit_of_measurement: kWh
+    icon: mdi:solar-power-variant-outline
+
+template:
+  - sensor:
+      - name: Planned PV Curtailment Remaining Today
+        unique_id: planned_pv_curtailment_remaining_today
+        device_class: energy
+        state_class: measurement
+        unit_of_measurement: kWh
+        icon: mdi:solar-power
+        availability: >-
+          {% set forecasts = state_attr('sensor.mpc_p_pv_curtailment', 'forecasts')
+             | default([], true) %}
+          {% set ns = namespace(current=false) %}
+          {% for item in forecasts %}
+            {% set start = as_datetime(item.date, none) %}
+            {% if start is not none
+                  and start <= now()
+                  and now() < start + timedelta(minutes=5) %}
+              {% set ns.current = true %}
+            {% endif %}
+          {% endfor %}
+          {{ states('sensor.mpc_p_pv_curtailment') not in ['unknown', 'unavailable']
+             and ns.current }}
+        state: >-
+          {% set forecasts = state_attr('sensor.mpc_p_pv_curtailment', 'forecasts')
+             | default([], true) %}
+          {% set ns = namespace(total_w=0.0) %}
+          {% for item in forecasts %}
+            {% set start = as_datetime(item.date, none) %}
+            {% if start is not none
+                  and as_local(start).date() == now().date()
+                  and start + timedelta(minutes=5) > now() %}
+              {% set ns.total_w = ns.total_w
+                 + ([item.mpc_p_pv_curtailment | float(0), 0] | max) %}
+            {% endif %}
+          {% endfor %}
+          {{ (ns.total_w / 12000) | round(3) }}
+        attributes:
+          source_entity: sensor.mpc_p_pv_curtailment
+          interval_minutes: 5
+          boundary: local calendar day
+
+  - binary_sensor:
+      - name: Curtailment Threshold Order Valid
+        unique_id: curtailment_threshold_order_valid
+        icon: mdi:order-numeric-ascending
+        availability: >-
+          {{ expand(
+               'input_number.curtailment_hwc_compressor_threshold',
+               'input_number.curtailment_hwc_element_threshold',
+               'input_number.curtailment_dump_load_threshold',
+               'input_number.curtailment_proactive_pv_threshold')
+             | rejectattr('state', 'in', ['unknown', 'unavailable']) | list | count == 4 }}
+        state: >-
+          {% set compressor = states('input_number.curtailment_hwc_compressor_threshold') | float %}
+          {% set element = states('input_number.curtailment_hwc_element_threshold') | float %}
+          {% set dump = states('input_number.curtailment_dump_load_threshold') | float %}
+          {% set proactive = states('input_number.curtailment_proactive_pv_threshold') | float %}
+          {{ compressor <= element <= dump < proactive }}
+        attributes:
+          required_order: HWC compressor <= HWC element <= aggressive dump load < proactive full PV curtailment
+
+automation:
+  - id: curtailment_threshold_policy_invalid
+    alias: Curtailment threshold policy invalid
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.curtailment_threshold_order_valid
+        for: "00:00:10"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ not is_state('binary_sensor.curtailment_threshold_order_valid', 'on') }}
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: curtailment_threshold_policy_invalid
+          title: Curtailment threshold policy invalid
+          message: >-
+            Flexible-load surplus behavior is disabled. Required order:
+            HWC compressor <= HWC element <= aggressive dump load < proactive full PV curtailment.
+    mode: restart
+
+  - id: curtailment_threshold_policy_valid
+    alias: Curtailment threshold policy valid
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.curtailment_threshold_order_valid
+        to: "on"
+    actions:
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: curtailment_threshold_policy_invalid
+    mode: restart
