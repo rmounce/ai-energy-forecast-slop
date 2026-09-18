@@ -245,8 +245,8 @@ Database: `hass`, InfluxDB v1.x
 | Measurement | Fields |
 |---|---|
 | `power_load_30m` | `mean_value`, `min_value`, `max_value` — gross site consumed power, retained for history |
-| `power_load_without_deferrable_30m` | `mean_value`, `min_value`, `max_value` — preferred model load input from HA `sensor.power_consumed_without_deferrable_loads`; excludes both HWC heat sources (heat-pump compressor and resistive element) and the fan-heater dump loads |
-| `power_dump_load_30m` | `mean_value`, `min_value`, `max_value` — estimated dump load (2×2000W heaters on smart switches, no power monitoring); retained for fallback subtraction against older `power_load_30m` history |
+| `power_load_without_deferrable_30m` | `mean_value`, `min_value`, `max_value` — preferred model load input from HA `sensor.power_consumed_without_deferrable_loads`; excludes both HWC heat sources (heat-pump compressor and resistive element) and all dump loads |
+| `power_dump_load_30m` | `mean_value`, `min_value`, `max_value` — aggregate dump load: estimated 2×2000W fan heaters plus metered 2×2150W nominal oil heaters; retained for fallback subtraction against older `power_load_30m` history |
 | `power_dump_load_5m` | `mean_value`, `min_value`, `max_value` — intermediate 5m aggregation fed by CQ |
 | `power_pv_30m` | `mean_value`, `min_value`, `max_value` |
 | `temperature_adelaide` | `mean_value` |

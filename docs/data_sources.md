@@ -41,9 +41,9 @@
 | Source | InfluxDB measurement | RP | Fields | CQ from |
 |--------|---------------------|-----|--------|---------|
 | Household load | `power_load_5m`, `power_load_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | Gross HA consumed power; retained for history |
-| Household load without deferrable loads | `power_load_without_deferrable_5m`, `power_load_without_deferrable_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA `sensor.power_consumed_without_deferrable_loads` → `rp_raw` → CQs; excludes both HWC heat sources (heat-pump compressor and resistive element) and fan-heater dump loads |
+| Household load without deferrable loads | `power_load_without_deferrable_5m`, `power_load_without_deferrable_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA `sensor.power_consumed_without_deferrable_loads` → `rp_raw` → CQs; excludes both HWC heat sources (heat-pump compressor and resistive element) and all dump loads |
 | Solar PV | `power_pv_5m`, `power_pv_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQs |
-| Dump load | `power_dump_load_30m` | `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQ |
+| Dump load | `power_dump_load_30m` | `rp_30m` | `mean_value` (W) | `sensor.estimated_dump_load_power` → `rp_raw` → CQ; fixed estimates for two fan heaters plus live metering (with switched-on fallback) for two oil heaters; see `docs/dump_load_control.md` |
 | Temperature | `temperature_adelaide` | `rp_30m` | `mean_value` (°C) | HA sensor → `rp_raw` → CQ |
 | Humidity | `humidity_adelaide` | `rp_30m` | `mean_value` (%) | HA sensor → `rp_raw` → CQ |
 | Wind speed | `wind_speed_adelaide` | `rp_30m` | `mean_value` (m/s) | HA sensor → `rp_raw` → CQ |

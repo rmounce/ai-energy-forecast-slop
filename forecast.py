@@ -401,7 +401,7 @@ def get_historical_data(client, start_time, end_time):
         'total_demand_nsw1': f'SELECT mean("total_demand") FROM "rp_30m"."aemo_dispatch_nsw1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
         'net_interchange_nsw1': f'SELECT mean("net_interchange") FROM "rp_30m"."aemo_dispatch_nsw1_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
 
-        # Estimated dump load (2x2000W heaters on smart switches, active during
+        # Aggregate dump load (fixed estimates and metered heaters, active during
         # negative price periods). Subtracted from power_load before training/
         # prediction so the model learns base load, not dump-load-inflated load.
         'power_dump_load': f'SELECT mean("mean_value") FROM "rp_30m"."power_dump_load_30m" WHERE time >= \'{start_str}\' AND time <= \'{end_str}\' GROUP BY time(30m)',
