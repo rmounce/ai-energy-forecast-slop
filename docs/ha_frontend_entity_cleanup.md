@@ -20,6 +20,22 @@ at archive time. Those sources are now expected to go stale unless deliberately
 revived, so active dashboards should remove them and keep only production
 APF/LightGBM price plus LightGBM load forecast surfaces.
 
+## 2026-09-18 Dashboard Cleanup
+
+Removed the final comparison-era stack from the live `Forecasts` view through
+the HA WebSocket API:
+
+- `Price Source Selectors`
+- `MPC Diagnostic`
+- `DH Diagnostic`
+
+The `input_select.emhass_mpc_price_source` and
+`input_select.emhass_dh_price_source` helpers remain in the HA package because
+the production templates still read them. Their only available option is
+`amber_apf_lgbm`, so exposing them as dashboard controls was redundant. The
+removed diagnostic cards referenced retired `sensor.emhass_*_price_diagnostic`
+entities and generated missing-entity warnings.
+
 ## Historical Dashboard References
 
 Production dashboard file:
