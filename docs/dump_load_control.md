@@ -28,6 +28,13 @@
 - Fan heaters contribute 2,000 W each while their switches are on.
 - Oil heaters contribute their live plug power while available and 2,150 W fallback while switched on if metering is unavailable.
 - A thermostat-open oil heater correctly contributes approximately 0 W while its plug remains on.
+- HA counts the aggregate once in `sensor.individually_metered_load`, so active dump power is
+  classified as known rather than inflating `sensor.remaining_power_load`.
+- The main dashboard's state-sorted `Individual Loads` card shows the aggregate as `Dump Loads`.
+- Dump loads remain part of `sensor.deferrable_load_power` and are therefore excluded from
+  `sensor.power_consumed_without_deferrable_loads`, the base load-forecast input.
+- The HWC heat-pump meter follows the same split: it is a known individual load, but is also
+  deferrable and excluded from the base forecast before its schedule is added to EMHASS demand.
 
 ## Oil-heater circulation fans
 
@@ -56,3 +63,6 @@
   switches were off at final verification, so the fans correctly remained off.
 - 2026-09-19: increased both circulation fans from minimum speed (16%) to 50% and applied the
   change immediately while both heaters were enabled.
+- 2026-09-19: added the aggregate dump-load sensor to the live known-load total and main
+  dashboard through a template hot reload and Lovelace WebSocket save. HA configuration check
+  passed; the dashboard save passed read-after-write verification.
