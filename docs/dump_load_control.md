@@ -29,6 +29,22 @@
 - Oil heaters contribute their live plug power while available and 2,150 W fallback while switched on if metering is unavailable.
 - A thermostat-open oil heater correctly contributes approximately 0 W while its plug remains on.
 
+## Oil-heater circulation fans
+
+- PowerWaster 3 drives Bed 3 fan `fan.fan_1` through
+  `automation.powerwaster_3_bed_3_circulation_fan` (ID `1789795626001`).
+- PowerWaster 4 drives Bed 2 fan `fan.fan_2` through
+  `automation.powerwaster_4_bed_2_circulation_fan` (ID `1789795626002`).
+- Plug switch on: request forward direction and minimum speed (16%).
+- Plug switch off: keep the fan running for six minutes, then stop it if the plug remains off.
+- Each room uses a separate restart-mode automation. A new switch transition cancels that
+  room's pending shutdown without affecting the other room.
+- HA startup reconciles enabled heaters. A fan stopped or reversed while its heater remains
+  enabled is restored to forward minimum-speed operation.
+- Control follows plug switch state, not measured heater power. Low/zero power while the plug
+  is on can mean the heater thermostat is saturated; circulation remains useful then.
+- Existing Bed 2/3 air-conditioning fan automations remain separate.
+
 ## Commissioning observations
 
 - 2026-09-18, individual live switching test: both new plug mappings and relays worked.
@@ -36,3 +52,5 @@
 - PowerWaster 4 reached 2,096 W during its test.
 - Plug voltage/current/power entities update asynchronously. Ignore the first few samples after switching; aggregate power follows the plug's reported power.
 - The 2,250 W control allowance remains conservative relative to the observed loads.
+- 2026-09-19: added and enabled both live oil-heater circulation-fan automations. Both heater
+  switches were off at final verification, so the fans correctly remained off.
