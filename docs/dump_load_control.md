@@ -33,6 +33,11 @@
   `sensor.remaining_power_load`. PowerWaster 1/2 fixed estimates do not enter the known total.
 - The main dashboard's state-sorted `Individual Loads` card shows PowerWaster 3 and 4
   separately. It does not show the aggregate estimated dump-load entity.
+- A separate `Dump Loads` dashboard card shows the aggregate as `Total (estimated)` and the
+  direct switch-based PowerWaster 1/2 estimate. Estimated values are not mixed into the
+  state-sorted metered-load list.
+- `sensor.estimated_unmetered_dump_load_power` reports 0, 2,000, or 4,000 W directly from the
+  PowerWaster 1/2 switch states; it does not subtract meters from the aggregate.
 - Dump loads remain part of `sensor.deferrable_load_power` and are therefore excluded from
   `sensor.power_consumed_without_deferrable_loads`, the base load-forecast input.
 - The HWC heat-pump meter follows the same split: it is a known individual load, but is also
@@ -69,3 +74,5 @@
   dashboard through a template hot reload and Lovelace WebSocket save. Fixed PowerWaster 1/2
   estimates remain outside the known-load presentation. HA configuration check passed; the
   dashboard save passed read-after-write verification.
+- 2026-09-19: added a separate main-dashboard `Dump Loads` card for the aggregate and
+  PowerWaster 1/2 estimate; the measured-load list and known-load sum remain measured-only.
