@@ -61,6 +61,13 @@ actions:
         {{ states('sensor.sigen_plant_battery_state_of_charge_derived') |
         float('unknown') }}
       soc_full_threshold: 99.5
+      full_reached_holdoff_hours: 8
+      full_reached_holdoff_active: >-
+        {% set last_full =
+          states('input_datetime.battery_last_reached_full') | as_timestamp(0) %}
+        {{ last_full > 0
+           and (as_timestamp(now()) - last_full)
+             < (full_reached_holdoff_hours * 60 * 60) }}
       planned_pv_curtailment_kwh: >
         {{ states('sensor.planned_pv_curtailment_remaining_today') |
         float('unknown') }}
@@ -293,8 +300,8 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ soc >= soc_full_threshold and p_pv_curtailment > 0 and p_grid
-              == 0 and p_batt <= 0
+              {{ soc >= soc_full_threshold and not full_reached_holdoff_active
+              and p_pv_curtailment > 0 and p_grid == 0 and p_batt <= 0
               and today_at('10:00') <= now() < today_at('16:00') }}
         sequence:
           - data_template:
@@ -309,8 +316,8 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ soc >= soc_full_threshold and p_pv_curtailment > 0 and p_grid
-              == 0 and p_batt <= 0 }}
+              {{ soc >= soc_full_threshold and not full_reached_holdoff_active
+              and p_pv_curtailment > 0 and p_grid == 0 and p_batt <= 0 }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action
@@ -323,8 +330,8 @@ actions:
       - conditions:
           - condition: template
             value_template: >-
-              {{ soc >= soc_full_threshold and p_pv > 0 and p_grid < 0 and
-              p_batt <= 0 }}
+              {{ soc >= soc_full_threshold and not full_reached_holdoff_active
+              and p_pv > 0 and p_grid < 0 and p_batt <= 0 }}
         sequence:
           - data_template:
               entity_id: input_text.emhass_battery_action

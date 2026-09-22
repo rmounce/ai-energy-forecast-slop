@@ -37,6 +37,16 @@ input_number:
     unit_of_measurement: "%"
     icon: mdi:battery-sync
 
+input_datetime:
+  # Written only when derived battery SoC crosses into 100%. The execution
+  # automation uses this timestamp to avoid repeating near-full top balancing
+  # after the battery has already reached full recently.
+  battery_last_reached_full:
+    name: Battery Last Reached Full
+    has_date: true
+    has_time: true
+    icon: mdi:battery-check
+
 input_text:
   # Compact UTC key for the most recent 30-minute DH quantization block where
   # script.emhass_dayahead_optim re-grounded its chained anchor to live SoC
@@ -1197,6 +1207,22 @@ script:
           soc_final_pct: "{{ soc_final_pct }}"
 
 automation:
+  # Record the transition to full, not every sensor update while full. A later
+  # transition back to 100% legitimately refreshes the timestamp.
+  - alias: "Battery — Record reaching full"
+    id: battery_record_reaching_full
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.sigen_plant_battery_state_of_charge_derived
+        above: 99.99
+    actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.battery_last_reached_full
+        data:
+          timestamp: "{{ now().timestamp() }}"
+    mode: single
+
   # +72h offset feedback loop.
   #
   # Each time EMHASS publishes a fresh DH plan (sensor.dh_soc_batt_forecast

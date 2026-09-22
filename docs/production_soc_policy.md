@@ -1,6 +1,6 @@
 # Production Terminal SoC Policy
 
-**Last updated: 2026-09-15**
+**Last updated: 2026-09-22**
 
 This document captures the *production* behaviour of how the Sigenergy battery's
 target State-of-Charge (SoC) is set across the day-ahead (DH) and 14-hour MPC layers,
@@ -205,6 +205,14 @@ penalty. Near-full top balancing is handled directly by the execution automation
 `soc_full_threshold` branches (99.5% as of 2026-09-15), which use Maximum Self
 Consumption without copying EMHASS's final partial-interval charge power into a
 battery charge limit.
+
+The package automation `Battery — Record reaching full` writes
+`input_datetime.battery_last_reached_full` only when derived SoC crosses into
+100%. For eight hours after that transition, the execution automation disables
+the three `soc_full_threshold` overrides and follows normal EMHASS dispatch. This
+loosely limits top balancing to once per day without repeatedly writing helper
+state while the battery remains full. A later crossing back into 100% refreshes
+the timestamp. The dedicated true-100% full-curtailment branch is unchanged.
 
 ## Persistence helpers
 
