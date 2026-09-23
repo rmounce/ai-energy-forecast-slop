@@ -1,0 +1,11 @@
+[Unit]
+Description=Archive AEMO PEC-MI transition reports and run schema canary
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/ai-energy-forecast-slop
+EnvironmentFile=-%h/src/ai-energy-forecast-slop/.env
+Environment=AEMO_TRANSITION_CAPTURE_FROM_UTC=2026-09-22T00:00:00Z
+ExecStart=%h/src/ai-energy-forecast-slop/.venv/bin/python %h/src/ai-energy-forecast-slop/ingest/capture_aemo_transition_reports.py
+TimeoutStartSec=15min
+Nice=10

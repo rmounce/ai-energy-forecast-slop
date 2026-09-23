@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture current AEMO reports every five minutes
+
+[Timer]
+# Runs two minutes after the usual five-minute boundary, matching P5MIN ingest.
+OnCalendar=*:02,07,12,17,22,27,32,37,42,47,52,57:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
