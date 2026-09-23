@@ -7,6 +7,6 @@ Description=Run AI load predictions and publish to Home Assistant
 Type=oneshot
 WorkingDirectory=%h/src/ai-energy-forecast-slop
 EnvironmentFile=%h/src/ai-energy-forecast-slop/.env
-# The healthcheck is intentionally short-circuited: it must run only after a
-# validated prediction and successful HA publication (forecast.py exit 0).
-ExecStart=/bin/bash -c 'source .venv/bin/activate && ./forecast.py predict-load --publish-hass --publish-covariates && curl -fsS --retry 3 ${HC_PREDICT_URL}'
+# The slug is separate from the price listener's slug, so either job can fail
+# without a success ping from the other job clearing its state.
+ExecStart=/bin/bash -c 'source .venv/bin/activate; ./forecast.py predict-load --publish-hass --publish-covariates; result=$?; if [ "$result" -ne 0 ]; then exit "$result"; fi; .venv/bin/python healthchecks.py predict-load'

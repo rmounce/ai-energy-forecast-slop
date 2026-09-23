@@ -32,6 +32,10 @@ from urllib.parse import urljoin
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from healthchecks import ping_check as ping_healthcheck  # noqa: E402
+
 DEFAULT_ROOT = ROOT / "data" / "aemo_transition"
 DEFAULT_CAPTURE_FROM = "2026-09-22T00:00:00+00:00"
 NEM_TZ = timezone(timedelta(hours=10))
@@ -699,9 +703,8 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
     return report
 
 
-def _ping_healthcheck(url: str, failed: bool) -> None:
-    endpoint = url.rstrip("/") + ("/fail" if failed else "")
-    _request(endpoint)
+def _ping_healthcheck(failed: bool) -> bool:
+    return ping_healthcheck("aemo-pec-mi-transition", failed=failed, timeout=30)
 
 
 def main() -> int:
@@ -721,16 +724,16 @@ def main() -> int:
                          result["new_files_saved"], result["listing_files"], ids)
     for issue in report["issues"]:
         logging.error("CANARY: %s", issue)
-    healthcheck = os.environ.get("HC_AEMO_TRANSITION_URL")
+    project_key = os.environ.get("HC_REPO_PING_KEY", "").strip()
     failed = bool(report["issues"])
-    if healthcheck:
+    if project_key:
         try:
-            _ping_healthcheck(healthcheck, failed)
+            _ping_healthcheck(failed)
         except Exception as exc:
             logging.error("Healthcheck ping failed: %s", exc)
             failed = True
     else:
-        logging.warning("HC_AEMO_TRANSITION_URL is unset; failures are recorded in systemd journal only")
+        logging.warning("HC_REPO_PING_KEY is unset; failures are recorded in systemd journal only")
     return 1 if failed else 0
 
 

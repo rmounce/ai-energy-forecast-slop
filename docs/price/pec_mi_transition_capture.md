@@ -44,10 +44,18 @@ first non-overlapping interval; a gap above 30 hours or a regional interchange j
 cadence over the latest 13 distinct run times. It records the maximum target horizon by source
 and alerts if that horizon changes by more than 30 minutes between captures.
 
-Set a dedicated `HC_AEMO_TRANSITION_URL` in `.env` for a separate Healthchecks monitor. Success
-pings the URL; capture or canary failure pings `/fail` and exits nonzero. Without this value,
-failures appear only in the systemd journal. The archive and canary report remain available for
-diagnosis.
+Use one `HC_REPO_PING_KEY` project Ping Key in `.env` for Healthchecks across the repo. Each job
+uses a unique slug: this capture uses `aemo-pec-mi-transition`, while the load service and price
+listener use `predict-load` and `price-listener`. These slugs have independent check states, so a
+success from one job cannot clear another job's failure. The `?create=1` option auto-creates each
+check on its first ping; no per-job UUID needs to be copied into `.env`. Without the project key,
+this capture only records failures in the systemd journal.
+
+Healthchecks auto-created checks start with a one-day period and one-hour grace period. After the
+capture's first ping creates its slug, set its expected period to five minutes with a suitable
+grace time so a stopped timer is detected promptly. The existing `HC_PREDICT_URL` setting remains
+a transition fallback for the load service and listener only; while they use that one URL, their
+success pings can mask one another. Set `HC_REPO_PING_KEY` to move them to their separate slugs.
 
 ## Initial live observation
 
@@ -76,7 +84,8 @@ horizon was 34.38 hours at capture time.
 That capture retained 2,688 raw and sidecar files (187.5 MB) from the 2026-09-22 backfill start.
 At the observed rate this is about 4.4 GB per month; the machine had about 2.1 TB free.
 
-Install and enable after setting up the Healthchecks URL:
+Install and enable after putting `HC_REPO_PING_KEY` in `.env` and adjusting the auto-created
+capture check's period and grace time:
 
 ```bash
 sudo cp systemd/ai-energy-transition-capture.service systemd/ai-energy-transition-capture.timer /etc/systemd/system/

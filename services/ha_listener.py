@@ -22,7 +22,6 @@ import time
 from contextlib import suppress
 from pathlib import Path
 
-import requests
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
@@ -30,6 +29,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from config_utils import load_config  # noqa: E402
+from healthchecks import ping_check as ping_healthcheck  # noqa: E402
 
 DEBOUNCE_SECONDS = 1.0
 HEARTBEAT_SECONDS = 30 * 60
@@ -269,10 +269,12 @@ class Listener:
 
     async def _ping_healthcheck(self) -> None:
         if not self.healthcheck_url:
-            return
+            if not os.environ.get("HC_REPO_PING_KEY"):
+                return
         try:
             await asyncio.to_thread(
-                requests.get, self.healthcheck_url, timeout=HEALTHCHECK_TIMEOUT
+                ping_healthcheck, "price-listener", legacy_url=self.healthcheck_url,
+                timeout=HEALTHCHECK_TIMEOUT,
             )
         except Exception as e:
             log.warning("Healthcheck ping failed (non-fatal): %s", e)
