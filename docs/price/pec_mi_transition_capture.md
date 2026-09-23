@@ -59,7 +59,7 @@ success pings can mask one another. Set `HC_REPO_PING_KEY` to move them to their
 
 ## Initial live observation
 
-The live capture at `2026-09-23T07:10:00Z` found `NSW1-SA1` in STPASA
+The live captures on 2026-09-23 found `NSW1-SA1` in STPASA
 `INTERCONNECTORSOLN` rows in a report run before cutover. The earliest retained run was
 `2026-09-23T03:00:00Z`; its forecast target range starts at
 `2026-09-24T18:30:00Z` (2026-09-25 04:30 NEM time). This is a future PASA record and does not
@@ -81,8 +81,9 @@ were 0 hours for dispatch, 0.92 hours for P5MIN, 34.5 hours for PREDISPATCHIS, 3
 legacy PREDISPATCH, 175.41 hours for Seven Day Outlook, and 180 hours for STPASA. The API
 horizon was 34.38 hours at capture time.
 
-That capture retained 2,688 raw and sidecar files (187.5 MB) from the 2026-09-22 backfill start.
-At the observed rate this is about 4.4 GB per month; the machine had about 2.1 TB free.
+At `2026-09-23T07:00:16Z`, the archive had 2,688 raw and sidecar files (187.5 MB) from the
+2026-09-22 backfill start. At the observed rate this is about 4.4 GB per month; the machine had
+about 2.1 TB free.
 
 Install and enable after putting `HC_REPO_PING_KEY` in `.env` and adjusting the auto-created
 capture check's period and grace time:
