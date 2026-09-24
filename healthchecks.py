@@ -7,11 +7,13 @@ when every job is healthy, and sends ``/fail`` when any job fails or goes stale.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -27,6 +29,18 @@ JOBS = {
 
 class HealthcheckError(RuntimeError):
     """A sanitized healthcheck configuration or transport error."""
+
+
+@contextmanager
+def _registry_lock(status_root: Path):
+    """Serialize status writers with aggregate evaluation across processes."""
+    status_root.mkdir(parents=True, exist_ok=True)
+    with (status_root / ".lock").open("a+b") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def _utc_now(now: datetime | None = None) -> datetime:
@@ -60,9 +74,15 @@ def record_job_status(
     """Atomically write this job's latest outcome and preserve unseen failures."""
     if job not in JOBS:
         raise HealthcheckError("unknown monitored job")
-    at = _utc_now(now)
     directory = Path(root) / "data" / "healthcheck_status"
-    directory.mkdir(parents=True, exist_ok=True)
+    with _registry_lock(directory):
+        return _record_job_status_unlocked(job, exit_code, directory, now)
+
+
+def _record_job_status_unlocked(
+    job: str, exit_code: int, directory: Path, now: datetime | None,
+) -> dict:
+    at = _utc_now(now)
     path = directory / f"{job}.json"
     previous = _read_json(path)
     succeeded = int(exit_code) == 0
@@ -148,9 +168,16 @@ def aggregate_once(
     url = (healthcheck_url if healthcheck_url is not None else os.environ.get("HC_PREDICT_URL", "")).strip()
     if not url:
         raise HealthcheckError("HC_PREDICT_URL is unset")
-    current = _utc_now(now)
     status_root = Path(root) / "data" / "healthcheck_status"
-    status_root.mkdir(parents=True, exist_ok=True)
+    with _registry_lock(status_root):
+        return _aggregate_once_unlocked(status_root, url, now, ping_fn, force)
+
+
+def _aggregate_once_unlocked(
+    status_root: Path, url: str, now: datetime | None,
+    ping_fn: Callable[..., None] | None, force: bool,
+) -> dict:
+    current = _utc_now(now)
     state_path = status_root / AGGREGATE_STATE.name
     state = _read_json(state_path)
     started_at = _parse_time(state.get("monitor_started_at")) or current

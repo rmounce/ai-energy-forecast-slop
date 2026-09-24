@@ -15,6 +15,8 @@ success. If any job records a failure or exceeds its freshness window, it sends 
 sending success pings until all jobs recover. This prevents one job's success from masking
 another job's failure. A failure remains pending through a quick recovery until the aggregate has
 reported it.
+Status writes and aggregate evaluation share a filesystem lock. A job result that arrives
+during an aggregate pass waits for that pass to finish, then is evaluated on the next pass.
 
 On first installation, jobs without status get one period plus grace to produce their initial
 success. After that, a missing or stale result fails the aggregate. The remote single check should

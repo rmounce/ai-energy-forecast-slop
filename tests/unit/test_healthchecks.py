@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from threading import Event, Thread
 from urllib.error import URLError
 
 import pytest
@@ -94,6 +95,76 @@ def test_new_failure_while_remote_is_already_down_does_not_block_recovery(tmp_pa
     )
     assert recovered["status"] == "success" and recovered["pinged"] is True
     assert calls == [True, False]
+
+
+def test_failure_recorded_during_aggregate_is_reported_on_next_pass(tmp_path):
+    healthchecks.record_job_status("price-listener", 0, root=tmp_path, now=NOW)
+    started = Event()
+    finished = Event()
+    worker = None
+
+    def ping(_url, *, failed):
+        nonlocal worker
+        assert failed is False
+
+        def record_failure():
+            started.set()
+            healthchecks.record_job_status(
+                "price-listener", 1, root=tmp_path, now=NOW + timedelta(seconds=1),
+            )
+            finished.set()
+
+        worker = Thread(target=record_failure)
+        worker.start()
+        assert started.wait(1)
+        assert not finished.wait(0.1)
+
+    healthchecks.aggregate_once(
+        root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
+        now=NOW, ping_fn=ping,
+    )
+    worker.join(timeout=1)
+    assert finished.is_set()
+    calls = []
+    result = healthchecks.aggregate_once(
+        root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
+        now=NOW + timedelta(seconds=2),
+        ping_fn=lambda _url, *, failed: calls.append(failed),
+    )
+    assert result["status"] == "failure"
+    assert calls == [True]
+
+
+def test_new_failure_cannot_be_cleared_by_earlier_failure_ping(tmp_path):
+    healthchecks.record_job_status("price-listener", 1, root=tmp_path, now=NOW)
+    started = Event()
+    finished = Event()
+    worker = None
+
+    def ping(_url, *, failed):
+        nonlocal worker
+        assert failed is True
+
+        def record_failure():
+            started.set()
+            healthchecks.record_job_status(
+                "price-listener", 1, root=tmp_path, now=NOW + timedelta(seconds=1),
+            )
+            finished.set()
+
+        worker = Thread(target=record_failure)
+        worker.start()
+        assert started.wait(1)
+        assert not finished.wait(0.1)
+
+    healthchecks.aggregate_once(
+        root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
+        now=NOW, ping_fn=ping,
+    )
+    worker.join(timeout=1)
+    assert finished.is_set()
+    state = healthchecks._read_json(tmp_path / "data/healthcheck_status/price-listener.json")
+    assert state["failure_pending"] is True
 
 
 def test_success_from_one_job_cannot_mask_another_jobs_failure(tmp_path):
