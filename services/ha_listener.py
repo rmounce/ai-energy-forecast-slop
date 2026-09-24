@@ -29,7 +29,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from config_utils import load_config  # noqa: E402
-from healthchecks import ping_check as ping_healthcheck  # noqa: E402
+from healthchecks import record_job_status  # noqa: E402
 
 DEBOUNCE_SECONDS = 1.0
 HEARTBEAT_SECONDS = 30 * 60
@@ -38,7 +38,6 @@ SUBPROCESS_TIMEOUT_SECONDS = 120
 FAILURE_RETRY_SECONDS = 5 * 60
 RECONNECT_BACKOFF_INITIAL = 1
 RECONNECT_BACKOFF_CAP = 30
-HEALTHCHECK_TIMEOUT = 5
 
 PREDICT_PRICE_CMD = [
     str(REPO_ROOT / ".venv" / "bin" / "python"),
@@ -62,7 +61,6 @@ class Listener:
         self.ws_url = ha["url"].replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
         self.token = ha["token"]
         self.entity_id = ha["amber_billing_entity"]
-        self.healthcheck_url = os.environ.get("HC_PREDICT_URL")
         self.trigger = asyncio.Event()
         self.run_lock = asyncio.Lock()
         self.last_run_at: float | None = None  # monotonic; validated successful publish only
@@ -208,6 +206,7 @@ class Listener:
                 except asyncio.TimeoutError:
                     log.error("prediction timeout after %ss", SUBPROCESS_TIMEOUT_SECONDS)
                     await self._terminate_child(proc, stream_task)
+                    self._record_health_status(1)
                     self._schedule_failure_retry()
                     return
                 # Drain any final lines buffered after process exit.
@@ -217,12 +216,14 @@ class Listener:
                     log.info("predict-price succeeded in %.1fs", elapsed)
                     self.last_run_at = time.monotonic()
                     self._retry_not_before = 0.0
-                    await self._ping_healthcheck()
+                    self._record_health_status(0)
                 else:
                     log.error("generation/publication failure rc=%s after %.1fs", proc.returncode, elapsed)
+                    self._record_health_status(proc.returncode or 1)
                     self._schedule_failure_retry()
             except Exception:
                 log.exception("prediction subprocess raised")
+                self._record_health_status(1)
                 self._schedule_failure_retry()
             finally:
                 if proc is not None and proc.returncode is None:
@@ -267,17 +268,11 @@ class Listener:
                 return
             log.info("[predict-price] %s", line.rstrip(b"\n").decode(errors="replace"))
 
-    async def _ping_healthcheck(self) -> None:
-        if not self.healthcheck_url:
-            if not os.environ.get("HC_REPO_PING_KEY"):
-                return
+    def _record_health_status(self, exit_code: int) -> None:
         try:
-            await asyncio.to_thread(
-                ping_healthcheck, "price-listener", legacy_url=self.healthcheck_url,
-                timeout=HEALTHCHECK_TIMEOUT,
-            )
+            record_job_status("price-listener", exit_code)
         except Exception as e:
-            log.warning("Healthcheck ping failed (non-fatal): %s", e)
+            log.warning("Could not record price-listener status: %s", e)
 
     # ---- Heartbeat ----
 

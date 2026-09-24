@@ -7,6 +7,5 @@ Description=Run AI load predictions and publish to Home Assistant
 Type=oneshot
 WorkingDirectory=%h/src/ai-energy-forecast-slop
 EnvironmentFile=%h/src/ai-energy-forecast-slop/.env
-# The slug is separate from the price listener's slug, so either job can fail
-# without a success ping from the other job clearing its state.
-ExecStart=/bin/bash -c 'source .venv/bin/activate; ./forecast.py predict-load --publish-hass --publish-covariates; result=$?; if [ "$result" -ne 0 ]; then exit "$result"; fi; .venv/bin/python healthchecks.py predict-load'
+# Each job records locally; the aggregate service owns the shared Healthchecks URL.
+ExecStart=/bin/bash -c 'source .venv/bin/activate; ./forecast.py predict-load --publish-hass --publish-covariates; result=$?; .venv/bin/python healthchecks.py record predict-load --exit-code "$result" || true; exit "$result"'

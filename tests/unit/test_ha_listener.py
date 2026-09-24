@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import suppress
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from services.ha_listener import Listener
 import services.ha_listener as listener_module
@@ -86,31 +86,31 @@ def test_failed_retry_has_bounded_deadline_and_coalesces_trigger():
     asyncio.run(run())
 
 
-def test_success_updates_last_run_and_pings_once():
+def test_success_updates_last_run_and_records_local_success():
     async def run():
         listener = Listener({"home_assistant": {
             "url": "http://ha", "token": "x", "amber_billing_entity": "sensor.x",
         }})
         proc = RunProc(0)
         with patch.object(listener_module.asyncio, "create_subprocess_exec", return_value=proc), \
-             patch.object(listener, "_ping_healthcheck", new_callable=AsyncMock) as ping:
+             patch.object(listener_module, "record_job_status") as record:
             await listener._run_predict_price()
         assert listener.last_run_at is not None
-        ping.assert_awaited_once()
+        record.assert_called_once_with("price-listener", 0)
 
     asyncio.run(run())
 
 
-def test_nonzero_child_does_not_ping_and_schedules_retry():
+def test_nonzero_child_records_failure_and_schedules_retry():
     async def run():
         listener = Listener({"home_assistant": {
             "url": "http://ha", "token": "x", "amber_billing_entity": "sensor.x",
         }})
         with patch.object(listener_module.asyncio, "create_subprocess_exec", return_value=RunProc(1)), \
-             patch.object(listener, "_ping_healthcheck", new_callable=AsyncMock) as ping:
+             patch.object(listener_module, "record_job_status") as record:
             await listener._run_predict_price()
         assert listener.last_run_at is None
-        ping.assert_not_awaited()
+        record.assert_called_once_with("price-listener", 1)
         assert listener._retry_not_before > 0
         listener.shutdown.set()
         if listener._retry_task:
@@ -121,7 +121,7 @@ def test_nonzero_child_does_not_ping_and_schedules_retry():
     asyncio.run(run())
 
 
-def test_timeout_kills_child_suppresses_ping_and_schedules_retry():
+def test_timeout_kills_child_records_failure_and_schedules_retry():
     async def run():
         listener = Listener({"home_assistant": {
             "url": "http://ha", "token": "x", "amber_billing_entity": "sensor.x",
@@ -129,10 +129,10 @@ def test_timeout_kills_child_suppresses_ping_and_schedules_retry():
         proc = HangingProc()
         with patch.object(listener_module, "SUBPROCESS_TIMEOUT_SECONDS", 0.001), \
              patch.object(listener_module.asyncio, "create_subprocess_exec", return_value=proc), \
-             patch.object(listener, "_ping_healthcheck", new_callable=AsyncMock) as ping:
+             patch.object(listener_module, "record_job_status") as record:
             await listener._run_predict_price()
         assert proc.killed and proc.waited
-        ping.assert_not_awaited()
+        record.assert_called_once_with("price-listener", 1)
         assert listener._retry_not_before > 0
         listener.shutdown.set()
         if listener._retry_task:

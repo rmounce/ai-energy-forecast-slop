@@ -1,6 +1,7 @@
 # PEC-MI transition data capture
 
-Status: implementation prepared 2026-09-23; systemd timer is not enabled yet.
+Status: capture and aggregate timers enabled 2026-09-24 ACST; latest canary failed and was sent to
+the existing shared Healthchecks check.
 
 ## What is retained
 
@@ -44,18 +45,11 @@ first non-overlapping interval; a gap above 30 hours or a regional interchange j
 cadence over the latest 13 distinct run times. It records the maximum target horizon by source
 and alerts if that horizon changes by more than 30 minutes between captures.
 
-Use one `HC_REPO_PING_KEY` project Ping Key in `.env` for Healthchecks across the repo. Each job
-uses a unique slug: this capture uses `aemo-pec-mi-transition`, while the load service and price
-listener use `predict-load` and `price-listener`. These slugs have independent check states, so a
-success from one job cannot clear another job's failure. The `?create=1` option auto-creates each
-check on its first ping; no per-job UUID needs to be copied into `.env`. Without the project key,
-this capture only records failures in the systemd journal.
-
-Healthchecks auto-created checks start with a one-day period and one-hour grace period. After the
-capture's first ping creates its slug, set its expected period to five minutes with a suitable
-grace time so a stopped timer is detected promptly. The existing `HC_PREDICT_URL` setting remains
-a transition fallback for the load service and listener only; while they use that one URL, their
-success pings can mask one another. Set `HC_REPO_PING_KEY` to move them to their separate slugs.
+The capture records its result in ignored `data/healthcheck_status/`. The repository's
+`ai-energy-healthcheck-aggregate.timer` evaluates that status with the load service and price
+listener, then sends success or `/fail` to the one existing `HC_PREDICT_URL`. A success from one
+job cannot clear another job's failure. Capture freshness is enforced locally at five minutes
+plus three minutes; see [`docs/healthchecks.md`](../healthchecks.md).
 
 ## Initial live observation
 
@@ -85,13 +79,54 @@ At `2026-09-23T07:00:16Z`, the archive had 2,688 raw and sidecar files (187.5 MB
 2026-09-22 backfill start. At the observed rate this is about 4.4 GB per month; the machine had
 about 2.1 TB free.
 
-Install and enable after putting `HC_REPO_PING_KEY` in `.env` and adjusting the auto-created
-capture check's period and grace time:
+## Follow-up live canary — 2026-09-24 ACST
+
+The `ai-energy-transition-capture.service` run at `2026-09-23T23:39:25Z` archived the current
+reports and marked the canary failed. The aggregate service completed successfully and sent the
+failure to the one configured Healthchecks check; `ai-energy-healthcheck-aggregate.timer` runs
+once per minute and `ai-energy-transition-capture.timer` every five minutes.
+
+Observed issues:
+
+- Visualisations API horizon shortened from 34.38 to 17.84 hours; PREDISPATCHIS shortened from
+  34.50 to 18 hours and legacy PREDISPATCH from 35 to 18 hours. STPASA shortened from 180 to 163
+  hours and Seven Day Outlook from 175.41 to 162.45 hours. The reason is unconfirmed.
+- The first non-overlapping VIC1 API/Seven-Day interchange difference was -3,258 MW, above the
+  3,000 MW canary threshold.
+- Six older report downloads returned HTTP 403 after three attempts (two legacy dispatch files
+  and four P5MIN files dated 2026-09-23 UTC). Whether these files are permanently unavailable or
+  the denial is transient remains unknown; their paths remain in the canary issue list.
+- The current STPASA report still contains `NSW1-SA1`; this remains a forecast capacity result,
+  not evidence that NEMDE has switched its dispatch topology.
+
+A later capture at `2026-09-24T23:42:18Z` still failed: Seven Day Outlook's horizon changed from
+162.95 to 162.44 hours, and the VIC1 API/Seven-Day interchange jump was -3,011 MW. The horizon
+change is just over the configured 30-minute threshold; both values are checked against the
+preceding capture. Their cause is unconfirmed.
+
+These are observations, not proof that PEC-MI caused the horizon or interchange changes. Keep
+the canary failure active until the current data recovers or the individual condition is reviewed.
+
+## ST-PASA timing update — 2026-09-24
+
+WattClarity's 2026-09-24 review reports that ST-PASA now includes `NSW1-SA1` within the short-term
+window, seven days before its 2026-10-01 effective dispatch date. The current outlook reached
+2026-10-02 04:00; its capacity flow was constrained to 0 MW until about midday on 2026-10-01,
+then became non-zero as the `NS_` / `SN_ZERO` constraints were lifted. The article also describes
+different capacity results by regional LOR study, including about 150 MW into SA in the SA study.
+This is forecast capacity assessment, not cleared dispatch flow, and explains why a pre-cutover
+STPASA report can already contain the new interconnector. See
+[WattClarity's ST-PASA review](https://wattclarity.com.au/articles/2026/09/pec-stage-2-enters-the-st-timeframe/).
+
+Install and enable the capture and aggregate timers. Set the existing `HC_PREDICT_URL` in `.env`;
+no per-job Healthchecks records or schedule edits are needed:
 
 ```bash
 sudo cp systemd/ai-energy-transition-capture.service systemd/ai-energy-transition-capture.timer /etc/systemd/system/
+sudo cp systemd/ai-energy-healthcheck-aggregate.service systemd/ai-energy-healthcheck-aggregate.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ai-energy-transition-capture.timer
+sudo systemctl enable --now ai-energy-healthcheck-aggregate.timer
 ```
 
 Inspect operation and disk use:

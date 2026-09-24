@@ -3,6 +3,8 @@ Description=Archive AEMO PEC-MI transition reports and run schema canary
 
 [Service]
 Type=oneshot
+User=energy-user
+Group=energy-user
 WorkingDirectory=%h/src/ai-energy-forecast-slop
 EnvironmentFile=-%h/src/ai-energy-forecast-slop/.env
 Environment=AEMO_TRANSITION_CAPTURE_FROM_UTC=2026-09-22T00:00:00Z

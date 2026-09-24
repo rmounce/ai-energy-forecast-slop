@@ -513,14 +513,13 @@ The systemd services load secrets from `.env` in the repo root (git-ignored). Th
 
 ```ini
 # .env
-HC_REPO_PING_KEY=<project-ping-key>
+HC_PREDICT_URL=<existing-healthcheck-ping-url>
 ```
 
-Use one Healthchecks project Ping Key for the repository and a unique slug per monitored job.
-New slug-based checks auto-provision on first ping; configure their schedules and grace periods
-for the job cadence. `HC_PREDICT_URL` is a migration fallback for the load service and price
-listener only; do not reuse its single check URL for additional jobs. See
-[`docs/healthchecks.md`](docs/healthchecks.md) for current slugs and configuration details.
+Jobs write status locally; one minute-level aggregate reports their combined state to this
+existing Healthchecks check. This keeps one remote check while ensuring an individual job failure
+cannot be cleared by another job's success. See
+[`docs/healthchecks.md`](docs/healthchecks.md) for monitored jobs and freshness limits.
 
 ---
 

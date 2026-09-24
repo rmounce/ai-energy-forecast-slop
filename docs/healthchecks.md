@@ -1,24 +1,36 @@
-# Repository healthchecks
+# Repository Healthchecks
 
-Set one `HC_REPO_PING_KEY` in the ignored `.env` file. It is the Healthchecks.io **project Ping
-Key**. Each monitored job uses a stable, unique slug, so check records have independent states
-even though jobs share the same secret.
+Configure the existing single-check ping URL as `HC_PREDICT_URL` in the ignored root `.env`.
+The repository does not create extra Healthchecks records or need a project Ping Key.
 
-The shared helper is [healthchecks.py](../healthchecks.py). Current slugs are:
+Jobs write their latest result under ignored `data/healthcheck_status/`:
 
-- `predict-load` — 30-minute load prediction service
-- `price-listener` — event-driven price prediction listener
-- `aemo-pec-mi-transition` — five-minute report capture and canary
+- `predict-load` — 30-minute load prediction service; 30-minute period plus 10-minute grace.
+- `price-listener` — event-driven price prediction listener; 30-minute period plus 10-minute grace.
+- `aemo-pec-mi-transition` — report capture and canary; 5-minute period plus 3-minute grace.
 
-Slug pings use `?create=1`, so Healthchecks creates each check on first ping. This avoids creating
-and copying a UUID for every job. A shared slug or a shared UUID URL would let one job's success
-clear another job's failure; give every independently monitored job its own slug.
+`ai-energy-healthcheck-aggregate.timer` evaluates those files every minute and is the only
+component that contacts Healthchecks. It sends a success heartbeat while every job has a recent
+success. If any job records a failure or exceeds its freshness window, it sends `/fail` and stops
+sending success pings until all jobs recover. This prevents one job's success from masking
+another job's failure. A failure remains pending through a quick recovery until the aggregate has
+reported it.
 
-Auto-created checks use Healthchecks defaults of a one-day period and one-hour grace. Set each
-check's schedule or period and grace to match its job after the first ping. The current capture
-needs a five-minute period; load prediction and the price listener need a 30-minute period. Use a
-Management API key if check configuration should also be automated.
+On first installation, jobs without status get one period plus grace to produce their initial
+success. After that, a missing or stale result fails the aggregate. The remote single check should
+have a period of about two minutes and a short grace period so a stopped aggregator is detected;
+job cadence and grace are enforced locally.
 
-`HC_PREDICT_URL` remains a migration fallback for the load service and price listener while
-`HC_REPO_PING_KEY` is unset. Those two jobs share that legacy check and can mask each other's
-state until the project Ping Key is configured. The transition capture does not use this fallback.
+Run the aggregate manually with `.venv/bin/python healthchecks.py aggregate`. It prints the names
+of failed jobs but never prints the configured URL. Job wrappers can record a result with
+`.venv/bin/python healthchecks.py record JOB --exit-code CODE`. Use `aggregate --force` once to
+resynchronize the remote check after removing an old direct pinger.
+
+On 2026-09-25, two old direct pingers were found. The running user-level
+`ai-energy-listener.service` still had the pre-aggregation code loaded from its 2026-09-18 start.
+The `ai-energy-predict.service` file on disk had been updated, but the user systemd manager had
+not reloaded it; its cached command still ran `curl` against `HC_PREDICT_URL`. The listener was
+restarted and the user manager was reloaded. A forced aggregate ping then restored the current
+failure state. Restart long-running services and reload their manager after deploying a change
+that removes direct pings; restarting only the aggregator cannot prevent a cached unit or old
+process from clearing its failure state.

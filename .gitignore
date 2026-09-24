@@ -18,6 +18,7 @@ nemosis_cache/
 data/nemseer_cache/
 data/http_cache.sqlite
 data/aemo_transition/
+data/healthcheck_status/
 
 # HWC per-cycle local store (daemon runtime system-of-record; WAL/SHM siblings too)
 data/hwc_cycles.sqlite

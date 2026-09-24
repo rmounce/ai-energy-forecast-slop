@@ -34,7 +34,7 @@ from urllib.parse import urljoin
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from healthchecks import ping_check as ping_healthcheck  # noqa: E402
+from healthchecks import record_job_status  # noqa: E402
 
 DEFAULT_ROOT = ROOT / "data" / "aemo_transition"
 DEFAULT_CAPTURE_FROM = "2026-09-22T00:00:00+00:00"
@@ -703,14 +703,18 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
     return report
 
 
-def _ping_healthcheck(failed: bool) -> bool:
-    return ping_healthcheck("aemo-pec-mi-transition", failed=failed, timeout=30)
-
-
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     root = Path(os.environ.get("AEMO_TRANSITION_ROOT", DEFAULT_ROOT))
-    report = capture(root)
+    try:
+        report = capture(root)
+    except Exception:
+        logging.exception("AEMO transition report capture failed")
+        try:
+            record_job_status("aemo-pec-mi-transition", 1)
+        except Exception as exc:
+            logging.error("Could not record capture failure status: %s", exc)
+        return 1
     for result in report["results"]:
         if result["source"] == "visualisations_5min":
             logging.info("%s API rows=%d regions=%s target=%s..%s saved=%s",
@@ -724,16 +728,12 @@ def main() -> int:
                          result["new_files_saved"], result["listing_files"], ids)
     for issue in report["issues"]:
         logging.error("CANARY: %s", issue)
-    project_key = os.environ.get("HC_REPO_PING_KEY", "").strip()
     failed = bool(report["issues"])
-    if project_key:
-        try:
-            _ping_healthcheck(failed)
-        except Exception as exc:
-            logging.error("Healthcheck ping failed: %s", exc)
-            failed = True
-    else:
-        logging.warning("HC_REPO_PING_KEY is unset; failures are recorded in systemd journal only")
+    try:
+        record_job_status("aemo-pec-mi-transition", 1 if failed else 0)
+    except Exception as exc:
+        logging.error("Could not record capture status: %s", exc)
+        failed = True
     return 1 if failed else 0
 
 
