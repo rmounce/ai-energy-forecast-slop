@@ -149,15 +149,26 @@ def _cadence_diagnostics(source: ReportSource, filenames: Iterable[str]) -> dict
 
 
 def _record_horizon(source_key: str, horizon_hours: float | None, state: dict,
-                    issues: list[str]) -> None:
+                    issues: list[str], *, run_time_utc: str | None = None) -> None:
     if horizon_hours is None:
         return
     previous = state.setdefault("horizons_hours", {}).get(source_key)
-    if previous is not None and abs(horizon_hours - previous) > MAX_HORIZON_CHANGE_HOURS:
+    end_time = None
+    if run_time_utc is not None:
+        run_time = datetime.fromisoformat(run_time_utc.replace("Z", "+00:00"))
+        end_time = _utc_iso(run_time + timedelta(hours=horizon_hours))
+    previous_end = state.setdefault("horizon_end_utc", {}).get(source_key)
+    same_end = False
+    if end_time is not None and previous_end is not None:
+        same_end = abs((datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                        - datetime.fromisoformat(previous_end.replace("Z", "+00:00"))).total_seconds()) <= 60
+    if previous is not None and not same_end and abs(horizon_hours - previous) > MAX_HORIZON_CHANGE_HOURS:
         issues.append(
             f"{source_key}: forecast horizon changed from {previous:.2f} to {horizon_hours:.2f} hours"
         )
     state["horizons_hours"][source_key] = round(horizon_hours, 2)
+    if end_time is not None:
+        state["horizon_end_utc"][source_key] = end_time
 
 
 def _max_report_horizon_hours(run_time_utc: str, tables: list[dict]) -> float | None:
@@ -633,7 +644,7 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
                 inspection = inspect_aemo_zip(latest_content)
                 latest_tables = inspection["tables"]
                 max_horizon_hours = _max_report_horizon_hours(run_time, latest_tables)
-                _record_horizon(source.key, max_horizon_hours, state, issues)
+                _record_horizon(source.key, max_horizon_hours, state, issues, run_time_utc=run_time)
                 report_issues = validate_report(source, inspection)
                 issues.extend(f"{source.key}/{latest_name}: {issue}" for issue in report_issues)
                 if source.key == "sevendayoutlook":

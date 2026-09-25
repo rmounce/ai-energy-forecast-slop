@@ -106,6 +106,21 @@ def test_cadence_and_horizon_diagnostics_detect_source_changes():
     assert issues == ["test: forecast horizon changed from 10.25 to 9.50 hours"]
 
 
+def test_horizon_shrinking_with_fixed_forecast_end_is_not_a_failure():
+    state = {}
+    issues = []
+    capture._record_horizon("stpasa", 163, state, issues,
+                            run_time_utc="2026-09-24T23:00:00Z")
+    capture._record_horizon("stpasa", 162, state, issues,
+                            run_time_utc="2026-09-25T00:00:00Z")
+    assert issues == []
+    assert state["horizon_end_utc"]["stpasa"] == "2026-10-01T18:00:00Z"
+
+    capture._record_horizon("stpasa", 160, state, issues,
+                            run_time_utc="2026-09-25T01:00:00Z")
+    assert issues == ["stpasa: forecast horizon changed from 162.00 to 160.00 hours"]
+
+
 def test_current_dispatchis_and_predispatchis_table_names_are_recognized():
     for source, region_table, interconnector_table, time_column, interchange_column in (
         (_source(), "REGIONSOLUTION", "INTERCONNECTORSOLN", "INTERVAL_DATETIME", "NET_INTERCHANGE"),

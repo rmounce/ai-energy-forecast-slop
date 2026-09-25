@@ -44,6 +44,10 @@ first non-overlapping interval; a gap above 30 hours or a regional interchange j
 3,000 MW fails the canary. For ZIP products, it checks the latest report gap and the median
 cadence over the latest 13 distinct run times. It records the maximum target horizon by source
 and alerts if that horizon changes by more than 30 minutes between captures.
+When a new report advances its run time but keeps the same forecast end (within one minute),
+the shorter remaining horizon is expected and does not alert. This occurred in the 2026-09-25
+10:00 NEM-time STPASA report: the remaining horizon moved from 163 to 162 hours while both
+reports ended at `2026-10-01T18:00:00Z`.
 
 The capture records its result in ignored `data/healthcheck_status/`. The repository's
 `ai-energy-healthcheck-aggregate.timer` evaluates that status with the load service and price
