@@ -25,6 +25,12 @@
 - Home Assistant: prefer domain hot reloads through the HA API whenever supported; restart
   HA only when the changed configuration cannot be reloaded. Follow `docs/ha_hot_reload.md`.
 
+## Monitoring
+
+- Alert on structural failures, stale data, or sustained loss of usable data.
+- Keep transient forecast movements and threshold crossings as diagnostics; require persistence
+  before paging on volatile signals.
+
 ## Plans And Memory
 
 - Session start: check plan files against memory files.
