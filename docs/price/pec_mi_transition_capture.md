@@ -1,7 +1,7 @@
 # PEC-MI transition data capture
 
-Status: capture and aggregate timers enabled 2026-09-24 ACST; latest canary failed and was sent to
-the existing shared Healthchecks check.
+Status: capture and aggregate timers enabled 2026-09-24 ACST; current status is in
+`data/aemo_transition/canary_latest.json`.
 
 ## What is retained
 
@@ -40,10 +40,11 @@ The canary writes `data/aemo_transition/canary_latest.json` and
 expected regional and interconnector tables, SA1/VIC1/NSW1 rows, required flow/interchange
 columns, row widths, duplicate keys, and schema-version/header changes. It records the first
 report run containing `NSW1-SA1`. API and Seven Day Outlook data are also compared at their
-first non-overlapping interval; a gap above 30 hours or a regional interchange jump above
-3,000 MW fails the canary. For ZIP products, it checks the latest report gap and the median
-cadence over the latest 13 distinct run times. It records the maximum target horizon by source
-and alerts if that horizon changes by more than 30 minutes between captures.
+first non-overlapping interval; a gap above 30 hours fails the canary, while a regional
+interchange jump above 3,000 MW is recorded as a diagnostic. For ZIP products, it checks the
+latest report gap and the median cadence over the latest 13 distinct run times. Horizon changes
+over 30 minutes are diagnostics. A 5MIN API response with less than one hour of future data fails
+only after three consecutive captures.
 When a new report advances its run time but keeps the same forecast end (within one minute),
 the shorter remaining horizon is expected and does not alert. This occurred in the 2026-09-25
 10:00 NEM-time STPASA report: the remaining horizon moved from 163 to 162 hours while both
@@ -108,8 +109,12 @@ A later capture at `2026-09-24T23:42:18Z` still failed: Seven Day Outlook's hori
 change is just over the configured 30-minute threshold; both values are checked against the
 preceding capture. Their cause is unconfirmed.
 
-These are observations, not proof that PEC-MI caused the horizon or interchange changes. Keep
-the canary failure active until the current data recovers or the individual condition is reviewed.
+These are observations, not proof that PEC-MI caused the horizon or interchange changes.
+
+On 2026-09-25 the canary alert policy was narrowed after transient horizon and interchange
+changes caused repeat alerts. Raw values and threshold crossings remain in `diagnostics` and
+`api_to_sevendayoutlook_stitch`; the shared Healthchecks check receives structural failures,
+missing/stale reports, and API future coverage below one hour for three consecutive captures.
 
 ## ST-PASA timing update — 2026-09-24
 

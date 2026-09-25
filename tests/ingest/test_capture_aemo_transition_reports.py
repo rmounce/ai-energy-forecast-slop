@@ -121,6 +121,20 @@ def test_horizon_shrinking_with_fixed_forecast_end_is_not_a_failure():
     assert issues == ["stpasa: forecast horizon changed from 162.00 to 160.00 hours"]
 
 
+def test_short_api_coverage_requires_three_consecutive_captures():
+    state = {}
+    diagnostics = []
+    issues = []
+    for _ in range(2):
+        capture._record_api_coverage(-0.46, state, diagnostics, issues)
+    assert issues == []
+    assert state["api_short_coverage_runs"] == 2
+    capture._record_api_coverage(-0.46, state, diagnostics, issues)
+    assert issues == ["visualisations_5min: only -0.46 hours of future data (3 captures)"]
+    capture._record_api_coverage(17, state, diagnostics, issues)
+    assert state["api_short_coverage_runs"] == 0
+
+
 def test_current_dispatchis_and_predispatchis_table_names_are_recognized():
     for source, region_table, interconnector_table, time_column, interchange_column in (
         (_source(), "REGIONSOLUTION", "INTERCONNECTORSOLN", "INTERVAL_DATETIME", "NET_INTERCHANGE"),

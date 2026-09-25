@@ -46,6 +46,8 @@ NET_INTERCHANGE_COLUMNS = {"NETINTERCHANGE", "NET_INTERCHANGE"}
 MAX_STITCH_GAP_HOURS = 30
 MAX_STITCH_JUMP_MW = 3000.0
 MAX_HORIZON_CHANGE_HOURS = 0.5
+MIN_API_FUTURE_HOURS = 1.0
+PERSISTENT_COVERAGE_RUNS = 3
 
 
 @dataclass(frozen=True)
@@ -149,7 +151,7 @@ def _cadence_diagnostics(source: ReportSource, filenames: Iterable[str]) -> dict
 
 
 def _record_horizon(source_key: str, horizon_hours: float | None, state: dict,
-                    issues: list[str], *, run_time_utc: str | None = None) -> None:
+                    diagnostics: list[str], *, run_time_utc: str | None = None) -> None:
     if horizon_hours is None:
         return
     previous = state.setdefault("horizons_hours", {}).get(source_key)
@@ -163,12 +165,23 @@ def _record_horizon(source_key: str, horizon_hours: float | None, state: dict,
         same_end = abs((datetime.fromisoformat(end_time.replace("Z", "+00:00"))
                         - datetime.fromisoformat(previous_end.replace("Z", "+00:00"))).total_seconds()) <= 60
     if previous is not None and not same_end and abs(horizon_hours - previous) > MAX_HORIZON_CHANGE_HOURS:
-        issues.append(
+        diagnostics.append(
             f"{source_key}: forecast horizon changed from {previous:.2f} to {horizon_hours:.2f} hours"
         )
     state["horizons_hours"][source_key] = round(horizon_hours, 2)
     if end_time is not None:
         state["horizon_end_utc"][source_key] = end_time
+
+
+def _record_api_coverage(horizon_hours: float, state: dict,
+                         diagnostics: list[str], issues: list[str]) -> None:
+    if horizon_hours >= MIN_API_FUTURE_HOURS:
+        state["api_short_coverage_runs"] = 0
+        return
+    count = state.get("api_short_coverage_runs", 0) + 1
+    state["api_short_coverage_runs"] = count
+    message = f"visualisations_5min: only {horizon_hours:.2f} hours of future data ({count} captures)"
+    (issues if count >= PERSISTENT_COVERAGE_RUNS else diagnostics).append(message)
 
 
 def _max_report_horizon_hours(run_time_utc: str, tables: list[dict]) -> float | None:
@@ -561,6 +574,7 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
     state = _load_state(state_path)
     schema_changes: list[str] = []
     issues: list[str] = []
+    diagnostics: list[str] = []
     results: list[dict] = []
     api_samples: list[dict] = []
     outlook_samples: list[dict] = []
@@ -573,7 +587,8 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
         api_summary, _ = _capture_json_api(root)
         results.append(api_summary)
         api_samples = api_summary["regional_net_interchange"]
-        _record_horizon("visualisations_5min", api_summary["max_horizon_hours"], state, issues)
+        _record_horizon("visualisations_5min", api_summary["max_horizon_hours"], state, diagnostics)
+        _record_api_coverage(api_summary["max_horizon_hours"], state, diagnostics, issues)
     except Exception as exc:
         issues.append(f"visualisations_5min: {exc}")
 
@@ -644,7 +659,7 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
                 inspection = inspect_aemo_zip(latest_content)
                 latest_tables = inspection["tables"]
                 max_horizon_hours = _max_report_horizon_hours(run_time, latest_tables)
-                _record_horizon(source.key, max_horizon_hours, state, issues, run_time_utc=run_time)
+                _record_horizon(source.key, max_horizon_hours, state, diagnostics, run_time_utc=run_time)
                 report_issues = validate_report(source, inspection)
                 issues.extend(f"{source.key}/{latest_name}: {issue}" for issue in report_issues)
                 if source.key == "sevendayoutlook":
@@ -694,7 +709,7 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
         if item["gap_hours"] > MAX_STITCH_GAP_HOURS:
             issues.append(f"{item['region']} API/Seven-Day stitch gap is {item['gap_hours']:.2f} hours")
         if abs(item["net_interchange_jump_mw"]) > MAX_STITCH_JUMP_MW:
-            issues.append(
+            diagnostics.append(
                 f"{item['region']} API/Seven-Day interchange jump is "
                 f"{item['net_interchange_jump_mw']:.0f} MW"
             )
@@ -707,6 +722,7 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
         "api_to_sevendayoutlook_stitch": stitch,
         "schema_changes": schema_changes,
         "issues": issues,
+        "diagnostics": diagnostics,
         "status": "failed" if issues else "ok",
     }
     _write_json(state_path, state)
