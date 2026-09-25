@@ -7,7 +7,7 @@ Jobs write their latest result under ignored `data/healthcheck_status/`:
 
 - `predict-load` — 30-minute load prediction service; 30-minute period plus 10-minute grace.
 - `price-listener` — event-driven price prediction listener; 30-minute period plus 10-minute grace.
-- `aemo-pec-mi-transition` — report capture and canary; 5-minute period plus 3-minute grace.
+- `aemo-pec-mi-transition` — report capture and canary; two consecutive failed runs trigger an alert. A missing success becomes stale after 15 minutes (5-minute period plus 10-minute grace).
 
 `ai-energy-healthcheck-aggregate.timer` evaluates those files every minute and is the only
 component that contacts Healthchecks. It sends a success heartbeat while every job has a recent
@@ -21,7 +21,14 @@ during an aggregate pass waits for that pass to finish, then is evaluated on the
 On first installation, jobs without status get one period plus grace to produce their initial
 success. After that, a missing or stale result fails the aggregate. The remote single check should
 have a period of about two minutes and a short grace period so a stopped aggregator is detected;
-job cadence and grace are enforced locally.
+job cadence and grace are enforced locally. The AEMO capture job logs an isolated failed run,
+but the shared check stays healthy if the next run succeeds within the freshness window.
+Two failed capture runs remain pending until the aggregate reports them, even if a later run
+succeeds before the next aggregate pass. Other monitored jobs still alert on one failure.
+
+On 2026-09-25 at 23:13 Adelaide time, the AEMO visualisations `5MIN` API timed out after
+three attempts; the 23:17 capture succeeded. This transient endpoint timeout prompted the
+capture-specific persistence threshold.
 
 Run the aggregate manually with `.venv/bin/python healthchecks.py aggregate`. It prints the names
 of failed jobs but never prints the configured URL. Job wrappers can record a result with

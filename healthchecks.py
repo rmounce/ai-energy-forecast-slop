@@ -23,7 +23,7 @@ AGGREGATE_STATE = STATUS_ROOT / "aggregate.json"
 JOBS = {
     "predict-load": {"period_seconds": 1800, "grace_seconds": 600},
     "price-listener": {"period_seconds": 1800, "grace_seconds": 600},
-    "aemo-pec-mi-transition": {"period_seconds": 300, "grace_seconds": 180},
+    "aemo-pec-mi-transition": {"period_seconds": 300, "grace_seconds": 600, "failure_runs": 2},
 }
 
 
@@ -86,13 +86,16 @@ def _record_job_status_unlocked(
     path = directory / f"{job}.json"
     previous = _read_json(path)
     succeeded = int(exit_code) == 0
+    failure_runs = 0 if succeeded else int(previous.get("consecutive_failures", 0)) + 1
+    alert_after = JOBS[job].get("failure_runs", 1)
     status = {
         "job": job,
         "updated_at": _iso(at),
         "last_success_at": _iso(at) if succeeded else previous.get("last_success_at"),
         "last_outcome": "success" if succeeded else "failure",
         "last_failure_at": previous.get("last_failure_at") if succeeded else _iso(at),
-        "failure_pending": bool(previous.get("failure_pending")) or not succeeded,
+        "consecutive_failures": failure_runs,
+        "failure_pending": bool(previous.get("failure_pending")) or failure_runs >= alert_after,
     }
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(status, sort_keys=True) + "\n")
@@ -117,7 +120,11 @@ def _failures(status_root: Path, started_at: datetime, now: datetime) -> list[st
     for job, schedule in JOBS.items():
         status = _read_json(status_root / f"{job}.json")
         last_success = _parse_time(status.get("last_success_at"))
-        if status.get("failure_pending") or status.get("last_outcome") == "failure":
+        alert_after = schedule.get("failure_runs", 1)
+        if status.get("failure_pending") or (
+            status.get("last_outcome") == "failure"
+            and int(status.get("consecutive_failures", 1)) >= alert_after
+        ):
             failures.append(f"{job}: recorded failure")
         elif last_success is not None:
             allowed_age = schedule["period_seconds"] + schedule["grace_seconds"]

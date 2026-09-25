@@ -14,8 +14,54 @@ def test_registry_has_one_status_schedule_per_monitored_job():
         "predict-load", "price-listener", "aemo-pec-mi-transition",
     }
     assert healthchecks.JOBS["aemo-pec-mi-transition"] == {
-        "period_seconds": 300, "grace_seconds": 180,
+        "period_seconds": 300, "grace_seconds": 600, "failure_runs": 2,
     }
+
+
+def test_one_capture_failure_recovers_without_alert(tmp_path):
+    calls = []
+    ping = lambda _url, *, failed: calls.append(failed)
+    healthchecks.record_job_status("aemo-pec-mi-transition", 0, root=tmp_path, now=NOW)
+    healthchecks.record_job_status(
+        "aemo-pec-mi-transition", 1, root=tmp_path, now=NOW + timedelta(minutes=5),
+    )
+    first = healthchecks.aggregate_once(
+        root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
+        now=NOW + timedelta(minutes=6), ping_fn=ping,
+    )
+    healthchecks.record_job_status(
+        "aemo-pec-mi-transition", 0, root=tmp_path, now=NOW + timedelta(minutes=10),
+    )
+    second = healthchecks.aggregate_once(
+        root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
+        now=NOW + timedelta(minutes=11), ping_fn=ping,
+    )
+    assert first["status"] == second["status"] == "success"
+    assert calls == [False, False]
+
+
+def test_two_capture_failures_remain_pending_through_quick_recovery(tmp_path):
+    healthchecks.record_job_status("aemo-pec-mi-transition", 0, root=tmp_path, now=NOW)
+    for minutes in (5, 10):
+        healthchecks.record_job_status(
+            "aemo-pec-mi-transition", 1, root=tmp_path, now=NOW + timedelta(minutes=minutes),
+        )
+    healthchecks.record_job_status(
+        "aemo-pec-mi-transition", 0, root=tmp_path, now=NOW + timedelta(minutes=11),
+    )
+    calls = []
+    ping = lambda _url, *, failed: calls.append(failed)
+    failed = healthchecks.aggregate_once(
+        root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
+        now=NOW + timedelta(minutes=11), ping_fn=ping,
+    )
+    recovered = healthchecks.aggregate_once(
+        root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
+        now=NOW + timedelta(minutes=12), ping_fn=ping,
+    )
+    assert failed["status"] == "failure"
+    assert recovered["status"] == "success"
+    assert calls == [True, False]
 
 
 def test_job_failure_remains_pending_until_aggregate_reports_it(tmp_path):
@@ -55,6 +101,7 @@ def test_aggregate_fails_once_for_a_job_failure_and_recovery_clears_check(tmp_pa
 
 def test_force_resynchronizes_remote_failure_even_if_local_state_says_failed(tmp_path):
     healthchecks.record_job_status("aemo-pec-mi-transition", 1, root=tmp_path, now=NOW)
+    healthchecks.record_job_status("aemo-pec-mi-transition", 1, root=tmp_path, now=NOW)
     calls = []
     ping = lambda _url, *, failed: calls.append(failed)
     healthchecks.aggregate_once(
@@ -71,6 +118,7 @@ def test_force_resynchronizes_remote_failure_even_if_local_state_says_failed(tmp
 def test_new_failure_while_remote_is_already_down_does_not_block_recovery(tmp_path):
     calls = []
     ping = lambda _url, *, failed: calls.append(failed)
+    healthchecks.record_job_status("aemo-pec-mi-transition", 1, root=tmp_path, now=NOW)
     healthchecks.record_job_status("aemo-pec-mi-transition", 1, root=tmp_path, now=NOW)
     healthchecks.aggregate_once(
         root=tmp_path, healthcheck_url="https://hc-ping.com/private-id", now=NOW, ping_fn=ping,
@@ -170,6 +218,7 @@ def test_new_failure_cannot_be_cleared_by_earlier_failure_ping(tmp_path):
 def test_success_from_one_job_cannot_mask_another_jobs_failure(tmp_path):
     healthchecks.record_job_status("predict-load", 0, root=tmp_path, now=NOW)
     healthchecks.record_job_status("aemo-pec-mi-transition", 1, root=tmp_path, now=NOW)
+    healthchecks.record_job_status("aemo-pec-mi-transition", 1, root=tmp_path, now=NOW)
     calls = []
     result = healthchecks.aggregate_once(
         root=tmp_path, healthcheck_url="https://hc-ping.com/private-id", now=NOW,
@@ -194,7 +243,7 @@ def test_missing_job_status_is_allowed_only_during_initial_grace(tmp_path):
     )
     overdue = healthchecks.aggregate_once(
         root=tmp_path, healthcheck_url="https://hc-ping.com/private-id",
-        now=NOW + timedelta(minutes=9), ping_fn=ping,
+        now=NOW + timedelta(minutes=16), ping_fn=ping,
     )
     assert first["status"] == still_starting["status"] == "success"
     assert overdue["status"] == "failure"
