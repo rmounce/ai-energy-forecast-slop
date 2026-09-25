@@ -135,6 +135,34 @@ def test_short_api_coverage_requires_three_consecutive_captures():
     assert state["api_short_coverage_runs"] == 0
 
 
+def test_api_transport_outage_alerts_after_30_minutes_and_resets_on_success():
+    started = datetime(2026, 9, 26, 0, tzinfo=timezone.utc)
+    state = {}
+    error = capture.RequestFailure("upstream timed out")
+    diagnostics = []
+    issues = []
+    capture._record_api_transport_failure(error, state, started, diagnostics, issues)
+    capture._record_api_transport_failure(
+        error, state, started + timedelta(minutes=29), diagnostics, issues,
+    )
+    assert len(diagnostics) == 2
+    assert issues == []
+    capture._record_api_transport_failure(
+        error, state, started + timedelta(minutes=30), diagnostics, issues,
+    )
+    assert len(issues) == 1
+    assert "30 minutes of failed captures" in issues[0]
+
+    state["api_transport_failure_started_utc"] = None
+    diagnostics.clear()
+    issues.clear()
+    capture._record_api_transport_failure(
+        error, state, started + timedelta(minutes=35), diagnostics, issues,
+    )
+    assert len(diagnostics) == 1
+    assert issues == []
+
+
 def test_current_dispatchis_and_predispatchis_table_names_are_recognized():
     for source, region_table, interconnector_table, time_column, interchange_column in (
         (_source(), "REGIONSOLUTION", "INTERCONNECTORSOLN", "INTERVAL_DATETIME", "NET_INTERCHANGE"),

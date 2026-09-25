@@ -25,6 +25,8 @@ job cadence and grace are enforced locally. The AEMO capture job logs an isolate
 but the shared check stays healthy if the next run succeeds within the freshness window.
 Two failed capture runs remain pending until the aggregate reports them, even if a later run
 succeeds before the next aggregate pass. Other monitored jobs still alert on one failure.
+The capture canary treats a visualisations API transport outage as a diagnostic for 30 minutes;
+NEMWeb report failures and API response/schema failures still affect the capture result.
 
 On 2026-09-25 at 23:13 Adelaide time, the AEMO visualisations `5MIN` API timed out after
 three attempts; the 23:17 capture succeeded. This transient endpoint timeout prompted the

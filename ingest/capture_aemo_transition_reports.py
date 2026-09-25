@@ -48,6 +48,7 @@ MAX_STITCH_JUMP_MW = 3000.0
 MAX_HORIZON_CHANGE_HOURS = 0.5
 MIN_API_FUTURE_HOURS = 1.0
 PERSISTENT_COVERAGE_RUNS = 3
+MAX_API_TRANSPORT_OUTAGE = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,10 @@ SOURCES = (
 
 API_URL = "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN"
 API_PAYLOAD = {"timeScale": ["30MIN"]}
+
+
+class RequestFailure(RuntimeError):
+    """All attempts to fetch an upstream response failed."""
 
 
 class HrefParser(HTMLParser):
@@ -209,7 +214,16 @@ def _request(url: str, *, data: bytes | None = None, content_type: str | None = 
             last_error = exc
             if attempt < 2:
                 time.sleep(2 ** attempt)
-    raise RuntimeError(f"request failed after 3 attempts: {url}: {last_error}")
+    raise RequestFailure(f"request failed after 3 attempts: {url}: {last_error}")
+
+
+def _record_api_transport_failure(exc: RequestFailure, state: dict, now: datetime,
+                                  diagnostics: list[str], issues: list[str]) -> None:
+    started = state.get("api_transport_failure_started_utc") or _utc_iso(now)
+    state["api_transport_failure_started_utc"] = started
+    elapsed = now - datetime.fromisoformat(started.replace("Z", "+00:00"))
+    message = f"visualisations_5min: {exc} ({elapsed.total_seconds() / 60:.0f} minutes of failed captures)"
+    (issues if elapsed >= MAX_API_TRANSPORT_OUTAGE else diagnostics).append(message)
 
 
 def _atomic_write(path: Path, content: bytes) -> None:
@@ -585,10 +599,14 @@ def capture(root: Path = DEFAULT_ROOT) -> dict:
 
     try:
         api_summary, _ = _capture_json_api(root)
+        state["api_transport_failure_started_utc"] = None
+        state["api_last_success_utc"] = api_summary.get("captured_utc", _utc_iso(now))
         results.append(api_summary)
         api_samples = api_summary["regional_net_interchange"]
         _record_horizon("visualisations_5min", api_summary["max_horizon_hours"], state, diagnostics)
         _record_api_coverage(api_summary["max_horizon_hours"], state, diagnostics, issues)
+    except RequestFailure as exc:
+        _record_api_transport_failure(exc, state, now, diagnostics, issues)
     except Exception as exc:
         issues.append(f"visualisations_5min: {exc}")
 

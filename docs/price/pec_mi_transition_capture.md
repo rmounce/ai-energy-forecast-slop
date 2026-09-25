@@ -45,6 +45,10 @@ interchange jump above 3,000 MW is recorded as a diagnostic. For ZIP products, i
 latest report gap and the median cadence over the latest 13 distinct run times. Horizon changes
 over 30 minutes are diagnostics. A 5MIN API response with less than one hour of future data fails
 only after three consecutive captures.
+Transport failures from the supplemental visualisations API are diagnostics for the first
+30 minutes; a sustained outage then fails the canary. Response/schema failures still fail the
+canary. The NEMWeb report checks continue during an API timeout. A successful API capture resets
+the transport outage clock.
 When a new report advances its run time but keeps the same forecast end (within one minute),
 the shorter remaining horizon is expected and does not alert. This occurred in the 2026-09-25
 10:00 NEM-time STPASA report: the remaining horizon moved from 163 to 162 hours while both
@@ -54,7 +58,13 @@ The capture records its result in ignored `data/healthcheck_status/`. The reposi
 `ai-energy-healthcheck-aggregate.timer` evaluates that status with the load service and price
 listener, then sends success or `/fail` to the one existing `HC_PREDICT_URL`. A success from one
 job cannot clear another job's failure. Capture freshness is enforced locally at five minutes
-plus three minutes; see [`docs/healthchecks.md`](../healthchecks.md).
+plus ten minutes; two consecutive failed capture runs trigger the shared check. See
+[`docs/healthchecks.md`](../healthchecks.md).
+
+On 2026-09-26, the API timed out on the 00:02 and 00:07 runs and recovered on the 00:12 run.
+The other NEMWeb reports completed; the visualisations API timeout alone caused the 00:09
+healthcheck alert. NEMWeb `P5MIN` and `PREDISPATCHIS` contain regional forecast/interchange
+data, but the API is retained as a separate comparison source.
 
 ## Initial live observation
 
