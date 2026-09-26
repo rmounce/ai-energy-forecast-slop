@@ -34,7 +34,8 @@ from healthchecks import record_job_status  # noqa: E402
 DEBOUNCE_SECONDS = 1.0
 HEARTBEAT_SECONDS = 30 * 60
 HEARTBEAT_POLL_SECONDS = 30
-SUBPROCESS_TIMEOUT_SECONDS = 120
+# AEMO forecast retries can consume roughly a minute before model work starts.
+SUBPROCESS_TIMEOUT_SECONDS = 180
 FAILURE_RETRY_SECONDS = 5 * 60
 RECONNECT_BACKOFF_INITIAL = 1
 RECONNECT_BACKOFF_CAP = 30

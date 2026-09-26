@@ -28,6 +28,12 @@ succeeds before the next aggregate pass. Other monitored jobs still alert on one
 The capture canary treats a visualisations API transport outage as a diagnostic for 30 minutes;
 NEMWeb report failures and API response/schema failures still affect the capture result.
 
+On 2026-09-27 at 04:17 Adelaide time, the price listener's child published all three price
+forecast sensors after AEMO visualisations API retries, but had not exited at the old 120-second
+listener timeout. The listener killed it and recorded a failure; its 04:22 retry succeeded. The
+child timeout is now 180 seconds to accommodate this observed slow path while still detecting a
+stuck prediction process.
+
 On 2026-09-25 at 23:13 Adelaide time, the AEMO visualisations `5MIN` API timed out after
 three attempts; the 23:17 capture succeeded. This transient endpoint timeout prompted the
 capture-specific persistence threshold.
