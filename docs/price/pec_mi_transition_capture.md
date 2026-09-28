@@ -3,6 +3,35 @@
 Status: capture and aggregate timers enabled 2026-09-24 ACST; current status is in
 `data/aemo_transition/canary_latest.json`.
 
+## Pre-cutover check — 2026-09-29 08:38 ACST
+
+- Latest capture at 2026-09-29 08:37 ACST: `status=ok`, no issues or schema changes. The
+  shared healthcheck last sent success at 08:38 ACST. All eight sources had their expected
+  recent cadence. `NSW1-SA1` remains in ST-PASA capacity rows only; current DispatchIS,
+  legacy dispatch, P5MIN, PREDISPATCHIS, and legacy PREDISPATCH each list six other
+  interconnectors. Do not interpret the ST-PASA entry as cleared flow.
+- Raw archive: 1.2 GB; filesystem available: 2.2 TB. The VIC1 API/Seven-Day interchange
+  boundary jump was -3,962 MW, retained as a diagnostic under the existing alert policy.
+- AEMO's [PEC-MI FAQ](https://www.aemo.com.au/initiatives/major-programs/nem-reform-program/nem-reform-program-initiatives/project-energyconnect-market-integration-project/frequently-asked-questions)
+  still targets physical loop operations from 2026-10-01. Its
+  [final inter-network test program](https://www.aemo.com.au/consultations/current-and-closed-consultations/pec-stage-2-internetwork-test-program)
+  expects staged capacity testing in Q4 2026 after prerequisites. The dispatch topology
+  change and full transfer-capacity release are separate milestones; confirm actual timing
+  from AEMO notices and dispatch data.
+
+Cutover checks:
+
+1. Before and after the announced change, confirm capture and aggregate health statuses,
+   report freshness, raw archive growth, and free disk space using the commands below.
+2. Compare `NSW1-SA1` presence and first target/run times across DispatchIS, legacy
+   dispatch, P5MIN, and both PREDISPATCH products. Check row count, `MWFLOW`/limits,
+   flow sign, and any schema or header changes in the retained original ZIPs. ST-PASA
+   capacity rows alone do not establish the dispatch change.
+3. Check regional SA1/NSW1/VIC1 prices and interchange across the first live intervals;
+   compare the API/Seven-Day boundary, but treat isolated jumps as diagnostics.
+4. Keep the active production price bundle in place. Review live forecast freshness and
+   error after the change; assess retraining or feature changes only with observed data.
+
 ## What is retained
 
 `ingest/capture_aemo_transition_reports.py` saves original response bytes below
