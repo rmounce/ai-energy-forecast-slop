@@ -3,6 +3,32 @@
 Status: capture and aggregate timers enabled 2026-09-24 ACST; current status is in
 `data/aemo_transition/canary_latest.json`.
 
+## Predispatch arrival — 2026-09-30 09:42 ACST
+
+- Latest capture: `2026-09-30T00:12:35Z`, `status=ok`, no issues, diagnostics, or schema
+  changes. Both PREDISPATCH formats now contain `NSW1-SA1`; dispatch and P5MIN still do not.
+- Earliest retained PREDISPATCHIS file containing PEC:
+  `PUBLIC_PREDISPATCHIS_202609291300_20260929123229.zip` (13:00 NEM-time report label).
+  This is a retained-file observation, not a claim about AEMO's first-ever publication.
+- The latest 10:30 NEM-time PREDISPATCH reports contain eight PEC rows targeting
+  2026-10-01 00:30–04:00 NEM time. `MWFLOW`, `IMPORTLIMIT`, and `EXPORTLIMIT` are all zero
+  in both formats. These are forecast results for future intervals.
+- Exercised `ingest/ingest-predispatch.py`'s regional parser on the latest archived legacy
+  ZIP without database writes: 108 SA1/VIC1/NSW1 points, all with price, demand, and net
+  interchange fields. Price listener and aggregate health statuses remain successful.
+- [WattClarity's 30 September update](https://wattclarity.com.au/articles/2026/09/30sept-pec-in-predispatch/)
+  confirms PEC's arrival after the 29 September 12:30 gate closure. Its
+  [linked LOR3 report](https://wattclarity.com.au/articles/2026/09/29sept-pec-gremlins/)
+  reproduces AEMO MN145396 (suspect SA LOR3, midnight–04:00 on 1 October) and MN145397
+  (resolved at 14:07 NEM time on 29 September; no SA LOR3 then forecast). A calendar-day
+  versus trading-day mismatch is the author's hypothesis; its cause is not confirmed here.
+- Impact: begin inspecting tomorrow's forecast inputs now. Regional prices/interchange
+  already reflect AEMO's future topology assumptions. Additional interconnector rows do
+  not require a regional parser change. Successful schema checks do not establish economic
+  forecast accuracy; monitor forecast error and source agreement through cutover.
+- `first_nsw1_sa1_utc` is global across sources and remains the earlier ST-PASA observation.
+  Use the original report files to establish the first appearance in each other source.
+
 ## Pre-cutover check — 2026-09-29 08:38 ACST
 
 - Latest capture at 2026-09-29 08:37 ACST: `status=ok`, no issues or schema changes. The
