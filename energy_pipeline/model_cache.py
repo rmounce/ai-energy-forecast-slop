@@ -24,6 +24,11 @@ class ModelCache:
                 result.append((name, kind, str(path), stat.st_ino, stat.st_size, stat.st_mtime_ns))
         return tuple(result)
 
+    @property
+    def loaded_signature(self):
+        """Identity of the installed family, never a newly resolved pointer."""
+        return self._signature
+
     def load_family(self, paths):
         signature = self.signature(paths)
         self.last_load_seconds = 0.0

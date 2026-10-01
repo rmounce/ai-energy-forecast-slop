@@ -338,6 +338,16 @@ def test_resident_worker_uses_one_ha_snapshot_for_all_quantiles(monkeypatch):
     api.assert_called_once_with('GET', 'states')
     assert len(result.parent_revision) == 64
     assert result.outcome.publication_result == 'not_requested'
+    assert result.input_revisions['apf'] == result.parent_revision
+    assert result.input_revisions['source:aemo'] == 'aemo'
+    assert result.input_revisions['ha:sensor.pv'] == price_worker.content_revision(rows[1])
+    assert result.input_revisions['tariff'] == price_worker.content_revision([{}, {}, 1])
+
+
+def test_input_revision_ignores_mapping_order_and_tracks_values():
+    from energy_pipeline.price_worker import content_revision
+    assert content_revision({'a': 1, 'b': 2}) == content_revision({'b': 2, 'a': 1})
+    assert content_revision({'a': 1}) != content_revision({'a': 2})
 
 
 def test_cached_input_path_performs_no_future_or_history_acquisition(tmp_path, monkeypatch):

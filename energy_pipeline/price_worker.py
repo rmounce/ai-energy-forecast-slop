@@ -15,6 +15,11 @@ from energy_pipeline.source_cache import SourceCache, SourcePolicy, validate_fra
 from production_contract import PredictionInputs, PredictionOutcome
 
 
+def content_revision(value):
+    """Opaque digest: provenance logs never contain configuration credentials."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class PriceCompletion:
     outcome: PredictionOutcome
@@ -29,6 +34,7 @@ class PriceCompletion:
     memory_maintenance_seconds: float
     rss_before_maintenance_mib: float
     allocator_trimmed: bool
+    input_revisions: dict[str, str]
 
 
 class PriceWorker:
@@ -64,7 +70,15 @@ class PriceWorker:
         if not apf or not apf.get('attributes', {}).get('Forecasts'):
             raise RuntimeError('snapshot missing Amber APF')
         captured_at = datetime.now(timezone.utc).isoformat()
-        revision = hashlib.sha256(json.dumps(apf, sort_keys=True).encode()).hexdigest()
+        revision = content_revision(apf)
+        input_revisions = {
+            'config': content_revision(fc.CONFIG),
+            'tariff': content_revision([fc.GENERAL_TARIFF_MAP, fc.FEED_IN_TARIFF_MAP, fc.NETWORK_LOSS_FACTOR]),
+            'apf': revision,
+            **{f'ha:{entity}': content_revision(states.get(entity))
+               for entity in fc.CONFIG['home_assistant']['solcast_entities']},
+            **{f'source:{name}': source.revision for name, source in sources.items()},
+        }
         with fc.prediction_resources(entity_states=states, model_cache=self.cache, verify_reload=self.verify_reload):
             solcast = fc.get_solcast_forecast()
             # Solcast's four-day horizon can span DST and produce an object
@@ -78,14 +92,16 @@ class PriceWorker:
                 sources['history'].frame, start)
             outcome = fc.run_predictions(['price'], False, True, False, calculation_only=True, input_snapshot=inputs)
         memory = reclaim_transient_memory()
+        input_revisions['model_artifacts'] = content_revision(self.cache.loaded_signature)
         completion = PriceCompletion(outcome, revision, captured_at, time.monotonic()-started,
                                      self.cache.last_load_seconds, self.cache.loads, memory.after_mib,
                                      {name: source.revision for name, source in sources.items()},
                                      {name: (now-source.fetched_at).total_seconds() for name, source in sources.items()},
-                                     memory.elapsed_seconds, memory.before_mib, memory.trimmed)
+                                     memory.elapsed_seconds, memory.before_mib, memory.trimmed, input_revisions)
         logging.info(json.dumps({'event': 'resident_price_complete', 'run_id': outcome.run_id,
             'parent_revision': revision, 'captured_at': captured_at,
             'source_revisions': completion.source_revisions, 'source_ages_seconds': completion.source_ages_seconds,
+            'input_revisions': completion.input_revisions,
             'memory_maintenance_seconds': round(memory.elapsed_seconds, 3),
             'rss_before_maintenance_mib': round(memory.before_mib, 1), 'allocator_trimmed': memory.trimmed,
             'model_bundle_id': outcome.model_bundle_id, 'point_counts': outcome.point_counts,

@@ -27,6 +27,10 @@ flowchart LR
   age and current horizon coverage. Missing/expired coverage blocks inference, never falls through
   to synchronous refresh or fabricates a fresh revision.
 - Cache snapshots copied under an immutable ownership contract; input revisions/ages in completion.
+- Completion lineage also includes opaque config/effective-tariff digests, each frozen Solcast
+  entity digest and the installed model artifact signature digest. Signature is path/inode/size/
+  mtime identity, not a byte-content checksum; failed promotion retains prior installed identity.
+  Digests record consumed inputs; obsolete-result rejection/publication is still unimplemented.
 - Config frozen for process lifetime to avoid changing forecast globals while source threads run.
   Config edits require shadow restart; inference detects changes and fails. Tariff maps read per run;
   active model pointer still resolved per run. Legacy globals require one inference worker.
@@ -61,6 +65,26 @@ flowchart LR
 - Plain raw `notna()` coverage would reject valid overnight data; explicit exceptions above preserve
   behaviour without permitting arbitrary missing covariates.
 
+## Freshness contract audit (2026-10-02 morning)
+
+- Live Solcast `sensor.solcast_pv_forecast_api_last_polled` state is an aware successful-fetch
+  timestamp (23:07:45 UTC at inspection); `last_attempt` and `next_auto_update` are separate attrs.
+  Installed `solcast_solar/solcastapi.py:last_updated` and `fetcher.py:get_forecast_update` confirm
+  timestamp advancement after all attempted sites succeed and forecast build is attempted.
+  Build/serialization can still fail after timestamp assignment; timestamp alone is insufficient.
+  Forecast entities have no own provider-issuance attr. Capture poll metadata with arrays before
+  defining schedule-aware age policy; overnight polling gaps are intentional.
+- Live APF attr `update_time` was `2026-10-01T23:45:17.754096` while HA update was
+  `2026-10-01T23:45:17.943092+00:00`. Local amber2mqtt `mqttmessages.py` uses naive
+  `datetime.now()`: bridge publication time, not provider issuance. Container timezone and
+  local-code/live-image equivalence remain unverified; do not parse as Adelaide automatically.
+- Installed BOM `bureau_of_meteorology/PyBoM/collector.py:_fetch_with_retry` can return cached
+  hourly forecast data after request failure. Its successful-fetch timestamp stays internal.
+  `weather.py:async_forecast_hourly` projects forecast fields without that cache timestamp;
+  weather entity state/last_updated also reflects observations. Successful HA service retrieval
+  cannot establish a new BOM fetch or provider issue. Need explicit upstream freshness metadata
+  or a separate source contract before production admission is trustworthy.
+
 ## Memory evidence and handling
 
 - Frozen-source repeat probe + GC: six warm inferences; RSS ~1491 MiB, Python traced net growth
@@ -82,6 +106,16 @@ flowchart LR
 - Memory in that session: bootstrap 1985 →1377 MiB; APF run ~1395 MiB; after next source refresh
   2055 →1590 MiB. Maintenance 0.15–0.17s; unchanged 2048 MiB post-maintenance guard respected.
   Higher steady RSS after source refresh means a longer multi-cycle/daytime run remains necessary.
+- 2026-10-02 09:03–09:19 Adelaide: 16-minute daytime event shadow, exit 0; six completions,
+  three model loads total. Cold 9.6s; APF runs 4.4–5.5s; source-change replans 2.0–2.2s.
+  Bootstrap plus two completed AEMO/history refresh cycles; third acquisition was in flight at
+  automatic shutdown and discarded. No publications. This session used the preceding commit;
+  new lineage fields validated by the focused suite, not by this running process.
+  Post-maintenance RSS ~1698 →1840 →1995 MiB across source cycles, then ~1992 MiB on APF run;
+  pre-maintenance peak measured at 2290 MiB. No guard breach, but continuing growth leaves little
+  headroom: memory stability gate NOT passed. Do not raise the guard or proceed to cutover.
+  Next isolate repeated AEMO vs history acquisition with stable inference and measure Python/native
+  retention per thread/source. No upstream failure/reconnect injected in this session.
 
 ## Commands
 
@@ -102,10 +136,10 @@ flowchart LR
 - Implemented/tested: independent cache refresh, strict admission, confirmed zero-capacity exceptions,
   UTC Solcast normalization, no-acquisition inference path, content lineage, memory reclamation.
 - Cached/reloaded quantile parity passes on admitted cached inputs; all quantiles 144 points.
-- Focused suite: 74 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
+- Focused suite: 75 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
   cache, deadline discard, memory guard/reclamation, incumbent regressions.
 - Still shadow only. Short benchmark evidence is not a full-day memory/failure-recovery gate.
-- Next: longer bounded shadow over source failures/reconnect/interval/DST boundaries; verify source
-  issuance and entity freshness, extend complete lineage to config/tariff/model inputs.
+- Next: investigate multi-cycle memory growth, then longer shadow over source failures/reconnect/
+  interval/DST boundaries; expose trustworthy source freshness metadata and test result rejection.
 - Then implement result acceptance/publication transaction and switch price ownership with explicit
   rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

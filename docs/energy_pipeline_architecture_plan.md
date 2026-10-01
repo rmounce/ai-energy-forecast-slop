@@ -136,7 +136,7 @@ Pure payload/time/SoC extraction passes one recorded snapshot and deterministic 
 Resident price shadow now uses independent validated source caches. Warm inference ~4s; measured
 memory reclamation keeps short runs below the unchanged 2 GiB guard. Current implementation/evidence
 and resume gates: [source-cache checkpoint](energy_pipeline_source_cache.md).
-Next: longer bounded shadow and source/entity freshness verification, complete input lineage,
+Next: investigate multi-cycle memory growth and expose source freshness metadata, then longer shadow,
 then explicit price result acceptance/publication and single-owner cutover. Collect independent
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.

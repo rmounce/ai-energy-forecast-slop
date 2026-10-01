@@ -36,13 +36,16 @@ def test_failed_promotion_keeps_previous_complete_family(tmp_path):
     cache = ModelCache(lambda path: Path(path).read_text())
     old_paths = artifacts(tmp_path)
     previous = cache.load_family(old_paths)
+    previous_signature = cache.loaded_signature
     new_paths = artifacts(tmp_path, 'b')
     new_paths['high']['params'].write_text('broken')
     with pytest.raises(ValueError):
         cache.load_family(new_paths)
+    assert cache.loaded_signature == previous_signature
     assert cache.load_family(old_paths) is previous
     new_paths['high']['params'].write_text('{"shift_value": 3}')
     assert cache.load_family(new_paths) is not previous
+    assert cache.loaded_signature == cache.signature(new_paths)
 
 
 def test_artifact_change_during_load_rejects_entire_family(tmp_path):
