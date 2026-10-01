@@ -581,3 +581,7 @@ Current implementation priority:
 | Weather | Bureau of Meteorology (BOM) via HA integration |
 | Job scheduling | systemd timers |
 | Runtime | Python 3.13, `.venv` |
+
+The proposed consolidation across Amber, Python services, EMHASS, HA and HWC is tracked in
+[the energy pipeline architecture plan](docs/energy_pipeline_architecture_plan.md).
+Status: initial assessment; no production cutover.
