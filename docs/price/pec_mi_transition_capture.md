@@ -3,6 +3,30 @@
 Status: capture and aggregate timers enabled 2026-09-24 ACST; current status is in
 `data/aemo_transition/canary_latest.json`.
 
+## Live dispatch check — 2026-10-01 14:53 ACST
+
+- Capture at `2026-10-01T05:07:17Z`: `status=ok`, no issues or schema changes.
+  `NSW1-SA1` is present in DispatchIS, legacy dispatch, P5MIN, both PREDISPATCH
+  formats, and STPASA. Dispatch/P5MIN now contain seven interconnectors.
+- Retained `PUBLIC_DISPATCHIS_202610011510_0000000540592259.zip`: PEC at
+  15:10 NEM time has `MWFLOW=115.45828`, `METEREDMWFLOW=115.4375`,
+  `EXPORTLIMIT=150`, `IMPORTLIMIT=63.69172` MW. This is a live dispatch result.
+- Latest retained legacy PREDISPATCH (15:00 NEM-time label) parses into 225
+  SA1/VIC1/NSW1 points, all with price, demand, and net interchange; no database
+  writes in this parser check. Additional interconnector rows need no regional parser change.
+- Read-only InfluxDB checks: P5MIN latest run `2026-10-01T05:20:00Z`, PREDISPATCH
+  `2026-10-01T05:00:00Z`, Seven Day `2026-10-01T04:35:20Z`.
+  P5MIN/PREDISPATCH recent interval queries contain SA1/VIC1/NSW1.
+- Load published at 14:32 ACST; price at 14:35 and 14:40 ACST. Each published
+  three quantiles with 144 points. STPASA refresh completed at 14:25 ACST;
+  prediction logs report 100% historical STPASA feature coverage.
+- Shared healthcheck is successful; capture and aggregate timers are active.
+  Filesystem has 2.2 TB available. No runtime/model changes made.
+- Diagnostics: API horizon recovered from -0.46 to 36.37 hours; VIC1
+  API/Seven-Day boundary jump is -3,823 MW, SA1 -346 MW, NSW1 -565 MW.
+  These remain diagnostics under the persistence policy. Operational health does
+  not establish post-cutover price accuracy; forecast-error review remains outstanding.
+
 ## Predispatch arrival — 2026-09-30 09:42 ACST
 
 - Latest capture: `2026-09-30T00:12:35Z`, `status=ok`, no issues, diagnostics, or schema
