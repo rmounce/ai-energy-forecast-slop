@@ -14,7 +14,7 @@
 ```
 
 - A 30-minute idle heartbeat triggers the same command if no run occurred.
-- Runs are serialized; subprocess timeout is 120 seconds.
+- Runs are serialized; subprocess timeout is 180 seconds (changed 2026-09-27).
 - WebSocket reconnect uses exponential backoff capped at 30 seconds.
 - `systemd/ai-energy-predict.timer` is load-only and still runs at `:01,:31`.
 

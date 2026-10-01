@@ -53,7 +53,7 @@ EMHASS day-ahead optimises 72 hours ahead and needs both:
   LGBM-extrapolated.
 - A 30-min **load forecast** — LGBM quantile model.
 
-### Price feed (event-driven, sub-10s)
+### Price feed (event-driven)
 
 1. Amber publishes a new APF.
 2. HA's Amber integration updates
@@ -74,8 +74,10 @@ child exit nonzero. The listener healthcheck is pinged only after validated
 success; failures retry on a five-minute cadence.
 
 **Latency from Amber publish → `sensor.ai_price_forecast` updated**:
-~7-8s end-to-end. ~6-7s of that is `forecast.py` startup + multi-source
-data fetch; LGBM inference itself plus the HA publish is <1s.
+2026-10-01 HA sample: ~26s from APF entity update to p50 publication. Recent listener
+process durations were 25.3–28.9s. The older ~7–8s estimate is superseded; component
+timings and upstream Amber publication latency still need measurement. See the
+[runtime inventory](energy_pipeline_runtime_inventory.md).
 
 The old shadow stack (PD-direct + canonical AI bundle + AEMO stitched +
 TFT-load) is disabled; this publish is now the production price surface for DH.
@@ -142,7 +144,7 @@ for diagnostic continuity.
 | Tier | Horizon | Refresh trigger | Forecast freshness (post Amber publish) |
 |---|---|---|---|
 | MPC | 14h | Raw Amber 5-min entity state_changed + every-min `:25` fallback | seconds |
-| DH (price) | 72h | `sensor.ai_price_forecast` state_changed | ~7-8s |
+| DH (price) | 72h | `sensor.ai_price_forecast` state_changed | ~26s after HA APF update in 2026-10-01 sample |
 | DH (price covariates) | 72h | `ai-energy-stpasa.timer` hourly at `:25` | up to 1h |
 | DH (load) | 72h | `sensor.ai_load_forecast` state_changed | up to 30 min (timer-driven) |
 

@@ -1,6 +1,7 @@
 # Energy pipeline consolidation
 
-Status: initial assessment 2026-10-01; implementation not started.
+Status: runtime routing baseline checked 2026-10-01; implementation not started.
+Evidence and dependency map: [runtime inventory](energy_pipeline_runtime_inventory.md).
 Scope: Amber → forecasts → EMHASS DH/MPC → battery/HWC/dump-load control; include HA,
 MQTT bridges, InfluxDB, sibling `../hwc`, and system/user systemd units.
 
@@ -9,10 +10,9 @@ MQTT bridges, InfluxDB, sibling `../hwc`, and system/user systemd units.
 - Read repository units, live HA `automations.yaml` and packages under
   `/opt/dockerfiles/hass/config/`, EMHASS/Amber Compose image declarations, and HWC daemon code.
 - Live `packages/emhass.yaml` matches this repository's copy.
-- Compose declares EMHASS `v0.17.9`; running container version not checked in this assessment.
-- Automation definitions establish configured routing; enabled state and actual execution
-  require HA API/traces. An old direct Amber battery controller remains defined; do not assume
-  it is enabled or competing with EMHASS.
+- Running EMHASS container uses `v0.17.9`.
+- HA API confirms DH/MPC, battery policy, dump-load and Sigenergy controllers are enabled;
+  the old direct Amber battery controller is disabled. See the runtime inventory for limits.
 - No memory files found in repository `.agents`; historical plans are subordinate to current
   production routing and deployed configuration.
 - Existing critical-path latency estimates (~7–8 seconds) predate September's observed
@@ -128,6 +128,7 @@ actuator writers. Freeze behaviour during extraction; tuning/model changes are s
 
 ## Next concrete deliverable
 
-Complete runtime inventory and produce a current dependency/feedback diagram plus a component
-ownership/deletion list. Use those to settle coordinator boundaries and the first migration phase.
-This initial plan authorises no production cutover.
+Runtime routing inventory, dependency/feedback diagram and ownership/removal order are recorded.
+Next: record representative input snapshots and extract payload/time/SoC functions with parity
+checks; measure model-load/resource costs before implementing the resident price worker.
+Production cutover remains gated on shadow equivalence and verified single ownership.
