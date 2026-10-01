@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from config_utils import load_config
 from energy_pipeline.price_worker import PriceWorker
+from energy_pipeline.source_cache import SourceCache, SourceUnavailable, price_source_policies
+from energy_pipeline.source_refresh import SourceRefreshers
 from services.ha_listener import Listener, _install_signal_handlers
 
 log = logging.getLogger('resident_price')
@@ -33,7 +35,8 @@ class WorkerResourceLimit(RuntimeError):
 class ResidentPriceListener(Listener):
     def __init__(self, config, predictor=None):
         super().__init__(config)
-        self.predictor = predictor or PriceWorker()
+        self.predictor = predictor or PriceWorker(SourceCache(price_source_policies(config)))
+        self.refreshers = SourceRefreshers(self.predictor.sources, self.trigger, self.shutdown) if isinstance(self.predictor, PriceWorker) else None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='price')
         self.completed = None
 
@@ -59,6 +62,11 @@ class ResidentPriceListener(Listener):
             except asyncio.CancelledError:
                 self.shutdown.set()
                 raise
+            except SourceUnavailable as exc:
+                # Dependency acquisition will arm another trigger on readiness;
+                # do not penalize initial cache warming with a five-minute retry.
+                log.info('resident inputs not ready: %s', exc)
+                return
             except Exception:
                 log.exception('resident shadow generation failed')
                 self._schedule_failure_retry()
@@ -80,6 +88,8 @@ class ResidentPriceListener(Listener):
     async def run(self):
         tasks = [asyncio.create_task(self.consume_websocket()),
                  asyncio.create_task(self.worker()), asyncio.create_task(self.heartbeat())]
+        if self.refreshers is not None:
+            tasks.extend(asyncio.create_task(self.refreshers.loop(name)) for name in self.predictor.sources.policies)
         stop = asyncio.create_task(self.shutdown.wait())
         try:
             done, _ = await asyncio.wait([*tasks, stop], return_when=asyncio.FIRST_COMPLETED)
@@ -98,32 +108,52 @@ class ResidentPriceListener(Listener):
                 with suppress(asyncio.CancelledError):
                     await self._retry_task
             self.executor.shutdown(wait=False, cancel_futures=True)
+            if self.refreshers is not None:
+                self.refreshers.close()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--runs', type=int, help='run N shadow predictions sequentially, then exit (benchmark)')
+    lifetime = parser.add_mutually_exclusive_group()
+    lifetime.add_argument('--runs', type=int, help='warm sources once, run N shadow predictions, then exit')
+    lifetime.add_argument('--duration', type=float, help='run normal event/refresh loops for N seconds, then stop')
     parser.add_argument('--verify-reload', action='store_true', help='compare each quantile against a freshly loaded model on identical inputs')
     args = parser.parse_args()
     if args.runs is not None and args.runs < 1:
         parser.error('--runs must be positive')
+    if args.duration is not None and args.duration <= 0:
+        parser.error('--duration must be positive')
     config = load_config(ROOT / 'config.yaml')
     if not config['home_assistant'].get('token'):
         parser.error('home_assistant.token missing')
-    listener = ResidentPriceListener(config, PriceWorker(verify_reload=args.verify_reload))
+    listener = ResidentPriceListener(config, PriceWorker(SourceCache(price_source_policies(config)), verify_reload=args.verify_reload))
 
     async def run():
         _install_signal_handlers(listener, asyncio.get_running_loop())
         if args.runs is None:
-            await listener.run()
+            async def expire():
+                await asyncio.sleep(args.duration)
+                listener.shutdown.set()
+            timer = asyncio.create_task(expire()) if args.duration is not None else None
+            try:
+                await listener.run()
+            finally:
+                if timer:
+                    timer.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await timer
         else:
             try:
+                # Finite benchmark warms each dependency once; subsequent runs
+                # measure inference against the same cached data, not API latency.
+                await asyncio.gather(*(listener.refreshers.refresh(name) for name in listener.predictor.sources.policies))
                 for _ in range(args.runs):
                     if listener.shutdown.is_set():
                         break
+                    previous = listener.completed
                     await listener._run_predict_price()
-                    if listener._retry_not_before:
-                        raise RuntimeError('shadow benchmark failed')
+                    if listener._retry_not_before or listener.completed is previous:
+                        raise RuntimeError('shadow benchmark failed or inputs not ready')
             finally:
                 listener.shutdown.set()
                 if listener._retry_task:
@@ -139,6 +169,8 @@ def main():
         rc = 1
     finally:
         listener.executor.shutdown(wait=False, cancel_futures=True)
+        if listener.refreshers is not None:
+            listener.refreshers.close()
     # Python normally joins executor threads at exit. A stuck worker would
     # prevent systemd restart; shadow mode has no publication/file transaction
     # to commit, so terminate the process after flushing its diagnostic logs.

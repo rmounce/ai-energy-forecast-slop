@@ -15,6 +15,14 @@ class ForecastContractError(ValueError):
 
 
 @dataclass(frozen=True)
+class PredictionInputs:
+    """Already acquired frames; resident shadow must validate before admission."""
+    future_sources: Mapping[str, pd.DataFrame]
+    historical_df: pd.DataFrame
+    forecast_start: datetime
+
+
+@dataclass(frozen=True)
 class PredictionOutcome:
     family: str
     source: str

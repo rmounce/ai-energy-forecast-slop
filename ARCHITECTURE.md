@@ -588,4 +588,4 @@ Status: initial assessment; no production cutover.
 
 Offline Python DH/MPC payload extraction and validation: [replay runbook](docs/energy_pipeline_payload_replay.md). Production solve ownership remains in HA.
 
-Resident price calculation-only successor: [shadow worker](docs/energy_pipeline_resident_price.md). Model reuse verified; memory and source-refresh gates remain before production cutover.
+Resident price calculation-only successor: [shadow worker](docs/energy_pipeline_resident_price.md). Model reuse, independent source caches and measured memory reclamation implemented in shadow. [Current evidence/resume gates](docs/energy_pipeline_source_cache.md); production unchanged.

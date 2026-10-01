@@ -328,7 +328,28 @@ def test_resident_worker_uses_one_ha_snapshot_for_all_quantiles(monkeypatch):
         return SimpleNamespace(run_id='r', model_bundle_id='b', point_counts={'price': 144},
                                publication_result='not_requested')
     monkeypatch.setattr(forecast, 'run_predictions', predict)
-    result = price_worker.PriceWorker().predict()
+    from energy_pipeline.source_cache import SourceSnapshot
+    now = pd.Timestamp.now(tz='UTC')
+    frame = pd.DataFrame({'power_pv': [0.] * 145}, index=pd.date_range(now.floor('30min'), periods=145, freq='30min'))
+    source_cache = SimpleNamespace(snapshot=lambda at: {
+        name: SourceSnapshot(frame, now.to_pydatetime(), name) for name in ('aemo', 'weather', 'history')})
+    monkeypatch.setattr(forecast, 'get_solcast_forecast', lambda: frame)
+    result = price_worker.PriceWorker(source_cache).predict()
     api.assert_called_once_with('GET', 'states')
     assert len(result.parent_revision) == 64
     assert result.outcome.publication_result == 'not_requested'
+
+
+def test_cached_input_path_performs_no_future_or_history_acquisition(tmp_path, monkeypatch):
+    from production_contract import PredictionInputs
+    patch_prediction_boundaries(monkeypatch, tmp_path)
+    family = valid_load_family()
+    frame = next(iter(family.values()))
+    snapshot = PredictionInputs({'solcast': frame, 'weather': frame, 'aemo': frame}, frame, frame.index[0])
+    for name in ('get_solcast_forecast', 'get_weather_forecast', 'get_aemo_forecast', 'get_historical_data', 'InfluxDBClient'):
+        monkeypatch.setattr(forecast, name, Mock(side_effect=AssertionError('unexpected acquisition')))
+    monkeypatch.setattr(forecast, '_execute_single_prediction', lambda **kwargs: (family, 'simple'))
+    outcome = forecast.run_predictions(['load'], False, False, False, calculation_only=True, input_snapshot=snapshot)
+    assert outcome.point_counts['load'] == 144
+    with pytest.raises(ValueError, match='only supported'):
+        forecast.run_predictions(['load'], False, False, False, input_snapshot=snapshot)

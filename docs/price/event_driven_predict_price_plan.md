@@ -57,4 +57,5 @@ and failed HA writes before the listener reports success.
 
 Opt-in calculation-only successor: [resident price shadow](../energy_pipeline_resident_price.md).
 Current production unit still runs the subprocess listener above. Model reuse passes exact parity;
-memory growth and upstream-refresh coupling remain unresolved cutover gates.
+independent source refreshes and memory reclamation now work in shadow. Current evidence and
+remaining cutover gates: [checkpoint](../energy_pipeline_source_cache.md).

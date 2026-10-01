@@ -135,7 +135,7 @@ def test_subscription_reconciles_latest_state_after_connect():
         async def recv(self):
             return '{"success": true}'
     async def run():
-        listener = ResidentPriceListener(CONFIG)
+        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=lambda: completion()))
         try:
             await listener._subscribe_state_changed(WS())
             assert listener.trigger.is_set()
@@ -146,7 +146,7 @@ def test_subscription_reconciles_latest_state_after_connect():
 
 def test_shutdown_cancels_idle_ingress_without_waiting_for_another_event():
     async def run():
-        listener = ResidentPriceListener(CONFIG)
+        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=lambda: completion()))
         started = asyncio.Event()
         async def ingress():
             started.set()

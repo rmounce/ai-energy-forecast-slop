@@ -2,7 +2,8 @@
 
 Status: runtime routing baseline checked 2026-10-01; pure payload extraction and resident price shadow implemented offline.
 Replay evidence: [payload extraction](energy_pipeline_payload_replay.md),
-[resident price shadow](energy_pipeline_resident_price.md). Production unchanged.
+[resident price shadow](energy_pipeline_resident_price.md),
+[source-cache/memory checkpoint](energy_pipeline_source_cache.md). Production unchanged.
 Evidence and dependency map: [runtime inventory](energy_pipeline_runtime_inventory.md).
 Scope: Amber → forecasts → EMHASS DH/MPC → battery/HWC/dump-load control; include HA,
 MQTT bridges, InfluxDB, sibling `../hwc`, and system/user systemd units.
@@ -132,9 +133,11 @@ actuator writers. Freeze behaviour during extraction; tuning/model changes are s
 
 Runtime routing inventory, dependency/feedback diagram and ownership/removal order are recorded.
 Pure payload/time/SoC extraction passes one recorded snapshot and deterministic edge-case replay.
-Resident price shadow reuses models and passes cached/reloaded parity. Measurements show upstream
-fetch delays dominate and RSS grows across short repeated-run checks. Next: profile/bound memory and
-implement independent validated source refreshes before production forecast cutover; collect independent
-daytime/curtailment/recovery snapshots alongside it. APF ingress uses HA WebSocket and the existing
-amber2mqtt acquisition owner.
+Resident price shadow now uses independent validated source caches. Warm inference ~4s; measured
+memory reclamation keeps short runs below the unchanged 2 GiB guard. Current implementation/evidence
+and resume gates: [source-cache checkpoint](energy_pipeline_source_cache.md).
+Next: longer bounded shadow and source/entity freshness verification, complete input lineage,
+then explicit price result acceptance/publication and single-owner cutover. Collect independent
+DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
+amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.
 Production cutover remains gated on shadow equivalence and verified single ownership.

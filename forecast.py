@@ -46,7 +46,7 @@ from tariff_utils import (
     tariffed_price_frame_from_wholesale_mwh,
 )
 from eval.retro_tier1_inference import build_feature_dict as build_tier1_feature_dict, build_long_matrix_for_model as build_tier1_long_matrix
-from production_contract import ForecastContractError, PredictionOutcome, rearrange_quantile_family, validate_apf, validate_forecast_family
+from production_contract import ForecastContractError, PredictionInputs, PredictionOutcome, rearrange_quantile_family, validate_apf, validate_forecast_family
 from model_bundles import BundleError, BundleStore
 from candidate_quality import derive_screening_metrics, evaluate_eligibility
 
@@ -3237,7 +3237,7 @@ def _prepare_prediction_covariates(models_to_run, historical_df, future_sources)
     return original_covariates_for_log, adjusted_covariates_df, adjusted_covariates_for_prediction
 
 
-def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_covariates, *, calculation_only=False):
+def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_covariates, *, calculation_only=False, input_snapshot=None):
     """
     ORCHESTRATOR: Fetches data, runs predictions for all specified model families,
     and then handles all logging, saving, and publishing.
@@ -3245,6 +3245,8 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     global _PREDICTION_BUNDLE_PATHS, _PREDICTION_BUNDLE_IDS, _PREDICTION_APF_AGES
     if calculation_only and (publish_hass or publish_covariates):
         raise ValueError("calculation_only cannot publish")
+    if input_snapshot is not None and not calculation_only:
+        raise ValueError("input_snapshot is only supported by calculation_only")
     _PREDICTION_BUNDLE_PATHS = None
     _PREDICTION_BUNDLE_IDS = None
     _PREDICTION_APF_AGES = {}
@@ -3263,28 +3265,33 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         }, sort_keys=True))
     logging.info(f"--- Prediction Orchestrator started for models: {models_to_run} ---")
 
-    # 1. Fetch and process data ONCE (This part is unchanged)
-    logging.info("Fetching all future covariate and recent historical data...")
-    try:
-        future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast(), 'aemo': get_aemo_forecast()}
-    except Exception as exc:
-        log_failure("source_acquisition", exc)
-        raise
-    now = datetime.now(pytz.UTC)
-    minute = 30 if now.minute >= 30 else 0
-    forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
-    client = InfluxDBClient(**CONFIG['influxdb'])
-    try:
-        history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
-        history_end = forecast_start_time - timedelta(minutes=30)
-        historical_df = get_historical_data(client, history_start, history_end)
-        if historical_df.empty:
-            exc = RuntimeError("failed to get recent history for prediction")
-            log_failure("history_acquisition", exc)
-            raise exc
-    finally:
-        client.close()
-    
+    if input_snapshot is not None:
+        future_sources = {key: frame.copy(deep=True) for key, frame in input_snapshot.future_sources.items()}
+        historical_df = input_snapshot.historical_df.copy(deep=True)
+        forecast_start_time = input_snapshot.forecast_start
+    else:
+        # 1. Fetch and process data ONCE (This part is unchanged)
+        logging.info("Fetching all future covariate and recent historical data...")
+        try:
+            future_sources = {'solcast': get_solcast_forecast(), 'weather': get_weather_forecast(), 'aemo': get_aemo_forecast()}
+        except Exception as exc:
+            log_failure("source_acquisition", exc)
+            raise
+        now = datetime.now(pytz.UTC)
+        minute = 30 if now.minute >= 30 else 0
+        forecast_start_time = now.replace(minute=minute, second=0, microsecond=0)
+        client = InfluxDBClient(**CONFIG['influxdb'])
+        try:
+            history_start = forecast_start_time - timedelta(days=CONFIG['prediction_history_days'])
+            history_end = forecast_start_time - timedelta(minutes=30)
+            historical_df = get_historical_data(client, history_start, history_end)
+            if historical_df.empty:
+                exc = RuntimeError("failed to get recent history for prediction")
+                log_failure("history_acquisition", exc)
+                raise exc
+        finally:
+            client.close()
+
     try:
         original_covariates_for_log, adjusted_covariates_df, adjusted_covariates_for_prediction = (
             _prepare_prediction_covariates(models_to_run, historical_df, future_sources)
@@ -3292,6 +3299,16 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
     except Exception as exc:
         log_failure("covariate_preparation", exc)
         raise
+    if input_snapshot is not None:
+        # Cache admission preserves documented raw NaNs (e.g. nightly solar
+        # availability 0/0). Verify the incumbent fill pipeline actually yields
+        # finite covariates over the requested future horizon before inference.
+        for model_name in models_to_run:
+            model_config = CONFIG['models'][model_name]
+            required = pd.date_range(forecast_start_time, periods=model_config.get('forecast_horizon', 144), freq='30min')
+            window = adjusted_covariates_for_prediction.reindex(required)[model_config['feature_cols']]
+            if not np.isfinite(window.to_numpy(dtype=float)).all():
+                raise ForecastContractError(f'{model_name}: prepared covariates lack finite horizon coverage')
     amber_spot_df = pd.DataFrame()
 
     if 'price' in models_to_run and not calculation_only:

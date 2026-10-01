@@ -2,13 +2,14 @@
 
 Status: opt-in calculation-only runner; not installed/enabled; production listener unchanged.
 Plan: [pipeline consolidation](energy_pipeline_architecture_plan.md).
+Current source-cache/memory implementation: [checkpoint](energy_pipeline_source_cache.md).
 
 ## Contract
 
 - `services/resident_price.py`: existing HA WebSocket listener ingress/debounce/retry policy;
   one dedicated executor thread; bounded pending trigger, no overlapping inference.
 - Startup/reconnect triggers reconciliation from current HA state; no replay of old event payloads.
-- `energy_pipeline/price_worker.py`: reload config/tariffs each run; one HA states response;
+- `energy_pipeline/price_worker.py`: fixed process config, tariffs read each run; one HA states response;
   retain only configured APF/Solcast inputs; all quantiles consume the same frozen APF.
 - `forecast.prediction_resources`: worker-local inputs; missing entity cannot fetch newer live state.
   Legacy forecast globals still require single-thread serialization; no concurrent family inference.
@@ -17,15 +18,17 @@ Plan: [pipeline consolidation](energy_pipeline_architecture_plan.md).
   intact but fails the requested run, never silently uses the wrong bundle.
 - `forecast.run_predictions(..., calculation_only=True)`: validate full quantile family; return
   `PredictionOutcome`; skip HA publication, spot-history capture, prediction JSON and forecast CSV.
-- Weather `get_forecasts` request reads forecast data; AEMO/history acquisition still runs per job.
+- Independent weather/AEMO/history refresh threads feed validated last-usable caches; inference
+  reads the current HA APF/Solcast snapshot and performs no acquisition for cached dependencies.
 - Completion records run ID, APF snapshot digest, capture time, model bundle, point counts,
-  load time, total elapsed time and RSS. APF digest includes HA entity metadata; not an upstream
+  load time, source content revisions/acquisition ages, memory maintenance time and RSS. APF digest includes HA entity metadata; not an upstream
   atomic revision or a complete lineage identity for weather/AEMO/history.
 - Shadow does not overwrite production health records. Errors retry on existing five-minute cadence;
   successful shadow generation advances only its own heartbeat.
 - Worker deadline 180s: discard result, stop scheduler, exit process with failure for supervision.
   Async cancellation cannot kill a thread; never submit overlapping work after timeout.
-- RSS >2048 MiB after a run: reject completion and exit with failure. Guard is measured after
+- GC after each inference; optional GNU heap trim above 1536 MiB; measured RSS/cost.
+- RSS >2048 MiB after memory maintenance: reject completion and exit with failure. Guard is measured after
   inference, not a hard OS peak-memory limit or a fix for memory growth.
 - Shutdown cancels idle ingress/waiters and discards pending completion; CLI exits the process
   explicitly after flushing logs so Python cannot hang joining a stuck executor thread.
@@ -36,9 +39,9 @@ Plan: [pipeline consolidation](energy_pipeline_architecture_plan.md).
 From repo root, existing uv-created venv; HA/AEMO/Influx access required.
 
 ```bash
-# Normal resident shadow (Ctrl-C stops it)
+# Normal resident shadow (Ctrl-C stops it; source refreshes run independently)
 .venv/bin/python services/resident_price.py
-# Finite cold/warm benchmark
+# Warm sources once, then finite cold/warm inference benchmark
 .venv/bin/python services/resident_price.py --runs 4
 # Compare cached/reloaded quantiles on identical frozen APF/history/covariates
 .venv/bin/python services/resident_price.py --runs 2 --verify-reload
@@ -48,7 +51,7 @@ From repo root, existing uv-created venv; HA/AEMO/Influx access required.
 It requires exact DataFrame equality before monotonic quantile rearrangement. Diagnostic stdout/
 stderr only; household forecast files untouched. No systemd unit or enabled shadow daemon added.
 
-## Evidence: 2026-10-01 Adelaide
+## Initial evidence: 2026-10-01 Adelaide (before source caching)
 
 - 55 focused tests: payload policy, cache reuse/replacement/failure, input isolation/no writes,
   worker-thread completion, event bursts, deadline discard, memory guard, reconnect reconciliation,
@@ -64,12 +67,10 @@ stderr only; household forecast files untouched. No systemd unit or enabled shad
 
 ## Next gates
 
-- Profile repeated-run allocations/model mutation; distinguish retained objects from allocator
-  high-water marks; reduce heavy runtime overhead where possible; demonstrate bounded RSS.
-- Independent AEMO/weather/history refreshes with validated coverage, age budgets, provenance and
-  last usable cache; APF update should not wait on a full upstream refresh every time.
-- Shadow live event/trigger decisions over representative market and recovery conditions; collect
-  independent daytime/curtailment/restart payload snapshots alongside the worker.
-- Add publication acceptance and complete input lineage; reject obsolete/expired results before
-  publishing; preserve current HA sensor contracts; only then replace the subprocess publisher.
-- Later: shadow DH/MPC coordination and move solve ownership after its separate cutover gates.
+Current memory/source-cache evidence and precise resume point:
+[source-cache checkpoint](energy_pipeline_source_cache.md).
+
+- Longer bounded event-driven shadow over upstream failures/reconnect/interval/DST boundaries.
+- Source issuance/HA entity age, complete lineage, obsolete-result rejection and publication acceptance.
+- Retain current production publisher until those gates pass; then one-owner cutover/rollback.
+- DH/MPC solve/control migration remains a separate shadow and acceptance phase.
