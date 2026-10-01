@@ -20,6 +20,9 @@ forecast publishers.
 Canonical current-state reference:
 [docs/prod_pipeline_critical_path.md](docs/prod_pipeline_critical_path.md).
 
+Pipeline consolidation work: [plan](docs/energy_pipeline_architecture_plan.md),
+[offline payload replay](docs/energy_pipeline_payload_replay.md). Production routing remains unchanged.
+
 ## Features
 
 *   **Dual Forecasting Surfaces:** Independently predicts household base load and the 72-hour wholesale-price curve.

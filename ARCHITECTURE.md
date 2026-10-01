@@ -585,3 +585,5 @@ Current implementation priority:
 The proposed consolidation across Amber, Python services, EMHASS, HA and HWC is tracked in
 [the energy pipeline architecture plan](docs/energy_pipeline_architecture_plan.md).
 Status: initial assessment; no production cutover.
+
+Offline Python DH/MPC payload extraction and validation: [replay runbook](docs/energy_pipeline_payload_replay.md). Production solve ownership remains in HA.

@@ -1,6 +1,7 @@
 # Energy pipeline consolidation
 
-Status: runtime routing baseline checked 2026-10-01; implementation not started.
+Status: runtime routing baseline checked 2026-10-01; pure payload extraction implemented offline.
+Replay evidence: [payload extraction](energy_pipeline_payload_replay.md). Production unchanged.
 Evidence and dependency map: [runtime inventory](energy_pipeline_runtime_inventory.md).
 Scope: Amber → forecasts → EMHASS DH/MPC → battery/HWC/dump-load control; include HA,
 MQTT bridges, InfluxDB, sibling `../hwc`, and system/user systemd units.
@@ -129,6 +130,8 @@ actuator writers. Freeze behaviour during extraction; tuning/model changes are s
 ## Next concrete deliverable
 
 Runtime routing inventory, dependency/feedback diagram and ownership/removal order are recorded.
-Next: record representative input snapshots and extract payload/time/SoC functions with parity
-checks; measure model-load/resource costs before implementing the resident price worker.
+Pure payload/time/SoC extraction passes one recorded snapshot and deterministic edge-case replay.
+Next: measure model-load/resource costs and implement the resident price worker; collect independent
+daytime/curtailment/recovery snapshots alongside it. APF ingress starts with HA WebSocket and the
+existing amber2mqtt acquisition owner.
 Production cutover remains gated on shadow equivalence and verified single ownership.
