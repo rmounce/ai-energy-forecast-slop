@@ -54,6 +54,6 @@ Credentials loaded from existing config/secrets; never stored in replay snapshot
 - Collect independent daytime/negative-price/curtailment/restart snapshots; replay them.
 - Target-offset automation has unit coverage; full HA automation scheduling not replayed.
 - No inference/model/solver/control migration yet; offline parity does not prove safe cutover.
-- Next implementation: measure model/resource loading and build resident price worker with HA
-  WebSocket APF ingress, frozen input revision, coalesced work and explicit bundle completion.
+- Resident price calculation-only worker implemented: [shadow evidence](energy_pipeline_resident_price.md).
+  Memory stability and independent validated source refreshes remain gates before production cutover.
 - Then shadow coordination; only move live solve ownership after replay/recovery gates pass.

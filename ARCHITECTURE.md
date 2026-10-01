@@ -587,3 +587,5 @@ The proposed consolidation across Amber, Python services, EMHASS, HA and HWC is 
 Status: initial assessment; no production cutover.
 
 Offline Python DH/MPC payload extraction and validation: [replay runbook](docs/energy_pipeline_payload_replay.md). Production solve ownership remains in HA.
+
+Resident price calculation-only successor: [shadow worker](docs/energy_pipeline_resident_price.md). Model reuse verified; memory and source-refresh gates remain before production cutover.

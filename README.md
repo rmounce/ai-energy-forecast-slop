@@ -21,7 +21,8 @@ Canonical current-state reference:
 [docs/prod_pipeline_critical_path.md](docs/prod_pipeline_critical_path.md).
 
 Pipeline consolidation work: [plan](docs/energy_pipeline_architecture_plan.md),
-[offline payload replay](docs/energy_pipeline_payload_replay.md). Production routing remains unchanged.
+[offline payload replay](docs/energy_pipeline_payload_replay.md),
+[resident price shadow](docs/energy_pipeline_resident_price.md). Production routing remains unchanged.
 
 ## Features
 

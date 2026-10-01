@@ -264,3 +264,71 @@ def test_forecast_publication_failure_preserves_local_output(tmp_path, monkeypat
 
     assert output.read_text() == "sentinel"
     assert '"failure_stage": "publication"' in caplog.text
+
+
+def test_calculation_only_has_no_output_publication_or_forecast_log(tmp_path, monkeypatch):
+    patch_prediction_boundaries(monkeypatch, tmp_path)
+    output = tmp_path / "predictions.json"
+    output.write_text("sentinel")
+    monkeypatch.setattr(forecast, "_execute_single_prediction",
+                        lambda **kwargs: (valid_load_family(), "simple"))
+    names = ("_publish_lgbm_model_to_hass", "publish_adjusted_covariates_to_hass",
+             "log_forecast_data", "_persist_amber_spot_5min_forecasts")
+    mocks = [Mock() for _ in names]
+    for name, mock in zip(names, mocks):
+        monkeypatch.setattr(forecast, name, mock)
+    outcome = forecast.run_predictions(["load"], False, False, False, calculation_only=True)
+    assert outcome.publication_result == "not_requested"
+    assert outcome.point_counts == {"load": 144, "load_p65": 144, "load_p75": 144}
+    assert output.read_text() == "sentinel"
+    for mock in mocks:
+        mock.assert_not_called()
+
+
+def test_prediction_snapshot_is_frozen_and_missing_inputs_do_not_fetch_live(monkeypatch):
+    states = {"sensor.apf": {"attributes": {"Forecasts": [1]}}}
+    live = Mock()
+    monkeypatch.setattr(forecast, "call_ha_api", live)
+    with forecast.prediction_resources(entity_states=states, model_cache=object()):
+        states["sensor.apf"]["attributes"]["Forecasts"].append(2)
+        first = forecast.get_entity_state("sensor.apf")
+        first["attributes"]["Forecasts"].append(3)
+        assert forecast.get_entity_state("sensor.apf")["attributes"]["Forecasts"] == [1]
+        assert forecast.get_entity_state("sensor.missing") is None
+        live.assert_not_called()
+    forecast.get_entity_state("sensor.live")
+    live.assert_called_once()
+
+
+def test_calculation_only_rejects_publish_flags():
+    with pytest.raises(ValueError, match="cannot publish"):
+        forecast.run_predictions(["price"], True, True, False, calculation_only=True)
+
+
+def test_resident_worker_uses_one_ha_snapshot_for_all_quantiles(monkeypatch):
+    from energy_pipeline import price_worker
+    from types import SimpleNamespace
+    config = {'home_assistant': {'amber_billing_entity': 'sensor.apf', 'solcast_entities': ['sensor.pv']}}
+    monkeypatch.setattr(price_worker, 'load_config', lambda: config)
+    monkeypatch.setattr('tariff_utils.load_tariff_profile', lambda *args: ({}, {}, 1))
+    monkeypatch.setattr(forecast, 'CONFIG', config)
+    monkeypatch.setattr(forecast, 'GENERAL_TARIFF_MAP', {})
+    monkeypatch.setattr(forecast, 'FEED_IN_TARIFF_MAP', {})
+    monkeypatch.setattr(forecast, 'NETWORK_LOSS_FACTOR', 1)
+    rows = [{'entity_id': 'sensor.apf', 'attributes': {'Forecasts': [1]}},
+            {'entity_id': 'sensor.pv', 'attributes': {}},
+            {'entity_id': 'sensor.unrelated', 'attributes': {}}]
+    api = Mock(return_value=rows)
+    monkeypatch.setattr(forecast, 'call_ha_api', api)
+    def predict(*args, **kwargs):
+        assert kwargs['calculation_only'] is True
+        for _ in range(3):
+            assert forecast.get_entity_state('sensor.apf')['attributes']['Forecasts'] == [1]
+            assert forecast.get_entity_state('sensor.unrelated') is None
+        return SimpleNamespace(run_id='r', model_bundle_id='b', point_counts={'price': 144},
+                               publication_result='not_requested')
+    monkeypatch.setattr(forecast, 'run_predictions', predict)
+    result = price_worker.PriceWorker().predict()
+    api.assert_called_once_with('GET', 'states')
+    assert len(result.parent_revision) == 64
+    assert result.outcome.publication_result == 'not_requested'

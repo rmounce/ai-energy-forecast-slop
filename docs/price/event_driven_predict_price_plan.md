@@ -52,3 +52,9 @@ and failed HA writes before the listener reports success.
 - Do not revive archived tactical, PD-direct, TFT, or canonical AI publishers as part of listener
   hardening.
 - Do not change EMHASS source selection in this track.
+
+## Resident migration
+
+Opt-in calculation-only successor: [resident price shadow](../energy_pipeline_resident_price.md).
+Current production unit still runs the subprocess listener above. Model reuse passes exact parity;
+memory growth and upstream-refresh coupling remain unresolved cutover gates.

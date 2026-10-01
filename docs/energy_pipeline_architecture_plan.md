@@ -1,7 +1,8 @@
 # Energy pipeline consolidation
 
-Status: runtime routing baseline checked 2026-10-01; pure payload extraction implemented offline.
-Replay evidence: [payload extraction](energy_pipeline_payload_replay.md). Production unchanged.
+Status: runtime routing baseline checked 2026-10-01; pure payload extraction and resident price shadow implemented offline.
+Replay evidence: [payload extraction](energy_pipeline_payload_replay.md),
+[resident price shadow](energy_pipeline_resident_price.md). Production unchanged.
 Evidence and dependency map: [runtime inventory](energy_pipeline_runtime_inventory.md).
 Scope: Amber → forecasts → EMHASS DH/MPC → battery/HWC/dump-load control; include HA,
 MQTT bridges, InfluxDB, sibling `../hwc`, and system/user systemd units.
@@ -131,7 +132,9 @@ actuator writers. Freeze behaviour during extraction; tuning/model changes are s
 
 Runtime routing inventory, dependency/feedback diagram and ownership/removal order are recorded.
 Pure payload/time/SoC extraction passes one recorded snapshot and deterministic edge-case replay.
-Next: measure model-load/resource costs and implement the resident price worker; collect independent
-daytime/curtailment/recovery snapshots alongside it. APF ingress starts with HA WebSocket and the
-existing amber2mqtt acquisition owner.
+Resident price shadow reuses models and passes cached/reloaded parity. Measurements show upstream
+fetch delays dominate and RSS grows across short repeated-run checks. Next: profile/bound memory and
+implement independent validated source refreshes before production forecast cutover; collect independent
+daytime/curtailment/recovery snapshots alongside it. APF ingress uses HA WebSocket and the existing
+amber2mqtt acquisition owner.
 Production cutover remains gated on shadow equivalence and verified single ownership.

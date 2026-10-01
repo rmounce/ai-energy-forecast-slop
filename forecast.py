@@ -6,6 +6,8 @@
 # 1. IMPORTS
 # --------------------------------------------------------------------------- #
 import argparse
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import logging
 import os
@@ -98,6 +100,22 @@ _DEBUG_TFT = False
 _PREDICTION_BUNDLE_PATHS = None
 _PREDICTION_BUNDLE_IDS = None
 _PREDICTION_APF_AGES = None
+_PREDICTION_RESOURCES = ContextVar("prediction_resources", default=None)
+
+
+@contextmanager
+def prediction_resources(*, entity_states, model_cache, verify_reload=False):
+    """Worker-local frozen HA inputs and model reuse; callers must serialize inference.
+
+    The legacy prediction globals remain single-worker state. This context does
+    not make parallel forecast families in the same process safe.
+    """
+    token = _PREDICTION_RESOURCES.set((copy.deepcopy(entity_states), model_cache, verify_reload))
+    try:
+        yield
+    finally:
+        _PREDICTION_RESOURCES.reset(token)
+
 
 
 def _production_bundle_store() -> BundleStore:
@@ -536,7 +554,10 @@ def call_ha_api(method, endpoint, payload=None):
     return None
 
 def get_entity_state(entity_id):
-    # This function remains unchanged
+    resources = _PREDICTION_RESOURCES.get()
+    if resources is not None:
+        # Missing snapshot inputs never fall through to a newer live revision.
+        return copy.deepcopy(resources[0].get(entity_id))
     return call_ha_api('GET', f"states/{entity_id}")
 
 def _persist_amber_spot_5min_forecasts(entity_id, entity_state, forecasts):
@@ -1245,15 +1266,20 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
     quantile_models_config = model_config.get('quantile_models', {})
     raw_forecasts = {}
     resolved_paths = _prediction_model_paths(base_model_name)
+    resources = _PREDICTION_RESOURCES.get()
+    cached = resources[1].load_family(resolved_paths) if resources is not None else None
 
     for model_name, quantile_info in quantile_models_config.items():
         logging.info(f"--- Processing forecast for sub-model: {model_name} ---")
         model_file_path = resolved_paths[model_name]["model"]
 
         try:
-            model = joblib.load(model_file_path)
-            with open(resolved_paths[model_name]["params"], 'r') as f:
-                params = json.load(f)
+            if cached is not None:
+                model, params = cached[model_name]
+            else:
+                model = joblib.load(model_file_path)
+                with open(resolved_paths[model_name]["params"], 'r') as f:
+                    params = json.load(f)
             logging.info(f"Loaded model '{model_name}' successfully.")
         except FileNotFoundError:
             logging.error(f"Model file for '{model_name}' not found. Skipping this forecast.")
@@ -1278,6 +1304,22 @@ def _execute_quantile_prediction(base_model_name, historical_df, adjusted_covari
             )
             pred_df = _predict_simple(model, params, historical_df, future_covariates_ts, model_config)
         
+        if cached is not None and resources[2]:
+            # Shadow acceptance gate: identical frozen APF/history/covariates,
+            # with a newly deserialized model, not another live source fetch.
+            fresh_model = joblib.load(model_file_path)
+            with open(resolved_paths[model_name]["params"]) as handle:
+                fresh_params = json.load(handle)
+            if base_model_name == 'price' and use_dynamic_handoff:
+                reference = _predict_with_dynamic_handoff(
+                    fresh_model, fresh_params, historical_df,
+                    adjusted_covariates_for_prediction, model_config, amber_df)
+            else:
+                reference = _predict_simple(fresh_model, fresh_params, historical_df,
+                                            future_covariates_ts, model_config)
+            pd.testing.assert_frame_equal(pred_df, reference, check_exact=True)
+            logging.info("Resident/reloaded exact parity: %s (%s points)", model_name, len(pred_df))
+
         if not pred_df.empty:
             raw_forecasts[model_name] = pred_df.rename(columns={model_config['target_column']: model_name})
 
@@ -3195,12 +3237,14 @@ def _prepare_prediction_covariates(models_to_run, historical_df, future_sources)
     return original_covariates_for_log, adjusted_covariates_df, adjusted_covariates_for_prediction
 
 
-def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_covariates):
+def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_covariates, *, calculation_only=False):
     """
     ORCHESTRATOR: Fetches data, runs predictions for all specified model families,
     and then handles all logging, saving, and publishing.
     """
     global _PREDICTION_BUNDLE_PATHS, _PREDICTION_BUNDLE_IDS, _PREDICTION_APF_AGES
+    if calculation_only and (publish_hass or publish_covariates):
+        raise ValueError("calculation_only cannot publish")
     _PREDICTION_BUNDLE_PATHS = None
     _PREDICTION_BUNDLE_IDS = None
     _PREDICTION_APF_AGES = {}
@@ -3250,7 +3294,7 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
         raise
     amber_spot_df = pd.DataFrame()
 
-    if 'price' in models_to_run:
+    if 'price' in models_to_run and not calculation_only:
         try:
             amber_entity_id = CONFIG['home_assistant']['amber_entity']
             amber_entity_state = get_entity_state(amber_entity_id)
@@ -3281,6 +3325,17 @@ def run_predictions(models_to_run, publish_hass, use_dynamic_handoff, publish_co
 
     if not all_results or any(model not in all_results for model in models_to_run):
         raise ForecastContractError("no complete production prediction family was generated")
+
+    if calculation_only:
+        bundle_ids = {(_PREDICTION_BUNDLE_IDS or {}).get(model, "unknown") for model in models_to_run}
+        return PredictionOutcome(
+            run_id=run_id, family=",".join(models_to_run),
+            source="amber_apf_lgbm" if "price" in models_to_run and use_dynamic_handoff else "lgbm",
+            model_bundle_id=",".join(sorted(bundle_ids)),
+            forecasts={key: frame for result in all_results.values() for key, frame in result["forecasts"].items()},
+            apf_age_minutes=max((_PREDICTION_APF_AGES or {}).values(), default=None),
+            publication_result="not_requested",
+        )
 
     if publish_covariates:
         publish_df = adjusted_covariates_df[adjusted_covariates_df.index >= forecast_start_time]
