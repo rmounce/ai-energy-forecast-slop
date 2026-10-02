@@ -312,7 +312,6 @@ def test_resident_worker_uses_one_ha_snapshot_for_all_quantiles(monkeypatch):
               'home_assistant': {'amber_billing_entity': 'sensor.apf', 'solcast_entities': ['sensor.pv'],
                                  'solcast_last_polled_entity': 'sensor.pv_polled'}}
     monkeypatch.setattr(price_worker, 'load_config', lambda: config)
-    monkeypatch.setattr('tariff_utils.load_tariff_profile', lambda *args: ({}, {}, 1))
     monkeypatch.setattr(forecast, 'CONFIG', config)
     monkeypatch.setattr(forecast, 'GENERAL_TARIFF_MAP', {})
     monkeypatch.setattr(forecast, 'FEED_IN_TARIFF_MAP', {})
@@ -344,7 +343,7 @@ def test_resident_worker_uses_one_ha_snapshot_for_all_quantiles(monkeypatch):
     assert result.input_revisions['apf'] == result.parent_revision
     assert result.input_revisions['source:aemo'] == 'aemo'
     assert result.input_revisions['ha:sensor.pv'] == price_worker.content_revision(rows[1])
-    assert result.input_revisions['tariff'] == price_worker.content_revision([{}, {}, 1])
+    assert result.input_revisions['tariff'] == price_worker.content_revision([{}, {}, 1.05])
     assert result.input_revisions['ha:sensor.pv_polled'] == price_worker.content_revision(rows[3])
     assert result.source_freshness['solcast'][0]['timestamp'] == rows[3]['state']
     assert result.source_freshness['apf'][0]['timestamp'] is None

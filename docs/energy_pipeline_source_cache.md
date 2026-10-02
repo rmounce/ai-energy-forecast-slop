@@ -34,7 +34,7 @@ flowchart LR
   Tariff-file and active model-pointer byte digests now included. Shadow obsolete-result rejection
   implemented; publication still unimplemented. [Acceptance contract](energy_pipeline_price_acceptance.md).
 - Config frozen for process lifetime to avoid changing forecast globals while source threads run.
-  Config edits require shadow restart; inference detects changes and fails. Tariff maps read per run;
+  Config edits require shadow restart; inference detects changes and fails. [Tariffs captured once](energy_pipeline_tariff_snapshot.md) per run;
   active model pointer still resolved per run. Legacy globals require one inference worker.
 - `PredictionInputs` injection allowed only with `calculation_only=True`; ordinary CLI production
   acquisition/publication unchanged. Prepared future covariates must be finite over full horizon.
@@ -87,6 +87,8 @@ flowchart LR
   weather entity state/last_updated also reflects observations. Successful HA service retrieval
   cannot establish a new BOM fetch or provider issue. Need explicit upstream freshness metadata
   or a separate source contract before production admission is trustworthy.
+- Native hourly `issue_time` confirmed; [integration attribute patch](energy_pipeline_bom_freshness.md)
+  staged/dry-checked only. Production integration untouched; hourly cache clocks not yet exposed in HA.
 
 ## Freshness provenance implementation
 
@@ -209,12 +211,12 @@ flowchart LR
   UTC Solcast normalization, no-acquisition inference path, content lineage, memory reclamation,
   shadow result acceptance. [Contract and latest evidence](energy_pipeline_price_acceptance.md).
 - Cached/reloaded quantile parity passes on admitted cached inputs; all quantiles 144 points.
-- Focused suite: 105 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
+- Focused suite: 126 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
   cache, deadline discard, memory guard/reclamation, cached HTTP timestamps, collector isolation,
   real response-path evidence, changed-parent rejection, validation races/deadlines, source recovery,
-  incumbent regressions.
+  frozen tariff mutation/isolation/conversion parity, incumbent regressions.
 - Still shadow only. Short benchmark evidence is not a full-day memory/failure-recovery gate.
 - Next: multi-hour filtered shadow and source failures/reconnect/
-  interval/DST boundaries; expose missing provider freshness and freeze remaining tariff reads.
+  interval/DST boundaries; expose/associate missing provider freshness. Tariff freezing now complete.
 - Then implement durable acceptance/publication transaction and switch price ownership with explicit
   rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

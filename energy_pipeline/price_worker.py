@@ -16,6 +16,7 @@ from energy_pipeline.source_cache import SourceCache, SourcePolicy, validate_fra
 from production_contract import PredictionInputs, PredictionOutcome, ForecastContractError, validate_forecast_family
 from energy_pipeline.acceptance import AcceptanceDecision, compare_revisions
 from energy_pipeline.source_cache import SourceUnavailable
+from energy_pipeline.tariffs import TariffSnapshot, capture_tariffs
 
 
 def content_revision(value):
@@ -50,6 +51,7 @@ class PriceCompletion:
     allocator_trimmed: bool
     input_revisions: dict[str, str]
     source_freshness: dict[str, list[dict]]
+    tariff_snapshot: TariffSnapshot
 
 
 class PriceWorker:
@@ -66,13 +68,11 @@ class PriceWorker:
     def predict(self):
         started = time.monotonic()
         import forecast as fc
-        from tariff_utils import load_tariff_profile
         # Source workers read the same immutable process configuration. Reloading
         # its module globals while they run could mix inputs; restart on changes.
         if load_config() != fc.CONFIG:
             raise RuntimeError('configuration changed; restart resident shadow')
-        fc.GENERAL_TARIFF_MAP, fc.FEED_IN_TARIFF_MAP, fc.NETWORK_LOSS_FACTOR = load_tariff_profile(fc.CONFIG, fc.ROOT)
-        tariff_revision = file_revision(fc.ROOT / fc.CONFIG['paths']['tariff_file'])
+        tariff = capture_tariffs(fc.ROOT / fc.CONFIG['paths']['tariff_file'])
         pointer_revision = file_revision(fc._production_bundle_store().active_pointer('price'))
         now = datetime.now(timezone.utc)
         sources = self.sources.snapshot(now)
@@ -103,8 +103,9 @@ class PriceWorker:
             'integration_successful_fetch' if poll else 'provider_fetch_unknown', poll.get('state'))])
         input_revisions = {
             'config': content_revision(fc.CONFIG),
-            'tariff': content_revision([fc.GENERAL_TARIFF_MAP, fc.FEED_IN_TARIFF_MAP, fc.NETWORK_LOSS_FACTOR]),
-            'tariff_file': tariff_revision,
+            'tariff': content_revision(tariff.effective_profile),
+            'tariff_scaling': content_revision(tariff.amber_api_scaling_factor),
+            'tariff_file': tariff.revision,
             'model_pointer': pointer_revision,
             'apf': revision,
             **{f'ha:{entity}': content_revision(states.get(entity))
@@ -113,7 +114,8 @@ class PriceWorker:
         }
         if solcast_poll_entity:
             input_revisions[f'ha:{solcast_poll_entity}'] = content_revision(poll)
-        with fc.prediction_resources(entity_states=states, model_cache=self.cache, verify_reload=self.verify_reload):
+        with fc.prediction_resources(entity_states=states, model_cache=self.cache, verify_reload=self.verify_reload,
+                                     tariff_snapshot=tariff):
             solcast = fc.get_solcast_forecast()
             # Solcast's four-day horizon can span DST and produce an object
             # index of mixed offsets. Match the incumbent preparation's UTC
@@ -131,7 +133,7 @@ class PriceWorker:
                                      self.cache.last_load_seconds, self.cache.loads, memory.after_mib,
                                      {name: source.revision for name, source in sources.items()},
                                      {name: (now-source.fetched_at).total_seconds() for name, source in sources.items()},
-                                     memory.elapsed_seconds, memory.before_mib, memory.trimmed, input_revisions, freshness)
+                                     memory.elapsed_seconds, memory.before_mib, memory.trimmed, input_revisions, freshness, tariff)
         logging.info(json.dumps({'event': 'resident_price_complete', 'run_id': outcome.run_id,
             'parent_revision': revision, 'captured_at': captured_at,
             'source_revisions': completion.source_revisions, 'source_ages_seconds': completion.source_ages_seconds,
@@ -149,7 +151,6 @@ class PriceWorker:
     def evaluate_completion(self, completion, *, now=None):
         """Point-in-time shadow admission; no output writes or model promotion."""
         import forecast as fc
-        from tariff_utils import load_tariff_profile
         live_clock = now is None
         now = utc_now() if live_clock else pd.Timestamp(now)
         if now.tzinfo is None:
@@ -184,10 +185,12 @@ class PriceWorker:
             sources = self.sources.snapshot(finish)
         except SourceUnavailable as exc:
             return AcceptanceDecision((f'inputs_unavailable:{exc}',))
+        tariff = capture_tariffs(fc.ROOT / fc.CONFIG['paths']['tariff_file'])
         current = {
             'config': content_revision(load_config()),
-            'tariff': content_revision(load_tariff_profile(fc.CONFIG, fc.ROOT)),
-            'tariff_file': file_revision(fc.ROOT / fc.CONFIG['paths']['tariff_file']),
+            'tariff': content_revision(tariff.effective_profile),
+            'tariff_scaling': content_revision(tariff.amber_api_scaling_factor),
+            'tariff_file': tariff.revision,
             'model_pointer': file_revision(fc._production_bundle_store().active_pointer('price')),
             'model_artifacts': content_revision(self.cache.current_signature()),
             **{f'source:{name}': source.revision for name, source in sources.items()},

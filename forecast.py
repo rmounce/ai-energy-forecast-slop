@@ -24,6 +24,7 @@ import pytz
 import requests
 from aemo_session import make_aemo_session
 from energy_pipeline.freshness import FreshnessEvidence, record_evidence, record_http_response
+from energy_pipeline.tariffs import current_tariffs, frozen_tariffs
 from influxdb import InfluxDBClient
 import time
 import pickle
@@ -105,15 +106,16 @@ _PREDICTION_RESOURCES = ContextVar("prediction_resources", default=None)
 
 
 @contextmanager
-def prediction_resources(*, entity_states, model_cache, verify_reload=False):
-    """Worker-local frozen HA inputs and model reuse; callers must serialize inference.
+def prediction_resources(*, entity_states, model_cache, verify_reload=False, tariff_snapshot=None):
+    """Worker-local frozen HA/tariff inputs and model reuse; serialize inference.
 
     The legacy prediction globals remain single-worker state. This context does
     not make parallel forecast families in the same process safe.
     """
     token = _PREDICTION_RESOURCES.set((copy.deepcopy(entity_states), model_cache, verify_reload))
     try:
-        yield
+        with frozen_tariffs(tariff_snapshot):
+            yield
     finally:
         _PREDICTION_RESOURCES.reset(token)
 
@@ -196,7 +198,10 @@ def add_time_features(df):
     return df
 
 def get_amber_api_scaling_factor():
-    """Reads tariff_profile.json to extract amber_api_scaling_factor. Defaults to 1.10."""
+    """Frozen resident scaling, otherwise profile value/default 1.10."""
+    snapshot = current_tariffs()
+    if snapshot is not None:
+        return snapshot.amber_api_scaling_factor
     try:
         with open(CONFIG['paths']['tariff_file'], 'r') as f:
             tariffs = json.load(f)
@@ -205,7 +210,10 @@ def get_amber_api_scaling_factor():
         return 1.10
 
 def get_network_loss_factor():
-    """Reads tariff_profile.json to extract network_loss_factor. Defaults to 1.05."""
+    """Frozen resident loss factor, otherwise profile value/default 1.05."""
+    snapshot = current_tariffs()
+    if snapshot is not None:
+        return snapshot.network_loss_factor
     try:
         with open(CONFIG['paths']['tariff_file'], 'r') as f:
             tariffs = json.load(f)
@@ -1797,12 +1805,15 @@ def _execute_tactical_prediction():
     dow_cos  = float(np.cos(2 * np.pi * rt_bne.weekday() / 7.0))
 
     intervals = pd.date_range(start=latest_run_time, periods=12, freq='5min', tz='UTC')
+    snapshot = current_tariffs()
+    general_map, feed_in_map, loss_factor = snapshot.effective_profile if snapshot is not None else (
+        GENERAL_TARIFF_MAP, FEED_IN_TARIFF_MAP, NETWORK_LOSS_FACTOR)
     tariffed_curve = tariffed_price_frame_from_wholesale_mwh(
         pd.Series(np.asarray(p5min_rrp, dtype=np.float64), index=intervals),
         timezone=CONFIG['timezone'],
-        general_tariff_map=GENERAL_TARIFF_MAP,
-        feed_in_tariff_map=FEED_IN_TARIFF_MAP,
-        network_loss_factor=NETWORK_LOSS_FACTOR,
+        general_tariff_map=general_map,
+        feed_in_tariff_map=feed_in_map,
+        network_loss_factor=loss_factor,
         gst_rate=CONFIG['gst_rate'],
     )
     import_curve = tariffed_curve['general_price_mwh'].to_numpy(dtype=np.float32, copy=False)
@@ -3712,9 +3723,16 @@ def _run_pd_direct_publish_archived(publish_hass):
 
 def apply_tariffs_to_forecast(pred_df):
     logging.info("Applying tariffs to wholesale price forecast (GST on import leg only)...")
+    snapshot = current_tariffs()
     try:
-        with open(CONFIG['paths']['tariff_file'], 'r') as f:
-            tariffs = json.load(f)
+        if snapshot is not None:
+            if not snapshot.present:
+                raise FileNotFoundError
+            general, feed_in, _ = snapshot.effective_profile
+            tariffs = {'general_tariff': general, 'feed_in_tariff': feed_in}
+        else:
+            with open(CONFIG['paths']['tariff_file'], 'r') as f:
+                tariffs = json.load(f)
     except FileNotFoundError:
         logging.warning("tariff_profile.json not found. Skipping tariff application.")
         pred_df['general_price'] = pred_df['wholesale_price']

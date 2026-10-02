@@ -18,7 +18,6 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(fc, 'CONFIG', config)
     monkeypatch.setattr(fc, 'ROOT', tmp_path)
     monkeypatch.setattr(price_worker, 'load_config', lambda: config)
-    monkeypatch.setattr('tariff_utils.load_tariff_profile', lambda *args: ({}, {}, 1))
     pointer = tmp_path/'active.json'
     monkeypatch.setattr(fc, '_production_bundle_store', lambda: SimpleNamespace(active_pointer=lambda family: pointer))
     rows = [{'entity_id': 'sensor.apf', 'attributes': {'Forecasts': [1]}},
@@ -100,3 +99,21 @@ def test_acceptance_read_crossing_boundary_cannot_accept_old_interval(world, mon
     monkeypatch.setattr(price_worker, 'utc_now', lambda: next(clock))
     decision = world.worker.evaluate_completion(result)
     assert decision.reasons == ('forecast_interval_changed',)
+
+
+def test_tariff_change_during_generation_keeps_scaling_frozen_and_rejects_result(world, monkeypatch):
+    world.tariff.write_text('{"amber_api_scaling_factor":1.25,"network_loss_factor":1.07}')
+    previous_predict = fc.run_predictions
+    def generate(*args, **kwargs):
+        assert fc.get_amber_api_scaling_factor() == 1.25
+        assert fc.get_network_loss_factor() == 1.07
+        world.tariff.write_text('{"amber_api_scaling_factor":2,"network_loss_factor":2}')
+        assert fc.get_amber_api_scaling_factor() == 1.25
+        assert fc.get_network_loss_factor() == 1.07
+        return previous_predict(*args, **kwargs)
+    monkeypatch.setattr(fc, 'run_predictions', generate)
+    result = world.worker.predict()
+    assert result.tariff_snapshot.amber_api_scaling_factor == 1.25
+    decision = world.worker.evaluate_completion(result, now=pd.Timestamp(result.captured_at))
+    assert not decision.accepted and decision.reconcile
+    assert 'input_changed:tariff_scaling' in decision.reasons

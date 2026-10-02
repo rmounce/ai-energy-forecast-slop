@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytz
+from energy_pipeline.tariffs import current_tariffs
 
 
 _SCI_NUMBER = re.compile(r"-?\d+\.?\d*[eE][+-]?\d+")
@@ -134,6 +135,9 @@ def smooth_tariff_maps(profile: dict) -> dict:
 
 
 def load_tariff_profile(config: dict, root: Path) -> tuple[dict[str, float], dict[str, float], float]:
+    snapshot = current_tariffs()
+    if snapshot is not None:
+        return snapshot.effective_profile
     tariff_path = root / config["paths"]["tariff_file"]
     try:
         with open(tariff_path) as f:

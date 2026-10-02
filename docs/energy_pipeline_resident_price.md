@@ -9,7 +9,7 @@ Current source-cache/memory implementation: [checkpoint](energy_pipeline_source_
 - `services/resident_price.py`: existing HA WebSocket listener ingress/debounce/retry policy;
   one dedicated executor thread; bounded pending trigger, no overlapping inference.
 - Startup/reconnect triggers reconciliation from current HA state; no replay of old event payloads.
-- `energy_pipeline/price_worker.py`: fixed process config, tariffs read each run; one HA states response;
+- `energy_pipeline/price_worker.py`: fixed process config, frozen tariff snapshot per run; one HA states response;
   retain configured APF/Solcast inputs and optional Solcast last-polled marker; all quantiles
   consume the same frozen APF.
 - `forecast.prediction_resources`: worker-local inputs; missing entity cannot fetch newer live state.
@@ -75,6 +75,6 @@ Current memory/source-cache evidence and precise resume point:
 [source-cache checkpoint](energy_pipeline_source_cache.md).
 
 - Longer bounded event-driven shadow over upstream failures/reconnect/interval/DST boundaries.
-- Missing provider freshness, frozen tariff inputs, durable accepted bundles and publication transaction.
+- Missing provider freshness, durable accepted bundles and publication transaction.
 - Retain current production publisher until those gates pass; then one-owner cutover/rollback.
 - DH/MPC solve/control migration remains a separate shadow and acceptance phase.

@@ -1,0 +1,30 @@
+--- a/custom_components/bureau_of_meteorology/weather.py
++++ b/custom_components/bureau_of_meteorology/weather.py
+@@ -2,7 +2,7 @@
+ from __future__ import annotations
+ 
+ import logging
+-from datetime import datetime, tzinfo
++from datetime import datetime, timezone, tzinfo
+ 
+ import iso8601
+ import zoneinfo
+@@ -206,6 +206,18 @@
+         """Initialize the sensor."""
+         super().__init__(hass_data, location_name)
+ 
++    @property
++    def extra_state_attributes(self):
++        """Expose hourly data clocks without refreshing or retiming cached data."""
++        data = self.collector.hourly_forecasts_data or {}
++        fetched = self.collector._cache.get("hourly_forecasts", {}).get("timestamp", 0)
++        return {
++            "hourly_forecast_issue_time": data.get("metadata", {}).get("issue_time"),
++            "hourly_forecast_last_fetched": (
++                datetime.fromtimestamp(fetched, timezone.utc).isoformat() if fetched else None
++            ),
++        }
++
+     async def async_forecast_daily(self) -> list[Forecast]:
+         # Don't implement this feature for this entity
+         raise NotImplementedError
