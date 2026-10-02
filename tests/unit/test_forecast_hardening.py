@@ -308,7 +308,8 @@ def test_calculation_only_rejects_publish_flags():
 def test_resident_worker_uses_one_ha_snapshot_for_all_quantiles(monkeypatch):
     from energy_pipeline import price_worker
     from types import SimpleNamespace
-    config = {'home_assistant': {'amber_billing_entity': 'sensor.apf', 'solcast_entities': ['sensor.pv'],
+    config = {'paths': {'tariff_file': 'missing-tariff-test.json'},
+              'home_assistant': {'amber_billing_entity': 'sensor.apf', 'solcast_entities': ['sensor.pv'],
                                  'solcast_last_polled_entity': 'sensor.pv_polled'}}
     monkeypatch.setattr(price_worker, 'load_config', lambda: config)
     monkeypatch.setattr('tariff_utils.load_tariff_profile', lambda *args: ({}, {}, 1))

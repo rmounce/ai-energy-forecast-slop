@@ -73,6 +73,39 @@ def test_weather_acquisition_explicitly_marks_unknown_provider_fetch(monkeypatch
     assert acquired.evidence == (FreshnessEvidence('bom', 'provider_fetch_unknown', None),)
 
 
+def test_refresh_loop_recovers_after_failure_without_replacing_prior_snapshot():
+    async def run():
+        cache = SourceCache({'aemo': SourcePolicy(('value',), .01, 1800)})
+        prior = datetime.now(timezone.utc)
+        cache.put('aemo', frame(), prior)
+        calls = []
+        def acquire(name):
+            calls.append(name)
+            if len(calls) == 1:
+                raise OSError('injected outage')
+            return AcquiredSource(frame()*2)
+        trigger, shutdown = asyncio.Event(), asyncio.Event()
+        workers = SourceRefreshers(cache, trigger, shutdown, acquire)
+        task = asyncio.create_task(workers.loop('aemo'))
+        try:
+            async def recovered():
+                while not trigger.is_set():
+                    snapshot = cache.snapshot(datetime.now(timezone.utc))['aemo']
+                    assert snapshot.fetched_at == prior
+                    await asyncio.sleep(.001)
+            await asyncio.wait_for(recovered(), 1)
+            assert cache.snapshot(datetime.now(timezone.utc))['aemo'].frame.iloc[0, 0] == 2
+            shutdown.set()
+            await asyncio.wait_for(task, 1)
+            assert len(calls) == 2
+        finally:
+            shutdown.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            for executor in workers.executors.values(): executor.shutdown(wait=True)
+    asyncio.run(run())
+
+
 def test_failed_refresh_preserves_snapshot_and_does_not_arm_trigger():
     async def run():
         cache = SourceCache({'aemo': SourcePolicy(('value',), 300, 1800)})

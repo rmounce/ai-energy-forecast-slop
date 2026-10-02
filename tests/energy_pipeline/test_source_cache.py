@@ -18,12 +18,14 @@ def test_snapshots_are_isolated_and_unchanged_refresh_has_stable_revision():
     cache = SourceCache({'aemo': POLICY})
     data = frame()
     assert cache.put('aemo', data, START)
+    generation = cache.generation
     revision = cache.snapshot(START)['aemo'].revision
     data.iloc[0, 0] = -100
     snapshot = cache.snapshot(START)
     snapshot['aemo'].frame.iloc[0, 0] = -200
     assert cache.snapshot(START)['aemo'].frame.iloc[0, 0] == 0
     assert not cache.put('aemo', frame(), START+timedelta(minutes=5))
+    assert cache.generation == generation
     assert cache.snapshot(START+timedelta(minutes=5))['aemo'].revision == revision
 
 

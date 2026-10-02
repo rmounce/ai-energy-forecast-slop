@@ -35,6 +35,8 @@ Current source-cache/memory implementation: [checkpoint](energy_pipeline_source_
 - Shutdown cancels idle ingress/waiters and discards pending completion; CLI exits the process
   explicitly after flushing logs so Python cannot hang joining a stuck executor thread.
 - No output/control publication option; production cutover needs separate acceptance/publication work.
+- [Shadow acceptance](energy_pipeline_price_acceptance.md): verify current parents after generation;
+  changed/expired result rejected, one coalesced replacement. One total generation/validation deadline.
 
 ## Run
 
@@ -73,6 +75,6 @@ Current memory/source-cache evidence and precise resume point:
 [source-cache checkpoint](energy_pipeline_source_cache.md).
 
 - Longer bounded event-driven shadow over upstream failures/reconnect/interval/DST boundaries.
-- Source issuance/HA entity age, complete lineage, obsolete-result rejection and publication acceptance.
+- Missing provider freshness, frozen tariff inputs, durable accepted bundles and publication transaction.
 - Retain current production publisher until those gates pass; then one-owner cutover/rollback.
 - DH/MPC solve/control migration remains a separate shadow and acceptance phase.

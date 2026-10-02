@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from config_utils import load_config
 from energy_pipeline.price_worker import PriceWorker
+from energy_pipeline.acceptance import AcceptanceDecision
 from energy_pipeline.source_cache import SourceCache, SourceUnavailable, price_source_policies
 from energy_pipeline.source_refresh import SourceRefreshers
 from services.ha_listener import Listener, _install_signal_handlers
@@ -39,20 +40,50 @@ class ResidentPriceListener(Listener):
         self.refreshers = SourceRefreshers(self.predictor.sources, self.trigger, self.shutdown) if isinstance(self.predictor, PriceWorker) else None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='price')
         self.completed = None
+        self.last_decision = None
+        ha = config['home_assistant']
+        self._input_entities = {self.entity_id, *ha.get('solcast_entities', [])}
+        if ha.get('solcast_last_polled_entity'):
+            self._input_entities.add(ha['solcast_last_polled_entity'])
+        self._input_generation = 0
+
+    def _on_state_changed(self, data):
+        if data.get('entity_id') in self._input_entities:
+            self._input_generation += 1
+            self.trigger.set()
 
     async def _subscribe_state_changed(self, ws):
         await super()._subscribe_state_changed(ws)
         # Reconcile latest source state after startup and every reconnect.
+        self._input_generation += 1
         self.trigger.set()
 
     async def _run_predict_price(self):
         async with self.run_lock:
             loop = asyncio.get_running_loop()
-            future = loop.run_in_executor(self.executor, self.predictor.predict)
-            # Retrieve late exceptions even when timeout/cancellation discards the result.
-            future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            async def submit(function, *args):
+                future = loop.run_in_executor(self.executor, function, *args)
+                # Retrieve late exceptions even after deadline/cancellation.
+                future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+                return await asyncio.shield(future)
+
+            async def generate_and_check():
+                result = await submit(self.predictor.predict)
+                if result.rss_mib > MAX_RSS_MIB:
+                    return result, None
+                generation = self._input_generation
+                source_generation = self.predictor.sources.generation if self.refreshers else None
+                acceptance_started = time.monotonic()
+                decision = await submit(self.predictor.evaluate_completion, result)
+                if generation != self._input_generation:
+                    decision = AcceptanceDecision(('ha_changed_during_acceptance',), True)
+                elif self.refreshers and source_generation != self.predictor.sources.generation:
+                    decision = AcceptanceDecision(('source_changed_during_acceptance',), True)
+                log.info('resident acceptance checked run=%s elapsed=%.3fs accepted=%s',
+                         result.outcome.run_id, time.monotonic()-acceptance_started, decision.accepted)
+                return result, decision
             try:
-                result = await asyncio.wait_for(asyncio.shield(future), WORKER_TIMEOUT_SECONDS)
+                result, decision = await asyncio.wait_for(generate_and_check(), WORKER_TIMEOUT_SECONDS)
             except asyncio.TimeoutError as exc:
                 self.shutdown.set()
                 log.error('resident worker deadline exceeded; process restart required')
@@ -76,6 +107,15 @@ class ResidentPriceListener(Listener):
             if result.rss_mib > MAX_RSS_MIB:
                 self.shutdown.set()
                 raise WorkerResourceLimit(f'resident RSS {result.rss_mib:.1f} MiB exceeds {MAX_RSS_MIB} MiB')
+            self.last_decision = decision
+            if not decision.accepted:
+                log.info('resident shadow rejected run=%s reasons=%s', result.outcome.run_id, decision.reasons)
+                if decision.reconcile:
+                    self._retry_not_before = 0.0
+                    self.trigger.set()
+                elif not any(reason.startswith(('inputs_unavailable:', 'input_changed:config')) for reason in decision.reasons):
+                    self._schedule_failure_retry()
+                return
             self.completed = result
             self.last_run_at = time.monotonic()
             self._retry_not_before = 0.0

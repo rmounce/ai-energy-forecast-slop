@@ -29,6 +29,15 @@ class ModelCache:
         """Identity of the installed family, never a newly resolved pointer."""
         return self._signature
 
+    def current_signature(self):
+        """Stat installed paths again without loading/replacing any model."""
+        if self._signature is None:
+            return None
+        paths = {}
+        for name, kind, path, *_ in self._signature:
+            paths.setdefault(name, {})[kind] = path
+        return self.signature(paths)
+
     def load_family(self, paths):
         signature = self.signature(paths)
         self.last_load_seconds = 0.0

@@ -4,6 +4,7 @@ Status: runtime routing baseline checked 2026-10-01; pure payload extraction and
 Replay evidence: [payload extraction](energy_pipeline_payload_replay.md),
 [resident price shadow](energy_pipeline_resident_price.md),
 [source-cache/memory checkpoint](energy_pipeline_source_cache.md). Production unchanged.
+[Shadow acceptance](energy_pipeline_price_acceptance.md) rejects obsolete results; publication pending.
 Evidence and dependency map: [runtime inventory](energy_pipeline_runtime_inventory.md).
 Scope: Amber → forecasts → EMHASS DH/MPC → battery/HWC/dump-load control; include HA,
 MQTT bridges, InfluxDB, sibling `../hwc`, and system/user systemd units.
@@ -153,8 +154,9 @@ and resume gates: [source-cache checkpoint](energy_pipeline_source_cache.md).
 Target-filtered STPASA archive reads substantially reduce multi-cycle memory/refresh cost with exact
 feature parity; six accelerated refresh/inference cycles use ~1.2 GiB. Bounded HTTP/STPASA/HA freshness
 evidence recorded; BOM provider freshness remains unknown. Next: validate long-run memory and expose
-missing provider freshness metadata,
-then explicit price result acceptance/publication and single-owner cutover. Collect independent
+missing provider freshness metadata and freeze remaining tariff reads. Shadow result acceptance now
+rejects changed inputs, expiry and observed validation races. Next publication step: durable accepted
+bundles, partial-write recovery and single-owner cutover. Collect independent
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.
 Production cutover remains gated on shadow equivalence and verified single ownership.

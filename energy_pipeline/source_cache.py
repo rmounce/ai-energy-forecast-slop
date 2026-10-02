@@ -74,6 +74,12 @@ class SourceCache:
         self.policies = dict(policies)
         self._sources = {}
         self._lock = threading.Lock()
+        self._generation = 0
+
+    @property
+    def generation(self):
+        with self._lock:
+            return self._generation
 
     def put(self, name, frame, fetched_at, *, evidence=()):
         fetched_at = pd.Timestamp(fetched_at).to_pydatetime()
@@ -94,7 +100,10 @@ class SourceCache:
                 raise SourceUnavailable('out-of-order source completion')
             recovered = prior is not None and (fetched_at-prior.fetched_at).total_seconds() > self.policies[name].max_age_seconds
             self._sources[name] = replacement
-        return prior is None or prior.revision != digest or recovered
+            changed = prior is None or prior.revision != digest or recovered
+            if changed:
+                self._generation += 1
+        return changed
 
     def snapshot(self, now):
         now = pd.Timestamp(now)

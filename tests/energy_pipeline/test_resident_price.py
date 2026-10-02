@@ -7,6 +7,12 @@ import pytest
 from services.resident_price import ResidentPriceListener, WorkerTimeout
 import services.resident_price as resident
 import services.ha_listener as legacy
+from energy_pipeline.acceptance import AcceptanceDecision
+
+
+class HealthyPredictor:
+    def evaluate_completion(self, result):
+        return AcceptanceDecision()
 
 CONFIG = {'home_assistant': {'url': 'http://ha', 'token': 'x', 'amber_billing_entity': 'sensor.apf'}}
 
@@ -26,7 +32,7 @@ def test_worker_runs_in_one_thread_without_blocking_event_loop():
     async def run():
         calls = []
         started, release = threading.Event(), threading.Event()
-        class Predictor:
+        class Predictor(HealthyPredictor):
             def predict(self):
                 calls.append(threading.get_ident())
                 if len(calls) == 1:
@@ -54,7 +60,7 @@ def test_worker_runs_in_one_thread_without_blocking_event_loop():
 def test_timeout_discards_late_completion_and_stops_scheduler():
     async def run():
         release = threading.Event()
-        class Predictor:
+        class Predictor(HealthyPredictor):
             def predict(self):
                 release.wait(2)
                 return completion()
@@ -78,7 +84,7 @@ def test_timeout_discards_late_completion_and_stops_scheduler():
 
 def test_failure_retries_without_touching_production_health():
     async def run():
-        class Predictor:
+        class Predictor(HealthyPredictor):
             def predict(self):
                 raise ValueError('bad input')
         listener = ResidentPriceListener(CONFIG, Predictor())
@@ -102,7 +108,7 @@ def test_burst_during_work_coalesces_to_one_followup():
     async def run():
         started, release = threading.Event(), threading.Event()
         calls = []
-        class Predictor:
+        class Predictor(HealthyPredictor):
             def predict(self):
                 calls.append(1)
                 if len(calls) == 1:
@@ -135,7 +141,7 @@ def test_subscription_reconciles_latest_state_after_connect():
         async def recv(self):
             return '{"success": true}'
     async def run():
-        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=lambda: completion()))
+        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=lambda: completion(), evaluate_completion=lambda result: AcceptanceDecision()))
         try:
             await listener._subscribe_state_changed(WS())
             assert listener.trigger.is_set()
@@ -146,7 +152,7 @@ def test_subscription_reconciles_latest_state_after_connect():
 
 def test_shutdown_cancels_idle_ingress_without_waiting_for_another_event():
     async def run():
-        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=lambda: completion()))
+        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=lambda: completion(), evaluate_completion=lambda result: AcceptanceDecision()))
         started = asyncio.Event()
         async def ingress():
             started.set()
@@ -161,7 +167,7 @@ def test_shutdown_cancels_idle_ingress_without_waiting_for_another_event():
 
 def test_memory_budget_stops_worker_without_accepting_result():
     async def run():
-        class Predictor:
+        class Predictor(HealthyPredictor):
             def predict(self):
                 result = completion()
                 result.rss_mib = 3000
@@ -174,5 +180,111 @@ def test_memory_budget_stops_worker_without_accepting_result():
             assert listener.completed is None
             assert listener._retry_task is None
         finally:
+            listener.executor.shutdown(wait=True)
+    asyncio.run(run())
+
+
+def test_obsolete_completion_keeps_previous_and_arms_one_replacement():
+    async def run():
+        predictor = SimpleNamespace(predict=completion, evaluate_completion=lambda result:
+                                    AcceptanceDecision(('input_changed:source:aemo',), True))
+        listener = ResidentPriceListener(CONFIG, predictor)
+        previous = completion()
+        listener.completed, listener.last_run_at = previous, 123
+        try:
+            await listener._run_predict_price()
+            assert listener.completed is previous and listener.last_run_at == 123
+            assert listener.trigger.is_set()
+            assert listener._retry_task is None
+        finally:
+            listener.executor.shutdown(wait=True)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('reconnect', [False, True])
+def test_ha_change_or_reconnect_during_acceptance_discards_result(reconnect):
+    async def run():
+        started, release = threading.Event(), threading.Event()
+        def evaluate(result):
+            started.set()
+            release.wait(2)
+            return AcceptanceDecision()
+        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=completion, evaluate_completion=evaluate))
+        class WS:
+            async def send(self, message): pass
+            async def recv(self): return '{"success": true}'
+        try:
+            task = asyncio.create_task(listener._run_predict_price())
+            await wait_until(started.is_set)
+            if reconnect:
+                await listener._subscribe_state_changed(WS())
+            else:
+                listener._on_state_changed({'entity_id': 'sensor.apf'})
+            release.set()
+            await task
+            assert listener.completed is None and listener.last_run_at is None
+            assert listener.last_decision.reasons == ('ha_changed_during_acceptance',)
+            assert listener.trigger.is_set()
+        finally:
+            release.set()
+            listener.executor.shutdown(wait=True)
+    asyncio.run(run())
+
+
+def test_acceptance_timeout_never_commits_late_result():
+    async def run():
+        release = threading.Event()
+        def evaluate(result):
+            release.wait(2)
+            return AcceptanceDecision()
+        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=completion, evaluate_completion=evaluate))
+        try:
+            with patch.object(resident, 'WORKER_TIMEOUT_SECONDS', .02):
+                with pytest.raises(WorkerTimeout):
+                    await listener._run_predict_price()
+            release.set()
+            await asyncio.sleep(.02)
+            assert listener.shutdown.is_set() and listener.completed is None
+        finally:
+            release.set()
+            listener.executor.shutdown(wait=True)
+    asyncio.run(run())
+
+
+def test_only_consumed_ha_entities_trigger_reconciliation():
+    listener = ResidentPriceListener({'home_assistant': {**CONFIG['home_assistant'],
+        'solcast_entities': ['sensor.pv'], 'solcast_last_polled_entity': 'sensor.pv_poll'}}, HealthyPredictor())
+    try:
+        listener._on_state_changed({'entity_id': 'sensor.unrelated'})
+        assert not listener.trigger.is_set()
+        for entity in ('sensor.apf', 'sensor.pv', 'sensor.pv_poll'):
+            listener._on_state_changed({'entity_id': entity})
+        assert listener.trigger.is_set() and listener._input_generation == 3
+    finally:
+        listener.executor.shutdown(wait=True)
+
+
+def test_source_change_during_acceptance_discards_result():
+    async def run():
+        started, release = threading.Event(), threading.Event()
+        sources = SimpleNamespace(generation=1)
+        def evaluate(result):
+            started.set()
+            release.wait(2)
+            return AcceptanceDecision()
+        listener = ResidentPriceListener(CONFIG, SimpleNamespace(predict=completion, sources=sources,
+                                                                 evaluate_completion=evaluate))
+        listener.refreshers = SimpleNamespace()  # emulate owned cache tracking
+        try:
+            task = asyncio.create_task(listener._run_predict_price())
+            await wait_until(started.is_set)
+            sources.generation += 1
+            release.set()
+            await task
+            assert listener.completed is None
+            assert listener.last_decision.reasons == ('source_changed_during_acceptance',)
+            assert listener.trigger.is_set()
+        finally:
+            release.set()
             listener.executor.shutdown(wait=True)
     asyncio.run(run())

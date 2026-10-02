@@ -13,12 +13,25 @@ from energy_pipeline.model_cache import ModelCache
 from energy_pipeline.memory import reclaim_transient_memory
 from energy_pipeline.freshness import FreshnessEvidence, serialize_evidence
 from energy_pipeline.source_cache import SourceCache, SourcePolicy, validate_frame
-from production_contract import PredictionInputs, PredictionOutcome
+from production_contract import PredictionInputs, PredictionOutcome, ForecastContractError, validate_forecast_family
+from energy_pipeline.acceptance import AcceptanceDecision, compare_revisions
+from energy_pipeline.source_cache import SourceUnavailable
 
 
 def content_revision(value):
     """Opaque digest: provenance logs never contain configuration credentials."""
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def file_revision(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return 'missing'
+
+
+def utc_now():
+    return pd.Timestamp.now(tz='UTC')
 
 
 @dataclass(frozen=True)
@@ -59,6 +72,8 @@ class PriceWorker:
         if load_config() != fc.CONFIG:
             raise RuntimeError('configuration changed; restart resident shadow')
         fc.GENERAL_TARIFF_MAP, fc.FEED_IN_TARIFF_MAP, fc.NETWORK_LOSS_FACTOR = load_tariff_profile(fc.CONFIG, fc.ROOT)
+        tariff_revision = file_revision(fc.ROOT / fc.CONFIG['paths']['tariff_file'])
+        pointer_revision = file_revision(fc._production_bundle_store().active_pointer('price'))
         now = datetime.now(timezone.utc)
         sources = self.sources.snapshot(now)
         rows = fc.call_ha_api('GET', 'states')
@@ -89,6 +104,8 @@ class PriceWorker:
         input_revisions = {
             'config': content_revision(fc.CONFIG),
             'tariff': content_revision([fc.GENERAL_TARIFF_MAP, fc.FEED_IN_TARIFF_MAP, fc.NETWORK_LOSS_FACTOR]),
+            'tariff_file': tariff_revision,
+            'model_pointer': pointer_revision,
             'apf': revision,
             **{f'ha:{entity}': content_revision(states.get(entity))
                for entity in fc.CONFIG['home_assistant']['solcast_entities']},
@@ -128,3 +145,60 @@ class PriceWorker:
             'model_load_seconds': round(completion.model_load_seconds, 3),
             'model_loads': completion.model_loads, 'rss_mib': round(completion.rss_mib, 1)}, sort_keys=True))
         return completion
+
+    def evaluate_completion(self, completion, *, now=None):
+        """Point-in-time shadow admission; no output writes or model promotion."""
+        import forecast as fc
+        from tariff_utils import load_tariff_profile
+        live_clock = now is None
+        now = utc_now() if live_clock else pd.Timestamp(now)
+        if now.tzinfo is None:
+            raise ValueError('acceptance time must be timezone-aware')
+        capture = pd.Timestamp(completion.captured_at)
+        age = (now-capture).total_seconds()
+        if age < 0 or age > 180:
+            return AcceptanceDecision(('completion_age_outside_budget',), True)
+        first = pd.Timestamp(completion.outcome.forecasts['price'].index[0])
+        if first != now.floor('30min'):
+            return AcceptanceDecision(('forecast_interval_changed',), True)
+        try:
+            validate_forecast_family(completion.outcome.forecasts, 'price', expected_start=now.floor('30min'))
+        except ForecastContractError as exc:
+            return AcceptanceDecision((f'forecast_invalid:{exc}',))
+        try:
+            sources = self.sources.snapshot(now)
+        except SourceUnavailable as exc:
+            # Wait for source recovery; immediately rerunning cannot repair it.
+            return AcceptanceDecision((f'inputs_unavailable:{exc}',))
+        rows = fc.call_ha_api('GET', 'states')
+        if not isinstance(rows, list):
+            raise RuntimeError('cannot verify current HA inputs')
+        # Recheck interval and cache admission after the network read; it may
+        # have crossed a boundary or taken long enough to expire dependencies.
+        finish = utc_now() if live_clock else now
+        if first != finish.floor('30min'):
+            return AcceptanceDecision(('forecast_interval_changed',), True)
+        if (finish-capture).total_seconds() > 180:
+            return AcceptanceDecision(('completion_age_outside_budget',), True)
+        try:
+            sources = self.sources.snapshot(finish)
+        except SourceUnavailable as exc:
+            return AcceptanceDecision((f'inputs_unavailable:{exc}',))
+        current = {
+            'config': content_revision(load_config()),
+            'tariff': content_revision(load_tariff_profile(fc.CONFIG, fc.ROOT)),
+            'tariff_file': file_revision(fc.ROOT / fc.CONFIG['paths']['tariff_file']),
+            'model_pointer': file_revision(fc._production_bundle_store().active_pointer('price')),
+            'model_artifacts': content_revision(self.cache.current_signature()),
+            **{f'source:{name}': source.revision for name, source in sources.items()},
+        }
+        needed = {key.removeprefix('ha:') for key in completion.input_revisions if key.startswith('ha:')}
+        apf_entity = fc.CONFIG['home_assistant']['amber_billing_entity']
+        needed.add(apf_entity)
+        states = {row['entity_id']: row for row in rows if row['entity_id'] in needed}
+        current['apf'] = content_revision(states.get(apf_entity))
+        for entity in needed-{apf_entity}:
+            # The initial optional poll marker uses {} when missing.
+            fallback = {} if entity == fc.CONFIG['home_assistant'].get('solcast_last_polled_entity') else None
+            current[f'ha:{entity}'] = content_revision(states.get(entity, fallback))
+        return compare_revisions(completion.input_revisions, current)

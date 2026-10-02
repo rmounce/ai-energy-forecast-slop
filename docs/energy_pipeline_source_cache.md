@@ -20,7 +20,8 @@ flowchart LR
 - Three independent source threads; one inference thread; single process. Source threads never
   execute inference or publication. Retain one accepted dataframe per source; bounded trigger.
 - APF inference uses cached weather/AEMO/history; performs one HA states read for current APF/
-  Solcast. No AEMO, weather service or Influx query on this inference path.
+  Solcast. A second HA read verifies parents during acceptance. No AEMO, weather service or
+  Influx query on this generation/acceptance path.
 - Successful source content change or recovery from expired acquisition age re-arms inference.
   Unchanged refresh advances acquisition time without changing its content revision.
 - Failed/invalid refresh preserves prior accepted frame and timestamp; every inference rechecks
@@ -30,7 +31,8 @@ flowchart LR
 - Completion lineage also includes opaque config/effective-tariff digests, each frozen Solcast
   entity digest and the installed model artifact signature digest. Signature is path/inode/size/
   mtime identity, not a byte-content checksum; failed promotion retains prior installed identity.
-  Digests record consumed inputs; obsolete-result rejection/publication is still unimplemented.
+  Tariff-file and active model-pointer byte digests now included. Shadow obsolete-result rejection
+  implemented; publication still unimplemented. [Acceptance contract](energy_pipeline_price_acceptance.md).
 - Config frozen for process lifetime to avoid changing forecast globals while source threads run.
   Config edits require shadow restart; inference detects changes and fails. Tariff maps read per run;
   active model pointer still resolved per run. Legacy globals require one inference worker.
@@ -204,13 +206,15 @@ flowchart LR
 ## Resume checkpoint
 
 - Implemented/tested: independent cache refresh, strict admission, confirmed zero-capacity exceptions,
-  UTC Solcast normalization, no-acquisition inference path, content lineage, memory reclamation.
+  UTC Solcast normalization, no-acquisition inference path, content lineage, memory reclamation,
+  shadow result acceptance. [Contract and latest evidence](energy_pipeline_price_acceptance.md).
 - Cached/reloaded quantile parity passes on admitted cached inputs; all quantiles 144 points.
-- Focused suite: 86 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
+- Focused suite: 105 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
   cache, deadline discard, memory guard/reclamation, cached HTTP timestamps, collector isolation,
-  real response-path evidence, incumbent regressions.
+  real response-path evidence, changed-parent rejection, validation races/deadlines, source recovery,
+  incumbent regressions.
 - Still shadow only. Short benchmark evidence is not a full-day memory/failure-recovery gate.
 - Next: multi-hour filtered shadow and source failures/reconnect/
-  interval/DST boundaries; expose trustworthy source freshness metadata and test result rejection.
-- Then implement result acceptance/publication transaction and switch price ownership with explicit
+  interval/DST boundaries; expose missing provider freshness and freeze remaining tariff reads.
+- Then implement durable acceptance/publication transaction and switch price ownership with explicit
   rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

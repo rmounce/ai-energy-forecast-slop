@@ -25,6 +25,8 @@ Pipeline consolidation work: [plan](docs/energy_pipeline_architecture_plan.md),
 [resident price shadow](docs/energy_pipeline_resident_price.md),
 [current checkpoint](docs/energy_pipeline_source_cache.md). Production routing remains unchanged;
 long-run memory validation and complete upstream freshness metadata remain migration gates.
+Shadow [result acceptance](docs/energy_pipeline_price_acceptance.md) rejects changed/expired inputs;
+production publication remains with the incumbent listener.
 
 ## Features
 

@@ -135,11 +135,11 @@ class Listener:
                 continue
             event = msg.get("event", {})
             data = event.get("data", {})
-            if data.get("entity_id") != self.entity_id:
-                continue
-            # We don't compare old/new state — any change to the entity
-            # (including attribute-only changes) is a signal that Amber
-            # published fresh APF.
+            self._on_state_changed(data)
+
+    def _on_state_changed(self, data):
+        if data.get("entity_id") == self.entity_id:
+            # Attribute-only changes also signal a fresh APF.
             log.debug("APF entity state_changed; arming trigger")
             self.trigger.set()
 
