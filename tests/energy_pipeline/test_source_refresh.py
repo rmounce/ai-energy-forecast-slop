@@ -5,8 +5,9 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 from energy_pipeline.source_cache import SourceCache, SourcePolicy
-from energy_pipeline.source_refresh import SourceRefreshers, SourceRefreshTimeout
+from energy_pipeline.source_refresh import AcquiredSource, SourceRefreshers, SourceRefreshTimeout
 import energy_pipeline.source_refresh as refresh_module
+from energy_pipeline.freshness import FreshnessEvidence
 
 
 def frame():
@@ -20,7 +21,7 @@ def test_source_timeout_never_commits_late_frame():
         trigger, shutdown, release = asyncio.Event(), asyncio.Event(), threading.Event()
         def acquire(name):
             release.wait(2)
-            return frame()
+            return AcquiredSource(frame())
         workers = SourceRefreshers(cache, trigger, shutdown, acquire)
         try:
             with patch.object(refresh_module, 'SOURCE_TIMEOUT_SECONDS', .01):
@@ -46,7 +47,7 @@ def test_slow_refresh_does_not_block_cached_consumption():
         def acquire(name):
             started.set()
             release.wait(2)
-            return frame()*2
+            return AcquiredSource(frame()*2, (FreshnessEvidence('aemo', 'unknown', None),))
         workers = SourceRefreshers(cache, trigger, shutdown, acquire)
         try:
             task = asyncio.create_task(workers.refresh('aemo'))
@@ -59,10 +60,17 @@ def test_slow_refresh_does_not_block_cached_consumption():
             await asyncio.wait_for(task, 1)
             assert trigger.is_set()
             assert cache.snapshot(datetime.now(timezone.utc))['aemo'].frame.iloc[0, 0] == 2
+            assert cache.snapshot(datetime.now(timezone.utc))['aemo'].evidence == (FreshnessEvidence('aemo', 'unknown', None),)
         finally:
             release.set()
             for executor in workers.executors.values(): executor.shutdown(wait=True)
     asyncio.run(run())
+
+
+def test_weather_acquisition_explicitly_marks_unknown_provider_fetch(monkeypatch):
+    monkeypatch.setattr(refresh_module, '_acquire_frame', lambda name: frame())
+    acquired = refresh_module.acquire_source('weather')
+    assert acquired.evidence == (FreshnessEvidence('bom', 'provider_fetch_unknown', None),)
 
 
 def test_failed_refresh_preserves_snapshot_and_does_not_arm_trigger():

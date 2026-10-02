@@ -7,6 +7,7 @@ import threading
 from typing import Mapping
 import numpy as np
 import pandas as pd
+from energy_pipeline.freshness import FreshnessEvidence
 
 
 class SourceUnavailable(ValueError):
@@ -28,6 +29,7 @@ class SourceSnapshot:
     frame: pd.DataFrame
     fetched_at: datetime
     revision: str
+    evidence: tuple[FreshnessEvidence, ...] = ()
 
 
 def validate_frame(frame, policy, start):
@@ -73,7 +75,7 @@ class SourceCache:
         self._sources = {}
         self._lock = threading.Lock()
 
-    def put(self, name, frame, fetched_at):
+    def put(self, name, frame, fetched_at, *, evidence=()):
         fetched_at = pd.Timestamp(fetched_at).to_pydatetime()
         if fetched_at.tzinfo is None:
             raise SourceUnavailable('fetch timestamp must be timezone-aware')
@@ -85,7 +87,7 @@ class SourceCache:
         frozen.index = frozen.index.tz_convert('UTC')
         digest = hashlib.sha256(pd.util.hash_pandas_object(frozen, index=True).values.tobytes()
                                 + repr(list(frozen.columns)).encode()).hexdigest()
-        replacement = SourceSnapshot(frozen, fetched_at, digest)
+        replacement = SourceSnapshot(frozen, fetched_at, digest, tuple(evidence))
         with self._lock:
             prior = self._sources.get(name)
             if prior and prior.fetched_at > fetched_at:
@@ -113,7 +115,7 @@ class SourceCache:
                 validate_frame(source.frame, policy, start)
             except SourceUnavailable as exc:
                 raise SourceUnavailable(f'{name}: {exc}') from exc
-            result[name] = SourceSnapshot(source.frame.copy(deep=True), source.fetched_at, source.revision)
+            result[name] = SourceSnapshot(source.frame.copy(deep=True), source.fetched_at, source.revision, source.evidence)
         return result
 
 

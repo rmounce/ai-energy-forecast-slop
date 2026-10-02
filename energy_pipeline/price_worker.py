@@ -11,6 +11,7 @@ import pandas as pd
 from config_utils import load_config
 from energy_pipeline.model_cache import ModelCache
 from energy_pipeline.memory import reclaim_transient_memory
+from energy_pipeline.freshness import FreshnessEvidence, serialize_evidence
 from energy_pipeline.source_cache import SourceCache, SourcePolicy, validate_frame
 from production_contract import PredictionInputs, PredictionOutcome
 
@@ -35,6 +36,7 @@ class PriceCompletion:
     rss_before_maintenance_mib: float
     allocator_trimmed: bool
     input_revisions: dict[str, str]
+    source_freshness: dict[str, list[dict]]
 
 
 class PriceWorker:
@@ -64,6 +66,9 @@ class PriceWorker:
             raise RuntimeError('cannot capture HA inputs')
         needed = set(fc.CONFIG['home_assistant']['solcast_entities'])
         needed.add(fc.CONFIG['home_assistant']['amber_billing_entity'])
+        solcast_poll_entity = fc.CONFIG['home_assistant'].get('solcast_last_polled_entity')
+        if solcast_poll_entity:
+            needed.add(solcast_poll_entity)
         states = {row['entity_id']: row for row in rows if row['entity_id'] in needed}
         del rows
         apf = states.get(fc.CONFIG['home_assistant']['amber_billing_entity'])
@@ -71,6 +76,16 @@ class PriceWorker:
             raise RuntimeError('snapshot missing Amber APF')
         captured_at = datetime.now(timezone.utc).isoformat()
         revision = content_revision(apf)
+        freshness = {name: serialize_evidence(source.evidence) for name, source in sources.items()}
+        freshness['apf'] = serialize_evidence([
+            FreshnessEvidence('apf', 'ha_entity_updated', apf.get('last_updated')),
+            # Preserve bridge's naive clock string. It is neither an aware
+            # source-issue time nor proof of a successful Amber API fetch.
+            FreshnessEvidence('apf', 'bridge_publication_naive_clock',
+                              apf['attributes'].get('update_time'))])
+        poll = states.get(solcast_poll_entity, {})
+        freshness['solcast'] = serialize_evidence([FreshnessEvidence('solcast',
+            'integration_successful_fetch' if poll else 'provider_fetch_unknown', poll.get('state'))])
         input_revisions = {
             'config': content_revision(fc.CONFIG),
             'tariff': content_revision([fc.GENERAL_TARIFF_MAP, fc.FEED_IN_TARIFF_MAP, fc.NETWORK_LOSS_FACTOR]),
@@ -79,6 +94,8 @@ class PriceWorker:
                for entity in fc.CONFIG['home_assistant']['solcast_entities']},
             **{f'source:{name}': source.revision for name, source in sources.items()},
         }
+        if solcast_poll_entity:
+            input_revisions[f'ha:{solcast_poll_entity}'] = content_revision(poll)
         with fc.prediction_resources(entity_states=states, model_cache=self.cache, verify_reload=self.verify_reload):
             solcast = fc.get_solcast_forecast()
             # Solcast's four-day horizon can span DST and produce an object
@@ -97,11 +114,12 @@ class PriceWorker:
                                      self.cache.last_load_seconds, self.cache.loads, memory.after_mib,
                                      {name: source.revision for name, source in sources.items()},
                                      {name: (now-source.fetched_at).total_seconds() for name, source in sources.items()},
-                                     memory.elapsed_seconds, memory.before_mib, memory.trimmed, input_revisions)
+                                     memory.elapsed_seconds, memory.before_mib, memory.trimmed, input_revisions, freshness)
         logging.info(json.dumps({'event': 'resident_price_complete', 'run_id': outcome.run_id,
             'parent_revision': revision, 'captured_at': captured_at,
             'source_revisions': completion.source_revisions, 'source_ages_seconds': completion.source_ages_seconds,
             'input_revisions': completion.input_revisions,
+            'source_freshness': completion.source_freshness,
             'memory_maintenance_seconds': round(memory.elapsed_seconds, 3),
             'rss_before_maintenance_mib': round(memory.before_mib, 1), 'allocator_trimmed': memory.trimmed,
             'model_bundle_id': outcome.model_bundle_id, 'point_counts': outcome.point_counts,

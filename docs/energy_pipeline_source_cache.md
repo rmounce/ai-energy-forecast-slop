@@ -76,14 +76,42 @@ flowchart LR
   defining schedule-aware age policy; overnight polling gaps are intentional.
 - Live APF attr `update_time` was `2026-10-01T23:45:17.754096` while HA update was
   `2026-10-01T23:45:17.943092+00:00`. Local amber2mqtt `mqttmessages.py` uses naive
-  `datetime.now()`: bridge publication time, not provider issuance. Container timezone and
-  local-code/live-image equivalence remain unverified; do not parse as Adelaide automatically.
+  `datetime.now()`: bridge publication time, not provider issuance. Read-only live
+  `docker exec amber2mqtt date` confirmed UTC (+0000), 2026-10-02 morning; local-code/live-image
+  equivalence remains unverified. Preserve naive value as evidence, never assume Adelaide.
 - Installed BOM `bureau_of_meteorology/PyBoM/collector.py:_fetch_with_retry` can return cached
   hourly forecast data after request failure. Its successful-fetch timestamp stays internal.
   `weather.py:async_forecast_hourly` projects forecast fields without that cache timestamp;
   weather entity state/last_updated also reflects observations. Successful HA service retrieval
   cannot establish a new BOM fetch or provider issue. Need explicit upstream freshness metadata
   or a separate source contract before production admission is trustworthy.
+
+## Freshness provenance implementation
+
+- `energy_pipeline/freshness.py`: frozen evidence records; bounded worker-local ContextVar collector.
+  Collection restored after success/failure/nesting; refresh threads cannot mix their evidence.
+- AEMO short-term HTTP, NEMWeb listing and ZIP response record requests-cache `created_at`,
+  `from_cache`, `is_expired`. Expired/stale-if-error responses retain original creation time;
+  cached response with unknown time remains unknown. Legacy naive requests-cache dates are UTC.
+  HTTP response creation is successful retrieval time, NOT report/provider issuance time.
+- STPASA records latest run_time in the loaded target window. Diagnostic inventory marker, not
+  the oldest consumed row's age or proof every row meets freshness requirements.
+- `AcquiredSource` bundles frame + immutable evidence; cache copies/preserves evidence with frame.
+  Invalid/failed refresh retains prior frame, evidence and acquisition time. Content digest unchanged.
+- Completion logs evidence for weather/AEMO/history and frozen HA APF/Solcast snapshot. BOM
+  provider fetch explicitly unknown; Amber HA update and naive bridge publication separate.
+- Optional `home_assistant.solcast_last_polled_entity` joins the SAME HA states response and input
+  digest; no extra inference-path network call. Integration poll state is a fetch marker with build/
+  serialisation caveat above; absent marker remains unknown. Config still requires process restart.
+- Evidence diagnostic only: no source-age threshold, production admission, alerting or bridge change.
+  Next admission policy must distinguish transport receipt, provider issuance, observation time and
+  consumed coverage; do not turn retrieval success into fresh-provider proof.
+- Live finite probe 2026-10-02 10:14 Adelaide: all quantiles 144 points, no publication, exit 0.
+  9.8s cold / RSS 1127 MiB, three model loads. Short-term response uncached; NEMWeb listing/report
+  cached with original ~00:40 UTC response dates; Solcast marker 00:30:55 UTC; BOM unknown.
+  STPASA run-window markers distinct for history/forecast, confirming they cannot be used as a
+  single universal freshness clock. Config now names the confirmed Solcast poll entity; incumbent
+  ignores this extra field, no running service restarted. Freshness evidence logs no credentials.
 
 ## Memory evidence and handling
 
@@ -144,6 +172,21 @@ flowchart LR
 - Focused suite including STPASA feature tests: 79 pass. Scratch probes under /tmp, no household
   archive or raw frames committed. Temporary frozen parquet removed after parity comparison.
 
+## Longer filtered shadow (2026-10-02 09:39–09:59 Adelaide)
+
+- 20-minute normal event/WebSocket shadow, calculation only, automatic exit 0. Eight completions:
+  startup, four real APF events and three AEMO refresh-triggered replans; three model loads total.
+- Source bootstrap plus three completed normal AEMO/history refresh cycles. History content
+  unchanged; successful refresh advances acquisition age without re-arming work.
+- Post-maintenance RSS MiB: 1125, 1133, 1207, 1209, 1224, 1233, 1248, 1248. No heap trim used;
+  unchanged 2048 MiB guard respected. Far more headroom than unfiltered run, but still upward
+  drift: multi-hour/full-day stability gate remains unpassed.
+- Cold inference 10.4s; real APF runs 4.5–5.7s; source-change runs 2.1–4.0s. Source refresh
+  4.8–5.7s under concurrent acquisition. No upstream failures/reconnects injected; this session
+  does not span a 30-minute boundary or weather refresh. Those remain separate validation gates.
+- Session ran archive-filter commit before freshness changes; new metadata verified separately
+  by finite probe above. No production sensors/files/health/controls/unit ownership changed.
+
 ## Commands
 
 ```bash
@@ -163,10 +206,11 @@ flowchart LR
 - Implemented/tested: independent cache refresh, strict admission, confirmed zero-capacity exceptions,
   UTC Solcast normalization, no-acquisition inference path, content lineage, memory reclamation.
 - Cached/reloaded quantile parity passes on admitted cached inputs; all quantiles 144 points.
-- Focused suite: 75 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
-  cache, deadline discard, memory guard/reclamation, incumbent regressions.
+- Focused suite: 86 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
+  cache, deadline discard, memory guard/reclamation, cached HTTP timestamps, collector isolation,
+  real response-path evidence, incumbent regressions.
 - Still shadow only. Short benchmark evidence is not a full-day memory/failure-recovery gate.
-- Next: validate filtered reads over longer normal shadow and source failures/reconnect/
+- Next: multi-hour filtered shadow and source failures/reconnect/
   interval/DST boundaries; expose trustworthy source freshness metadata and test result rejection.
 - Then implement result acceptance/publication transaction and switch price ownership with explicit
   rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

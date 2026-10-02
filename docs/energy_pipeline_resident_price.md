@@ -10,7 +10,8 @@ Current source-cache/memory implementation: [checkpoint](energy_pipeline_source_
   one dedicated executor thread; bounded pending trigger, no overlapping inference.
 - Startup/reconnect triggers reconciliation from current HA state; no replay of old event payloads.
 - `energy_pipeline/price_worker.py`: fixed process config, tariffs read each run; one HA states response;
-  retain only configured APF/Solcast inputs; all quantiles consume the same frozen APF.
+  retain configured APF/Solcast inputs and optional Solcast last-polled marker; all quantiles
+  consume the same frozen APF.
 - `forecast.prediction_resources`: worker-local inputs; missing entity cannot fetch newer live state.
   Legacy forecast globals still require single-thread serialization; no concurrent family inference.
 - `energy_pipeline/model_cache.py`: load one complete quantile family; reuse unchanged artifacts;
@@ -22,7 +23,8 @@ Current source-cache/memory implementation: [checkpoint](energy_pipeline_source_
   reads the current HA APF/Solcast snapshot and performs no acquisition for cached dependencies.
 - Completion records run ID, APF snapshot digest, capture time, model bundle, point counts,
   load time, source content revisions/acquisition ages, memory maintenance time and RSS. APF digest includes HA entity metadata; not an upstream
-  atomic revision or a complete lineage identity for weather/AEMO/history.
+  atomic upstream revision. Config/tariff/model/Solcast/source lineage and bounded freshness
+  evidence now recorded; unknown provider freshness explicit. See current checkpoint for limits.
 - Shadow does not overwrite production health records. Errors retry on existing five-minute cadence;
   successful shadow generation advances only its own heartbeat.
 - Worker deadline 180s: discard result, stop scheduler, exit process with failure for supervision.

@@ -61,6 +61,20 @@ This is a feedback loop. A simple acyclic dependency graph cannot describe the w
 - Use systemd for supervision/restart; periodic reconciliation belongs inside the coordinator
   for migrated tasks. External archives/training may retain timers.
 
+## Language decision (2026-10-02)
+
+- Keep Python for coordinator and model/data work. Existing models/payload extraction are Python;
+  observed issue was large archive expansion, substantially reduced by target filtering.
+- Async I/O + bounded worker threads fit current network coordination. Pure Python CPU work is
+  GIL-limited; many NumPy operations release it. Keep mutable frames/models privately owned.
+  References: [Python threading with asyncio](https://docs.python.org/3.13/library/asyncio-task.html#asyncio.to_thread),
+  [NumPy thread safety](https://numpy.org/doc/2.3/reference/thread_safety.html).
+- Go/Rust dispatcher could improve runtime footprint, static contracts and CPU concurrency;
+  numerical Python stack would still need a bridge/service or substantial replacement/equivalence work.
+  Current measured coordination cost does not justify that migration.
+- Revisit for measured CPU-bound coordination, required hard timing limits or native failure isolation.
+  Prefer replace/profile a specific bottleneck first; process isolation is separate from language choice.
+
 ## Data and task contract
 
 - Normalised input: source, received time, issued time when available, content digest/revision,
@@ -137,8 +151,9 @@ Resident price shadow now uses independent validated source caches. Warm inferen
 memory reclamation keeps short runs below the unchanged 2 GiB guard. Current implementation/evidence
 and resume gates: [source-cache checkpoint](energy_pipeline_source_cache.md).
 Target-filtered STPASA archive reads substantially reduce multi-cycle memory/refresh cost with exact
-feature parity; six accelerated refresh/inference cycles use ~1.2 GiB. Longer normal shadow still
-required. Next: validate long-run memory and expose source freshness metadata,
+feature parity; six accelerated refresh/inference cycles use ~1.2 GiB. Bounded HTTP/STPASA/HA freshness
+evidence recorded; BOM provider freshness remains unknown. Next: validate long-run memory and expose
+missing provider freshness metadata,
 then explicit price result acceptance/publication and single-owner cutover. Collect independent
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.

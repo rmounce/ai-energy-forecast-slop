@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from energy_pipeline.source_cache import SourceCache, SourcePolicy, SourceUnavailable
+from energy_pipeline.freshness import FreshnessEvidence
 
 START = pd.Timestamp('2026-10-03T16:00:00Z')
 POLICY = SourcePolicy(('value',), 300, 1800)
@@ -28,10 +29,13 @@ def test_snapshots_are_isolated_and_unchanged_refresh_has_stable_revision():
 
 def test_failed_refresh_retains_last_good_without_resetting_age():
     cache = SourceCache({'aemo': POLICY})
-    cache.put('aemo', frame(), START)
+    evidence = [FreshnessEvidence('aemo', 'http_response_created', START.isoformat(), True, False)]
+    cache.put('aemo', frame(), START, evidence=evidence)
+    evidence.clear()
     with pytest.raises(SourceUnavailable):
         cache.put('aemo', frame(10), START+timedelta(minutes=10))
     assert cache.snapshot(START+timedelta(minutes=29))['aemo'].fetched_at == START
+    assert cache.snapshot(START+timedelta(minutes=29))['aemo'].evidence[0].timestamp == START.isoformat()
     with pytest.raises(SourceUnavailable, match='age'):
         cache.snapshot(START+timedelta(minutes=31))
     # A recovered identical source must re-arm dependent work.

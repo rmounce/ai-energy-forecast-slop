@@ -23,6 +23,7 @@ import pandas as pd
 import pytz
 import requests
 from aemo_session import make_aemo_session
+from energy_pipeline.freshness import FreshnessEvidence, record_evidence, record_http_response
 from influxdb import InfluxDBClient
 import time
 import pickle
@@ -254,6 +255,8 @@ def _load_stpasa_regionsolution(path: Path | None = None, *, targets=None) -> pd
         return pd.DataFrame()
     df["interval_dt"] = pd.to_datetime(df["interval_dt"], utc=True)
     df["run_time"] = pd.to_datetime(df["run_time"], utc=True)
+    if not df.empty:
+        record_evidence(FreshnessEvidence('stpasa', 'latest_run_in_target_window', df['run_time'].max().isoformat()))
     return df.sort_values(["interval_dt", "run_time"])
 
 
@@ -855,6 +858,7 @@ def _get_aemo_short_term_forecast():
             response = _aemo_session.post(url, json=payload, timeout=timeout_seconds)
             response.raise_for_status()
             data = response.json()
+            record_http_response('aemo_short_term', response)
             break # Success
         except requests.exceptions.RequestException as e:
             logging.warning(f"Attempt {attempt}/{max_attempts} failed to fetch AEMO forecast: {e}")
@@ -932,6 +936,7 @@ def _get_aemo_7_day_outlook_forecast():
         dir_url = "https://nemweb.com.au/Reports/CURRENT/SEVENDAYOUTLOOK_FULL/"
         response = _aemo_session.get(dir_url, timeout=30)
         response.raise_for_status()
+        record_http_response('nemweb_listing', response)
         
         file_pattern = r"PUBLIC_SEVENDAYOUTLOOK_FULL_(\d{14})_\d+\.zip"
         files = re.findall(file_pattern, response.text)
@@ -951,6 +956,7 @@ def _get_aemo_7_day_outlook_forecast():
         # 2. Download and extract the CSV from the ZIP in memory
         zip_response = _aemo_session.get(zip_url, timeout=60)
         zip_response.raise_for_status()
+        record_http_response('nemweb_report', zip_response)
         
         with zipfile.ZipFile(io.BytesIO(zip_response.content)) as z:
             csv_filename = z.namelist()[0]

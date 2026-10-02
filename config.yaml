@@ -11,6 +11,7 @@ home_assistant:
   amber_entity: sensor.amber_30min_forecasts_general_price
   amber_feed_in_entity: sensor.amber_30min_forecasts_feed_in_price
   amber_billing_entity: sensor.amber_billing_interval_forecasts_general_price
+  solcast_last_polled_entity: sensor.solcast_pv_forecast_api_last_polled
   solcast_entities:
   - sensor.solcast_pv_forecast_forecast_today
   - sensor.solcast_pv_forecast_forecast_tomorrow

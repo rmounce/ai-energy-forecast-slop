@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 import logging
 import time
+from pandas import DataFrame
 
 from energy_pipeline.source_cache import SourceCache
+from energy_pipeline.freshness import FreshnessEvidence, collect_freshness, serialize_evidence
 
 log = logging.getLogger('source_refresh')
 SOURCE_TIMEOUT_SECONDS = 180
@@ -16,7 +19,21 @@ class SourceRefreshTimeout(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class AcquiredSource:
+    frame: DataFrame
+    evidence: tuple[FreshnessEvidence, ...] = ()
+
+
 def acquire_source(name):
+    with collect_freshness() as evidence:
+        frame = _acquire_frame(name)
+        if name == 'weather':
+            evidence.append(FreshnessEvidence('bom', 'provider_fetch_unknown', None))
+        return AcquiredSource(frame, tuple(evidence))
+
+
+def _acquire_frame(name):
     import forecast as fc
     if name == 'aemo':
         return fc.get_aemo_forecast()
@@ -48,16 +65,17 @@ class SourceRefreshers:
         future = asyncio.get_running_loop().run_in_executor(self.executors[name], self.acquire, name)
         future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         try:
-            frame = await asyncio.wait_for(asyncio.shield(future), SOURCE_TIMEOUT_SECONDS)
+            acquired = await asyncio.wait_for(asyncio.shield(future), SOURCE_TIMEOUT_SECONDS)
         except asyncio.TimeoutError as exc:
             self.shutdown.set()
             raise SourceRefreshTimeout(f'{name}: acquisition deadline exceeded') from exc
         if self.shutdown.is_set():
             return
-        changed = self.cache.put(name, frame, fetched_at)
+        changed = self.cache.put(name, acquired.frame, fetched_at, evidence=acquired.evidence)
         if changed:
             self.trigger.set()
         log.info('source refreshed name=%s changed=%s elapsed=%.3fs', name, changed, time.monotonic()-started)
+        log.info('source freshness name=%s evidence=%s', name, serialize_evidence(acquired.evidence))
 
     async def loop(self, name):
         while not self.shutdown.is_set():
