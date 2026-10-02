@@ -159,8 +159,10 @@ missing provider freshness metadata ([staged BOM patch and capture adapter](ener
 Adapter checks observed marker stability with one retry; integration patch still unapplied and
 collector/entity atomicity unverified. Tariff reads
 now frozen per run. Shadow result acceptance now
-rejects changed inputs, expiry and observed validation races. Next publication step: durable accepted
-bundles, partial-write recovery and single-owner cutover. Collect independent
+rejects changed inputs, expiry and observed validation races. Opt-in [durable checkpoint](energy_pipeline_accepted_store.md)
+stores accepted shadows; restart treats them as historical evidence. Live checkpoint validation blocked
+by weather 72-hour coverage admission on latest attempt; investigate interval-dependent coverage.
+Next publication step: partial-write recovery and single-owner cutover. Collect independent
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.
 Production cutover remains gated on shadow equivalence and verified single ownership.

@@ -5,6 +5,7 @@ import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 from config_utils import load_config
 from energy_pipeline.price_worker import PriceWorker
 from energy_pipeline.acceptance import AcceptanceDecision
+from energy_pipeline.accepted_store import AcceptedStore, StoreError
 from energy_pipeline.source_cache import SourceCache, SourceUnavailable, price_source_policies
 from energy_pipeline.source_refresh import SourceRefreshers
 from services.ha_listener import Listener, _install_signal_handlers
@@ -34,8 +36,13 @@ class WorkerResourceLimit(RuntimeError):
 
 
 class ResidentPriceListener(Listener):
-    def __init__(self, config, predictor=None):
+    def __init__(self, config, predictor=None, *, store=None):
         super().__init__(config)
+        self.store = store
+        self.recovered = store.recover() if store is not None else None
+        if self.recovered is not None:
+            log.info('recovered historical shadow checkpoint run=%s time_current=%s; fresh reconciliation required',
+                     self.recovered.payload['run_id'], self.recovered.time_current())
         self.predictor = predictor or PriceWorker(SourceCache(price_source_policies(config)))
         self.refreshers = SourceRefreshers(self.predictor.sources, self.trigger, self.shutdown) if isinstance(self.predictor, PriceWorker) else None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='price')
@@ -81,6 +88,14 @@ class ResidentPriceListener(Listener):
                     decision = AcceptanceDecision(('source_changed_during_acceptance',), True)
                 log.info('resident acceptance checked run=%s elapsed=%.3fs accepted=%s',
                          result.outcome.run_id, time.monotonic()-acceptance_started, decision.accepted)
+                if decision.accepted and self.store is not None and not self.shutdown.is_set():
+                    saved = await submit(self.store.save, result, datetime.now(timezone.utc))
+                    if generation != self._input_generation:
+                        decision = AcceptanceDecision(('ha_changed_during_checkpoint',), True)
+                    elif self.refreshers and source_generation != self.predictor.sources.generation:
+                        decision = AcceptanceDecision(('source_changed_during_checkpoint',), True)
+                    elif saved is not None and not saved.time_current():
+                        decision = AcceptanceDecision(('completion_expired_during_checkpoint',), True)
                 return result, decision
             try:
                 result, decision = await asyncio.wait_for(generate_and_check(), WORKER_TIMEOUT_SECONDS)
@@ -91,6 +106,9 @@ class ResidentPriceListener(Listener):
                 # inference in this process; main exits to let supervision restart it.
                 raise WorkerTimeout('price worker exceeded deadline') from exc
             except asyncio.CancelledError:
+                self.shutdown.set()
+                raise
+            except StoreError:
                 self.shutdown.set()
                 raise
             except SourceUnavailable as exc:
@@ -158,6 +176,7 @@ def main():
     lifetime.add_argument('--runs', type=int, help='warm sources once, run N shadow predictions, then exit')
     lifetime.add_argument('--duration', type=float, help='run normal event/refresh loops for N seconds, then stop')
     parser.add_argument('--verify-reload', action='store_true', help='compare each quantile against a freshly loaded model on identical inputs')
+    parser.add_argument('--state-file', type=Path, help='opt-in single-owner atomic accepted shadow checkpoint')
     args = parser.parse_args()
     if args.runs is not None and args.runs < 1:
         parser.error('--runs must be positive')
@@ -166,7 +185,13 @@ def main():
     config = load_config(ROOT / 'config.yaml')
     if not config['home_assistant'].get('token'):
         parser.error('home_assistant.token missing')
-    listener = ResidentPriceListener(config, PriceWorker(SourceCache(price_source_policies(config)), verify_reload=args.verify_reload))
+    store = AcceptedStore(args.state_file) if args.state_file else None
+    try:
+        listener = ResidentPriceListener(config, PriceWorker(SourceCache(price_source_policies(config)), verify_reload=args.verify_reload), store=store)
+    except BaseException:
+        if store is not None:
+            store.close()
+        raise
 
     async def run():
         _install_signal_handlers(listener, asyncio.get_running_loop())
@@ -212,8 +237,9 @@ def main():
         if listener.refreshers is not None:
             listener.refreshers.close()
     # Python normally joins executor threads at exit. A stuck worker would
-    # prevent systemd restart; shadow mode has no publication/file transaction
-    # to commit, so terminate the process after flushing its diagnostic logs.
+    # prevent supervision restart. A timed-out checkpoint may finish late;
+    # recovery treats every surviving record as historical, never a publication lease.
+    # Keep the file ownership lock until process exit, including late worker activity.
     logging.shutdown()
     sys.stdout.flush()
     sys.stderr.flush()
