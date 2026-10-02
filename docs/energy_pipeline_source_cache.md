@@ -89,6 +89,8 @@ flowchart LR
   or a separate source contract before production admission is trustworthy.
 - Native hourly `issue_time` confirmed; [integration attribute patch](energy_pipeline_bom_freshness.md)
   staged/dry-checked only. Production integration untouched; hourly cache clocks not yet exposed in HA.
+  Resident adapter checks before/after markers, retries one observed race, retains prior cache on
+  repeated race/read failure. Stable markers are observed evidence; atomic association unverified.
 
 ## Freshness provenance implementation
 
@@ -211,7 +213,7 @@ flowchart LR
   UTC Solcast normalization, no-acquisition inference path, content lineage, memory reclamation,
   shadow result acceptance. [Contract and latest evidence](energy_pipeline_price_acceptance.md).
 - Cached/reloaded quantile parity passes on admitted cached inputs; all quantiles 144 points.
-- Focused suite: 126 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
+- Focused suite: 133 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
   cache, deadline discard, memory guard/reclamation, cached HTTP timestamps, collector isolation,
   real response-path evidence, changed-parent rejection, validation races/deadlines, source recovery,
   frozen tariff mutation/isolation/conversion parity, incumbent regressions.

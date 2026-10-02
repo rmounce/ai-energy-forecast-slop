@@ -10,6 +10,7 @@ from pandas import DataFrame
 
 from energy_pipeline.source_cache import SourceCache
 from energy_pipeline.freshness import FreshnessEvidence, collect_freshness, serialize_evidence
+from energy_pipeline.weather import capture_weather
 
 log = logging.getLogger('source_refresh')
 SOURCE_TIMEOUT_SECONDS = 180
@@ -28,8 +29,6 @@ class AcquiredSource:
 def acquire_source(name):
     with collect_freshness() as evidence:
         frame = _acquire_frame(name)
-        if name == 'weather':
-            evidence.append(FreshnessEvidence('bom', 'provider_fetch_unknown', None))
         return AcquiredSource(frame, tuple(evidence))
 
 
@@ -38,7 +37,7 @@ def _acquire_frame(name):
     if name == 'aemo':
         return fc.get_aemo_forecast()
     if name == 'weather':
-        return fc.get_weather_forecast()
+        return capture_weather(fc)
     if name == 'history':
         start = datetime.now(timezone.utc)
         start = start.replace(minute=start.minute//30*30, second=0, microsecond=0)

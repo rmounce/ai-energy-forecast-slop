@@ -155,7 +155,9 @@ and resume gates: [source-cache checkpoint](energy_pipeline_source_cache.md).
 Target-filtered STPASA archive reads substantially reduce multi-cycle memory/refresh cost with exact
 feature parity; six accelerated refresh/inference cycles use ~1.2 GiB. Bounded HTTP/STPASA/HA freshness
 evidence recorded; BOM provider freshness remains unknown. Next: validate long-run memory and expose
-missing provider freshness metadata ([staged BOM patch](energy_pipeline_bom_freshness.md)). Tariff reads
+missing provider freshness metadata ([staged BOM patch and capture adapter](energy_pipeline_bom_freshness.md)).
+Adapter checks observed marker stability with one retry; integration patch still unapplied and
+collector/entity atomicity unverified. Tariff reads
 now frozen per run. Shadow result acceptance now
 rejects changed inputs, expiry and observed validation races. Next publication step: durable accepted
 bundles, partial-write recovery and single-owner cutover. Collect independent

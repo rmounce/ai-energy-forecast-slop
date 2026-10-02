@@ -67,8 +67,12 @@ def test_slow_refresh_does_not_block_cached_consumption():
     asyncio.run(run())
 
 
-def test_weather_acquisition_explicitly_marks_unknown_provider_fetch(monkeypatch):
-    monkeypatch.setattr(refresh_module, '_acquire_frame', lambda name: frame())
+def test_acquisition_preserves_collected_weather_evidence(monkeypatch):
+    from energy_pipeline.freshness import record_evidence
+    def acquire(name):
+        record_evidence(FreshnessEvidence('bom', 'provider_fetch_unknown', None))
+        return frame()
+    monkeypatch.setattr(refresh_module, '_acquire_frame', acquire)
     acquired = refresh_module.acquire_source('weather')
     assert acquired.evidence == (FreshnessEvidence('bom', 'provider_fetch_unknown', None),)
 

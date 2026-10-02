@@ -33,10 +33,22 @@ Status: patch prepared/dry-checked, NOT applied. Production HA integration untou
   config-entry reload alone does not establish module reload. Follow [HA recovery/reload guidance](ha_hot_reload.md)
   for any controlled deployment. No reload/restart performed in this work.
 
-## Next adapter step
+## Resident capture adapter
 
-- Read hourly markers before/after HA forecast service acquisition; only associate clocks with
-  the frame when markers stayed stable. Reject/reconcile mixed update; absent patch remains explicit
-  unknown provider freshness. Validate actual attribute/array lifecycle after controlled deployment.
+- `energy_pipeline/weather.py` reads hourly markers before/after the existing HA forecast service.
+  Changed markers discard the capture and retry once; a second change fails refresh, retaining
+  the previous cached frame/evidence/time. Failed state reads also fail refresh.
+- Stable aware timestamps normalize to UTC; absent/null/malformed/naive values remain explicit
+  unknown issue/fetch evidence. No capture clock substituted. Production forecast path unchanged.
+- Clocks are labelled `hourly_issue_observed` / `hourly_successful_fetch_observed`: these separate
+  HA reads detect observed races, not an atomic collector snapshot. Collector-to-entity update lag
+  remains unverified. Validate actual attribute/array lifecycle after controlled deployment before
+  treating these markers as an admission contract.
+- Seven adapter checks cover stable clocks, retry/discard, repeated races, missing/invalid clocks,
+  failed reads; focused pipeline regression suite: 133 passed.
+- Live unpatched HA shadow, 2026-10-02 16:05 Adelaide: weather capture 0.216s, 145 weather points;
+  both provider clocks explicitly unknown. Accepted 144-point quantile forecasts, 3 model loads,
+  RSS 1129.4 MiB; acceptance 0.082s, exit 0. No publications/reloads/restarts. Does not validate
+  patched integration lifecycle or sustained memory behaviour.
 - Capture issue age and successful-fetch age separately. Choose admission budgets from observed
   cadence/coverage; no new source thresholds/pages introduced by the staged patch.
