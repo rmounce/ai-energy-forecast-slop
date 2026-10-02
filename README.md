@@ -24,7 +24,7 @@ Pipeline consolidation work: [plan](docs/energy_pipeline_architecture_plan.md),
 [offline payload replay](docs/energy_pipeline_payload_replay.md),
 [resident price shadow](docs/energy_pipeline_resident_price.md),
 [current checkpoint](docs/energy_pipeline_source_cache.md). Production routing remains unchanged;
-multi-cycle memory growth and upstream freshness metadata remain migration gates.
+long-run memory validation and upstream freshness metadata remain migration gates.
 
 ## Features
 

@@ -230,7 +230,7 @@ def _stpasa_features_requested() -> bool:
     return False
 
 
-def _load_stpasa_regionsolution(path: Path | None = None) -> pd.DataFrame:
+def _load_stpasa_regionsolution(path: Path | None = None, *, targets=None) -> pd.DataFrame:
     """Load local SA1 STPASA REGIONSOLUTION parquet for price covariates."""
 
     source_path = path or _stpasa_regionsolution_path()
@@ -238,8 +238,17 @@ def _load_stpasa_regionsolution(path: Path | None = None) -> pd.DataFrame:
         logging.warning("STPASA REGIONSOLUTION parquet not found: %s", source_path)
         return pd.DataFrame()
     cols = ["interval_dt", "run_time", *STPASA_SOURCE_COLUMNS]
+    filters = None
+    if targets is not None:
+        if len(targets) == 0:
+            return pd.DataFrame(columns=cols)
+        targets = pd.to_datetime(targets, utc=True)
+        # Keep every run for relevant targets: historical as-of selection still
+        # happens below. Filtering run_time to 'latest' would introduce lookahead.
+        filters = [("interval_dt", ">=", targets.min().to_pydatetime()),
+                   ("interval_dt", "<=", targets.max().to_pydatetime())]
     try:
-        df = pd.read_parquet(source_path, columns=cols)
+        df = pd.read_parquet(source_path, columns=cols, filters=filters)
     except Exception as e:
         logging.warning("Failed to read STPASA REGIONSOLUTION parquet %s: %s", source_path, e)
         return pd.DataFrame()
@@ -319,7 +328,7 @@ def _attach_stpasa_features_for_targets(
 
 
 def _get_historical_stpasa_features(index: pd.DatetimeIndex, base_df: pd.DataFrame) -> pd.DataFrame:
-    stpasa_df = _load_stpasa_regionsolution()
+    stpasa_df = _load_stpasa_regionsolution(targets=index)
     features = _attach_stpasa_features_for_targets(
         base_df.reindex(index),
         stpasa_df,
@@ -331,7 +340,7 @@ def _get_historical_stpasa_features(index: pd.DatetimeIndex, base_df: pd.DataFra
 
 
 def _get_stpasa_forecast_features(base_df: pd.DataFrame, asof_time: pd.Timestamp) -> pd.DataFrame:
-    stpasa_df = _load_stpasa_regionsolution()
+    stpasa_df = _load_stpasa_regionsolution(targets=base_df.index)
     return _attach_stpasa_features_for_targets(base_df, stpasa_df, asof_times=asof_time)
 
 def _get_historical_pd7day_prices(client, start_time, end_time, region='SA1',

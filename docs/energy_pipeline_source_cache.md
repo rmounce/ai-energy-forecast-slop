@@ -117,6 +117,33 @@ flowchart LR
   Next isolate repeated AEMO vs history acquisition with stable inference and measure Python/native
   retention per thread/source. No upstream failure/reconnect injected in this session.
 
+## Archive-read correction (2026-10-02 morning)
+
+- Isolated five AEMO/history refresh pairs without models: RSS after GC + forced libc trim
+  ~102 MiB baseline, 531 MiB first AEMO, 613 MiB first history, 861 MiB final. Accepted frames
+  only 0.056/0.111 MiB. Growth exists without inference or retained forecast results.
+- Both source paths loaded the entire STPASA parquet on every refresh: 159 MiB compressed,
+  4,011,552 rows. Large transient archive expansion/feature grouping drives substantial retention;
+  exact allocator attribution is not proven (installed Arrow pool uses mimalloc; libc trim does
+  not establish that its pages were reclaimed).
+- `forecast.py:_load_stpasa_regionsolution(targets=...)`: parquet interval_dt range predicate
+  limits materialization/grouping to requested target window. Keep ALL run_time revisions in
+  that range; existing per-target as-of selection unchanged, including historical no-lookahead.
+  Both historical and future feature callers pass their target indexes. Empty targets skip read.
+  Shared acquisition code benefits incumbent CLI on its next run too; no unit/ownership changes.
+- Frozen copy of live archive: exact feature equality between full and filtered reads for
+  480 historical half-hours and 373 future half-hours, all feature columns/NaNs. Filtered rows
+  69,120 history / 28,656 future. Test also covers multiple revisions, future-issued rows and DST.
+- Five filtered source pairs: forced-trim RSS 198 →293 MiB; AEMO ~2.0–2.5s vs ~8s,
+  history ~2.6–3.0s vs ~8s. Reduced growth, not proof of zero retained growth.
+- Six concurrent refresh → inference cycles, production maintenance policy unchanged: RSS
+  1164, 1162, 1192, 1218, 1221, 1232 MiB; all below trim threshold, no allocator trim required.
+  Three model loads total; cold 13.5s, warm 4.3–5.1s. Full new input-lineage keys present.
+  Calculation only, no publication. RSS still rises ~68 MiB: longer normal event-loop validation
+  remains necessary before accepting long-run memory stability. No guard/threshold relaxation.
+- Focused suite including STPASA feature tests: 79 pass. Scratch probes under /tmp, no household
+  archive or raw frames committed. Temporary frozen parquet removed after parity comparison.
+
 ## Commands
 
 ```bash
@@ -139,7 +166,7 @@ flowchart LR
 - Focused suite: 75 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
   cache, deadline discard, memory guard/reclamation, incumbent regressions.
 - Still shadow only. Short benchmark evidence is not a full-day memory/failure-recovery gate.
-- Next: investigate multi-cycle memory growth, then longer shadow over source failures/reconnect/
+- Next: validate filtered reads over longer normal shadow and source failures/reconnect/
   interval/DST boundaries; expose trustworthy source freshness metadata and test result rejection.
 - Then implement result acceptance/publication transaction and switch price ownership with explicit
   rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

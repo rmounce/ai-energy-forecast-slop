@@ -4,6 +4,26 @@ import pandas as pd
 import forecast as fc
 
 
+def test_filtered_archive_preserves_historical_asof_and_forecast_features(tmp_path):
+    targets = pd.date_range('2026-10-03T15:30:00Z', periods=4, freq='30min')
+    rows = []
+    for target in [targets[0]-pd.Timedelta(days=10), *targets, targets[-1]+pd.Timedelta(days=10)]:
+        for lag in (48, 1, -1):
+            rows.append({'interval_dt': target, 'run_time': target-pd.Timedelta(hours=lag),
+                         **{col: float(lag+50) for col in fc.STPASA_SOURCE_COLUMNS}})
+    path = tmp_path/'archive.parquet'
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    full = fc._load_stpasa_regionsolution(path)
+    filtered = fc._load_stpasa_regionsolution(path, targets=targets.tz_convert('Australia/Adelaide'))
+    assert len(filtered) == 12
+    base = pd.DataFrame({'total_demand_sa1': 1000.}, index=targets)
+    for asof in (targets, targets[0]-pd.Timedelta(hours=2)):
+        pd.testing.assert_frame_equal(
+            fc._attach_stpasa_features_for_targets(base, full, asof_times=asof),
+            fc._attach_stpasa_features_for_targets(base, filtered, asof_times=asof))
+    assert fc._load_stpasa_regionsolution(path, targets=targets[:0]).empty
+
+
 def test_attach_stpasa_features_uses_latest_run_available_at_asof():
     target = pd.Timestamp("2026-05-04T00:00:00Z")
     base = pd.DataFrame(
@@ -96,7 +116,7 @@ def test_get_stpasa_forecast_features_uses_forecast_demand(monkeypatch):
             "ss_solar_capacity": [250.0],
         }
     )
-    monkeypatch.setattr(fc, "_load_stpasa_regionsolution", lambda: stpasa)
+    monkeypatch.setattr(fc, "_load_stpasa_regionsolution", lambda **kwargs: stpasa)
 
     out = fc._get_stpasa_forecast_features(
         base,
