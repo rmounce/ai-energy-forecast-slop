@@ -171,3 +171,6 @@ remote publication/consumer contract remains before single-owner cutover. Collec
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.
 Production cutover remains gated on shadow equivalence and verified single ownership.
+
+Solver isolation audit: [installed side effects/result contract](energy_pipeline_solver_isolation.md).
+Live wrappers write shared state even with saving/posts disabled; next direct-core isolated worker.
