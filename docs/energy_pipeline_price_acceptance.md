@@ -64,5 +64,6 @@ Parent: [pipeline plan](energy_pipeline_architecture_plan.md),
 
 Hourly [freshness capture adapter](energy_pipeline_bom_freshness.md) implemented; HA patch unapplied.
 Live expired-checkpoint restart and local publication rehearsal verified; next remote publication/consumer
-contract and bundle-aware DH/MPC shadow handoff.
+contract and isolated DH solve. [Bundle-aware DH/MPC payload handoff](energy_pipeline_handoff.md)
+now recorded/replayed; MPC DH price-parent still unknown until a new accepted solve exists.
 Production price owner stays incumbent until gates pass.

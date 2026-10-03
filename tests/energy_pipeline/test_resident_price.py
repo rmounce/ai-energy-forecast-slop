@@ -421,3 +421,38 @@ def test_local_publication_gates_heartbeat_and_preserves_validation_decisions(mo
         finally:
             listener.executor.shutdown(wait=True)
     asyncio.run(run())
+
+
+def test_handoff_uses_selected_frozen_states_and_saves_before_heartbeat(monkeypatch):
+    import forecast as fc
+    async def run():
+        captured = []
+        record = {'readiness': {'dh': {'coverage_ready': True}}}
+        def build(plan, snapshot):
+            captured.append(snapshot)
+            return record
+        monkeypatch.setattr(resident, 'prepare_plan', lambda *args: {'id': 'local'})
+        monkeypatch.setattr(resident, 'build_handoff', build)
+        monkeypatch.setattr(fc, 'call_ha_api', lambda method, endpoint: [
+            {'entity_id': 'sensor.sigen_plant_rated_energy_capacity', 'state': '50', 'attributes': {}},
+            {'entity_id': 'sensor.unrelated', 'state': 'secret', 'attributes': {}}])
+        saved = SimpleNamespace(time_current=lambda: True)
+        persisted = []
+        def save(plan, result):
+            assert listener.completed is None and listener.last_run_at is None
+            persisted.append(result)
+        publication = SimpleNamespace(abandon_pending=lambda: 0,
+            execute=lambda plan, valid: valid(), save_handoff=save)
+        listener = ResidentPriceListener({**CONFIG, 'timezone': 'Australia/Adelaide'},
+            SimpleNamespace(predict=completion, evaluate_completion=lambda result: AcceptanceDecision()),
+            store=SimpleNamespace(recover=lambda: None, save=lambda *args: saved),
+            publication=publication, handoff=True)
+        try:
+            await listener._run_predict_price()
+            assert persisted == [record]
+            assert set(captured[0]['states']) == {'sensor.sigen_plant_rated_energy_capacity'}
+            assert captured[0]['capture_started_at'] <= captured[0]['captured_at']
+            assert listener.completed is not None
+        finally:
+            listener.executor.shutdown(wait=True)
+    asyncio.run(run())

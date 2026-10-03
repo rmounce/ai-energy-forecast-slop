@@ -58,5 +58,5 @@ Parent: [accepted checkpoint](energy_pipeline_accepted_store.md).
 - Revalidate at actual publication, verify exclusive production ownership, exercise remote timeout/
   unknown acknowledgement/restart/partial-write behaviour and explicit rollback. No HA transport added.
 - Sustained memory/provider freshness/failure/DST gates remain open. BOM metadata patch unapplied.
-- Next: design bundle-aware DH/MPC shadow handoff; gather independent daytime/curtailment/recovery
-  replay evidence. Keep current HA solver/control ownership until separate acceptance gates pass.
+- [Bundle-aware DH/MPC handoff](energy_pipeline_handoff.md) implemented; independent daytime replay
+  passed. Next isolated DH solve/result-parent handoff; curtailment/recovery replay still open. Keep current HA solver/control ownership until separate acceptance gates pass.

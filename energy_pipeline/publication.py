@@ -74,6 +74,8 @@ class ShadowPublication:
                     (entity TEXT PRIMARY KEY, job TEXT NOT NULL, payload TEXT NOT NULL);
                     CREATE TABLE IF NOT EXISTS marker
                     (singleton INTEGER PRIMARY KEY CHECK(singleton=1), job TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS handoffs
+                    (job TEXT PRIMARY KEY, record TEXT NOT NULL);
                 ''')
         except Exception as exc:
             self.close()
@@ -128,6 +130,24 @@ class ShadowPublication:
             db.execute('INSERT INTO outputs VALUES (?, ?, ?) ON CONFLICT(entity) DO UPDATE SET job=excluded.job, payload=excluded.payload',
                        (write['entity'], job, encoded(write['payload'])))
 
+    def save_handoff(self, plan, record):
+        try:
+            self._save_handoff(plan, record)
+        except StoreError:
+            raise
+        except Exception as exc:
+            raise StoreError('handoff journal write failed') from exc
+
+    def _save_handoff(self, plan, record):
+        if record['publication_id'] != plan['id'] or self.committed_family() != plan:
+            raise StoreError('handoff parent is not the committed local family')
+        raw = encoded(record)
+        if len(raw.encode()) > 2 * 1024 * 1024:
+            raise StoreError('handoff record exceeds size limit')
+        with self._connect() as db:
+            db.execute('INSERT INTO handoffs VALUES (?, ?) ON CONFLICT(job) DO UPDATE SET record=excluded.record',
+                       (plan['id'], raw))
+
     def _ack(self, job, receipts):
         with self._connect() as db:
             db.execute('UPDATE jobs SET receipts=? WHERE id=?', (encoded(receipts), job))
@@ -172,6 +192,7 @@ class ShadowPublication:
                 db.execute("UPDATE jobs SET status='abandoned' WHERE status='pending'")
                 # Bound history; active job/marker retained. Local sink uses only current targets.
                 db.execute("DELETE FROM jobs WHERE id IN (SELECT id FROM jobs WHERE status != 'pending' AND id NOT IN (SELECT job FROM marker) ORDER BY rowid DESC LIMIT -1 OFFSET 8)")
+                db.execute('DELETE FROM handoffs WHERE job NOT IN (SELECT id FROM jobs)')
                 db.execute('INSERT INTO jobs VALUES (?, ?, ?, ?)', (job, encoded(plan), 'pending', '[]'))
                 receipts = []
         for write in plan['writes']:

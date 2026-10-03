@@ -6,12 +6,14 @@ Snapshots contain household telemetry; keep them in ignored data/energy_replay/.
 from __future__ import annotations
 import argparse
 import copy
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import json
 import math
 from pathlib import Path
 import re
 import subprocess
+import sqlite3
 import sys
 import urllib.request
 
@@ -154,6 +156,7 @@ def main():
     parser.add_argument('--capture', type=Path)
     parser.add_argument('--container', default='hass')
     parser.add_argument('--variants', action='store_true', help='also replay deterministic edge-case mutations')
+    parser.add_argument('--handoff-db', type=Path, help='replay stored shadow handoff snapshots from a readonly SQLite journal')
     args = parser.parse_args()
     paths = list(args.snapshots)
     if args.capture:
@@ -161,7 +164,7 @@ def main():
         args.capture.parent.mkdir(parents=True, exist_ok=True)
         args.capture.write_text(json.dumps(snapshot, indent=2) + '\n')
         paths.append(args.capture)
-    if not paths:
+    if not paths and not args.handoff_db:
         parser.error('provide snapshots or --capture')
     failed = False
     for path in paths:
@@ -173,6 +176,19 @@ def main():
                   f"{len(payloads['dh']['load_power_forecast'])}/{len(payloads['mpc']['load_power_forecast'])}", flush=True)
             for mismatch in mismatches[:20]:
                 print('  ' + mismatch)
+            failed |= bool(mismatches)
+    if args.handoff_db:
+        with closing(sqlite3.connect(args.handoff_db.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+            records = db.execute('SELECT record FROM handoffs ORDER BY rowid').fetchall()
+        if not records:
+            parser.error('handoff journal contains no captured payloads')
+        for raw, in records:
+            record = json.loads(raw)
+            mismatches, payloads = replay(record['input_snapshot'], args.container)
+            mismatches.extend(differences(record['payloads'], payloads, 'stored_payloads'))
+            print(f"handoff {record['price_run_id']}: {len(mismatches)} mismatches; readiness={record['readiness']}", flush=True)
+            for mismatch in mismatches[:20]:
+                print('  '+mismatch)
             failed |= bool(mismatches)
     return int(failed)
 

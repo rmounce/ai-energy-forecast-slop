@@ -214,7 +214,7 @@ flowchart LR
   shadow result acceptance and opt-in [durable checkpoint](energy_pipeline_accepted_store.md).
   [Contract and latest evidence](energy_pipeline_price_acceptance.md).
 - Cached/reloaded quantile parity passes on admitted cached inputs; all quantiles 144 points.
-- Focused suite: 177 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
+- Focused suite: 196 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
   cache, deadline discard, memory guard/reclamation, cached HTTP timestamps, collector isolation,
   real response-path evidence, changed-parent rejection, validation races/deadlines, source recovery,
   frozen tariff mutation/isolation/conversion parity, incumbent regressions.
@@ -224,5 +224,6 @@ flowchart LR
 - Durable checkpoint implemented; live expired-checkpoint restart reconciliation passed.
   [Weather tail admission](energy_pipeline_weather_coverage.md) preserves incumbent post-adjustment fill
   for at most one hour; no raw frame extension. [Local publication rehearsal](energy_pipeline_publication.md)
-  verifies durable receipts/recovery/commit guard; SQLite only. Next bundle-aware DH/MPC shadow handoff
-  and remote publication/consumer contract, then explicit rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.
+  verifies durable receipts/recovery/commit guard; SQLite only. [Bundle-aware DH/MPC handoff](energy_pipeline_handoff.md) now records payloads/lineage
+  with independent daytime HA Jinja parity. Next isolated DH solve and accepted-DH →MPC shadow;
+  remote publication/consumer contract, then explicit rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

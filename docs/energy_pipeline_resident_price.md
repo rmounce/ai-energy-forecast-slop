@@ -80,4 +80,6 @@ Current memory/source-cache evidence and precise resume point:
 - `--publication-db` enables [SQLite-only transaction rehearsal](energy_pipeline_publication.md) with
   fresh parent checks/partial-write recovery; no HA outputs.
 - Retain current production publisher until those gates pass; then one-owner cutover/rollback.
+- `--handoff-shadow` records [bundle-aware DH/MPC payloads](energy_pipeline_handoff.md); daytime
+  HA Jinja parity verified, solve permission disabled. Next isolated DH solve/result-parent rehearsal.
 - DH/MPC solve/control migration remains a separate shadow and acceptance phase.

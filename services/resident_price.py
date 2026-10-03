@@ -19,6 +19,7 @@ from energy_pipeline.price_worker import PriceWorker
 from energy_pipeline.acceptance import AcceptanceDecision
 from energy_pipeline.accepted_store import AcceptedStore, StoreError
 from energy_pipeline.publication import ShadowPublication, prepare_plan
+from energy_pipeline.handoff import ENTITIES, build_handoff
 from energy_pipeline.source_cache import SourceCache, SourceUnavailable, price_source_policies
 from energy_pipeline.source_refresh import SourceRefreshers
 from services.ha_listener import Listener, _install_signal_handlers
@@ -37,10 +38,13 @@ class WorkerResourceLimit(RuntimeError):
 
 
 class ResidentPriceListener(Listener):
-    def __init__(self, config, predictor=None, *, store=None, publication=None):
+    def __init__(self, config, predictor=None, *, store=None, publication=None, handoff=False):
         super().__init__(config)
         if publication is not None and store is None:
             raise ValueError('local publication requires accepted checkpoint storage')
+        if handoff and publication is None:
+            raise ValueError('handoff shadow requires local publication')
+        self.handoff = handoff
         self._publication_config = config
         self.store = store
         self.publication = publication
@@ -115,6 +119,22 @@ class ResidentPriceListener(Listener):
                                     and generation == self._input_generation
                                     and (not self.refreshers or source_generation == self.predictor.sources.generation))
                             committed = self.publication.execute(plan, revalidate)
+                            if committed and self.handoff:
+                                import forecast as fc
+                                started = datetime.now(timezone.utc).isoformat()
+                                rows = fc.call_ha_api('GET', 'states')
+                                if not isinstance(rows, list):
+                                    raise StoreError('cannot capture handoff HA inputs')
+                                snapshot = {'capture_started_at': started,
+                                    'captured_at': datetime.now(timezone.utc).isoformat(),
+                                    'timezone': self._publication_config['timezone'],
+                                    'states': {row['entity_id']: row for row in rows if row['entity_id'] in ENTITIES}}
+                                record = build_handoff(plan, snapshot)
+                                if saved.time_current() and revalidate():
+                                    self.publication.save_handoff(plan, record)
+                                    log.info('handoff shadow run=%s readiness=%s', result.outcome.run_id, record['readiness'])
+                                else:
+                                    committed = False
                             log.info('local publication rehearsal run=%s committed=%s', result.outcome.run_id, committed)
                             return committed, last_validation
                         committed, validation = await submit(rehearse)
@@ -204,9 +224,12 @@ def main():
     parser.add_argument('--verify-reload', action='store_true', help='compare each quantile against a freshly loaded model on identical inputs')
     parser.add_argument('--state-file', type=Path, help='opt-in single-owner atomic accepted shadow checkpoint')
     parser.add_argument('--publication-db', type=Path, help='opt-in SQLite local publication rehearsal; no HA writes')
+    parser.add_argument('--handoff-shadow', action='store_true', help='rehearse DH/MPC payload handoff locally; no solver requests')
     args = parser.parse_args()
     if args.publication_db and not args.state_file:
         parser.error('--publication-db requires --state-file')
+    if args.handoff_shadow and not args.publication_db:
+        parser.error('--handoff-shadow requires --publication-db')
     if args.runs is not None and args.runs < 1:
         parser.error('--runs must be positive')
     if args.duration is not None and args.duration <= 0:
@@ -218,7 +241,7 @@ def main():
     publication = None
     try:
         publication = ShadowPublication(args.publication_db) if args.publication_db else None
-        listener = ResidentPriceListener(config, PriceWorker(SourceCache(price_source_policies(config)), verify_reload=args.verify_reload), store=store, publication=publication)
+        listener = ResidentPriceListener(config, PriceWorker(SourceCache(price_source_policies(config)), verify_reload=args.verify_reload), store=store, publication=publication, handoff=args.handoff_shadow)
     except BaseException:
         if publication is not None:
             publication.close()

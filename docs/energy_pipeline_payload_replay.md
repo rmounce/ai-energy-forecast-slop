@@ -51,7 +51,9 @@ Credentials loaded from existing config/secrets; never stored in replay snapshot
 
 ## Remaining gates
 
-- Collect independent daytime/negative-price/curtailment/restart snapshots; replay them.
+- Two independent daytime bundle-overlaid snapshots now pass exact HA Jinja parity:
+  [handoff evidence/limits](energy_pipeline_handoff.md). Negative-price/curtailment/solver-restart
+  independent snapshots remain open.
 - Target-offset automation has unit coverage; full HA automation scheduling not replayed.
 - No inference/model/solver/control migration yet; offline parity does not prove safe cutover.
 - Resident price calculation-only worker implemented: [shadow evidence](energy_pipeline_resident_price.md).
