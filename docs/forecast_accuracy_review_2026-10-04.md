@@ -215,3 +215,54 @@ Hypothesis: sharing examples across related horizons improves stability; smooth 
 5. Reserve scarcity/neural/scenario work for demonstrated residual gaps; run controlled dispatch only on shortlisted candidates.
 
 No expected percentage gain is asserted. Prior results and external models support these hypotheses; only the new matched walk-forward experiment can establish improvements here.
+
+## Economic priorities with APF retained — user follow-up
+
+User expects APF to remain available. Working assumption: improve the APF-backed system's
+economic outcome; APF-free research becomes a resilience option with lower priority.
+This changes the execution order above when choosing work for financial return rather than
+forecast accuracy. These rankings are hypotheses, not measured savings.
+
+1. **Establish trustworthy economic replay and loss attribution.** Finish the narrow isolated
+   solver boundary already selected in [solver checkpoint](energy_pipeline_solver_isolation.md);
+   avoid live EMHASS action wrappers, which write shared state even with posting disabled.
+   Replay the real DH/MPC SoC feedback, current tariff, HWC inputs, export limits and battery
+   losses. Compare planned with delivered action. Report net cost/export revenue, ending stored
+   energy, throughput, clipping and unmet-load risk. Preserve the current production policy as
+   baseline. Perfect price/PV/load substitutions separately diagnose headroom; oracle results
+   require consistent endpoint/constraint treatment and are not achievable savings estimates.
+2. **Test decision policies with forecasts held fixed.** Compare current terminal SoC/lock-in
+   policy and buy/sell quantile weights with small bounded alternatives. Target repeated
+   deferral to cheap windows that recede, premature depletion before expensive periods and
+   unnecessary grid precharge before solar. Start from the existing
+   [charge-lever hypothesis](charge_lever_controller_plan_2026-06-22.md), but test across event
+   and quiet periods; the June episode alone does not validate it. Raising a quantile blend
+   does not guarantee earlier charging: only relative price reshaping and resulting dispatch
+   establish the mechanism. Test terminal policy and uncertainty weights separately before
+   combining them; avoid counting one risk twice. Retain a route toward soft terminal energy
+   value/scenario optimisation if simple controls show economic headroom.
+3. **Improve usable net-energy forecasts and flexible-load coordination.** Attribute PV
+   forecast errors, clipping/curtailment, load bias and HWC timing to actual costs. Test rolling
+   PV/base-load calibration and p50 versus calibrated p65 under the same price/terminal policy.
+   Verify HWC is represented once and that the battery and thermal plans share consistent
+   accepted inputs. Give this effort priority over price-tail work if PV/load oracle substitution
+   shows greater opportunity. Household-load model replacement alone has weak historical
+   economic evidence; joint net-energy and controllable-load timing may be more consequential.
+4. **Improve the APF tail where it changes inventory decisions.** Benchmark rolling bias,
+   ridge residual and LGBM residual against the current >16.5h curve, emphasising 16.5–36h
+   and the next evening/solar transition. Preserve APF near-term as baseline. Add forecast
+   fundamentals/revisions and multiple memories only after cheap corrections. Evaluate the
+   full DH→MPC chain: MPC already receives APF directly, so a better tail matters through
+   DH energy posture, not direct replacement of the next battery setpoint. Post-PEC results
+   need their own window and cannot be inferred from May performance.
+5. **Reserve complex/new price models for demonstrated gaps.** APF-free replacements,
+   foundation models and multi-day spike predictors are lower priority under this objective.
+   Scarcity preparedness can still matter economically, but measure missed-event energy and
+   opportunity cost before committing to a new predictor.
+
+First concrete deliverable: one production-faithful replay manifest and a ranked table of
+economic loss/headroom by policy, execution, PV, load/HWC and price horizon. Next deliverable:
+a fixed-forecast experiment on terminal policy and conditional uncertainty weights, alongside
+cheap net-energy calibration. Architecture consolidation proceeds for reliability on its own
+merits; faster forecasting is not assumed to improve revenue unless stale/missed actions are
+observed. No training, shadow solve or production-policy change was launched by this follow-up.
