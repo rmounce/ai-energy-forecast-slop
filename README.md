@@ -177,6 +177,9 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
 
 ## Status and Next Work
 
+- Fresh technique assessment: [price/load accuracy review, 2026-10-04](docs/forecast_accuracy_review_2026-10-04.md).
+  Ranked APF-assisted/APF-free and load experiments; evaluation exports need refresh before new comparisons.
+
 - Keep `amber_apf_lgbm` as the production price source.
 - APF-free price research is paused. Revival requires a written hypothesis and fixed evaluation
   matrix; see [docs/price/README.md](docs/price/README.md).

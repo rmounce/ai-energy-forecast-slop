@@ -13,6 +13,11 @@ APF-free price-forecast research is **paused**. No path is under active investig
 
 ## Review entry points
 
+Fresh cross-model assessment completed 2026-10-04:
+[price/load accuracy review](../forecast_accuracy_review_2026-10-04.md). Includes a pinned
+Purcell PD7DAY source review, APF-assisted/APF-free hypotheses, load candidates, and a causal
+evaluation protocol. No new benchmark or production change; candidate implementation remains paused.
+
 | Read first | Purpose |
 |---|---|
 | [health_check_brief_2026-08-10.md](health_check_brief_2026-08-10.md) | Scope, production boundary, evidence, and questions for the next holistic review |
