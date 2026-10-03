@@ -42,8 +42,8 @@ Parent: [pipeline plan](energy_pipeline_architecture_plan.md),
 
 - This is point-in-time shadow admission. Remote HA updates and external model/tariff writes are
   not an atomic multi-source transaction. An opt-in [durable shadow checkpoint](energy_pipeline_accepted_store.md)
-  now preserves accepted bundles as historical evidence. No publish transaction or partial-write
-  recovery yet; publication must recheck validity and enforce single ownership.
+  now preserves accepted bundles as historical evidence. A [local publication transaction](energy_pipeline_publication.md) rehearses partial-write
+  recovery; no HA output transport/consumer migration yet; publication must recheck validity and enforce single ownership.
 - [Tariff snapshot](energy_pipeline_tariff_snapshot.md) freezes maps/loss/scaling from one read
   throughout generation; acceptance rejects persistent file changes. Completion retains the snapshot.
 - Provider freshness unknown/transport-only evidence remains distinct from cache acquisition age.
@@ -63,5 +63,6 @@ Parent: [pipeline plan](energy_pipeline_architecture_plan.md),
   live session. Final acceptance-duration logging added after that session.
 
 Hourly [freshness capture adapter](energy_pipeline_bom_freshness.md) implemented; HA patch unapplied.
-Live expired-checkpoint restart reconciliation verified; next explicit publication/rollback transaction.
+Live expired-checkpoint restart and local publication rehearsal verified; next remote publication/consumer
+contract and bundle-aware DH/MPC shadow handoff.
 Production price owner stays incumbent until gates pass.

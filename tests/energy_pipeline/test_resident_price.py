@@ -386,3 +386,38 @@ def test_checkpoint_race_keeps_saved_record_historical_without_advancing(change)
         finally:
             listener.executor.shutdown(wait=True)
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome', ['commit', 'superseded', 'config_change', 'failure'])
+def test_local_publication_gates_heartbeat_and_preserves_validation_decisions(monkeypatch, outcome):
+    from energy_pipeline.accepted_store import StoreError
+    async def run():
+        validations = []
+        def evaluate(result):
+            validations.append(1)
+            if outcome == 'config_change' and len(validations) > 1:
+                return AcceptanceDecision(('input_changed:config',), False)
+            return AcceptanceDecision()
+        saved = SimpleNamespace(time_current=lambda: True)
+        def execute(plan, revalidate):
+            assert listener.completed is None and listener.last_run_at is None
+            if outcome == 'failure': raise StoreError('injected journal error')
+            return revalidate() and outcome == 'commit'
+        publication = SimpleNamespace(abandon_pending=lambda: 0, execute=execute)
+        store = SimpleNamespace(recover=lambda: None, save=lambda *args: saved)
+        monkeypatch.setattr(resident, 'prepare_plan', lambda *args: {})
+        listener = ResidentPriceListener(CONFIG,
+            SimpleNamespace(predict=completion, evaluate_completion=evaluate), store=store, publication=publication)
+        try:
+            if outcome == 'failure':
+                with pytest.raises(StoreError): await listener._run_predict_price()
+                assert listener.shutdown.is_set()
+            else:
+                await listener._run_predict_price()
+                if outcome == 'config_change':
+                    assert listener.last_decision.reasons == ('input_changed:config',)
+                    assert not listener.trigger.is_set() and listener._retry_task is None
+            assert (listener.completed is not None) == (outcome == 'commit')
+        finally:
+            listener.executor.shutdown(wait=True)
+    asyncio.run(run())

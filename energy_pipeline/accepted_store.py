@@ -34,6 +34,9 @@ def _clock(value):
 class RecoveredBundle:
     payload: dict
 
+    def validate(self):
+        _validate(self.payload)
+
     def time_current(self, now=None):
         """Necessary time gate only; current inputs must still be revalidated."""
         now = _clock(now if now is not None else datetime.now(timezone.utc))

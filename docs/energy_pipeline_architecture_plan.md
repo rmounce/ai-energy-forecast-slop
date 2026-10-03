@@ -163,7 +163,9 @@ rejects changed inputs, expiry and observed validation races. Opt-in [durable ch
 stores accepted shadows; restart treats them as historical evidence. [Weather horizon admission](energy_pipeline_weather_coverage.md)
 now preserves incumbent adjusted-tail fill within a one-hour cap. Live expired-checkpoint recovery and
 fresh reconciliation passed; exact quantile reload parity retained.
-Next publication step: partial-write recovery and single-owner cutover. Collect independent
+[Local publication transaction](energy_pipeline_publication.md) now rehearses partial-write recovery,
+current-parent checks and a verified completion marker; no HA output transport. Next: bundle-aware
+DH/MPC shadow handoff and remote publication/consumer contract before single-owner cutover. Collect independent
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.
 Production cutover remains gated on shadow equivalence and verified single ownership.

@@ -18,6 +18,7 @@ from config_utils import load_config
 from energy_pipeline.price_worker import PriceWorker
 from energy_pipeline.acceptance import AcceptanceDecision
 from energy_pipeline.accepted_store import AcceptedStore, StoreError
+from energy_pipeline.publication import ShadowPublication, prepare_plan
 from energy_pipeline.source_cache import SourceCache, SourceUnavailable, price_source_policies
 from energy_pipeline.source_refresh import SourceRefreshers
 from services.ha_listener import Listener, _install_signal_handlers
@@ -36,9 +37,16 @@ class WorkerResourceLimit(RuntimeError):
 
 
 class ResidentPriceListener(Listener):
-    def __init__(self, config, predictor=None, *, store=None):
+    def __init__(self, config, predictor=None, *, store=None, publication=None):
         super().__init__(config)
+        if publication is not None and store is None:
+            raise ValueError('local publication requires accepted checkpoint storage')
+        self._publication_config = config
         self.store = store
+        self.publication = publication
+        if publication is not None:
+            log.info('local publication startup abandoned pending=%s; fresh reconciliation required',
+                     publication.abandon_pending())
         self.recovered = store.recover() if store is not None else None
         if self.recovered is not None:
             log.info('recovered historical shadow checkpoint run=%s time_current=%s; fresh reconciliation required',
@@ -96,6 +104,24 @@ class ResidentPriceListener(Listener):
                         decision = AcceptanceDecision(('source_changed_during_checkpoint',), True)
                     elif saved is not None and not saved.time_current():
                         decision = AcceptanceDecision(('completion_expired_during_checkpoint',), True)
+                    if decision.accepted and self.publication is not None:
+                        def rehearse():
+                            plan = prepare_plan(saved, self._publication_config)
+                            last_validation = AcceptanceDecision()
+                            def revalidate():
+                                nonlocal last_validation
+                                last_validation = self.predictor.evaluate_completion(result)
+                                return (last_validation.accepted and not self.shutdown.is_set()
+                                    and generation == self._input_generation
+                                    and (not self.refreshers or source_generation == self.predictor.sources.generation))
+                            committed = self.publication.execute(plan, revalidate)
+                            log.info('local publication rehearsal run=%s committed=%s', result.outcome.run_id, committed)
+                            return committed, last_validation
+                        committed, validation = await submit(rehearse)
+                        if (not committed or generation != self._input_generation
+                            or (self.refreshers and source_generation != self.predictor.sources.generation)
+                            or not saved.time_current()):
+                            decision = validation if not validation.accepted else AcceptanceDecision(('local_publication_superseded',), True)
                 return result, decision
             try:
                 result, decision = await asyncio.wait_for(generate_and_check(), WORKER_TIMEOUT_SECONDS)
@@ -177,7 +203,10 @@ def main():
     lifetime.add_argument('--duration', type=float, help='run normal event/refresh loops for N seconds, then stop')
     parser.add_argument('--verify-reload', action='store_true', help='compare each quantile against a freshly loaded model on identical inputs')
     parser.add_argument('--state-file', type=Path, help='opt-in single-owner atomic accepted shadow checkpoint')
+    parser.add_argument('--publication-db', type=Path, help='opt-in SQLite local publication rehearsal; no HA writes')
     args = parser.parse_args()
+    if args.publication_db and not args.state_file:
+        parser.error('--publication-db requires --state-file')
     if args.runs is not None and args.runs < 1:
         parser.error('--runs must be positive')
     if args.duration is not None and args.duration <= 0:
@@ -186,9 +215,13 @@ def main():
     if not config['home_assistant'].get('token'):
         parser.error('home_assistant.token missing')
     store = AcceptedStore(args.state_file) if args.state_file else None
+    publication = None
     try:
-        listener = ResidentPriceListener(config, PriceWorker(SourceCache(price_source_policies(config)), verify_reload=args.verify_reload), store=store)
+        publication = ShadowPublication(args.publication_db) if args.publication_db else None
+        listener = ResidentPriceListener(config, PriceWorker(SourceCache(price_source_policies(config)), verify_reload=args.verify_reload), store=store, publication=publication)
     except BaseException:
+        if publication is not None:
+            publication.close()
         if store is not None:
             store.close()
         raise

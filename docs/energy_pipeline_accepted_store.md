@@ -29,7 +29,8 @@ Parent: [acceptance contract](energy_pipeline_price_acceptance.md).
 - Expiry = earlier of capture +180s and next UTC half-hour boundary. `time_current` checks that gate,
   current interval and nonnegative capture age; passing it does not validate current source parents.
 - `.tmp` files left by a hard crash are ignored on recovery. No automatic deletion of forensic files.
-  Lock file persists; kernel releases flock at exit. This is a checkpoint, not partial-publication recovery.
+  Lock file persists; kernel releases flock at exit. This is a checkpoint; separate [local publication journal](energy_pipeline_publication.md) rehearses
+  partial-write recovery. No HA output transport.
 
 ## Verification
 
@@ -44,5 +45,5 @@ Parent: [acceptance contract](energy_pipeline_price_acceptance.md).
   [live save/expired-checkpoint restart reconciliation](energy_pipeline_weather_coverage.md) passed
   2026-10-03 09:34/09:41 Adelaide. Both processes exit 0, no publications.
 
-Next: publication transaction
-with current-parent revalidation, idempotency/partial-write handling and verified single ownership.
+Local publication journal now implemented/tested; next remote transport/consumer contract and verified
+single ownership. See [publication limits/evidence](energy_pipeline_publication.md).
