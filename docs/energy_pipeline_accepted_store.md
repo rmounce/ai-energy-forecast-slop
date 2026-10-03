@@ -33,14 +33,16 @@ Parent: [acceptance contract](energy_pipeline_price_acceptance.md).
 
 ## Verification
 
-- Focused regression suite: 151 passed, including abrupt process-exit recovery.
+- Focused regression suite: 159 passed, including abrupt process-exit recovery.
 - Exact roundtrip/negative values, private file permissions, restart ownership release, expiry,
   corrupt/oversized/digest-valid invalid records, invalid family, file fsync/replace/directory fsync
   failure, temporary cleanup, abrupt child exit. Listener: rejected results never written, save before
   heartbeat, recovered data historical, storage failure/timeout, observed save races and expiry.
 - Live attempt 2026-10-02 19:33 Adelaide failed existing weather coverage admission: 145 returned
   weather points did not cover current 72-hour window. No prediction/checkpoint/publication occurred.
-  Live checkpoint restart validation still open; do not relax coverage to make validation pass.
+  Coverage mismatch subsequently isolated and corrected with bounded incumbent-tail admission;
+  [live save/expired-checkpoint restart reconciliation](energy_pipeline_weather_coverage.md) passed
+  2026-10-03 09:34/09:41 Adelaide. Both processes exit 0, no publications.
 
-Next: investigate interval-dependent weather coverage; live checkpoint recovery; publication transaction
+Next: publication transaction
 with current-parent revalidation, idempotency/partial-write handling and verified single ownership.

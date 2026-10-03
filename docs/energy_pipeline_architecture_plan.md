@@ -160,8 +160,9 @@ Adapter checks observed marker stability with one retry; integration patch still
 collector/entity atomicity unverified. Tariff reads
 now frozen per run. Shadow result acceptance now
 rejects changed inputs, expiry and observed validation races. Opt-in [durable checkpoint](energy_pipeline_accepted_store.md)
-stores accepted shadows; restart treats them as historical evidence. Live checkpoint validation blocked
-by weather 72-hour coverage admission on latest attempt; investigate interval-dependent coverage.
+stores accepted shadows; restart treats them as historical evidence. [Weather horizon admission](energy_pipeline_weather_coverage.md)
+now preserves incumbent adjusted-tail fill within a one-hour cap. Live expired-checkpoint recovery and
+fresh reconciliation passed; exact quantile reload parity retained.
 Next publication step: partial-write recovery and single-owner cutover. Collect independent
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.

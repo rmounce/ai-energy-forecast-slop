@@ -22,6 +22,7 @@ class SourcePolicy:
     historical: bool = False
     min_history_hours: float = 0
     zero_capacity_ratios: tuple[tuple[str, str, str], ...] = ()
+    max_tail_gap_seconds: float = 0
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,14 @@ def validate_frame(frame, policy, start):
     else:
         required = pd.date_range(start, periods=144, freq='30min')
         window = selected.reindex(required)
+        if policy.max_tail_gap_seconds:
+            # BOM's hourly horizon can end shortly before the price horizon.
+            # Preserve raw inputs: incumbent preparation fills AFTER adjustments.
+            # Only waive absent trailing targets, never present-but-invalid rows,
+            # internal holes or a missing leading target.
+            tail_gap = (required[-1]-selected.index[-1]).total_seconds()
+            if 0 < tail_gap <= policy.max_tail_gap_seconds:
+                window = window.loc[window.index <= selected.index[-1]]
         if not np.isfinite(window.to_numpy()).all():
             raise SourceUnavailable('missing or nonfinite 72-hour forecast coverage')
 
@@ -138,6 +147,6 @@ def price_source_policies(config):
     lookback = abs(min(lags)) / 2 if isinstance(lags, list) and lags else abs(lags) / 2 if isinstance(lags, int) else 0
     ratios = tuple((f'stpasa_{kind}_avail_frac', f'stpasa_ss_{kind}_uigf', f'stpasa_ss_{kind}_capacity')
                    for kind in ('wind', 'solar') if f'stpasa_{kind}_avail_frac' in features)
-    return {'weather': SourcePolicy(weather, 1800, 7200),
+    return {'weather': SourcePolicy(weather, 1800, 7200, max_tail_gap_seconds=3600),
             'aemo': SourcePolicy(aemo, 300, 1800, zero_capacity_ratios=ratios),
             'history': SourcePolicy(tuple(dict.fromkeys([target, *features])), 300, 2400, historical=True, min_history_hours=lookback, zero_capacity_ratios=ratios)}

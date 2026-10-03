@@ -214,13 +214,14 @@ flowchart LR
   shadow result acceptance and opt-in [durable checkpoint](energy_pipeline_accepted_store.md).
   [Contract and latest evidence](energy_pipeline_price_acceptance.md).
 - Cached/reloaded quantile parity passes on admitted cached inputs; all quantiles 144 points.
-- Focused suite: 151 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
+- Focused suite: 159 checks; cache failure/staleness/rollover/DST/isolation, slow refresh with usable
   cache, deadline discard, memory guard/reclamation, cached HTTP timestamps, collector isolation,
   real response-path evidence, changed-parent rejection, validation races/deadlines, source recovery,
   frozen tariff mutation/isolation/conversion parity, incumbent regressions.
 - Still shadow only. Short benchmark evidence is not a full-day memory/failure-recovery gate.
 - Next: multi-hour filtered shadow and source failures/reconnect/
   interval/DST boundaries; expose/associate missing provider freshness. Tariff freezing now complete.
-- Durable checkpoint implemented; live restart validation remains open after weather coverage failure.
-  Next investigate interval-dependent 72-hour weather coverage, then publication transaction and ownership with explicit
+- Durable checkpoint implemented; live expired-checkpoint restart reconciliation passed.
+  [Weather tail admission](energy_pipeline_weather_coverage.md) preserves incumbent post-adjustment fill
+  for at most one hour; no raw frame extension. Next publication transaction and ownership with explicit
   rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

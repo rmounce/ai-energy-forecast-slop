@@ -75,7 +75,7 @@ Current memory/source-cache evidence and precise resume point:
 [source-cache checkpoint](energy_pipeline_source_cache.md).
 
 - Longer bounded event-driven shadow over upstream failures/reconnect/interval/DST boundaries.
-- Missing provider freshness, live [durable checkpoint](energy_pipeline_accepted_store.md) recovery
-  validation and publication transaction. `--state-file` opt-in; recovered data always historical.
+- Missing provider freshness and publication transaction; live expired
+  [durable checkpoint](energy_pipeline_accepted_store.md) restart reconciliation verified. `--state-file` opt-in; recovered data always historical.
 - Retain current production publisher until those gates pass; then one-owner cutover/rollback.
 - DH/MPC solve/control migration remains a separate shadow and acceptance phase.

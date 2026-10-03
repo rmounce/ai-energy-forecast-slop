@@ -112,3 +112,58 @@ def test_only_confirmed_zero_capacity_ratio_nan_is_allowed_and_preserved():
     all_missing['solar_ratio'] = np.nan
     with pytest.raises(SourceUnavailable, match='coverage'):
         cache.put('aemo', all_missing, START)
+
+
+@pytest.mark.parametrize('missing', [1, 2])
+def test_weather_short_tail_admitted_without_modifying_raw_frame(missing):
+    policy = SourcePolicy(('value',), 1800, 7200, max_tail_gap_seconds=3600)
+    cache = SourceCache({'weather': policy})
+    raw = frame(144-missing)
+    cache.put('weather', raw, START)
+    pd.testing.assert_frame_equal(cache.snapshot(START)['weather'].frame, raw)
+    with pytest.raises(SourceUnavailable, match='coverage'):
+        SourceCache({'aemo': POLICY}).put('aemo', raw, START)
+
+
+@pytest.mark.parametrize('failure', ['long_tail', 'leading', 'internal', 'last_nan'])
+def test_weather_tail_allowance_never_hides_other_gaps(failure):
+    cache = SourceCache({'weather': SourcePolicy(('value',), 1800, 7200, max_tail_gap_seconds=3600)})
+    raw = frame(143)
+    if failure == 'long_tail': raw = raw.iloc[:-2]
+    elif failure == 'leading': raw = raw.iloc[1:]
+    elif failure == 'internal': raw = raw.drop(raw.index[20])
+    elif failure == 'last_nan': raw.iloc[-1, 0] = np.nan
+    with pytest.raises(SourceUnavailable, match='coverage'):
+        cache.put('weather', raw, START)
+
+
+def test_weather_tail_budget_rechecked_on_rollover():
+    cache = SourceCache({'weather': SourcePolicy(('value',), 1800, 7200, max_tail_gap_seconds=3600)})
+    cache.put('weather', frame(142), START)
+    with pytest.raises(SourceUnavailable, match='coverage'):
+        cache.snapshot(START+timedelta(minutes=30))
+
+
+def test_weather_tail_fill_still_occurs_after_incumbent_adjustments(monkeypatch):
+    import forecast as fc
+    raw = frame(142).rename(columns={'value': 'temperature_adelaide'})
+    policy = SourcePolicy(('temperature_adelaide',), 1800, 7200, max_tail_gap_seconds=3600)
+    cache = SourceCache({'weather': policy})
+    cache.put('weather', raw, START)
+    targets = pd.date_range(START, periods=144, freq='30min')
+    other = pd.DataFrame({'aemo': np.ones(144)}, index=targets)
+    history = pd.DataFrame({'temperature_adelaide': [0.], 'aemo': [1.]},
+                           index=pd.DatetimeIndex([START-pd.Timedelta(minutes=30)]))
+    monkeypatch.setattr(fc, 'CONFIG', {'timezone': 'Australia/Adelaide', 'models': {'price': {'feature_cols': ['temperature_adelaide', 'aemo']}}})
+    def adjust(frame):
+        result = frame.copy()
+        result['temperature_adelaide'] += np.arange(len(frame))
+        return result
+    monkeypatch.setattr(fc, 'apply_covariate_adjustments', adjust)
+    _, _, legacy = fc._prepare_prediction_covariates(['price'], history, {'weather': raw, 'aemo': other})
+    _, _, resident = fc._prepare_prediction_covariates(['price'], history,
+        {'weather': cache.snapshot(START)['weather'].frame, 'aemo': other})
+    pd.testing.assert_frame_equal(resident, legacy)
+    tail = resident.loc[targets[-3:], 'temperature_adelaide']
+    assert tail.nunique() == 1  # adjustment at final real sample carried to both absent targets
+    assert np.isfinite(resident.loc[targets, ['temperature_adelaide', 'aemo']].to_numpy()).all()

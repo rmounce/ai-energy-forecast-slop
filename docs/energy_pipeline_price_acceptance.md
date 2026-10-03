@@ -63,5 +63,5 @@ Parent: [pipeline plan](energy_pipeline_architecture_plan.md),
   live session. Final acceptance-duration logging added after that session.
 
 Hourly [freshness capture adapter](energy_pipeline_bom_freshness.md) implemented; HA patch unapplied.
-Next: live checkpoint restart validation and explicit publication/rollback transaction.
+Live expired-checkpoint restart reconciliation verified; next explicit publication/rollback transaction.
 Production price owner stays incumbent until gates pass.

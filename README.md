@@ -30,6 +30,7 @@ production publication remains with the incumbent listener.
 Each shadow run uses one [frozen tariff profile](docs/energy_pipeline_tariff_snapshot.md).
 Optional `--state-file` saves a [durable accepted shadow checkpoint](docs/energy_pipeline_accepted_store.md);
 recovery requires fresh reconciliation and never restores publication authority.
+[Weather admission](docs/energy_pipeline_weather_coverage.md) preserves incumbent tail fill within a one-hour cap.
 Weather capture checks [hourly freshness markers](docs/energy_pipeline_bom_freshness.md) for observed
 updates; the HA integration patch remains unapplied, so live provider clocks remain unknown.
 
