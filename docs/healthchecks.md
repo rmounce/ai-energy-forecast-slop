@@ -34,6 +34,15 @@ listener timeout. The listener killed it and recorded a failure; its 04:22 retry
 child timeout is now 180 seconds to accommodate this observed slow path while still detecting a
 stuck prediction process.
 
+On 2026-10-03 at 13:26 Adelaide time, `price-listener` failed after reading the STPASA
+parquet during `ai-energy-stpasa.service` refresh (13:25:42–13:25:58). The reader reported
+missing Parquet footer magic bytes at 13:25:56; historical STPASA coverage fell to 0%,
+and model generation rejected insufficient history. No new price forecast was published.
+The aggregate reported failure at 13:26:36; the retry published all three sensors at
+13:31:19 and the aggregate recovered at 13:31:47. The writer uses direct `to_parquet`
+publication; concurrent read/write is the likely cause. Atomic file replacement remains
+unimplemented.
+
 On 2026-09-25 at 23:13 Adelaide time, the AEMO visualisations `5MIN` API timed out after
 three attempts; the 23:17 capture succeeded. This transient endpoint timeout prompted the
 capture-specific persistence threshold.
