@@ -40,8 +40,11 @@ missing Parquet footer magic bytes at 13:25:56; historical STPASA coverage fell 
 and model generation rejected insufficient history. No new price forecast was published.
 The aggregate reported failure at 13:26:36; the retry published all three sensors at
 13:31:19 and the aggregate recovered at 13:31:47. The writer uses direct `to_parquet`
-publication; concurrent read/write is the likely cause. Atomic file replacement remains
-unimplemented.
+publication; concurrent read/write is the likely cause. Fixed the same day: the STPASA
+writer now writes and flushes a unique temporary file in the destination directory, then
+atomically replaces the archive. Readers retain the old complete file during refresh;
+failed writes preserve it and clean up the temporary file. Existing permissions are preserved.
+The next timer invocation loads this change; no service restart is required.
 
 On 2026-09-25 at 23:13 Adelaide time, the AEMO visualisations `5MIN` API timed out after
 three attempts; the 23:17 capture succeeded. This transient endpoint timeout prompted the

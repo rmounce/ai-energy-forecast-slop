@@ -10,7 +10,48 @@ from ingest.backfill_stpasa_regionsolution import (
     horizon_summary,
     normalise_regionsolution,
     validate_horizon,
+    write_parquet_atomic,
 )
+
+
+def test_atomic_publication_keeps_old_archive_readable_during_write(tmp_path, monkeypatch):
+    destination = tmp_path / "archive.parquet"
+    old = pd.DataFrame({"value": [1]})
+    new = pd.DataFrame({"value": [2, 3]})
+    old.to_parquet(destination, index=False)
+    destination.chmod(0o640)
+    original_write = pd.DataFrame.to_parquet
+    with destination.open("rb") as reader:
+        def interrupted_write(frame, handle, **kwargs):
+            handle.write(b"incomplete parquet")
+            handle.flush()
+            pd.testing.assert_frame_equal(pd.read_parquet(destination), old)
+            handle.seek(0)
+            handle.truncate()
+            return original_write(frame, handle, **kwargs)
+
+        monkeypatch.setattr(pd.DataFrame, "to_parquet", interrupted_write)
+        write_parquet_atomic(new, destination)
+        pd.testing.assert_frame_equal(pd.read_parquet(reader), old)
+    pd.testing.assert_frame_equal(pd.read_parquet(destination), new)
+    assert destination.stat().st_mode & 0o777 == 0o640
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_failed_atomic_write_preserves_archive_and_cleans_temporary(tmp_path, monkeypatch):
+    destination = tmp_path / "archive.parquet"
+    old = pd.DataFrame({"value": [1]})
+    old.to_parquet(destination, index=False)
+
+    def fail_write(frame, handle, **kwargs):
+        handle.write(b"partial file")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", fail_write)
+    with pytest.raises(OSError, match="disk full"):
+        write_parquet_atomic(pd.DataFrame({"value": [2]}), destination)
+    pd.testing.assert_frame_equal(pd.read_parquet(destination), old)
+    assert list(tmp_path.iterdir()) == [destination]
 
 
 def test_normalise_regionsolution_filters_region_and_converts_nem_time_to_utc():

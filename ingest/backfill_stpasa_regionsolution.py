@@ -24,8 +24,11 @@ import argparse
 import csv
 from html.parser import HTMLParser
 import io
+import os
 import re
+import stat
 import sys
+import tempfile
 import time
 import zipfile
 from datetime import timedelta
@@ -416,11 +419,30 @@ def main() -> None:
     combined = combined.sort_values(["run_time", "interval_dt"]).reset_index(drop=True)
     validate_horizon(combined, min_horizon_hours=args.min_horizon_hours)
 
-    combined.to_parquet(out_file, index=False, compression="snappy")
+    write_parquet_atomic(combined, out_file)
     print(f"Saved: {out_file}")
     print(f"Rows: {len(combined):,}; runs: {combined['run_time'].nunique():,}")
     print(f"run_time range: {combined['run_time'].min()} -> {combined['run_time'].max()}")
     print("Next: run eval/analyze_lgbm_residual_drivers.py with this parquet present.")
+
+
+def write_parquet_atomic(frame: pd.DataFrame, destination: Path) -> None:
+    """Publish a complete archive without exposing in-progress writes to readers."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            frame.to_parquet(handle, index=False, compression="snappy")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if destination.exists():
+            temporary.chmod(stat.S_IMODE(destination.stat().st_mode))
+        temporary.replace(destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
