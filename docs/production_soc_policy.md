@@ -1,6 +1,6 @@
 # Production Terminal SoC Policy
 
-**Last updated: 2026-09-22**
+**Last updated: 2026-10-04**
 
 This document captures the *production* behaviour of how the Sigenergy battery's
 target State-of-Charge (SoC) is set across the day-ahead (DH) and 14-hour MPC layers,
@@ -244,9 +244,10 @@ What the eval matches:
 
 What the eval does **not** match:
 
-- The eval's strategic LP solves the 72h horizon with **no terminal SoC constraint
-  at +72h**. Production's DH solves with a soft target ~98% at the end (via the
-  offset feedback loop).
+- By default the eval's strategic LP has **no terminal SoC constraint at +72h**.
+  Existing `--strategic-72h-terminal-soc-{kwh,pct}` options enforce an exact endpoint.
+  Installed EMHASS also enforces its passed terminal SoC by exact energy equality;
+  the offset feedback changes the requested target between solves. It is not a soft objective.
 - The eval does not apply the DH self-correction chain across consecutive solves
   (each eval step is a clean re-solve from current SoC).
 - The eval does not apply MPC's plan-relative `soc_init` lift; it passes the live
@@ -261,7 +262,7 @@ PD7Day data is missing and the seasonal HoD fallback dominates the back half of
 the strategic curve), and **roughly equivalent** in typical scenarios where the
 curve itself motivates inventory holding.
 
-This means dispatch evaluations of forecast sources that rely on flat tails (any
+Historical hypothesis, not a measured correction: dispatch evaluations of forecast sources that rely on flat tails (any
 pre-2026-02-09 historical window for PD-direct, since that's when PD7Day backfill
 starts) should be expected to under-estimate the terminal SoC achievable in
 production. Eval-only "battery depleted to 4 kWh" may translate to "battery
@@ -290,10 +291,10 @@ comparing what *would* have happened under each forecast had it been driving DH.
   `"EMHASS — Update target SoC offset"` automation in `hass/packages/emhass.yaml`.
   The dead `battery_soc_30_minute` clamp from the original Jinja (already
   commented out) was dropped in the migration; the offset remains unclamped.
-- A future `eval/rolling_mpc_eval.py` flag (e.g.
-  `--strategic-terminal-soc-target-kwh`) could optionally constrain the strategic
-  LP to end at ~95–98% SoC, mirroring the production constraint. Not currently
-  implemented; deferred until needed for a specific decision.
+- Existing `--strategic-72h-terminal-soc-{kwh,pct}` options can constrain the
+  strategic LP endpoint. They do not reproduce production's dynamic offset/anchor chain.
+  [Oct 4 replay checkpoint](economic_replay_checkpoint_2026-10-04.md) records remaining
+  solver, input and execution fidelity gaps; independent historical core solves now work.
 - The DH self-correction chain (anchor = `dh_last_soc_init` + deviation) is not
   reflected in eval either. Each eval step is a clean re-solve; consecutive solves
   do not share state via a persisted anchor. Expected to matter less than the

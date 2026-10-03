@@ -225,5 +225,6 @@ flowchart LR
   [Weather tail admission](energy_pipeline_weather_coverage.md) preserves incumbent post-adjustment fill
   for at most one hour; no raw frame extension. [Local publication rehearsal](energy_pipeline_publication.md)
   verifies durable receipts/recovery/commit guard; SQLite only. [Bundle-aware DH/MPC handoff](energy_pipeline_handoff.md) now records payloads/lineage
-  with independent daytime HA Jinja parity. Next isolated DH solve and accepted-DH →MPC shadow;
+  with independent daytime HA Jinja parity. [Isolated historical DH/MPC solves](energy_pipeline_solver_isolation.md)
+  now pass; next DH projection and chained DH →MPC shadow with fresh-parent admission;
   remote publication/consumer contract, then explicit rollback/single-writer checks. DH/MPC solve/control ownership stays in HA until its own shadow gate.

@@ -166,11 +166,14 @@ fresh reconciliation passed; exact quantile reload parity retained.
 [Local publication transaction](energy_pipeline_publication.md) now rehearses partial-write recovery,
 current-parent checks and a verified completion marker; no HA output transport. [Bundle handoff](energy_pipeline_handoff.md)
 now builds coherent DH prices and separately identifies MPC Amber/existing-DH parents; daytime HA
-Jinja parity passed. Next isolated DH solve/result-parent rehearsal, then accepted-DH →MPC shadow;
+Jinja parity passed. Isolated recorded DH/MPC core solves now pass; next DH projection and
+chained DH →MPC shadow with fresh-parent admission;
 remote publication/consumer contract remains before single-owner cutover. Collect independent
 DH/MPC daytime/curtailment/recovery snapshots alongside it. APF ingress remains HA WebSocket;
 amber2mqtt remains acquisition owner. DH/MPC/control ownership remains in HA.
 Production cutover remains gated on shadow equivalence and verified single ownership.
 
 Solver isolation audit: [installed side effects/result contract](energy_pipeline_solver_isolation.md).
-Live wrappers write shared state even with saving/posts disabled; next direct-core isolated worker.
+Live wrappers write shared state even with saving/posts disabled; direct-core disposable worker
+implemented for historical evidence only. [Economic replay checkpoint](economic_replay_checkpoint_2026-10-04.md)
+records policy/input/physical gaps before realised-loss attribution.

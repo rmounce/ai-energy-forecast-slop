@@ -265,4 +265,8 @@ economic loss/headroom by policy, execution, PV, load/HWC and price horizon. Nex
 a fixed-forecast experiment on terminal policy and conditional uncertainty weights, alongside
 cheap net-energy calibration. Architecture consolidation proceeds for reliability on its own
 merits; faster forecasting is not assumed to improve revenue unless stale/missed actions are
-observed. No training, shadow solve or production-policy change was launched by this follow-up.
+observed. No training or production-policy change was launched by this follow-up.
+
+Execution checkpoint: [existing replay audit and isolated DH/MPC core solves](economic_replay_checkpoint_2026-10-04.md).
+Both recorded horizons solved Optimal and passed physical checks. This establishes solver mechanics;
+chained current-policy replay and realised economic loss attribution remain outstanding.

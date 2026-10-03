@@ -56,7 +56,9 @@ Parent: [local publication transaction](energy_pipeline_publication.md).
   corrected check passes both. Last critical-unavailable-state checks added after live capture;
   both stored snapshots pass current validation offline. No independent curtailed/restart-solver case yet.
 
-Next: isolated DH solve rehearsal, preserve result/price-parent identity, then feed THAT accepted DH
-plan into MPC shadow. Existing EMHASS shares output state; audit installed behavior/isolation before
-calling a shadow solver. See [shared-state history](emhass_shared_state_race.md). Current HA solve/control
+Isolated recorded DH and MPC core solves now pass, preserving request/source identity:
+[solver boundary](energy_pipeline_solver_isolation.md). They use independent recorded payloads;
+the new DH result has not been injected into MPC. Next: verify DH projection and feed that plan
+into chained MPC shadow with fresh-parent admission. Existing EMHASS wrappers share output state;
+use the disposable worker. See [shared-state history](emhass_shared_state_race.md). Current HA solve/control
 ownership unchanged; remote publication, provider freshness and sustained-memory gates remain open.

@@ -191,4 +191,5 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
 ## Acknowledgements
 The initial version of the core `forecast.py` script was generated with assistance from Google's Gemini.
 
-Isolated solver checkpoint: [audit and result contract](docs/energy_pipeline_solver_isolation.md); no shadow solve executed yet.
+Isolated solver checkpoint: [audit and result contract](docs/energy_pipeline_solver_isolation.md).
+Recorded DH/MPC core solves verified; [economic replay gaps and next work](docs/economic_replay_checkpoint_2026-10-04.md).
