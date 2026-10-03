@@ -1,5 +1,25 @@
 # Repository Healthchecks
 
+## DST start audit — 2026-10-04
+
+- Read-only journals/status audit through ~09:40 ACDT; no runtime changes.
+- Window: 2026-10-03 14:00 UTC onward (~23:30 ACST); Adelaide skipped 02:00–02:59.
+- Price: 110 successful publication summaries, each quantile 144 points;
+  largest publication gap 371s. Across jump: 01:56:41 ACST → 03:00:33 ACDT
+  (~232 real seconds); UTC target start advanced 16:00 → 16:30 normally.
+- Load: 19 successful publication summaries, each quantile 144 points;
+  largest gap ~1840s. Across jump: 01:31:56 ACST → 03:01:56 ACDT
+  (~1800 real seconds). No skipped half-hour run observed.
+- HWC journal received MPC cost updates at 01:55:24 ACST, 03:00:20 ACDT,
+  03:05:22 ACDT. No HWC errors or DST timestamp exceptions observed.
+- AEMO visualisations timeouts occurred before/after jump; some exhausted retries,
+  but price/load still published. No other error/failure messages in inspected user units.
+- Aggregate journal: 518 successful invocations, no failure messages in window.
+  Status files: load has no recorded failure; price last failure remains Oct 3 13:26 ACST;
+  aggregate currently success. Capture last failure ~Oct 3 23:32 ACST, subsequently recovered.
+- Services/timers active as expected. Evidence supports smooth forecast/MPC-update continuity;
+  physical actuator history and every tariff slot were not independently audited.
+
 Configure the existing single-check ping URL as `HC_PREDICT_URL` in the ignored root `.env`.
 The repository does not create extra Healthchecks records or need a project Ping Key.
 
