@@ -1,6 +1,6 @@
 # Measured economic targets — 2026-10-04
 
-Status: separate two-day telemetry export + matched forecast-window audit. No production change,
+Status: seven-day telemetry export + causal walk-forward load challenger. No production change,
 settlement comparison or counterfactual savings claim. Existing replay remains the experiment scaffold.
 
 ## Tools / contract
@@ -62,6 +62,70 @@ Read installed `/opt/dockerfiles/hass/config/configuration.yaml` and current HA 
   inverter/plant battery positive charge. EMHASS planned `P_batt` is positive discharge.
 - Historical unit/config stability not asserted by today's metadata. State changes and independent
   sensors are asynchronous; interval balance agreement is a consistency check, not calibrated metrology.
+
+## Seven-day challenger (UTC Sept 27–Oct 4)
+
+- Private datasets: `measured_week_20261004/`, `measured_week_audit_20261004/`,
+  `measured_week_calibration_20261004/` under ignored `data/energy_replay/`.
+- 2016 five-minute intervals; grid/base load/battery 2014 complete, planned battery 2009,
+  delivered PV 1116. Two incomplete load bins exclude one half-hour target.
+- 144,144 causal forecast rows; 336 half-hour targets, one August 10 version per model.
+  143,715 rows match complete measured targets; 91,839 pass calibration warm-up.
+- `eval/calibrate_measured_load.py`: three-day rolling residual quantile by model/version/type/
+  horizon band; latest causal vintage per past target, each training target once. Minimum 48
+  past targets. Measurement available only at target interval end + 30 minutes assumed receipt lag.
+  No future labels; unchanged zero correction until warm-up; corrected load clipped at zero.
+- Paired eligible forecasts only; metrics average vintages within target, then give targets equal
+  weights. Daily scores retained. Days/vintages overlap; no independent significance claim.
+
+| p65 horizon | Paired targets | MAE baseline → corrected (W) | Pinball baseline → corrected (W) | Actual ≤ p65 baseline → corrected |
+|---|---:|---:|---:|---:|
+| 0–6h | 285 | 188 → 182 | 81.3 → 80.1 | 80.4% → 78.8% |
+| 6–16.5h | 273 | 221 → 176 | 88.3 → 78.5 | 88.0% → 67.0% |
+| 16.5–36h | 252 | 254 → 214 | 100.6 → 95.3 | 86.0% → 64.0% |
+| 36–72h | 213 | 266 → 210 | 95.9 → 82.7 | 91.7% → 67.0% |
+
+- p50 MAE improvements: ~3%, 17%, 12%, 21% respectively. Short-horizon p50 coverage still
+  69.4%; coarse correction insufficient for full conditional calibration.
+- Week includes substantial import days: Sept 27 **26.77 kWh**, Oct 3 **22.37 kWh**;
+  other days 0.09–0.77 kWh. Not classified as high-price events without interval rates.
+- Actual-minus-planned battery charge absolute p95 **411 W**, AC balance p95 **11.7 W**.
+  Good coarse consistency does not establish price-weighted execution opportunity cost.
+- PV current-proxy diagnostic: 391 strict measured-mode daytime bins; bias **−208 W**,
+  MAE **799 W**, estimate/delivered ratio **0.937**. Two-day ratio 0.904 is not stable enough
+  to justify a fixed multiplicative solar correction; still no future-vintage accuracy test.
+- Decision: prioritise longer-horizon load calibration as a fixed-price/PV/terminal economic
+  replay challenger. These are forecast-score gains, not dollar savings or permission to deploy.
+  Independent quantile corrections can cross; coherent bundles and regime validation still required.
+
+```bash
+./.venv/bin/python eval/calibrate_measured_load.py \
+  --dataset data/energy_replay/measured_week_20261004 \
+  --audit data/energy_replay/measured_week_audit_20261004 \
+  --output data/energy_replay/new_load_challenger
+```
+
+## Price archive contract — inspected live Oct 4
+
+- Raw current general/feed sources: `sensor.amber_5min_current_{general,feed_in}_price`,
+  `rp_raw.sensor__monetary`. Unit $/kWh; historical sample contains `type_str=CurrentInterval`,
+  `estimate=0`, `duration=5`, `start_time_str`, `end_time_str`. Candidate observed-rate evidence;
+  API confirmation is not invoice settlement reconciliation.
+- Influx numeric `start_time`/`end_time` are date-like numbers (~2.026e17), not epoch timestamps.
+  Use ISO `*_str` attributes. Observed interval start is end minus five minutes **plus one second**;
+  validate duration/end and explicit source convention before joining five-minute energy bins.
+- First Sept 27 raw sample arrived 00:00:23Z but quoted interval ended 00:00:00Z. State receipt
+  time is not the priced interval; never align realised rates by observation-time resampling.
+- Adjusted-confirmed feed source archives `raw_price`, `export_allowance_adjustment`,
+  `confirmed_end_time_str`. Template adds $0.01/kWh at local 10:00–16:00 while configured allowance
+  is positive. Preserve the recorded adjustment/config; verify billing meaning separately.
+- Effective general/feed templates can fall back to forecasts; historical records lack interval/
+  estimate/type metadata. Do not treat them as unconditional realised settlement targets.
+- Amber feed sign: negative earns export revenue; internal solver positive export value requires
+  negation at the boundary. Keep raw prices and adjustments separately identifiable.
+- Next: freeze full raw interval quote/revision history, reject estimated/ambiguous intervals,
+  match general/feed/adjustment by quoted end, retain receipt times. Invoice/rate reconciliation and
+  complete as-issued MPC APF/PV/HWC lineage remain financial-ranking gates.
 
 ## Two-day evidence (UTC Oct 1–3, 576 intervals)
 

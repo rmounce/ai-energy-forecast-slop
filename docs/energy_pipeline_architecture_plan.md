@@ -178,5 +178,7 @@ Live wrappers write shared state even with saving/posts disabled; direct-core di
 implemented for historical evidence only. [Economic replay checkpoint](economic_replay_checkpoint_2026-10-04.md)
 records policy/input/physical gaps before realised-loss attribution.
 Separate [measured economic targets](measured_economic_actuals_2026-10-04.md) now exported for
-two completed days with causal forecast windows. Extend matched periods and verify settlement/APF
-lineage before financial ranking; this evaluation work does not require orchestration cutover.
+seven completed days with causal forecast windows and an offline load-calibration challenger.
+Longer-horizon p65 MAE improves 16–21%; short-horizon gain small. Freeze interval price/revisions,
+verify settlement/APF lineage, then compare matched economic outcomes with fixed ending inventory;
+this evaluation work does not require orchestration cutover.

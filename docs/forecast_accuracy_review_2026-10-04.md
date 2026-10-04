@@ -277,3 +277,9 @@ estimates. Establish independent measured PV targets before assessing PV accurac
 dataset and causal forecast-window snapshots. Short-window p65 coverage is 88–95%, current-PV
 estimate/delivered ratio 0.904 on strict measured-mode samples. Supports cheap calibration trials;
 larger matched windows and dispatch/settlement evidence still needed before ranking realised gains.
+
+Seven-day extension: causal residual correction improves p65 MAE **16–21% beyond six hours**,
+about **3% below six hours**; corrected longer-horizon coverage near nominal 65%. Prioritise this
+cheap challenger in matched economic replay. PV-now ratio moves from 0.904 to 0.937; fixed solar
+rescaling is premature. Raw Amber archive preserves interval/estimate flags and ISO timestamps;
+effective fallback prices unsuitable as unconditional realised rates. Details in measured-target doc.

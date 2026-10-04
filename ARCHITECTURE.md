@@ -593,5 +593,6 @@ Resident price calculation-only successor: [shadow worker](docs/energy_pipeline_
 Isolated solver checkpoint: [audit and result contract](docs/energy_pipeline_solver_isolation.md).
 Recorded core solves and [historical DH→MPC chain](docs/energy_pipeline_solver_chain.md) verified;
 [economic replay gaps/PV provenance and next work](docs/economic_replay_checkpoint_2026-10-04.md).
-[Separate measured targets and fresh two-day diagnostics](docs/measured_economic_actuals_2026-10-04.md)
+[Seven-day measured targets and causal load-calibration trial](docs/measured_economic_actuals_2026-10-04.md)
 now available; bounded time-weighted raw telemetry, original model covariates/CQs unchanged.
+Offline residual correction fits completed past targets only; no production model/policy promotion.

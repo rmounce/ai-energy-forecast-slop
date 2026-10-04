@@ -94,6 +94,11 @@ Measured target milestone: [separate two-day export and causal load/price audit]
 576 complete grid/load/battery intervals; curtailment context retained, PV gaps explicit. Fresh p65
 coverage 88–95% on 96 targets supports a calibration experiment; no savings/quantile promotion claim.
 
+Seven-day extension + causal challenger completed: p65 MAE improves 16–21% beyond six hours,
+~3% below; complete grid/base-load/battery coverage 2014/2016. Raw Amber quote schema verified,
+including interval ISO timestamps and estimate flags. Next freeze quote/revision history, match
+actual energy by quoted interval, then fixed-price/PV/ending-inventory dispatch comparisons.
+
 1. Historical one-cycle projection/chain completed. Preserve it while auditing multi-cycle feedback;
    do not require a production cutover to conduct economic experiments.
 2. Two-day measured pilot and causal log windows frozen. Extend to recent matched event/quiet

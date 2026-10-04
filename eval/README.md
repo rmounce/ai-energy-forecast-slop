@@ -7,6 +7,8 @@ current state/physical policy before treating old replay PnL as realised savings
 
 Independent telemetry: `export_measured_actuals.py` → new ignored dataset/manifest;
 `audit_measured_actuals.py` → coverage, balance/tracking and causal load/price windows.
+`calibrate_measured_load.py` → offline rolling residual-quantile challenger, completed past labels,
+paired target-weighted daily scores; seven-day forecast evidence, no dispatch savings claim.
 [Contract, commands and Oct 4 evidence](../docs/measured_economic_actuals_2026-10-04.md).
 Time-weighted raw samples; bounded holds, no gap filling; current Solcast proxy kept separate.
 

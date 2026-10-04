@@ -137,7 +137,7 @@ def main():
     report['dataset_manifest_sha256'] = hashlib.sha256((args.dataset/'manifest.json').read_bytes()).hexdigest()
     report['auditor_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     report['forecast_logs'] = {}
-    report['limitations'] = ['two-day diagnostics do not establish economic rankings',
+    report['limitations'] = ['telemetry diagnostics do not establish economic rankings',
         'load scores use all causal vintages, not a matched walk-forward experiment',
         'no settled price/rates or counterfactual available-PV target included',
         'current PV estimate is not a forecast-vintage archive']

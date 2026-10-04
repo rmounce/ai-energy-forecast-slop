@@ -194,5 +194,5 @@ The initial version of the core `forecast.py` script was generated with assistan
 Isolated solver checkpoint: [audit and result contract](docs/energy_pipeline_solver_isolation.md).
 Recorded core solves and [historical DH→MPC chain](docs/energy_pipeline_solver_chain.md) verified;
 [economic replay gaps/PV provenance and next work](docs/economic_replay_checkpoint_2026-10-04.md).
-[Separate measured targets and fresh two-day diagnostics](docs/measured_economic_actuals_2026-10-04.md)
-now available; net-energy calibration trials next, no measured savings yet.
+[Seven-day measured targets and causal load-calibration trial](docs/measured_economic_actuals_2026-10-04.md)
+now available; longer-horizon p65 MAE improves 16–21%, no measured savings yet.
