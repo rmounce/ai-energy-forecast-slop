@@ -635,4 +635,6 @@ spends~0.20kWh. [Own-state timing feedback](docs/ems_timing_feedback_2026-10-05.
 later DH/MPC solves with each arm's battery, full MPC plan and EMS commands; common forecasts/
 terminal policy. Checkpoint binds controller/loss/physics; unchanged guard archive required for
 continuation. Unsupported branches fail.30min/72 solves still trades~0.20kWh for~5c;
-no demonstrated net gain. Installed MPC formatter parity and longer inventory use remain gates.
+no demonstrated net gain. [Installed MPC formatter audit](docs/mpc_publication_audit_2026-10-05.md)
+passes60 saved cases/60,528 power points. Actual activation/capture timing and longer inventory
+use remain gates; unchanged SoC helper receipts do not prove an absent solve.

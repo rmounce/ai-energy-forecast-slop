@@ -70,7 +70,7 @@ def run_request(request, image):
 def run_batch(bundle, worker, files):
     """Stage selected replay code; one bounded network-free disposable worker."""
     if worker not in ('eval/sequential_core_replay.py', 'eval/minute_core_replay.py',
-                       'eval/dh_feedback_replay.py') or worker not in files:
+                       'eval/dh_feedback_replay.py', 'eval/audit_mpc_formatter.py') or worker not in files:
         raise ValueError('unsupported batch worker')
     if any(Path(filename).is_absolute() or '..' in Path(filename).parts or
             Path(filename).parts[0] not in ('scripts', 'eval', 'energy_pipeline') for filename in files):

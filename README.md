@@ -219,3 +219,5 @@ reduces net-export error≈87%. [Energy reconciliation and timing pilot](docs/em
 identify a moving BMS SoC denominator and omitted DC overhead. Holding accepted commands adds
 ~5c credit but spends~0.20kWh inventory. [Timing with own optimizer feedback](docs/ems_timing_feedback_2026-10-05.md)
 now completes30min/72 solves: similar tradeoff, no demonstrated net gain; longer inventory use remains the gate.
+[Installed MPC formatter parity](docs/mpc_publication_audit_2026-10-05.md) passes all60 saved MPC cases;
+missing-anchor clock reconstruction remains a separate diagnostic before longer replay admission.

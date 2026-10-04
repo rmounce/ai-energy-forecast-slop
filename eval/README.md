@@ -53,7 +53,11 @@ raw power stock distinct from changing reported SoC/capacity. Optional140W execu
 adds own full MPC plans/EMS commands and physical SoC feedback into later installed DH/MPC solves.
 Verified continuation freezes physics/controller contract and requires unchanged guard archive.
 [30min/72-solve timing feedback](../docs/ems_timing_feedback_2026-10-05.md):~5c credit for~0.20kWh
-inventory; no demonstrated net gain. Unsupported branches fail; MPC formatter parity pending.
+inventory; no demonstrated net gain. Unsupported branches fail.
+`audit_mpc_formatter.py` validates consumed MPC projection against pinned installed pure formatter
+without additional solves or HA calls. [60-case parity and missing-anchor clocks](../docs/mpc_publication_audit_2026-10-05.md).
+`audit_mpc_clock.py` diagnoses unchanged helper receipts using separate25s/25.1s timer candidates,
+causal input consistency and subsequent paired publication evidence; never admits inferred origins.
 
 ## Price Source Contracts
 

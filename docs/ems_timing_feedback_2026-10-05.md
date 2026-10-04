@@ -1,7 +1,8 @@
 # EMS timing with own optimizer feedback — 2026-10-05
 
 - Decision: retain APF; no production promotion. Thirty-minute timing gain remains primarily
-  a trade of inventory for current export credit. Next verify MPC formatter/activation semantics
+  a trade of inventory for current export credit. [Installed MPC projection parity](mpc_publication_audit_2026-10-05.md)
+  passes60 saved cases; next verify activation/capture semantics
   and extend supported branches into longer scarce-inventory execution.
 - `dh_feedback_replay.py --experiment ems_timing`: common forecasts and terminal policy;
   each arm owns physical SoC, full accepted MPC plan, EMS command, DH parent, anchor, reground
@@ -56,8 +57,8 @@ nominal40.3kWh stock,99% battery and95% inverter efficiencies; no parameter fitt
 - Instant modeled activation at historical publication clock; no physical ramp, script completion
   delay, transient PCS controller or counterfactual solve-latency measurement.
 - Six consumed MPC power channels projected from validated installed-core results using expected
-  formatter rounding. Full installed MPC formatter parity remains a gate; DH formatter evidence
-  is validated. Coherent publication/helper admission is a modeled improvement.
+  formatter rounding. Installed MPC formatter parity now passes60 saved cases plus numerical
+  fixtures; DH formatter evidence is validated. Coherent publication/helper admission is a modeled improvement.
 - Current YAML/plant config and explicit capture fallbacks are not independent historical config.
   No HA/service/device writes, reloads, training or production changes.
 - 10 new tests: later MPC/DH feedback, owned checkpoint plan/command, fixed-loss stock/contract,
