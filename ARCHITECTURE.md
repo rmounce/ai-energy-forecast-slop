@@ -609,3 +609,6 @@ historical activation delays; conditional archived parents, own inventory, share
 [DH source admission](docs/economic_regimes_and_dh_admission_2026-10-04.md) reconstructs as-of
 production price/load/Solcast/settings; exact UTC target-grid validation catches four half-hour load
 lags. Static capture fallbacks identified explicitly; no production admission change yet.
+[Own-DH event replay](docs/dh_feedback_economic_replay_2026-10-04.md) persists each arm's SoC,
+trajectories/anchors/reground/offset, delays parent/command activation, and holds accepted parents
+on bad alignment. HWC exogenous; execution uses runtime capacity, not base-config placeholder.

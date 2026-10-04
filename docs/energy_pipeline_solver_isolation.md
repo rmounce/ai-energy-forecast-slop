@@ -37,6 +37,9 @@
 - Capture readiness is historical evidence; it does not renew freshness or authorise operations.
   Resource overrides recorded. Deferrable solver loads unsupported: HWC must already be in load.
 - Runtime capacity/minimum SoC/weights override static configuration, as production does.
+- Oct 4 [feedback replay](dh_feedback_economic_replay_2026-10-04.md): frozen base capacity
+  420,000 Wh vs runtime 40,300 Wh. Initial physical execution must apply runtime overrides too;
+  base config is not an authoritative inventory capacity. No live config change.
   Endpoint requiring clamping is rejected; unsupported payload fields are rejected.
 - Oct 3 01:51:09 UTC capture: DH 144×30m Optimal in 2.73s; MPC 168×5m Optimal in 1.20s.
   Physical/result checks passed; core temporary workspaces contained no generated files.

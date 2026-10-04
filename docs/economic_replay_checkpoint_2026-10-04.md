@@ -5,6 +5,9 @@ ranking terminal-policy, net-energy and APF-tail changes. No production change.
 Update: [stress windows/DH source admission](economic_regimes_and_dh_admission_2026-10-04.md)
 find four reconstructed half-hour load lags across three archives. Input alignment/hold-last-plan
 replay admission now precedes own-DH feedback and new model ranking.
+Update: [own-battery feedback pilots](dh_feedback_economic_replay_2026-10-04.md) now implement that
+admission/feedback path; 72 completed core solves across export/near-full approach show zero
+terminal-policy cash/inventory difference. Next net-energy calibration; export delivery gap remains.
 
 ## Existing work retained
 

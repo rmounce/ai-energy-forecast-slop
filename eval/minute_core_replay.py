@@ -146,7 +146,7 @@ def simulate(bundle, solve):
         'observed': bundle['observed'], 'steps': rows, 'solves': artifacts, 'publication_authorized': False}
 
 
-def build_bundle(args):
+def build_bundle(args, *, apf_revisions=None, captured_states=None):
     read = lambda path: json.loads(path.read_text())
     sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     manifest = read(args.history/'manifest.json')
@@ -155,6 +155,10 @@ def build_bundle(args):
             or old['bundle_sha256'] != digest(parent_bundle)):
         raise ValueError('changed evidence bundle')
     history = read(args.history/'history.json')
+    if apf_revisions is not None:
+        parent_bundle['apf_revisions'] = deepcopy(apf_revisions)
+    if captured_states is not None:
+        parent_bundle['parents']['baseline'] = deepcopy(captured_states)
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
     if (start.tzinfo is None or end.tzinfo is None or not start < end <= start+pd.Timedelta(minutes=30)
             or start < pd.Timestamp(manifest['start']) or end > pd.Timestamp(manifest['end'])):
@@ -206,11 +210,15 @@ def build_bundle(args):
     initial_command = {'battery_w': float(asof(history['mpc_battery'], start, 120)['value']),
         'curtail_w': 0., 'export_limit_w': min(parent_bundle['configuration']['plant_conf']['maximum_power_to_grid'],
             max(0, float(asof(history['mode'], start, 120)['export_limit_kw'])*1000))}
+    provenance = {'history_sha256': manifest['history_sha256'], 'parent_bundle_sha256': digest(parent_bundle),
+        'start': start.isoformat(), 'end': end.isoformat()}
+    if apf_revisions is not None or captured_states is not None:
+        provenance['source_overrides'] = {'apf': digest(apf_revisions) if apf_revisions is not None else None,
+            'capture': digest(captured_states) if captured_states is not None else None}
     return {'steps': steps, 'initial_soc': initial_soc, 'initial_command': initial_command, 'observed': observed,
         'image': parent_bundle['image'], 'configuration': parent_bundle['configuration'],
         'optimization_sha256': parent_bundle['optimization_sha256'], 'source_publication_id': parent_bundle['source_publication_id'],
-        'provenance': {'history_sha256': manifest['history_sha256'], 'parent_bundle_sha256': digest(parent_bundle),
-            'start': start.isoformat(), 'end': end.isoformat()}}
+        'provenance': provenance}
 
 
 def main():

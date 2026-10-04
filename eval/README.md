@@ -30,6 +30,9 @@ remain conditional; [results/commands/gates](../docs/minute_economic_replay_2026
 `audit_dh_source_history.py` → causal-source age/target alignment, optional same-vintage measured
 load scoring. `archived_forecasts.py` parses recorded Solcast constructor representations without
 evaluation. [Windows, four load lags and next gates](../docs/economic_regimes_and_dh_admission_2026-10-04.md).
+`dh_feedback_replay.py` → paired chronological DH/MPC events, endogenous battery plans/helpers,
+aligned-source admission, own inventory and delayed activation; archived HWC remains exogenous.
+[Two installed-core pilots, limits and next work](../docs/dh_feedback_economic_replay_2026-10-04.md).
 
 ## Price Source Contracts
 

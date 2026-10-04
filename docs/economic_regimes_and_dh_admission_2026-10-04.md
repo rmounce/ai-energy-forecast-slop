@@ -7,6 +7,8 @@
 - Next: enforce this admission in bounded replay; hold the previous accepted DH/HWC plan until
   fresh aligned inputs arrive; regenerate each arm's DH/HWC from its own simulated inventory.
   Missing final load target cannot be repaired by shifting and filling with future information.
+- Update: [own-battery DH feedback pilots](dh_feedback_economic_replay_2026-10-04.md) now implement
+  admission/retained parent and per-arm battery feedback; HWC remains exogenous. Next calibration.
 
 ## Frozen diagnostic windows
 

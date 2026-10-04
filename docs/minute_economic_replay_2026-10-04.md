@@ -104,6 +104,10 @@ Choose a new output path; household evidence stays ignored.
 
 ## Next effort / economic priorities
 
+Update: [own-battery DH/MPC event pilots](dh_feedback_economic_replay_2026-10-04.md) now complete
+aligned admission and per-arm battery feedback for two stress subwindows; no terminal-lock-in gain.
+HWC remains exogenous. Priorities below retain full-battery/device-delivery and forecast gates.
+
 1. [Three diagnostic stress windows now frozen](economic_regimes_and_dh_admission_2026-10-04.md).
    Four reconstructed DH origins have half-hour load lags despite equal array lengths. Enforce
    aligned-input admission and retain the accepted parent while waiting for fresh sources.

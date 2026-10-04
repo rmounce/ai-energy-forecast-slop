@@ -207,3 +207,6 @@ recorded activation delays; no meaningful terminal-lock-in gain in the bounded30
 [Regime selection and DH source admission](docs/economic_regimes_and_dh_admission_2026-10-04.md)
 now freeze three stress windows; four reconstructed DH origins have load timestamps one half-hour
 behind price/PV despite equal array lengths. Input alignment precedes new model comparisons.
+[Own-battery DH feedback pilots](docs/dh_feedback_economic_replay_2026-10-04.md) now retain aligned
+parents across rollover; two stress subwindows show no terminal-lock-in gain. HWC remains exogenous;
+next causal net-energy calibration and export device-delivery diagnosis.
