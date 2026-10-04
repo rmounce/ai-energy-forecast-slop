@@ -294,3 +294,7 @@ Single-origin forecast cashflow differences remain distinct from realised saving
 core solves; p65 calibration has no executed cash/inventory gain despite forecast/path changes.
 Measured delivery shows tracking and conversion/asynchronous residuals; validate actual controller
 grid-cap/mode/fallback semantics and solve clocks before promoting forecast changes. APF retained.
+
+[Recorded EMS control replay](ems_delivery_fidelity_2026-10-04.md) confirms fallback mode switches
+and reduces matched export error≈87%. Inventory error remains; reconcile physical energy and
+replay an endogenous controller challenger before treating forecast cashflow differences as gains.

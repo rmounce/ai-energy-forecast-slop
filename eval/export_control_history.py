@@ -51,6 +51,26 @@ DH_SOURCES = {
 }
 
 
+EMS_SOURCES = {
+    **{name: (None, entity, ['value', 'forecasts_str']) for name, entity in (
+        ('mpc_grid', 'mpc_p_grid_forecast'), ('mpc_load', 'mpc_p_load_forecast'),
+        ('mpc_pv', 'mpc_p_pv_forecast'), ('mpc_hybrid', 'mpc_p_hybrid_inverter'),
+        ('mpc_curtailment', 'mpc_p_pv_curtailment'))},
+    **{name: (None, entity, ['value', 'state', 'value_str']) for name, entity in (
+        ('ems_action', 'emhass_battery_action'), ('ems_mode', 'sigen_plant_remote_ems_control_mode'),
+        ('grid_status', 'sigen_plant_grid_connection_status'),
+        ('grid_export_limit', 'sigen_plant_grid_export_limitation'),
+        ('pcs_export_limit', 'sigen_plant_pcs_export_limitation'),
+        ('discharge_limit', 'sigen_plant_ess_max_discharging_limit'),
+        ('desired_export_limit', 'desired_export_limit'),
+        ('flexible_export_limit', 'flexible_export_limit'),
+        ('transient_pcs_cap', 'transient_pcs_export_cap'),
+        ('export_ramp_timer', 'sigen_export_ramp'),
+        ('minimum_export_soc', 'battery_soc_min_export'),
+        ('effective_feed', 'amber_effective_feed_in_price'))},
+}
+
+
 def main():
     os.nice(19)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -58,6 +78,7 @@ def main():
     parser.add_argument('--end', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--include-dh-inputs', action='store_true', help='include strategic forecast/settings lineage')
+    parser.add_argument('--include-ems-inputs', action='store_true', help='include published controller curves and device limits/modes')
     args = parser.parse_args()
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
     if (start.tzinfo is None or end.tzinfo is None or pd.isna(start) or pd.isna(end) or
@@ -72,6 +93,7 @@ def main():
         timeout=20, retries=0)
     sources = dict(SOURCES)
     if args.include_dh_inputs: sources.update(DH_SOURCES)
+    if args.include_ems_inputs: sources.update(EMS_SOURCES)
     raw, queries, schema, resolved = {}, {}, {}, {}
     try:
         for measurement in sorted({source[0] for source in sources.values() if source[0]}):
@@ -81,7 +103,8 @@ def main():
             if measurement is None:
                 keys = list(client.query(f'SHOW SERIES WHERE "entity_id" = \'{entity}\'').get_points())
                 available = sorted({row['key'].split(',', 1)[0] for row in keys
-                    if row['key'].split(',', 1)[0] == 'sensor' or row['key'].split(',', 1)[0].startswith('sensor__')})
+                    if row['key'].split(',', 1)[0] in ('sensor', 'number', 'select', 'input_number', 'input_text', 'timer')
+                    or row['key'].split(',', 1)[0].startswith(('sensor__', 'number__', 'input_number__'))})
                 matching = []
                 for candidate in available:
                     if candidate not in schema:

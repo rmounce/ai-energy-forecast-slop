@@ -214,4 +214,6 @@ next causal net-energy calibration and export device-delivery diagnosis.
 72 core solves: forecast/path changes but no 15-minute cash/inventory gain. Quantile loss is mixed;
 [Verified continuation](docs/continued_feedback_and_delivery_2026-10-04.md) extends export execution
 to40min/96 solves: still zero cash/inventory gain. Boundary timing and conversion residual explain
-parts of the export-delivery discrepancy; controller fidelity and coherent solve clocks come next.
+parts of the export-delivery discrepancy. [Recorded EMS delivery replay](docs/ems_delivery_fidelity_2026-10-04.md)
+reduces net-export error≈87%, but inventory fidelity remains open; next energy reconciliation
+and an endogenous controller challenger before forecast promotion.

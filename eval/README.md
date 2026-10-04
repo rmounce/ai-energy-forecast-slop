@@ -40,7 +40,10 @@ saved plans and optionally scores each vintage once on measured future targets, 
 [Initial 72-solve results](../docs/causal_load_feedback_results_2026-10-04.md).
 `--resume-from` verifies prior saved replay before carrying own state/command;
 `summarize_feedback_chain.py` validates chain lineage and totals flows/final inventory.
-[40min/96-solve continuation and export delivery](../docs/continued_feedback_and_delivery_2026-10-04.md).
+[40min/96-solve continuation](../docs/continued_feedback_and_delivery_2026-10-04.md).
+`export_control_history.py --include-ems-inputs` freezes controller curves/modes/limits;
+`audit_ems_delivery.py --replay INITIAL [CONTINUATION ...]` verifies chain and replays recorded
+controls as a baseline diagnostic. [Export fit improves; inventory gate remains](../docs/ems_delivery_fidelity_2026-10-04.md).
 
 ## Price Source Contracts
 

@@ -104,9 +104,10 @@ Confirmed control configuration, read-only inspection Oct4:
   Raw energy diagnostic integrates both before/after-activation segments by duration;
   boundary diagnostic selects prior published curve via `parse_curve/asof`, then cuts raw holds
   at5min tick, next publication and20s later. Outputs are diagnostics, not solver inputs.
-- Next priority: replay actual controller grid-cap/mode/fallback semantics and validate against
-  measured dispatch; establish solve/republish clocks; continue inventory-constrained economic
-  tests. Keep calibrated p65 a challenger and preserve its mixed quantile-loss finding.
+- [Recorded controller delivery completed](ems_delivery_fidelity_2026-10-04.md): action/mode
+  history confirms fallback self-consumption; replay reduces export error≈87% but inventory
+  error does not improve. Next energy reconciliation, endogenous controller challenger and
+  solve/republish clocks, then inventory-constrained forecast tests. Calibration remains offline.
 - Validation:338 affected tests pass outside sandbox;9 checkpoint/chain tests rerun after
   tightening complete saved-solve reproduction. Sandbox run stalled/timed out in unchanged
   thread-to-async listener/source tests; same cases pass outside sandbox. Existing Influx

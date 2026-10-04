@@ -620,3 +620,8 @@ policy. Separate saved-plan/future-target auditor; no scored future labels in re
 requests/results before carrying each arm's SoC/parent/helpers/command across bounded batches.
 Explicit raw-telemetry gap execution; chain totals count final inventory once. 40min export execution
 shows no calibration gain; inconsistent solve/publication clock blocks the next longer batch.
+
+[Recorded EMS delivery audit](docs/ems_delivery_fidelity_2026-10-04.md) cuts raw holds at mode/grid/PCS/
+charge/discharge-limit events; models self-consumption and PV-first forced discharge through existing
+physical bounds. ≈87% export-error reduction, inventory error unimproved. Recorded control history
+is exogenous baseline evidence, unsuitable for ranking counterfactual forecasts or claiming savings.
