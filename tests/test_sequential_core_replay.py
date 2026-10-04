@@ -185,3 +185,28 @@ def test_rescore_can_only_change_financial_labels_not_decisions_or_physics(plant
     assert decision_bundle_identity(bundle) == decision_bundle_identity(changed)
     changed['actuals'][0]['pv_dc_w'] = 999
     assert decision_bundle_identity(bundle) != decision_bundle_identity(changed)
+
+
+def test_fixed_dc_overhead_conserves_grid_and_battery_energy(plant):
+    a = execute(plant,.8,2000,0,1000,300,10000,duration_seconds=60)
+    b = execute(plant,.8,2000,0,1000,300,10000,duration_seconds=60,dc_fixed_loss_w=140)
+    assert b['end_soc'] == a['end_soc']
+    assert b['inverter_ac_w'] == pytest.approx(a['inverter_ac_w']-140*.95)
+    assert b['grid_export_kwh'] == pytest.approx(a['grid_export_kwh']-140*.95/60000)
+    empty = execute(plant,.15,0,0,0,300,10000,duration_seconds=60,dc_fixed_loss_w=140)
+    assert empty['grid_import_kwh'] == pytest.approx((300+140/.95)/60000)
+    assert empty['end_soc'] == .15
+
+
+@pytest.mark.parametrize('loss', [-1.,float('nan'),float('inf')])
+def test_invalid_dc_overhead_is_rejected(plant,loss):
+    with pytest.raises(ValueError): execute(plant,.8,2000,0,0,300,10000,dc_fixed_loss_w=loss)
+
+
+def test_dc_overhead_reduces_stored_charge_at_same_ac_input_limit(plant):
+    a = execute(plant,.5,-20000,0,0,1000,10000)
+    b = execute(plant,.5,-20000,0,0,1000,10000,dc_fixed_loss_w=140)
+    assert b['inverter_ac_w'] == pytest.approx(-9980)
+    assert b['grid_import_kwh'] == pytest.approx(a['grid_import_kwh'])
+    assert b['battery_discharge_w'] == pytest.approx(a['battery_discharge_w']+140)
+    assert b['end_soc'] < a['end_soc']

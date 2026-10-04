@@ -71,6 +71,18 @@ EMS_SOURCES = {
 }
 
 
+ENERGY_SOURCES = {
+    **{name: (None, entity, ['value', 'unit_of_measurement_str']) for name, entity in (
+        ('inverter_ac', 'sigen_inverter_active_power'),
+        ('pv1', 'sigen_inverter_pv1_power'), ('pv2', 'sigen_inverter_pv2_power'),
+        ('available_charge', 'sigen_plant_available_max_charging_capacity'),
+        ('available_discharge', 'sigen_plant_available_max_discharging_capacity'),
+        ('derived_capacity', 'sigen_plant_battery_capactiy_derived'),
+        ('bms_soc', 'sigen_plant_battery_state_of_charge'))},
+    **{key: DH_SOURCES[key] for key in ('rated_capacity', 'battery_health')},
+}
+
+
 def main():
     os.nice(19)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -79,6 +91,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--include-dh-inputs', action='store_true', help='include strategic forecast/settings lineage')
     parser.add_argument('--include-ems-inputs', action='store_true', help='include published controller curves and device limits/modes')
+    parser.add_argument('--include-energy-balance', action='store_true', help='include AC/DC and available battery capacity reconciliation')
     args = parser.parse_args()
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
     if (start.tzinfo is None or end.tzinfo is None or pd.isna(start) or pd.isna(end) or
@@ -94,6 +107,7 @@ def main():
     sources = dict(SOURCES)
     if args.include_dh_inputs: sources.update(DH_SOURCES)
     if args.include_ems_inputs: sources.update(EMS_SOURCES)
+    if args.include_energy_balance: sources.update(ENERGY_SOURCES)
     raw, queries, schema, resolved = {}, {}, {}, {}
     try:
         for measurement in sorted({source[0] for source in sources.values() if source[0]}):

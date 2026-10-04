@@ -136,3 +136,11 @@ def test_charging_limit_attribute_change_cuts_timeline_and_missing_readback_fail
     assert next(r for r in rows if pd.Timestamp(r['start'])==pd.Timestamp('2026-09-30T22:05:15Z'))['controls']['charge_limit']['value'] == 0.
     h['mode'][-1]['charge_limit_kw'] = None
     with pytest.raises(ValueError,match='charging-limit'): control_segments(h,[actual()])
+
+
+def test_fixed_overhead_increases_required_dc_without_inventing_grid_energy(plant):
+    a = execute_ems(plant,.8,actual())
+    b = execute_ems(plant,.8,actual(),dc_fixed_loss_w=140.)
+    assert b['grid_export_kwh'] == pytest.approx(a['grid_export_kwh'])
+    assert b['battery_discharge_w'] == pytest.approx(a['battery_discharge_w']+140)
+    assert b['end_soc'] < a['end_soc']

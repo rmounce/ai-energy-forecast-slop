@@ -112,7 +112,8 @@ future measured base-load half-hours only. Scoring never enters correction fitti
 - [Continuation completed](continued_feedback_and_delivery_2026-10-04.md): own state/plan/command
   carried through40min/96 export solves, past original projected divergences; no cash/inventory gain.
   [Recorded controller audit](ems_delivery_fidelity_2026-10-04.md) improves grid fit; inventory
-  remains unvalidated. Next energy reconciliation/coherent solve clocks, then inventory-constrained periods.
+  remains a proxy. [Energy/timing pilot completed](ems_energy_reconciliation_2026-10-05.md);
+  next own-state solver/controller integration and coherent clocks, then inventory-constrained periods.
   Diagnose requested-vs-delivered DC power in parallel with longer replay. Compare cashflow,
   throughput, curtailment and ending inventory; keep APF unchanged for this load experiment.
 - No production changes, publication, device writes or new model training.

@@ -215,5 +215,6 @@ next causal net-energy calibration and export device-delivery diagnosis.
 [Verified continuation](docs/continued_feedback_and_delivery_2026-10-04.md) extends export execution
 to40min/96 solves: still zero cash/inventory gain. Boundary timing and conversion residual explain
 parts of the export-delivery discrepancy. [Recorded EMS delivery replay](docs/ems_delivery_fidelity_2026-10-04.md)
-reduces net-export error≈87%, but inventory fidelity remains open; next energy reconciliation
-and an endogenous controller challenger before forecast promotion.
+reduces net-export error≈87%. [Energy reconciliation and timing pilot](docs/ems_energy_reconciliation_2026-10-05.md)
+identify a moving BMS SoC denominator and omitted DC overhead. Holding accepted commands adds
+~5c credit but spends~0.20kWh inventory; next own-SoC solver feedback before any promotion.

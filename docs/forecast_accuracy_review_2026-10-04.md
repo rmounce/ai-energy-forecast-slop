@@ -298,3 +298,8 @@ grid-cap/mode/fallback semantics and solve clocks before promoting forecast chan
 [Recorded EMS control replay](ems_delivery_fidelity_2026-10-04.md) confirms fallback mode switches
 and reduces matched export error≈87%. Inventory error remains; reconcile physical energy and
 replay an endogenous controller challenger before treating forecast cashflow differences as gains.
+
+[Energy and timing follow-up](ems_energy_reconciliation_2026-10-05.md): BMS SoC denominator
+moves, nominal inventory is a proxy; existing140W DC overhead improves baseline fidelity.
+Holding accepted commands gains~5c but consumes~0.20kWh; ending-value/wear and own-state
+future-solve feedback remain gates. No forecast or controller production promotion.

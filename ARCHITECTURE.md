@@ -625,3 +625,10 @@ shows no calibration gain; inconsistent solve/publication clock blocks the next 
 charge/discharge-limit events; models self-consumption and PV-first forced discharge through existing
 physical bounds. ≈87% export-error reduction, inventory error unimproved. Recorded control history
 is exogenous baseline evidence, unsuitable for ranking counterfactual forecasts or claiming savings.
+
+[Energy reconciliation](docs/ems_energy_reconciliation_2026-10-05.md): derived SoC uses changing
+available-charge/discharge capacity ratio; rated40.3kWh×SoC is an inventory proxy. Exact DC
+power ledger separate. Executor supports optional DC overhead, default0; existing140W ablation
+improves delivery/stock consistency. [Timing challenger](docs/ems_fallback_challenger_2026-10-05.md)
+owns SoC/mode/limits with current guards, but holds incumbent plans frozen. Extra credit~5c
+spends~0.20kWh; no demonstrated net gain or own-state future-solve feedback yet.

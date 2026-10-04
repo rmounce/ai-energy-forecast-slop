@@ -108,7 +108,14 @@ end22:15/22:40. Same start, rates and raw telemetry for every comparison.
 - Validation:65 affected tests pass, including12 EMS tests. Prior/future plan selection, YAML-supported branch, mode/DC energy balance,
   PCS/discharge/SOC constraints, unsupported states, chronological control cuts and audit scope.
 
-## Next effort
+## Follow-up status
+
+- [Energy reconciliation and timing pilot completed](ems_energy_reconciliation_2026-10-05.md):
+  moving BMS-capacity denominator explains why SoC×rating is a proxy; optional existing140W
+  DC overhead improves inventory consistency. Guarded timing pilot gains~5c but spends~0.20kWh.
+  Next controller/physics integration with own-state future solves; no promotion.
+
+## Original next effort (superseded by linked checkpoint)
 
 1. Reconcile stable-mode DC energy, AC/grid output and SoC/capacity on independently selected
    windows. Estimate fixed losses and response delay only from released training observations;

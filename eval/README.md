@@ -43,7 +43,12 @@ saved plans and optionally scores each vintage once on measured future targets, 
 [40min/96-solve continuation](../docs/continued_feedback_and_delivery_2026-10-04.md).
 `export_control_history.py --include-ems-inputs` freezes controller curves/modes/limits;
 `audit_ems_delivery.py --replay INITIAL [CONTINUATION ...]` verifies chain and replays recorded
-controls as a baseline diagnostic. [Export fit improves; inventory gate remains](../docs/ems_delivery_fidelity_2026-10-04.md).
+controls as a baseline diagnostic. [Initial recorded-delivery results](../docs/ems_delivery_fidelity_2026-10-04.md).
+`--include-energy-balance` freezes AC/DC/BMS capacity streams; `reconcile_ems_energy.py` keeps
+raw power stock distinct from changing reported SoC/capacity. Optional140W executor ablation.
+`replay_ems_fallback.py` emits own guarded commands/SoC with common frozen MPC plans;
+[energy reconciliation](../docs/ems_energy_reconciliation_2026-10-05.md) and
+[credit/inventory timing tradeoff](../docs/ems_fallback_challenger_2026-10-05.md).
 
 ## Price Source Contracts
 

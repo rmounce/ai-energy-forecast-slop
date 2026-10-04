@@ -78,7 +78,7 @@ def control_segments(history, segments):
     return result
 
 
-def execute_ems(plant, soc, actual, *, use_pcs_limit=True):
+def execute_ems(plant, soc, actual, *, use_pcs_limit=True, dc_fixed_loss_w=0.):
     """Ideal equilibrium behind recorded grid cap/mode, with physical energy limits."""
     states = actual['controls']
     mode = states['ems_mode']['state']
@@ -95,11 +95,11 @@ def execute_ems(plant, soc, actual, *, use_pcs_limit=True):
     cap = min(plant['maximum_power_to_grid'], limits['grid_export_limit']*1000)
     pv, load = actual['pv_dc_w'], actual['load_site_w']
     ac = load if mode == 'Maximum Self Consumption' else min(effective['inverter_ac_output_max'], load+cap)
-    command = ac/plant['inverter_efficiency_dc_ac']-pv
+    command = ac/plant['inverter_efficiency_dc_ac']+dc_fixed_loss_w-pv
     if mode == 'Command Discharging (PV First)':
         command = max(0., command)  # PV first; this mode does not command battery charging.
     return execute(effective, soc, command, 0., pv, load, cap,
-                   duration_seconds=actual['duration_seconds'])
+                   duration_seconds=actual['duration_seconds'], dc_fixed_loss_w=dc_fixed_loss_w)
 
 
 def integrate_observed(segments):
@@ -138,11 +138,12 @@ def audit(history, segments, plant, initial_soc, baseline_summary, observed_fina
                       'observed_before_publication': integrate_observed(interval)})
     controlled = control_segments(history, segments)
     physical = {}
-    for arm, use_pcs in (('recorded_mode_grid_and_pcs', True), ('recorded_mode_and_grid_only', False)):
+    for arm, use_pcs, loss in (('recorded_mode_grid_and_pcs', True, 0.), ('recorded_mode_and_grid_only', False, 0.),
+                              ('recorded_mode_grid_and_pcs_140w', True, 140.)):
         soc, total = initial_soc, {'grid_import_kwh': 0., 'grid_export_kwh': 0.,
                                            'variable_cost_aud': 0., 'dc_discharge_kwh': 0.}
         for actual in controlled:
-            out = execute_ems(plant, soc, actual, use_pcs_limit=use_pcs)
+            out = execute_ems(plant, soc, actual, use_pcs_limit=use_pcs, dc_fixed_loss_w=loss)
             for key in ('grid_import_kwh', 'grid_export_kwh'):
                 total[key] += out[key]
             total['variable_cost_aud'] += out['grid_import_kwh']*actual['general_rate']-out['grid_export_kwh']*actual['feed_rate']
@@ -159,6 +160,8 @@ def audit(history, segments, plant, initial_soc, baseline_summary, observed_fina
             'diagnostics': {'original_ideal_net_export_error_kwh': net(original)-net(observed),
                 'recorded_control_net_export_error_kwh': net(physical['recorded_mode_grid_and_pcs'])-net(observed),
                 'original_ideal_ending_inventory_error_kwh': baseline_summary['ending_inventory_kwh']-observed_final_soc*plant['battery_nominal_energy_capacity']/1000,
+                'recorded_control_140w_net_export_error_kwh': net(physical['recorded_mode_grid_and_pcs_140w'])-net(observed),
+                'recorded_control_140w_ending_inventory_error_kwh': (physical['recorded_mode_grid_and_pcs_140w']['final_soc']-observed_final_soc)*plant['battery_nominal_energy_capacity']/1000,
                 'recorded_control_ending_inventory_error_kwh': (physical['recorded_mode_grid_and_pcs']['final_soc']-observed_final_soc)*plant['battery_nominal_energy_capacity']/1000,
                 'supported_tick_count': sum(t['supported_expected_action'] is not None for t in ticks),
                 'supported_tick_action_matches': sum(t['supported_expected_action'] == t['observed_action']
@@ -166,7 +169,7 @@ def audit(history, segments, plant, initial_soc, baseline_summary, observed_fina
             'limitations': ['recorded mode/register timestamps are asynchronous readbacks, not command completion clocks',
                 'existing YAML supported self-consume subset only; unsupported branches not guessed',
                 'recorded control trace is exogenous and cannot rank counterfactual forecasts or establish savings',
-                'ideal equilibrium; no physical ramp, firmware response, fixed-loss or optimistic-select model',
+                'ideal equilibrium; no physical ramp, firmware response or optimistic-select model; fixed140W DC ablation not fitted',
                 'recorded PCS register already incorporates any transient cap; do not apply the cap helper twice',
                 'delivered PV lower bound and one initial battery SoC; no later recorded SoC resets',
                 'stable-state31day bound is not proof of continuous availability; plan receipt/target clocks explicit',
@@ -200,6 +203,8 @@ def main():
     result['provenance'] = {'control_history_sha256': manifest['history_sha256'],
         'replay_bundle_sha256': [digest(bundle) for bundle in bundles], 'replay_lineage': chain['lineage'],
         'code_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'dependency_sha256': {name: hashlib.sha256((Path(__file__).resolve().parents[1]/name).read_bytes()).hexdigest()
+                              for name in ('eval/audit_control_fidelity.py', 'eval/measured_actuals.py', 'eval/sequential_core_replay.py', 'eval/audit_ems_delivery.py', 'eval/dh_feedback_replay.py', 'eval/feedback_checkpoint.py', 'eval/summarize_feedback_chain.py')},
         'yaml_sha256': {name: hashlib.sha256((Path(__file__).resolve().parents[1]/name).read_bytes()).hexdigest()
                        for name in ('hass/automation-sigenergy-emhass.yaml','hass/packages/sigenergy_ems.yaml')}}
     args.output.write_text(json.dumps(result, indent=2, allow_nan=False)+'\n')

@@ -30,10 +30,10 @@ ENTITIES = ('sensor.sigen_plant_rated_energy_capacity', 'sensor.sigen_plant_batt
     'sensor.solcast_pv_forecast_power_now')
 
 
-def execute(plant, soc, battery_w, curtail_w, pv_w, load_w, export_limit_w, *, duration_seconds=300):
-    """Ideal DC battery command; deterministic feasible AC/DC projection, no gap fill."""
-    inputs = [soc, battery_w, curtail_w, pv_w, load_w, export_limit_w, duration_seconds]
-    if (not np.isfinite(inputs).all() or min(pv_w, load_w, export_limit_w) < 0
+def execute(plant, soc, battery_w, curtail_w, pv_w, load_w, export_limit_w, *, duration_seconds=300, dc_fixed_loss_w=0.):
+    """Ideal DC command with optional DC overhead; feasible AC/DC projection, no gap fill."""
+    inputs = [soc, battery_w, curtail_w, pv_w, load_w, export_limit_w, duration_seconds, dc_fixed_loss_w]
+    if (not np.isfinite(inputs).all() or min(pv_w, load_w, export_limit_w, dc_fixed_loss_w) < 0
             or not 0 < duration_seconds <= 300):
         raise ValueError('invalid execution input')
     if not plant['inverter_is_hybrid']:
@@ -53,17 +53,17 @@ def execute(plant, soc, battery_w, curtail_w, pv_w, load_w, export_limit_w, *, d
     # discharge if curtailment cannot prevent prohibited export.
     max_ac = min(plant['inverter_ac_output_max'], load_w+export_limit_w,
                  load_w+plant['maximum_power_to_grid'])
-    max_dc = max_ac/eta_out
+    max_dc = max_ac/eta_out+dc_fixed_loss_w
     excess = max(0, pv+batt-max_dc)
     removed = min(pv, excess)
     pv -= removed
     batt -= excess-removed
     minimum_ac = max(-plant['inverter_ac_input_max'], load_w-plant['maximum_power_from_grid'])
-    minimum_dc = minimum_ac*eta_in if minimum_ac < 0 else minimum_ac/eta_out
+    minimum_dc = (minimum_ac*eta_in if minimum_ac < 0 else minimum_ac/eta_out)+dc_fixed_loss_w
     batt = max(batt, minimum_dc-pv)
     if batt < low-1e-6 or batt > high+1e-6:
         raise ValueError('site cannot execute within grid/inverter/SoC bounds')
-    dc = pv+batt
+    dc = pv+batt-dc_fixed_loss_w
     ac = dc*eta_out if dc >= 0 else dc/eta_in
     grid = load_w-ac
     if grid > plant['maximum_power_from_grid']+1e-6 or grid < -export_limit_w-1e-6:
