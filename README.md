@@ -198,3 +198,5 @@ Recorded core solves and [historical DH→MPC chain](docs/energy_pipeline_solver
 now available; longer-horizon p65 MAE improves 16–21%, no measured savings yet.
 [Parallel economic comparisons](docs/parallel_economic_findings_2026-10-04.md): observed tariff
 accounting, fixed-endpoint load and fixed-forecast terminal sensitivities; APF archive pilot.
+[Sequential one-hour MPC comparison](docs/sequential_economic_replay_2026-10-04.md) now scored
+against common measurements: near-zero load-calibration gain here; baseline execution mismatch open.

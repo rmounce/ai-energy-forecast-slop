@@ -117,3 +117,41 @@ def test_pre_end_receipt_preserved_with_separate_sensitivity():
     assert not errors and not rates.iloc[0].received_at_or_after_end
     rates, errors = canonical_rates([row], START, END, require_post_end_receipt=True)
     assert rates.empty and errors['latest_receipt_before_interval_end'] == 1
+
+
+def test_mqtt_rollover_new_value_with_old_interval_is_not_a_quote_revision():
+    stable = quote(value=.0261, time='2026-09-27T00:00:16Z', update_time_str='2026-09-27T00:00:16')
+    transitional = quote(value=.03, time='2026-09-27T00:05:19.395265Z',
+                         update_time_str='2026-09-27T00:00:16')
+    next_interval = quote(value=.03, time='2026-09-27T00:05:19.396310Z',
+        start_time_str='2026-09-27T00:05:01Z', end_time_str='2026-09-27T00:10:00Z',
+        update_time_str='2026-09-27T00:05:19')
+    rates, errors = canonical_rates([stable, transitional, next_interval], START, END)
+    assert rates.iloc[0]['rate'] == .0261
+    assert errors['state_attribute_transition'] == 1
+    # Without an already received successor, do not use future evidence.
+    unpaired, _ = canonical_rates([stable, transitional], START, END)
+    assert unpaired.iloc[0]['rate'] == .03
+
+
+def test_same_interval_genuine_revision_not_removed_by_rollover_filter():
+    a = quote(value=.2, time='2026-09-27T00:04:00Z', update_time_str='a')
+    b = quote(value=.3, time='2026-09-27T00:04:00.001Z', update_time_str='b')
+    rates, errors = canonical_rates([a, b], START, END)
+    assert not errors and rates.iloc[0]['rate'] == .3
+
+
+def test_adjusted_rollover_retains_matching_complete_raw_quote():
+    stable = quote(time='2026-09-27T00:00:16Z', update_time_str='a')
+    old_metadata = quote(value=.3, time='2026-09-27T00:05:19.001Z', update_time_str='a')
+    next_metadata = quote(value=.3, time='2026-09-27T00:05:19.002Z', update_time_str='b',
+        start_time_str='2026-09-27T00:05:01Z', end_time_str='2026-09-27T00:10:00Z')
+    raw_rows = [stable, old_metadata, next_metadata]
+    raw, _ = canonical_rates(raw_rows, START, END)
+    adjusted_rows = [adjusted(time='2026-09-27T00:00:16.001Z'),
+        adjusted(time='2026-09-27T00:05:19.003Z', value=.31, raw_price=.3),
+        adjusted(time='2026-09-27T00:05:19.004Z', value=.31, raw_price=.3,
+                 confirmed_end_time_str='2026-09-27T00:10:00Z')]
+    result, errors = adjusted_rates(adjusted_rows, raw, raw_rows)
+    assert result.iloc[0]['rate'] == .21
+    assert errors['state_attribute_transition'] == 1

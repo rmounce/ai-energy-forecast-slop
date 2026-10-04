@@ -17,6 +17,8 @@ Time-weighted raw samples; bounded holds, no gap filling; current Solcast proxy 
 APF forecast attributes. `audit_amber_forecast_archive.py` → bounded extended APF feasibility pilot.
 `compare_load_solver_sensitivity.py` / `compare_terminal_solver_sensitivity.py` → isolated core
 counterfactuals with explicit ending-inventory/forecast-only economics. [Findings/gates](../docs/parallel_economic_findings_2026-10-04.md).
+`sequential_core_replay.py` → bounded paired MPC cycles, common measured targets, as-of APF,
+endogenous inventory; ideal physical executor and fixed DH parents. [Result/limitations/command](../docs/sequential_economic_replay_2026-10-04.md).
 
 ## Price Source Contracts
 

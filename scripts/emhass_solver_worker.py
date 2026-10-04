@@ -1,5 +1,6 @@
 """One core EMHASS solve in a disposable container; no HA/web/CLI wrappers."""
 import hashlib
+from copy import deepcopy
 import inspect
 import json
 import logging
@@ -16,16 +17,17 @@ from emhass.retrieve_hass import RetrieveHass
 from emhass import utils
 
 
-def main():
-    os.nice(19)
-    request = json.loads(Path(sys.argv[1]).read_text())
+def solve_request(request):
     source_hash = hashlib.sha256(Path(inspect.getfile(Optimization)).read_bytes()).hexdigest()
     if source_hash != request['optimization_sha256']:
         raise ValueError('installed solver source hash mismatch')
-    conf = request['configuration']
+    # EMHASS's parser replaces minutes/timezone strings with Python objects.
+    # Keep the frozen request immutable when the worker handles multiple solves.
+    conf = deepcopy(request['configuration'])
     payload = request['payload']
     logger = logging.getLogger('isolated_emhass')
-    logger.addHandler(logging.StreamHandler(sys.stderr))
+    if not logger.handlers:
+        logger.addHandler(logging.StreamHandler(sys.stderr))
     logger.setLevel(logging.WARNING)
     retrieve, optim, plant = utils.get_yaml_parse(conf, logger)
     # Same day-ahead runtime endpoint clamping as utils.treat_runtimeparams.
@@ -75,7 +77,13 @@ def main():
             result['projected_dh_entities'] = projected
             result['projection_source_sha256'] = hashlib.sha256(
                 Path(inspect.getfile(RetrieveHass)).read_bytes()).hexdigest()
-        print(json.dumps(result, allow_nan=False))
+        return result
+
+
+def main():
+    os.nice(19)
+    request = json.loads(Path(sys.argv[1]).read_text())
+    print(json.dumps(solve_request(request), allow_nan=False))
 
 
 if __name__ == '__main__':

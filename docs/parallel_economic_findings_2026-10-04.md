@@ -6,6 +6,8 @@
   cheap incumbent tail residual next. No large-model training. Rankings remain hypotheses.
 - [Model/path assessment](price_parallel_paths_2026-10-04.md);
   [measured targets/calibration](measured_economic_actuals_2026-10-04.md).
+- [Sequential MPC pilot](sequential_economic_replay_2026-10-04.md) now completed: 24 solves,
+  near-zero measured-target cashflow difference; baseline trajectory mismatch still open.
 
 ## Observed variable cashflow: UTC Sept 27–Oct 4
 
@@ -14,20 +16,22 @@
   CurrentInterval/non-estimated status, five-minute convention, latest conflicting revisions,
   adjustment against contemporaneous and latest raw feed quote validated.
 - 2014/2016 rate intervals per leg; 2013 complete energy/rate intersections (99.85%).
-- Raw import cost **−$1.362**, net export cost **−$10.442**: variable credit **$11.804**.
+- Raw import cost **−$2.011**, net export cost **−$11.315**: variable credit **$13.326**.
   Excludes fixed charges, wear, gaps and inventory valuation; not invoice reconciliation,
   net system profit or counterfactual improvement.
-- Gross export revenue **$10.452**; paid-export cost **$0.0092**, 0.452 kWh.
+- Gross export revenue **$11.321**; paid-export cost **$0.0056**, 0.410 kWh.
   Negative-export execution leakage is small here; no evidence to prioritise a curtailment
   rewrite over load/inventory experiments from this week.
-- Recorded local allowance adjustment increases credit by **$0.213**, to **$12.018**.
+- Recorded local allowance adjustment increases credit by **$0.213**, to **$13.540**.
   Scenario only; free-export threshold/billing semantics require reconciliation.
 - CurrentInterval estimate=false retained before interval end. Optional post-end-only
-  sensitivity: 1773 priced intervals / $11.141 credit; not a validated truth filter.
+  sensitivity leaves only two intervals after rollover filtering; not a validated truth filter.
   [Amber API staff semantics](https://github.com/amberelectric/public-api/discussions/214).
-- Authoritative ignored evidence: `data/energy_replay/amber_observed_week_20261004_v5/`.
+- Authoritative ignored evidence: `data/energy_replay/amber_observed_week_20261004_v6/`.
   Earlier v1–v4 accounting summaries used the wrong feed-state sign; superseded. Raw quote
-  rows remain usable and hash-verified; v5 re-audits those same rows without network access.
+  rows remain usable and hash-verified. v5 fixed sign but retained mixed state/attribute rollover
+  rows; v6 excludes 1797 identified transitions per leg. Credit changes by **+$1.522**; no new
+  network data. [Rollover evidence and sequential re-scoring](sequential_economic_replay_2026-10-04.md).
 
 ## Installed feed-state contract — verified Oct 4
 

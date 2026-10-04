@@ -102,6 +102,13 @@ Fixed-endpoint load + fixed-forecast terminal sensitivities pass; initial comman
 Extended APF archive pilot inspected 18h payloads. Next complete selected origin manifests and
 sequential realised DH→MPC comparison; invoice and available-PV reconciliation remain open.
 
+[One-hour sequential MPC pilot](sequential_economic_replay_2026-10-04.md): 24 core solves,
+same measured targets; −$0.000783 conditional cashflow /+0.012kWh ending inventory. Effect negligible;
+baseline ends ~1.316kWh above observed live trace. Diagnose execution/control input mismatch before
+larger economic ranking. Fixed DH parents, ideal execution and delivered-PV lower bound explicit.
+Raw MQTT state/attribute rollover identified; price accounting now excludes matched transitions.
+Authoritative v6 observed credit $13.326/week; previous v5 financial summaries superseded.
+
 1. Historical one-cycle projection/chain completed. Preserve it while auditing multi-cycle feedback;
    do not require a production cutover to conduct economic experiments.
 2. Seven-day measured/log/quote windows frozen; bounded APF archive pilot complete. Build

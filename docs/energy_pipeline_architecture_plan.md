@@ -181,6 +181,8 @@ Separate [measured economic targets](measured_economic_actuals_2026-10-04.md) no
 seven completed days with causal forecast windows and an offline load-calibration challenger.
 Longer-horizon p65 MAE improves 16–21%; short-horizon gain small. Interval price/revisions now
 frozen and observed cashflow scored; fixed-endpoint load and fixed-forecast terminal core sensitivities
-pass. Extended APF archive pilot confirms inspected 18h payloads. Next reconstruct selected complete
-origin manifests and sequential DH→MPC comparisons; verify settlement/PV/HWC lineage and inventory;
+pass. Extended APF horizon varies by revision (inspected ~16–24h). Bounded one-hour sequential
+MPC comparison now gives negligible load-calibration cashflow effect; baseline inventory/flow
+mismatch needs diagnosis. Next baseline execution parity + complete origin manifests/repeated
+DH/HWC feedback; verify settlement/PV lineage and inventory;
 this evaluation work does not require orchestration cutover.

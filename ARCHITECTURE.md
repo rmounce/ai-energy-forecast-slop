@@ -599,3 +599,6 @@ Offline residual correction fits completed past targets only; no production mode
 [Economic comparisons](docs/parallel_economic_findings_2026-10-04.md) share one identity-checked
 isolated core runner. Observed accounting distinguishes MQTT feed states from raw APF attributes;
 historical APF pilot retains revision receipts separately from quoted targets.
+[Sequential replay](docs/sequential_economic_replay_2026-10-04.md) reuses direct core solves in
+one isolated container, evolving simulated inventory per arm with lagged telemetry and as-of APF.
+Fixed DH/HWC/risk inputs and delivered-PV lower bound remain explicit limits; no savings promotion.

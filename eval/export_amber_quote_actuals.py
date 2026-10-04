@@ -111,6 +111,7 @@ def main():
         'rate_conventions': {'general_state': 'positive import cost',
             'feed_state': 'positive export revenue; MQTT state negates raw API per_kwh',
             'feed_forecast_attributes': 'raw API sign; negative is export revenue; not used for observed accounting'},
+        'transition_filter': 'exclude identified <=100ms MQTT state-before-next-interval-attribute pairs; preserve raw rows',
         'raw_revision_rows': {source: len(history) for source, history in rows.items()},
         'rejections': {'general': general_errors, 'feed': feed_errors, 'adjusted_feed': adjusted_errors},
         'summary': summary,

@@ -37,6 +37,8 @@
 Oct 4 installed MQTT price contract: current feed sensor **state positive earns**, negated from API;
 `Forecasts.per_kwh` retains raw API sign (**negative earns**). ISO quoted end identifies priced
 interval; recorder time is a separate event timestamp. [Verified source/accounting](parallel_economic_findings_2026-10-04.md).
+Recorded MQTT state can briefly contain new price + old interval metadata before the next event;
+identified 1ms rollover pairs must be excluded from quoted-interval accounting. [Oct 3 evidence](sequential_economic_replay_2026-10-04.md).
 
 ---
 

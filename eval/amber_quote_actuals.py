@@ -22,16 +22,49 @@ def finite(value):
     return result
 
 
+def transition_receipts(rows, end_field):
+    """Identify observed MQTT state-before-attribute rollover pairs, not quotes.
+
+    New value with old interval metadata is followed within 100ms by the same
+    value with next-interval metadata. Raw quotes additionally require changed
+    source update marker. No future records are fetched by this pure function;
+    as-of callers must pass only rows already available to them.
+    """
+    ordered = []
+    for row in rows:
+        try: ordered.append((utc(row.get('time')), row))
+        except (ValueError, TypeError): continue
+    ordered.sort(key=lambda item: item[0])
+    excluded = set()
+    for (at, old), (later, new) in zip(ordered, ordered[1:]):
+        try:
+            if not pd.Timedelta(0) < later-at <= pd.Timedelta(milliseconds=100): continue
+            if utc(new.get(end_field))-utc(old.get(end_field)) != pd.Timedelta(minutes=5): continue
+            if finite(old.get('value')) != finite(new.get('value')): continue
+            if end_field == 'end_time_str':
+                if (not old.get('update_time_str') or not new.get('update_time_str') or
+                        old['update_time_str'] == new['update_time_str']): continue
+            else:
+                if finite(old.get('raw_price')) != finite(new.get('raw_price')): continue
+            excluded.add(at)
+        except (ValueError, TypeError): continue
+    return excluded
+
+
 def canonical_rates(rows, start, end, *, require_post_end_receipt=False):
     """Latest receipt per quoted interval; never substitute older valid revisions."""
     start, end = utc(start), utc(end)
     buckets, rejected = {}, Counter()
+    transitions = transition_receipts(rows, 'end_time_str')
     for row in rows:
         try:
             quoted_end = utc(row.get('end_time_str'))
             receipt = utc(row.get('time'))
         except (ValueError, TypeError):
             rejected['invalid_identity'] += 1
+            continue
+        if receipt in transitions:
+            rejected['state_attribute_transition'] += 1
             continue
         target = quoted_end-pd.Timedelta(minutes=5)
         if target < start or target >= end:
@@ -81,9 +114,12 @@ def canonical_rates(rows, start, end, *, require_post_end_receipt=False):
 def adjusted_rates(rows, raw_rates, raw_rows):
     """Recorded local adjustment must match latest raw quote at receipt and final raw."""
     buckets, rejected = {}, Counter()
+    transitions = transition_receipts(rows, 'confirmed_end_time_str')
+    raw_transitions = transition_receipts(raw_rows, 'end_time_str')
     raw_by_end = {}
     for row in raw_rows:
         try:
+            if utc(row.get('time')) in raw_transitions: continue
             raw_by_end.setdefault(utc(row.get('end_time_str')), []).append((utc(row.get('time')), row))
         except (ValueError, TypeError):
             continue
@@ -93,6 +129,9 @@ def adjusted_rates(rows, raw_rates, raw_rows):
             receipt = utc(row.get('time'))
         except (ValueError, TypeError):
             rejected['invalid_identity'] += 1
+            continue
+        if receipt in transitions:
+            rejected['state_attribute_transition'] += 1
             continue
         if target not in raw_rates.index:
             rejected['no_confirmed_raw_interval'] += 1
