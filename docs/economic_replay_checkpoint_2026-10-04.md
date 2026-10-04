@@ -95,14 +95,17 @@ Measured target milestone: [separate two-day export and causal load/price audit]
 coverage 88–95% on 96 targets supports a calibration experiment; no savings/quantile promotion claim.
 
 Seven-day extension + causal challenger completed: p65 MAE improves 16–21% beyond six hours,
-~3% below; complete grid/base-load/battery coverage 2014/2016. Raw Amber quote schema verified,
-including interval ISO timestamps and estimate flags. Next freeze quote/revision history, match
-actual energy by quoted interval, then fixed-price/PV/ending-inventory dispatch comparisons.
+~3% below; complete grid/base-load/battery coverage 2014/2016.
+[Parallel comparisons](parallel_economic_findings_2026-10-04.md) now freeze raw quote/revision
+history and score 2013 measured intervals; current feed state sign verified in installed MQTT source.
+Fixed-endpoint load + fixed-forecast terminal sensitivities pass; initial commands unchanged.
+Extended APF archive pilot inspected 18h payloads. Next complete selected origin manifests and
+sequential realised DH→MPC comparison; invoice and available-PV reconciliation remain open.
 
 1. Historical one-cycle projection/chain completed. Preserve it while auditing multi-cycle feedback;
    do not require a production cutover to conduct economic experiments.
-2. Two-day measured pilot and causal log windows frozen. Extend to recent matched event/quiet
-   manifest: as-issued APF/tail/load/PV/HWC, current
+2. Seven-day measured/log/quote windows frozen; bounded APF archive pilot complete. Build
+   selected-origin manifests: as-issued APF/tail/load/PV/HWC, current
    tariff and config, actual price/load/PV/SoC, delivered battery/grid power. Correct PV provenance
    first; use measured gross site load plus separately identified HWC/base load. Record gaps explicitly.
 3. Reuse rolling evaluator/reporting; compare fast replay with core solver on a small set of origins

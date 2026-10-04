@@ -179,6 +179,8 @@ implemented for historical evidence only. [Economic replay checkpoint](economic_
 records policy/input/physical gaps before realised-loss attribution.
 Separate [measured economic targets](measured_economic_actuals_2026-10-04.md) now exported for
 seven completed days with causal forecast windows and an offline load-calibration challenger.
-Longer-horizon p65 MAE improves 16–21%; short-horizon gain small. Freeze interval price/revisions,
-verify settlement/APF lineage, then compare matched economic outcomes with fixed ending inventory;
+Longer-horizon p65 MAE improves 16–21%; short-horizon gain small. Interval price/revisions now
+frozen and observed cashflow scored; fixed-endpoint load and fixed-forecast terminal core sensitivities
+pass. Extended APF archive pilot confirms inspected 18h payloads. Next reconstruct selected complete
+origin manifests and sequential DH→MPC comparisons; verify settlement/PV/HWC lineage and inventory;
 this evaluation work does not require orchestration cutover.

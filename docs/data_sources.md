@@ -34,6 +34,10 @@
 
 **Amber vs direct AEMO**: The AI pipeline scrapes AEMO NEMweb directly for dispatch/forecast data. Amber prices flow HA → AI only (no double-scraping). If "Amber Express" replaces amber2mqtt, verify it doesn't duplicate P5MIN data already ingested by `aemo-p5min`.
 
+Oct 4 installed MQTT price contract: current feed sensor **state positive earns**, negated from API;
+`Forecasts.per_kwh` retains raw API sign (**negative earns**). ISO quoted end identifies priced
+interval; recorder time is a separate event timestamp. [Verified source/accounting](parallel_economic_findings_2026-10-04.md).
+
 ---
 
 ## InfluxDB HA-fed measurements (continuous queries)

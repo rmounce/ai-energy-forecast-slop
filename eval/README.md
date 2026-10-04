@@ -12,6 +12,12 @@ paired target-weighted daily scores; seven-day forecast evidence, no dispatch sa
 [Contract, commands and Oct 4 evidence](../docs/measured_economic_actuals_2026-10-04.md).
 Time-weighted raw samples; bounded holds, no gap filling; current Solcast proxy kept separate.
 
+`export_amber_quote_actuals.py` → frozen interval quote/revision archive and observed accounting;
+`--revision-archive` repeats accounting offline. MQTT current feed state positive earns, unlike raw
+APF forecast attributes. `audit_amber_forecast_archive.py` → bounded extended APF feasibility pilot.
+`compare_load_solver_sensitivity.py` / `compare_terminal_solver_sensitivity.py` → isolated core
+counterfactuals with explicit ending-inventory/forecast-only economics. [Findings/gates](../docs/parallel_economic_findings_2026-10-04.md).
+
 ## Price Source Contracts
 
 Before interpreting price-model results, check `eval/price_source_contracts.py`

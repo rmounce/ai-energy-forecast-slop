@@ -33,6 +33,39 @@ def container_command(image, workspace):
             '/work/worker.py', '/work/request.json']
 
 
+def run_request(request, image):
+    """Run one identity-checked request in the bounded network-free core worker."""
+    identity = dict(request)
+    request_id = identity.pop("request_id", None)
+    if request_id != digest(identity):
+        raise ValueError("request identity does not match frozen request")
+    with tempfile.TemporaryDirectory(prefix='energy-solve-replay-') as workspace:
+        folder = Path(workspace)
+        shutil.copyfile(ROOT/'scripts/emhass_solver_worker.py', folder/'worker.py')
+        (folder/'request.json').write_text(json.dumps(request, allow_nan=False))
+        # Bind files individually: host directory remains private (0700), while
+        # cap-free image root can read the mounted files without DAC override.
+        (folder/'worker.py').chmod(0o444)
+        (folder/'request.json').chmod(0o444)
+        command = container_command(image, workspace)
+        # Worker thread/solver budgets < docker stop timeout < client timeout.
+        # A named container is needed for reliable timeout cleanup; use request identity.
+        name = 'energy-replay-'+uuid.uuid4().hex[:16]
+        command[2:2] = ['--name', name]
+        try:
+            completed = subprocess.run(command, text=True, capture_output=True, timeout=90)
+        except subprocess.TimeoutExpired:
+            subprocess.run(['docker', 'stop', '--time', '1', name], capture_output=True, timeout=15)
+            raise
+        if completed.returncode:
+            raise RuntimeError(f'isolated solver failed: {completed.stderr[-4000:]}')
+        result = json.loads(completed.stdout)
+    frame = validate_result(request, result)
+    return {'schema': 1, 'mode': 'historical_solver_replay',
+                'publication_authorized': False, 'image': image,
+                'request': request, 'result': result, 'summary': forecast_summary(request, frame)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--journal', type=Path, required=True)
@@ -64,37 +97,13 @@ def main():
         record = build_chained_handoff(record, parent)
     request = prepare_request(record, config, kind=args.kind,
                               optimization_sha256=args.optimization_sha256)
-    with tempfile.TemporaryDirectory(prefix='energy-solve-replay-') as workspace:
-        folder = Path(workspace)
-        shutil.copyfile(ROOT/'scripts/emhass_solver_worker.py', folder/'worker.py')
-        (folder/'request.json').write_text(json.dumps(request, allow_nan=False))
-        # Bind files individually: host directory remains private (0700), while
-        # cap-free image root can read the mounted files without DAC override.
-        (folder/'worker.py').chmod(0o444)
-        (folder/'request.json').chmod(0o444)
-        command = container_command(args.image, workspace)
-        # Worker thread/solver budgets < docker stop timeout < client timeout.
-        # A named container is needed for reliable timeout cleanup; use request identity.
-        name = 'energy-replay-'+uuid.uuid4().hex[:16]
-        command[2:2] = ['--name', name]
-        try:
-            completed = subprocess.run(command, text=True, capture_output=True, timeout=90)
-        except subprocess.TimeoutExpired:
-            subprocess.run(['docker', 'stop', '--time', '1', name], capture_output=True, timeout=15)
-            raise
-        if completed.returncode:
-            raise RuntimeError(f'isolated solver failed: {completed.stderr[-4000:]}')
-        result = json.loads(completed.stdout)
-    frame = validate_result(request, result)
-    artifact = {'schema': 1, 'mode': 'historical_solver_replay',
-                'publication_authorized': False, 'image': args.image,
-                'request': request, 'result': result, 'summary': forecast_summary(request, frame)}
+    artifact = run_request(request, args.image)
     if args.dh_result:
         artifact['chained_handoff'] = record
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(artifact, indent=2, allow_nan=False)+'\n')
-    print(json.dumps({'output': str(args.output), 'status': result['status'],
-                      'solve_seconds': result['solve_seconds'], 'summary': artifact['summary']}))
+    print(json.dumps({'output': str(args.output), 'status': artifact['result']['status'],
+                      'solve_seconds': artifact['result']['solve_seconds'], 'summary': artifact['summary']}))
 
 
 if __name__ == '__main__':

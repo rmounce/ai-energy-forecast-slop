@@ -196,3 +196,5 @@ Recorded core solves and [historical DH→MPC chain](docs/energy_pipeline_solver
 [economic replay gaps/PV provenance and next work](docs/economic_replay_checkpoint_2026-10-04.md).
 [Seven-day measured targets and causal load-calibration trial](docs/measured_economic_actuals_2026-10-04.md)
 now available; longer-horizon p65 MAE improves 16–21%, no measured savings yet.
+[Parallel economic comparisons](docs/parallel_economic_findings_2026-10-04.md): observed tariff
+accounting, fixed-endpoint load and fixed-forecast terminal sensitivities; APF archive pilot.

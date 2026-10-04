@@ -596,3 +596,6 @@ Recorded core solves and [historical DH→MPC chain](docs/energy_pipeline_solver
 [Seven-day measured targets and causal load-calibration trial](docs/measured_economic_actuals_2026-10-04.md)
 now available; bounded time-weighted raw telemetry, original model covariates/CQs unchanged.
 Offline residual correction fits completed past targets only; no production model/policy promotion.
+[Economic comparisons](docs/parallel_economic_findings_2026-10-04.md) share one identity-checked
+isolated core runner. Observed accounting distinguishes MQTT feed states from raw APF attributes;
+historical APF pilot retains revision receipts separately from quoted targets.

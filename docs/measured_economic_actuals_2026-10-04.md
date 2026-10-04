@@ -121,8 +121,10 @@ Read installed `/opt/dockerfiles/hass/config/configuration.yaml` and current HA 
   is positive. Preserve the recorded adjustment/config; verify billing meaning separately.
 - Effective general/feed templates can fall back to forecasts; historical records lack interval/
   estimate/type metadata. Do not treat them as unconditional realised settlement targets.
-- Amber feed sign: negative earns export revenue; internal solver positive export value requires
-  negation at the boundary. Keep raw prices and adjustments separately identifiable.
+- Feed signs verified against installed MQTT publisher Oct 4: **current HA sensor state positive
+  earns**, because publisher negates API `per_kwh`; `Forecasts.per_kwh` attributes retain raw API
+  sign, **negative earns**. Internal solver positive export value uses current state directly,
+  negates forecast attributes. Keep channels/sign boundaries and adjustments separately identifiable.
 - Next: freeze full raw interval quote/revision history, reject estimated/ambiguous intervals,
   match general/feed/adjustment by quoted end, retain receipt times. Invoice/rate reconciliation and
   complete as-issued MPC APF/PV/HWC lineage remain financial-ranking gates.

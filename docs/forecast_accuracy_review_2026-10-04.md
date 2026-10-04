@@ -283,3 +283,9 @@ about **3% below six hours**; corrected longer-horizon coverage near nominal 65%
 cheap challenger in matched economic replay. PV-now ratio moves from 0.904 to 0.937; fixed solar
 rescaling is premature. Raw Amber archive preserves interval/estimate flags and ISO timestamps;
 effective fallback prices unsuitable as unconditional realised rates. Details in measured-target doc.
+
+[Parallel economic follow-up](parallel_economic_findings_2026-10-04.md) now scores observed
+variable cashflow with verified state/attribute signs, tests load and terminal core sensitivities,
+and finds archived extended APF sufficient for inspected 14h MPC origins. Paid-export cost below
+one cent in the measured week; conditional inventory/load work remains ahead of curtailment rewrite.
+Single-origin forecast cashflow differences remain distinct from realised savings.
