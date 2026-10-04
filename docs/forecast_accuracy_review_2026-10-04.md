@@ -1,5 +1,10 @@
 # Price and load accuracy review — 2026-10-04
 
+- Latest Oct5: [inventory-cycle coverage and low-stock replay](inventory_cycle_screen_2026-10-05.md).
+  Four full-to-full excursions have missing PV support;15min/36 requests near15% SoC show
+  zero command-hold cash/inventory gain. Runtime floor differs from10% base config. Audit shorter
+  20.6h cycle inputs before expensive full-cycle replay; no promotion evidence.
+
 - Latest Oct5: [one-hour PV controller/clock continuation](pv_controller_feedback_2026-10-05.md),
  144 requests/profile, extra6.39c for0.275kWh stock. Illustrative20c inventory/4c DC wear turns
   slightly negative;25.0/25.1s sensitivity agrees. Next full-cycle inventory/capacity states;

@@ -1,5 +1,9 @@
 # PV controller branches and clock sensitivity — 2026-10-05
 
+- Follow-up: [cycle coverage and low-stock replay](inventory_cycle_screen_2026-10-05.md).
+ 15min/36 requests near15% SoC: zero timing cash/inventory gain. Four observed full-to-full
+  excursions have missing PV support; audit inputs before broad full-cycle execution.
+
 - APF retained; offline evaluation only. No HA/service/device writes, reloads or training.
 - `dh_feedback_replay.py --pv-export`: controller revision`pv_export_v2`, separate checkpoint
   contract from preceding export-only experiment. Same forecast/terminal policy in both arms;

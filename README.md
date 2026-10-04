@@ -224,3 +224,5 @@ missing-anchor clock reconstruction remains a separate diagnostic before longer 
 [PV controller and clock sensitivities](docs/pv_controller_feedback_2026-10-05.md) now complete1h/
 144 requests per profile: extra6.39c spends0.275kWh; illustrative20c inventory/4c wear turns slightly
 negative. No production change; full-cycle value/physical gates remain.
+[Inventory-cycle screening and low-stock replay](docs/inventory_cycle_screen_2026-10-05.md)
+find four excursions with missing PV support;15min/36 requests near15% SoC show zero timing gain.

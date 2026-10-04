@@ -62,6 +62,10 @@ causal input consistency and subsequent paired publication evidence; never admit
 clock contract with causal PV-only price/weight inputs, local-time surplus charging and narrowly
 supported inferred clocks. `--reuse-solves` validates exact saved requests; `--cached-only` fails
 on a required new solve and runs no optimizer. [One-hour results and limits](../docs/pv_controller_feedback_2026-10-05.md).
+`screen_inventory_cycles.py --dataset MEASURED_ARCHIVE --output NEW.json` ranks observed
+full-to-full excursions and low-stock episodes, retaining missing support and endpoint conventions.
+[Cycle coverage and low-stock replay](../docs/inventory_cycle_screen_2026-10-05.md); diagnostic,
+not causal admission or savings. Incomplete unsigned energy totals stay null.
 
 ## Price Source Contracts
 

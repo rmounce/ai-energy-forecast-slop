@@ -643,3 +643,7 @@ weight decisions and tariff-dependent surplus-PV charging. Revision/timezone/clo
 bound in checkpoints; no inferred time without two retrospective consistency candidates. Exact
 validated core request caches reduce recomputation, with backend/reuse lineage explicit.1h/144
 requests per profile:6.39c credit for0.275kWh stock, no demonstrated net gain; full-cycle gate next.
+[Inventory screening](docs/inventory_cycle_screen_2026-10-05.md) separates observed full-to-full
+excursions/low-stock episodes from admission. Missing energy never summed as zero; observed endpoints
+do not impose equal counterfactual ending stock or establish runtime floor binding.15min/36-request
+low-stock comparison yields identical cashflow/inventory; full-cycle input coverage remains a gate.
