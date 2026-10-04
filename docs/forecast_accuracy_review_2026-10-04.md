@@ -1,5 +1,10 @@
 # Price and load accuracy review — 2026-10-04
 
+- Oct5 checkpoint: [timing with own optimizer feedback](ems_timing_feedback_2026-10-05.md),
+  30min/72 solves: extra4.96c, ending stock−0.198kWh, own later MPC/DH plans differ. No demonstrated
+  net gain; illustrative4c DC wear gives21.07c/kWh ending-energy break-even. APF retained;
+  next MPC formatter/activation parity and longer scarce-inventory execution.
+
 ## Decision summary
 
 - User requested fresh technique assessment, including `purcell-lab/nem_pd7day`.

@@ -1,5 +1,9 @@
 # Offline EMS fallback timing sensitivity — 2026-10-05
 
+- Follow-up: [own optimizer timing feedback](ems_timing_feedback_2026-10-05.md) completes30min/
+  72 installed-core solves with later owned DH/MPC decisions; similar credit/inventory tradeoff.
+  Frozen-plan results below remain a separate conditioned sensitivity.
+
 - Decision: review timing policy after delivery/energy validation; no production change.
   This experiment conditions on frozen incumbent MPC plans. It does not rerun the optimizer
   with each arm's changed SoC, rank forecast models, or establish deployable savings.

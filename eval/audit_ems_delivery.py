@@ -13,7 +13,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from energy_pipeline.solver_replay import digest
 from eval.audit_control_fidelity import asof, parse_curve
-from eval.dh_feedback_replay import between
+from eval.minute_core_replay import between
 from eval.summarize_feedback_chain import summarize
 from eval.sequential_core_replay import execute
 

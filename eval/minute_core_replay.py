@@ -22,6 +22,20 @@ from eval.amber_quote_actuals import canonical_rates
 from eval.sequential_core_replay import snapshot_at, execute
 
 
+def between(segments, start, end):
+    """Split already bounded raw holds at decision/activation times exactly."""
+    start,end = pd.Timestamp(start),pd.Timestamp(end)
+    result = []
+    for row in segments:
+        left,right = max(start,pd.Timestamp(row['start'])),min(end,pd.Timestamp(row['end']))
+        if right > left:
+            result.append(row | {'start':left.isoformat(),'end':right.isoformat(),
+                'duration_seconds':(right-left).total_seconds()})
+    if abs(sum(row['duration_seconds'] for row in result)-(end-start).total_seconds()) > 1e-6:
+        raise ValueError('execution timeline gap')
+    return result
+
+
 def execution_segments(history, start, end, rates):
     """Raw sample-and-hold targets on their joint event grid; no averaging/filling."""
     start, end = pd.Timestamp(start), pd.Timestamp(end)

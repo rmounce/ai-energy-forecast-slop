@@ -19,7 +19,7 @@ from energy_pipeline.solver_chain import project_dh_entities
 from energy_pipeline.solver_replay import digest, prepare_request, validate_result
 from eval.audit_dh_source_history import source_states, source_coverage, SETTINGS
 from eval.audit_amber_forecast_archive import parse_revision
-from eval.minute_core_replay import build_bundle as minute_bundle, advance, policy_payload, execution_segments
+from eval.minute_core_replay import build_bundle as minute_bundle, advance, policy_payload, execution_segments, between
 from eval.feedback_checkpoint import contract, verified_checkpoint, validate_resume
 from eval.audit_control_fidelity import asof
 from eval.amber_quote_actuals import canonical_rates
@@ -37,20 +37,6 @@ def overlay(exogenous, parent, soc):
         states[entity] = deepcopy(parent[entity])
     states[SOC] = {'state':str(soc*100)}
     return states
-
-
-def between(segments, start, end):
-    """Split already bounded raw holds at decision/activation times exactly."""
-    start,end = pd.Timestamp(start),pd.Timestamp(end)
-    result = []
-    for row in segments:
-        left,right = max(start,pd.Timestamp(row['start'])),min(end,pd.Timestamp(row['end']))
-        if right > left:
-            result.append(row | {'start':left.isoformat(),'end':right.isoformat(),
-                'duration_seconds':(right-left).total_seconds()})
-    if abs(sum(row['duration_seconds'] for row in result)-(end-start).total_seconds()) > 1e-6:
-        raise ValueError('execution timeline gap')
-    return result
 
 
 def solve_payload(bundle, payload, kind, origin, arm, refs, parent_revision, solve):
@@ -74,6 +60,10 @@ def simulate(bundle, solve):
         raise ValueError('require 1–15 MPC origins and <=8 DH origins')
     start,end = pd.Timestamp(bundle['steps'][0]['origin']),pd.Timestamp(bundle['steps'][-1]['end'])
     if 'resume_checkpoint' in bundle: start = validate_resume(bundle)
+    ems = bundle.get('ems_execution')
+    if ems:
+        from eval import ems_feedback_policy as controller
+        if bundle.get('experiment') != 'ems_timing': raise ValueError('EMS execution requires timing experiment')
     events = []
     for step in bundle['steps']:
         events.extend([(pd.Timestamp(step['origin']),2,'mpc',step),
@@ -86,12 +76,18 @@ def simulate(bundle, solve):
             activation = pd.Timestamp(event['activation'])
             if not at < activation < end: raise ValueError('DH activation outside bounded timeline')
             events.append((activation,0,'dh_activation',event))
+    if ems:
+        events.extend((stamp,1,'fallback',{}) for stamp in pd.date_range(start.ceil('5min'),end,freq='5min') if stamp < end)
+        for stream in ems['guards'].values():
+            events.extend((pd.Timestamp(row['time']),1,'guard',{}) for row in stream
+                          if start < pd.Timestamp(row['time']) < end)
     events.sort(key=lambda event:(event[0],event[1],event[2]))
     segments = bundle.get('prelude',[])+[row for step in bundle['steps'] for key in ('before_activation','after_activation') for row in step[key]]
     execution_plant = bundle.get('execution_plant',bundle['configuration']['plant_conf'])
     experiment = bundle.get('experiment','terminal_policy')
-    if experiment not in ('terminal_policy','load_calibration'): raise ValueError('unknown feedback experiment')
-    challenger = 'calibrated_load' if experiment == 'load_calibration' else 'without_positive_lockin'
+    if experiment not in ('terminal_policy','load_calibration','ems_timing'): raise ValueError('unknown feedback experiment')
+    if experiment == 'ems_timing' and not ems: raise ValueError('missing EMS execution contract')
+    challenger = {'load_calibration':'calibrated_load','ems_timing':'hold_accepted_command'}.get(experiment,'without_positive_lockin')
     arms = ('baseline',challenger)
     summaries, rows, artifacts, checkpoints = {},[],[],{}
     started = time.monotonic()
@@ -102,17 +98,33 @@ def simulate(bundle, solve):
         if 'resume_checkpoint' in bundle:
             seed = bundle['resume_checkpoint']['arms'][arm]
             parent,soc,command,revision = deepcopy(seed['parent']),seed['soc'],deepcopy(seed['command']),seed['revision']
+        elif ems:
+            plan = deepcopy(bundle['initial_ems_plan'])
+            # Retain original publication clock while selecting the current target.
+            command = {'ems_plan':plan,'ems_command':controller.policy(controller.selected(plan,start),soc,
+                ems['minimum_export_soc']),'plant':deepcopy(execution_plant)}
         initial_soc = soc
+        def execute_to(stamp):
+            held = between(segments,cursor,stamp)
+            if ems: return controller.advance(command.get('plant',execution_plant),soc,command,held,ems)
+            return advance(command.get('plant',execution_plant),soc,command,held)
         for stamp,_,kind,event in events:
             if time.monotonic()-started > 150: raise TimeoutError('feedback batch budget exceeded')
-            soc, flows = advance(command.get('plant',execution_plant),soc,command,
-                between(segments,cursor,stamp))
+            soc, flows = execute_to(stamp)
             for key,value in flows.items(): totals[key] = totals.get(key,0.)+value
             cursor = stamp
             row = {'origin':stamp.isoformat(),'kind':kind,'arm':arm,'soc':soc,'dh_parent_revision':revision}
+            if kind in ('fallback','guard'):
+                if kind == 'fallback' and arm == 'baseline':
+                    command = controller.fallback(command,stamp,soc,ems)
+                row['ems_command'] = deepcopy(command['ems_command'])
+                rows.append(row)
+                continue
             if kind.endswith('_activation'):
                 accepted = pending.pop((kind.removesuffix('_activation'),event['origin']))
-                if kind == 'mpc_activation': command = accepted
+                if kind == 'mpc_activation':
+                    command = controller.activate(accepted['ems_plan'],soc,ems,accepted['plant']) if ems else accepted
+                    if ems: row['ems_command'] = deepcopy(command['ems_command'])
                 else:
                     parent = accepted['parent']
                     # Model offset update as part of coherent acceptance, not a live helper write.
@@ -136,7 +148,7 @@ def simulate(bundle, solve):
                 policy = dh_soc(inputs)
                 payload = build_dh_payload(inputs)
             else:
-                payload = policy_payload(states,stamp,soc,'baseline' if arm == 'calibrated_load' else arm)
+                payload = policy_payload(states,stamp,soc,'baseline' if experiment in ('load_calibration','ems_timing') else arm)
             refs = event['input_receipts']
             if arm == 'calibrated_load' and kind == 'dh':
                 refs = refs | {'load_calibration':event['load_calibration']}
@@ -163,11 +175,12 @@ def simulate(bundle, solve):
                     'curtail_w':float(frame.get('P_PV_curtailment',pd.Series(0.,index=frame.index)).iloc[0]),
                     'export_limit_w':request['configuration']['plant_conf']['maximum_power_to_grid']
                         if payload['prod_price_forecast'][0] > 0 else 0.}
+                if ems:
+                    pending[(kind,event['origin'])]['ems_plan'] = controller.project(frame,event['activation'])
                 row['requested_battery_discharge_w'] = float(frame.P_batt.iloc[0])
                 row['published_battery_discharge_w'] = event['published_battery_discharge_w']
             rows.append(row)
-        soc, flows = advance(command.get('plant',execution_plant),soc,command,
-            between(segments,cursor,end))
+        soc, flows = execute_to(end)
         for key,value in flows.items(): totals[key] = totals.get(key,0.)+value
         if pending: raise ValueError('unactivated plans at end of replay')
         capacity = execution_plant['battery_nominal_energy_capacity']/1000
@@ -266,6 +279,14 @@ def build_bundle(args):
         bundle['provenance']['load_calibration'] = {'report_sha256':sha(args.calibration/'report.json'),
             'challenger_sha256':sha(path),'measured_actuals_sha256':measured['parquet_sha256'],
             'settings':calibration['settings']}
+    if getattr(args,'experiment','terminal_policy') == 'ems_timing':
+        from eval.ems_feedback_policy import configure, validate_guard_archive
+        # Configure before validating resume: the controller/physics contract is required.
+        if resume: bundle['resume_checkpoint'] = resume
+        bundle['experiment'] = 'ems_timing'
+        configure(bundle,args.ems_history,args.journal,args.dc_fixed_loss_w)
+        if resume:
+            validate_guard_archive(bundle,json.loads((args.resume_from/'bundle.json').read_text()))
     if resume:
         bundle['resume_checkpoint'] = resume
         validate_resume(bundle)
@@ -281,7 +302,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ('history','replay','journal','output'): parser.add_argument('--'+flag,type=Path,required=True)
     for flag in ('start','end'): parser.add_argument('--'+flag,required=True)
-    parser.add_argument('--experiment',choices=('terminal_policy','load_calibration'),default='terminal_policy')
+    parser.add_argument('--experiment',choices=('terminal_policy','load_calibration','ems_timing'),default='terminal_policy')
+    parser.add_argument('--ems-history',type=Path)
+    parser.add_argument('--dc-fixed-loss-w',type=float,choices=(0.,140.),default=0.)
     parser.add_argument('--calibration',type=Path)
     parser.add_argument('--dataset',type=Path)
     parser.add_argument('--resume-from',type=Path,help='verified preceding replay; carry own parents, inventory and command')
@@ -289,8 +312,12 @@ def main():
     if args.output.exists(): parser.error('new output directory required')
     if args.experiment == 'load_calibration' and (args.calibration is None or args.dataset is None):
         parser.error('load_calibration requires --calibration and --dataset')
-    if args.experiment == 'terminal_policy' and (args.calibration is not None or args.dataset is not None):
+    if args.experiment != 'load_calibration' and (args.calibration is not None or args.dataset is not None):
         parser.error('calibration/dataset apply only to load_calibration')
+    if args.experiment == 'ems_timing' and args.ems_history is None:
+        parser.error('ems_timing requires --ems-history')
+    if args.experiment != 'ems_timing' and (args.ems_history is not None or args.dc_fixed_loss_w != 0.):
+        parser.error('EMS history/DC loss apply only to ems_timing')
     bundle = build_bundle(args)
     from scripts.replay_energy_solves import run_batch
     files = ['scripts/emhass_solver_worker.py','eval/dh_feedback_replay.py','eval/minute_core_replay.py',
@@ -298,7 +325,9 @@ def main():
         'eval/archived_forecasts.py','eval/audit_amber_forecast_archive.py','eval/amber_quote_actuals.py',
         'eval/measured_actuals.py','energy_pipeline/payloads.py','energy_pipeline/solver_replay.py',
         'energy_pipeline/solver_chain.py','eval/prepare_load_feedback.py',
-        'eval/compare_load_solver_sensitivity.py','eval/calibrate_measured_load.py','eval/feedback_checkpoint.py']
+        'eval/compare_load_solver_sensitivity.py','eval/calibrate_measured_load.py','eval/feedback_checkpoint.py',
+        'eval/ems_feedback_policy.py','eval/replay_ems_fallback.py','eval/audit_ems_delivery.py',
+        'eval/summarize_feedback_chain.py']
     result,hashes = run_batch(bundle,'eval/dh_feedback_replay.py',files)
     for artifact in result['solves']: validate_result(artifact['request'],artifact['result'])
     result.update(bundle_sha256=digest(bundle),code_sha256=hashes,provenance=bundle['provenance'],limitations=[
@@ -315,6 +344,16 @@ def main():
         result['limitations'].extend(['calibration fits at logged forecast creation with assumed30m measurement release lag',
             'p65 version inferred from exact overlapping vector; archived HA lacks model-version identity',
             'common initial archived parent; calibration begins at first admitted DH refresh; tail labels not used'])
+    if bundle.get('experiment') == 'ems_timing':
+        result['experiment'] = 'ems_timing'
+        result['limitations'].remove('delivered measured PV lower bound, ideal physical executor, device mode/ramp behavior not simulated')
+        result['limitations'].extend([
+            'own MPC trajectories/controller modes/limits with endogenous DH/MPC battery feedback; forecasting/terminal policy common',
+            'supported on-grid noncharging noncurtailing battery export/self-consumption branches; others fail',
+            'instant modeled activation at historical publication clock; no script completion/ramp/transient PCS model',
+            'delivered PV lower bound and nominal-capacity energy ledger; independently validated stock unavailable',
+            'static export SOC capture fallback weaker than historical receipts; guard at/below physical floor',
+            'explicit fixed DC-loss ablation; no parameter fit'])
     args.output.mkdir(parents=True)
     for name,content in [('bundle',bundle),('report',result)]:
         (args.output/(name+'.json')).write_text(json.dumps(content,indent=2,allow_nan=False)+'\n')

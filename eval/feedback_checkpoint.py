@@ -9,12 +9,17 @@ from energy_pipeline.solver_replay import digest
 
 
 def contract(bundle):
-    return {'image':bundle.get('image'),'configuration_sha256':digest(bundle['configuration']),
+    result = {'image':bundle.get('image'),'configuration_sha256':digest(bundle['configuration']),
         'optimization_sha256':bundle['optimization_sha256'],
         'experiment':bundle.get('experiment','terminal_policy'),
         'source_publication_id':bundle['source_publication_id'],
         'calibration':bundle.get('provenance',{}).get('load_calibration'),
         'execution_capacity_wh':bundle.get('execution_plant',bundle['configuration']['plant_conf'])['battery_nominal_energy_capacity']}
+    if 'ems_execution' in bundle:
+        # Guard histories may extend between chunks; policy and physics may not change.
+        result['ems_execution'] = {key:value for key,value in bundle['ems_execution'].items() if key != 'guards'}
+        result['execution_plant_sha256'] = digest(bundle['execution_plant'])
+    return result
 
 
 def verified_checkpoint(folder):

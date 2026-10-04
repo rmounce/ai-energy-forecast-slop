@@ -1,5 +1,8 @@
 # EMS energy reconciliation — 2026-10-05
 
+- Follow-up: [own optimizer timing feedback](ems_timing_feedback_2026-10-05.md),30min/72 solves:
+  extra4.96c spends0.198kWh; no demonstrated net gain. Independent stock uncertainty remains.
+
 - Decision: carry DC energy as model stock; label `recorded SoC × rated capacity` an inventory
   proxy. Do not promote a timing/forecast policy on extra export credit alone. APF retained.
 - Two completed paths: raw AC/DC/BMS reconciliation; [bounded fallback timing challenger](ems_fallback_challenger_2026-10-05.md).

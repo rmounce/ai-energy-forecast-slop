@@ -5,7 +5,8 @@ import pandas as pd
 import pytest
 
 from energy_pipeline.solver_chain import project_dh_entities
-from eval.dh_feedback_replay import OWN, overlay, between, simulate
+from eval.dh_feedback_replay import OWN, overlay, simulate
+from eval.minute_core_replay import between
 from test_dh_source_admission import source_fixture
 from test_minute_core_replay import minute_bundle, feasible_solve
 from test_sequential_core_replay import plant

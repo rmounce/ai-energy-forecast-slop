@@ -217,4 +217,5 @@ to40min/96 solves: still zero cash/inventory gain. Boundary timing and conversio
 parts of the export-delivery discrepancy. [Recorded EMS delivery replay](docs/ems_delivery_fidelity_2026-10-04.md)
 reduces net-export error≈87%. [Energy reconciliation and timing pilot](docs/ems_energy_reconciliation_2026-10-05.md)
 identify a moving BMS SoC denominator and omitted DC overhead. Holding accepted commands adds
-~5c credit but spends~0.20kWh inventory; next own-SoC solver feedback before any promotion.
+~5c credit but spends~0.20kWh inventory. [Timing with own optimizer feedback](docs/ems_timing_feedback_2026-10-05.md)
+now completes30min/72 solves: similar tradeoff, no demonstrated net gain; longer inventory use remains the gate.

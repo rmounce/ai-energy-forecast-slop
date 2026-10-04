@@ -631,4 +631,8 @@ available-charge/discharge capacity ratio; rated40.3kWh×SoC is an inventory pro
 power ledger separate. Executor supports optional DC overhead, default0; existing140W ablation
 improves delivery/stock consistency. [Timing challenger](docs/ems_fallback_challenger_2026-10-05.md)
 owns SoC/mode/limits with current guards, but holds incumbent plans frozen. Extra credit~5c
-spends~0.20kWh; no demonstrated net gain or own-state future-solve feedback yet.
+spends~0.20kWh. [Own-state timing feedback](docs/ems_timing_feedback_2026-10-05.md) now reruns
+later DH/MPC solves with each arm's battery, full MPC plan and EMS commands; common forecasts/
+terminal policy. Checkpoint binds controller/loss/physics; unchanged guard archive required for
+continuation. Unsupported branches fail.30min/72 solves still trades~0.20kWh for~5c;
+no demonstrated net gain. Installed MPC formatter parity and longer inventory use remain gates.

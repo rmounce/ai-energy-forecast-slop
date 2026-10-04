@@ -49,6 +49,11 @@ raw power stock distinct from changing reported SoC/capacity. Optional140W execu
 `replay_ems_fallback.py` emits own guarded commands/SoC with common frozen MPC plans;
 [energy reconciliation](../docs/ems_energy_reconciliation_2026-10-05.md) and
 [credit/inventory timing tradeoff](../docs/ems_fallback_challenger_2026-10-05.md).
+`dh_feedback_replay.py --experiment ems_timing --ems-history ARCHIVE --dc-fixed-loss-w 140`
+adds own full MPC plans/EMS commands and physical SoC feedback into later installed DH/MPC solves.
+Verified continuation freezes physics/controller contract and requires unchanged guard archive.
+[30min/72-solve timing feedback](../docs/ems_timing_feedback_2026-10-05.md):~5c credit for~0.20kWh
+inventory; no demonstrated net gain. Unsupported branches fail; MPC formatter parity pending.
 
 ## Price Source Contracts
 
