@@ -19,6 +19,9 @@ APF forecast attributes. `audit_amber_forecast_archive.py` → bounded extended 
 counterfactuals with explicit ending-inventory/forecast-only economics. [Findings/gates](../docs/parallel_economic_findings_2026-10-04.md).
 `sequential_core_replay.py` → bounded paired MPC cycles, common measured targets, as-of APF,
 endogenous inventory; ideal physical executor and fixed DH parents. [Result/limitations/command](../docs/sequential_economic_replay_2026-10-04.md).
+`export_control_history.py` / `audit_control_fidelity.py` → bounded raw control archive, offline
+timing/input diagnostics, optional six pinned checkpoint solves or exact saved-request reuse.
+[Live reproduction and next replay gates](../docs/control_fidelity_audit_2026-10-04.md).
 
 ## Price Source Contracts
 

@@ -1,6 +1,8 @@
 # Energy pipeline consolidation
 
 Status: runtime routing baseline checked 2026-10-01; pure payload extraction and resident price shadow implemented offline.
+Economic replay [control fidelity](control_fidelity_audit_2026-10-04.md): three live MPC commands
+reproduced with recorded parents/current telemetry; minute cadence and parent feedback still replay gates.
 Replay evidence: [payload extraction](energy_pipeline_payload_replay.md),
 [resident price shadow](energy_pipeline_resident_price.md),
 [source-cache/memory checkpoint](energy_pipeline_source_cache.md). Production unchanged.

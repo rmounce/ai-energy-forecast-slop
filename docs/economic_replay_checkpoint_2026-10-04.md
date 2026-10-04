@@ -109,6 +109,11 @@ larger economic ranking. Fixed DH parents, ideal execution and delivered-PV lowe
 Raw MQTT state/attribute rollover identified; price accounting now excludes matched transitions.
 Authoritative v6 observed credit $13.326/week; previous v5 financial summaries superseded.
 
+[Control fidelity audit](control_fidelity_audit_2026-10-04.md): 60 MPC publications, 14 DH/HWC
+updates; three recorded-parent core checks match live commands≤0.005W. Fixed-parent solar
+differs ~2.9kWh/14h; boundary-held commands add0.458kWh. Next minute-cadence/parent-feedback
+replay; device execution is not supported as the main cause of this pilot's discrepancy.
+
 1. Historical one-cycle projection/chain completed. Preserve it while auditing multi-cycle feedback;
    do not require a production cutover to conduct economic experiments.
 2. Seven-day measured/log/quote windows frozen; bounded APF archive pilot complete. Build

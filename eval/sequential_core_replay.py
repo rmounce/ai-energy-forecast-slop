@@ -101,7 +101,8 @@ def snapshot_at(parent, soc, past, origin, revisions, quote_rows):
         provenance[leg] = {'receipt': chosen['receipt'], 'payload_sha256': chosen['payload_sha256']}
     quotes = {leg: [row for row in rows if pd.Timestamp(row['time']) <= origin]
               for leg, rows in quote_rows.items()}
-    start, end = origin, origin+pd.Timedelta(minutes=5)
+    start = origin.floor('5min')
+    end = start+pd.Timedelta(minutes=5)
     general, _ = canonical_rates(quotes['general'], start, end)
     feed, _ = canonical_rates(quotes['feed'], start, end)
     adjusted, _ = adjusted_rates(quotes['adjusted_feed'], feed, quotes['feed'])
@@ -110,12 +111,12 @@ def snapshot_at(parent, soc, past, origin, revisions, quote_rows):
     for leg, entity in [('general', 'sensor.amber_5min_current_general_price'),
                         ('feed_in', 'sensor.amber_adjusted_confirmed_feed_in_price')]:
         table = general if leg == 'general' else adjusted
-        if origin in table.index:
-            value = float(table.loc[origin, 'rate'])
+        if start in table.index:
+            value = float(table.loc[start, 'rate'])
             provenance[leg]['current_source'] = 'non_estimated_received_quote'
         else:
             raw = states['sensor.amber_5min_forecasts_extended_'+leg+'_price']['attributes']['Forecasts']
-            match = [row for row in raw if pd.Timestamp(row['end_time'])-pd.Timedelta(minutes=row['duration']) == origin]
+            match = [row for row in raw if pd.Timestamp(row['end_time'])-pd.Timedelta(minutes=row['duration']) == start]
             if len(match) != 1 or match[0]['duration'] != 5:
                 raise ValueError('no causal current-interval quote or forecast')
             row = match[0]

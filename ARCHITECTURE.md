@@ -602,3 +602,5 @@ historical APF pilot retains revision receipts separately from quoted targets.
 [Sequential replay](docs/sequential_economic_replay_2026-10-04.md) reuses direct core solves in
 one isolated container, evolving simulated inventory per arm with lagged telemetry and as-of APF.
 Fixed DH/HWC/risk inputs and delivered-PV lower bound remain explicit limits; no savings promotion.
+[Control fidelity audit](docs/control_fidelity_audit_2026-10-04.md) reconstructs recorded inputs:
+three pinned core checkpoints reproduce live commands≤0.005W; minute cadence/parent feedback next.

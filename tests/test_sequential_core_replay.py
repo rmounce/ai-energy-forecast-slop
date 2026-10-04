@@ -86,6 +86,16 @@ def test_unreceived_or_stale_apf_cannot_enter_decision():
             snapshot_at({}, .5, {'pv_dc_w': 0, 'load_site_w': 0, 'conversion_loss_w': 0}, origin, revisions, {})
 
 
+def test_subminute_origin_uses_current_five_minute_interval_with_causal_receipts():
+    revisions = {leg: [revision(leg)] for leg in ('general', 'feed_in')}
+    past = {'pv_dc_w': 5000, 'load_site_w': 1000, 'conversion_loss_w': 100}
+    quotes = {leg: [] for leg in ('general', 'feed', 'adjusted_feed')}
+    states, provenance = snapshot_at({}, .5, past, '2026-10-03T02:01:25Z', revisions, quotes)
+    assert float(states['sensor.amber_5min_current_general_price']['state']) == .2
+    assert provenance['general']['current_source'] == 'already_issued_per_kwh_forecast'
+    assert states['sensor.amber_5min_forecasts_extended_general_price']['attributes']['Forecasts'] == []
+
+
 def toy_bundle(plant):
     dates = pd.date_range('2026-10-03T02:00:00Z', periods=144, freq='30min')
     parent = {

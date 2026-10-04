@@ -200,3 +200,5 @@ now available; longer-horizon p65 MAE improves 16–21%, no measured savings yet
 accounting, fixed-endpoint load and fixed-forecast terminal sensitivities; APF archive pilot.
 [Sequential one-hour MPC comparison](docs/sequential_economic_replay_2026-10-04.md) now scored
 against common measurements: near-zero load-calibration gain here; baseline execution mismatch open.
+[Control fidelity audit](docs/control_fidelity_audit_2026-10-04.md) reproduces three live commands;
+minute cadence and refreshed DH/HWC parents are the next replay improvements.
