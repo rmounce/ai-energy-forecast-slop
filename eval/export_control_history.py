@@ -67,7 +67,9 @@ EMS_SOURCES = {
         ('transient_pcs_cap', 'transient_pcs_export_cap'),
         ('export_ramp_timer', 'sigen_export_ramp'),
         ('minimum_export_soc', 'battery_soc_min_export'),
-        ('effective_feed', 'amber_effective_feed_in_price'))},
+        ('effective_feed', 'amber_effective_feed_in_price'),
+        ('effective_general', 'amber_effective_general_price'),
+        ('controller_discharge_weight', 'emhass_weight_battery_discharge'))},
 }
 
 

@@ -1,5 +1,9 @@
 # MPC formatter and missing-anchor audit — 2026-10-05
 
+- Follow-up: [separate controller/clock sensitivity](pv_controller_feedback_2026-10-05.md) now
+  reaches1h under25.0/25.1s assumptions. Diagnostic below stays non-authorizing; the new replay
+  explicitly gates both candidate consistency checks and labels inferred origins.
+
 - Decision: numerical MPC projection gate passed on the saved timing corpus. Publication
   atomicity, actual script/device latency and missing input-capture clocks remain separate gates.
   APF retained; no production change or additional optimizer solves.

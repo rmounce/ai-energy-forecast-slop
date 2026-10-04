@@ -101,8 +101,8 @@ def simulate(bundle, solve):
         elif ems:
             plan = deepcopy(bundle['initial_ems_plan'])
             # Retain original publication clock while selecting the current target.
-            command = {'ems_plan':plan,'ems_command':controller.policy(controller.selected(plan,start),soc,
-                ems['minimum_export_soc']),'plant':deepcopy(execution_plant)}
+            command = {'ems_plan':plan,'ems_command':controller.select_command(plan,start,soc,ems),
+                'plant':deepcopy(execution_plant)}
         initial_soc = soc
         def execute_to(stamp):
             held = between(segments,cursor,stamp)
@@ -196,13 +196,38 @@ def simulate(bundle, solve):
         'checkpoint':{'schema':1,'cursor':end.isoformat(),'contract':contract(bundle),'arms':checkpoints}}
 
 
+def execute_batch(bundle, fresh_solve):
+    """Reuse only exact validated saved requests; new inputs always require a core solve."""
+    saved = {artifact['request']['request_id']:artifact for artifact in bundle.get('reuse_solves',[])}
+    if len(saved) != len(bundle.get('reuse_solves',[])): raise ValueError('duplicate reused solve identities')
+    counts = {'reused':0,'new':0}
+    def solve(request):
+        artifact = saved.get(request['request_id'])
+        if artifact is not None:
+            if artifact['request'] != request: raise ValueError('reused request identity collision')
+            validate_result(request,artifact['result'])
+            counts['reused'] += 1
+            return deepcopy(artifact['result'])
+        counts['new'] += 1
+        return fresh_solve(request)
+    result = simulate(bundle,solve)
+    result['solve_execution'] = counts
+    return result
+
+
 def build_bundle(args):
     history = json.loads((args.history/'history.json').read_text())
     with sqlite3.connect(args.journal.resolve().as_uri()+'?mode=ro',uri=True) as db:
         capture = json.loads(db.execute('SELECT record FROM handoffs ORDER BY rowid DESC LIMIT 1').fetchone()[0])
     captured = capture['input_snapshot']['states']
     apf = {leg:[parse_revision(row,leg) for row in history['mpc_apf_'+leg]] for leg in ('general','feed_in')}
-    bundle = minute_bundle(args,apf_revisions=apf,captured_states=captured)
+    clock_controls = None
+    if getattr(args,'timer_clock_seconds',None) is not None:
+        from eval.audit_mpc_clock import read_archive
+        _,clock_controls = read_archive(args.ems_history)
+    bundle = minute_bundle(args,apf_revisions=apf,captured_states=captured,clock_controls=clock_controls)
+    if getattr(args,'timer_clock_seconds',None) is not None:
+        bundle['timer_clock_seconds'] = args.timer_clock_seconds
     if len(bundle['steps']) > 15: raise ValueError('pilot limited to15 MPC origins')
     first,last = pd.Timestamp(bundle['steps'][0]['origin']),pd.Timestamp(bundle['steps'][-1]['end'])
     resume = None
@@ -284,7 +309,7 @@ def build_bundle(args):
         # Configure before validating resume: the controller/physics contract is required.
         if resume: bundle['resume_checkpoint'] = resume
         bundle['experiment'] = 'ems_timing'
-        configure(bundle,args.ems_history,args.journal,args.dc_fixed_loss_w)
+        configure(bundle,args.ems_history,args.journal,args.dc_fixed_loss_w,pv_export=getattr(args,'pv_export',False))
         if resume:
             validate_guard_archive(bundle,json.loads((args.resume_from/'bundle.json').read_text()))
     if resume:
@@ -297,28 +322,49 @@ def main():
     os.nice(19)
     if sys.argv[1:2] == ['--worker']:
         from scripts.emhass_solver_worker import solve_request
-        print(json.dumps(simulate(json.loads(Path(sys.argv[2]).read_text()),solve_request),allow_nan=False))
+        print(json.dumps(execute_batch(json.loads(Path(sys.argv[2]).read_text()),solve_request),allow_nan=False))
         return
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ('history','replay','journal','output'): parser.add_argument('--'+flag,type=Path,required=True)
     for flag in ('start','end'): parser.add_argument('--'+flag,required=True)
     parser.add_argument('--experiment',choices=('terminal_policy','load_calibration','ems_timing'),default='terminal_policy')
     parser.add_argument('--ems-history',type=Path)
+    parser.add_argument('--pv-export',action='store_true',help='enable PV-only export branches with archived controller price/weight')
+    parser.add_argument('--timer-clock-seconds',type=float,choices=(25.,25.1),help='explicit sensitivity for supported missing timer clocks; observed clocks retained')
     parser.add_argument('--dc-fixed-loss-w',type=float,choices=(0.,140.),default=0.)
     parser.add_argument('--calibration',type=Path)
     parser.add_argument('--dataset',type=Path)
     parser.add_argument('--resume-from',type=Path,help='verified preceding replay; carry own parents, inventory and command')
+    parser.add_argument('--reuse-solves',type=Path,nargs='+',help='verified saved requests reused only for exact identity matches')
+    parser.add_argument('--cached-only',action='store_true',help='host replay from verified exact requests; fail if any new solve is needed')
     args = parser.parse_args()
     if args.output.exists(): parser.error('new output directory required')
+    if args.cached_only and not args.reuse_solves: parser.error('cached-only requires --reuse-solves')
     if args.experiment == 'load_calibration' and (args.calibration is None or args.dataset is None):
         parser.error('load_calibration requires --calibration and --dataset')
     if args.experiment != 'load_calibration' and (args.calibration is not None or args.dataset is not None):
         parser.error('calibration/dataset apply only to load_calibration')
     if args.experiment == 'ems_timing' and args.ems_history is None:
         parser.error('ems_timing requires --ems-history')
-    if args.experiment != 'ems_timing' and (args.ems_history is not None or args.dc_fixed_loss_w != 0.):
+    if args.experiment != 'ems_timing' and (args.ems_history is not None or args.dc_fixed_loss_w != 0. or args.pv_export):
         parser.error('EMS history/DC loss apply only to ems_timing')
+    if args.timer_clock_seconds is not None and args.experiment != 'ems_timing':
+        parser.error('timer-clock sensitivity requires ems_timing')
     bundle = build_bundle(args)
+    if args.reuse_solves:
+        saved, lineage = {}, []
+        for folder in args.reuse_solves:
+            _,sha = verified_checkpoint(folder)
+            previous = json.loads((folder/'bundle.json').read_text())
+            if previous['image'] != bundle['image']: raise ValueError('reused installed image differs')
+            report = json.loads((folder/'report.json').read_text())
+            for artifact in report['solves']:
+                identity = artifact['request']['request_id']
+                if identity in saved and saved[identity] != artifact: raise ValueError('conflicting saved solve identity')
+                saved[identity] = artifact
+            lineage.append({'folder':str(folder),'report_sha256':sha})
+        bundle['reuse_solves'] = list(saved.values())
+        bundle['provenance']['reuse_solves'] = lineage
     from scripts.replay_energy_solves import run_batch
     files = ['scripts/emhass_solver_worker.py','eval/dh_feedback_replay.py','eval/minute_core_replay.py',
         'eval/sequential_core_replay.py','eval/audit_control_fidelity.py','eval/audit_dh_source_history.py',
@@ -327,8 +373,15 @@ def main():
         'energy_pipeline/solver_chain.py','eval/prepare_load_feedback.py',
         'eval/compare_load_solver_sensitivity.py','eval/calibrate_measured_load.py','eval/feedback_checkpoint.py',
         'eval/ems_feedback_policy.py','eval/replay_ems_fallback.py','eval/audit_ems_delivery.py',
-        'eval/summarize_feedback_chain.py']
-    result,hashes = run_batch(bundle,'eval/dh_feedback_replay.py',files)
+        'eval/summarize_feedback_chain.py','eval/audit_mpc_clock.py']
+    if args.cached_only:
+        def forbidden(request): raise ValueError('cached-only requires a new solve: '+request['request_id'])
+        result = execute_batch(bundle,forbidden)
+        hashes = {name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in files}
+        result['execution_backend'] = 'host_verified_exact_request_cache'
+    else:
+        result,hashes = run_batch(bundle,'eval/dh_feedback_replay.py',files)
+        result['execution_backend'] = 'isolated_installed_core_and_exact_request_cache'
     for artifact in result['solves']: validate_result(artifact['request'],artifact['result'])
     result.update(bundle_sha256=digest(bundle),code_sha256=hashes,provenance=bundle['provenance'],limitations=[
         'initial live DH parent/anchor/reground/offset seeded once; subsequent battery feedback endogenous',

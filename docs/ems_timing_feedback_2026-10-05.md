@@ -1,5 +1,9 @@
 # EMS timing with own optimizer feedback — 2026-10-05
 
+- Follow-up: [PV controller/clock continuation](pv_controller_feedback_2026-10-05.md) reaches1h/
+ 144 requests/profile. Extra6.39c spends0.275kWh; the20c inventory/4c wear sensitivity turns slightly
+  negative. These30min results remain separate; controller contract expanded explicitly.
+
 - Decision: retain APF; no production promotion. Thirty-minute timing gain remains primarily
   a trade of inventory for current export credit. [Installed MPC projection parity](mpc_publication_audit_2026-10-05.md)
   passes60 saved cases; next verify activation/capture semantics

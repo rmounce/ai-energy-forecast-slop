@@ -2,9 +2,11 @@
 from copy import deepcopy
 import hashlib
 import json
+import sqlite3
 
 import numpy as np
 import pandas as pd
+from energy_pipeline.solver_replay import digest
 
 from eval.audit_control_fidelity import asof, parse_curve
 from eval.audit_ems_delivery import CURVES, STATE_MAX_AGE, execute_ems
@@ -50,7 +52,7 @@ def seed(history, at):
     return result
 
 
-def configure(bundle, folder, journal, loss):
+def configure(bundle, folder, journal, loss, *, pv_export=False):
     if loss not in (0., 140.):
         raise ValueError('only explicit DC loss ablations 0/140W supported')
     manifest = json.loads((folder/'manifest.json').read_text())
@@ -67,10 +69,33 @@ def configure(bundle, folder, journal, loss):
         raise ValueError('unsupported export guard above physical SOC floor')
     bundle['ems_execution'] = {'schema': 1, 'dc_fixed_loss_w': loss, 'minimum_export_soc': guard,
         'guards': {key: history[key] for key in ('effective_feed', 'flexible_export_limit', 'grid_status')}}
+    if pv_export:
+        if not history.get('effective_general'):
+            raise ValueError('PV export requires archived general price')
+        weight_evidence = None
+        weight_rows = history.get('controller_discharge_weight',[])
+        if not weight_rows:
+            with sqlite3.connect(journal.resolve().as_uri()+'?mode=ro',uri=True) as connection:
+                record = json.loads(connection.execute('SELECT record FROM handoffs ORDER BY rowid DESC LIMIT 1').fetchone()[0])
+            entity = 'input_number.emhass_weight_battery_discharge'
+            state = record['input_snapshot']['states'][entity]
+            clocks = [pd.Timestamp(state[key]) for key in ('last_changed','last_updated','last_reported')]
+            value = float(state['state'])
+            if not np.isfinite(value) or max(clocks) > pd.Timestamp(start):
+                raise ValueError('no capture-confirmed older controller discharge weight')
+            weight_rows = [{'time':max(clocks).isoformat(),'value':value}]
+            weight_evidence = {'kind':'capture_confirmed_static_fallback_not_independent_historical_availability',
+                'entity':entity,'state':state['state'],'capture':record['captured_at'],
+                'record_sha256':digest(record),
+                'clocks':{key:state[key] for key in ('last_changed','last_updated','last_reported')}}
+        bundle['ems_execution']['controller_branches'] = 'pv_export_v2'
+        bundle['ems_execution']['local_time_zone'] = bundle['configuration']['retrieve_hass_conf']['time_zone']
+        bundle['ems_execution']['guards'].update(effective_general=history['effective_general'],controller_discharge_weight=weight_rows)
     if 'resume_checkpoint' not in bundle:
         bundle['initial_ems_plan'] = seed(history, start)
     bundle['provenance']['ems_execution'] = {'history_sha256': manifest['history_sha256'],
         'static_export_guard': evidence}
+    if pv_export: bundle['provenance']['ems_execution']['controller_discharge_weight_fallback'] = weight_evidence
     return bundle
 
 
@@ -83,13 +108,30 @@ def validate_guard_archive(bundle, previous):
 
 def activate(plan, soc, settings, plant):
     validate(settings, plant)
-    return {'ems_plan': deepcopy(plan), 'ems_command': policy(selected(plan, plan['accepted_at']),
-        soc, settings['minimum_export_soc']), 'plant': deepcopy(plant)}
+    return {'ems_plan': deepcopy(plan), 'ems_command': select_command(plan,plan['accepted_at'],soc,settings),
+            'plant': deepcopy(plant)}
+
+
+def select_command(plan, at, soc, settings):
+    selected_plan = selected(plan,at)
+    kwargs = {}
+    if settings.get('controller_branches') == 'pv_export_v2':
+        local = pd.Timestamp(at).tz_convert(settings['local_time_zone'])
+        kwargs.update(allow_pv_charge=True,local_hour=local.hour+local.minute/60+local.second/3600)
+    if selected_plan['battery'] == 0 and selected_plan['grid'] < 0 and selected_plan['pv'] > 0:
+        if settings.get('controller_branches') not in ('pv_export_v1','pv_export_v2'):
+            raise ValueError('unsupported PV-only export branch')
+        kwargs.update(effective_general_price=float(asof(settings['guards']['effective_general'],at,900)['value']),
+                  discharge_weight=float(asof(settings['guards']['controller_discharge_weight'],at,STATE_MAX_AGE)['value']))
+    try:
+        return policy(selected_plan,soc,settings['minimum_export_soc'],**kwargs)
+    except ValueError as exc:
+        raise ValueError(f'{exc}; selected_at={at}; plan={selected_plan}') from exc
 
 
 def fallback(command, at, soc, settings):
     command = deepcopy(command)
-    command['ems_command'] = policy(selected(command['ems_plan'], at), soc, settings['minimum_export_soc'])
+    command['ems_command'] = select_command(command['ems_plan'],at,soc,settings)
     return command
 
 

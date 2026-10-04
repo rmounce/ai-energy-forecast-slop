@@ -35,17 +35,47 @@ def static_guard(journal, start):
                    'last_updated': state['last_updated'], 'last_reported': state['last_reported']}
 
 
-def policy(plan, soc, minimum_export_soc):
+def policy(plan, soc, minimum_export_soc, *, effective_general_price=None, discharge_weight=None,
+           local_hour=None, allow_pv_charge=False):
     """Small verified YAML subset; unsupported choose branches stop the experiment."""
     if any(not math.isfinite(float(value)) for value in plan.values()):
         raise ValueError('nonfinite selected plan')
-    if (plan['battery'] < 0 or plan['load'] <= 0 or plan['pv'] < 0
+    if (plan['load'] <= 0 or plan['pv'] < 0
             or plan['hybrid'] < 0 or plan['curtailment'] != 0 or plan['grid'] > 0):
         raise ValueError('unsupported controller branch')
-    # Zero-grid branch precedes export-SOC guard in YAML. PV-only export branches
-    # also precede it and need further price/weight inputs, so are not approximated.
+    if plan['battery'] < 0:
+        if allow_pv_charge is not True or plan['grid'] != 0 or plan['pv'] <= 0:
+            raise ValueError('unsupported controller charging branch')
+        try:
+            hour = float(local_hour)
+        except (TypeError, ValueError):
+            raise ValueError('missing causal local hour for PV charging branch') from None
+        if not math.isfinite(hour) or not 0 <= hour < 24:
+            raise ValueError('invalid causal local hour for PV charging branch')
+        # This noncurtailing branch precedes the general zero-grid fallback.
+        if 10 <= hour < 16:
+            return {'mode': 'Maximum Self Consumption', 'export_kw': 10.,
+                    'branch': 'pv_charge_prevent_discharge', 'discharge_limit_kw': 0.}
+        return {'mode': 'Maximum Self Consumption', 'export_kw': 10.,
+                'branch': 'pv_charge_self_consume'}
+    # Zero-grid and PV-only price branches precede the export-SOC guard in YAML.
     if plan['grid'] == 0:
         return {'mode': 'Maximum Self Consumption', 'export_kw': 10., 'branch': 'self_consume'}
+    if plan['battery'] == 0 and plan['pv'] > 0 and plan['grid'] < 0:
+        # Earlier full-battery branch consumes a historical holdoff state that
+        # this bounded policy does not possess; do not silently change its limits.
+        if soc >= .995:
+            raise ValueError('unsupported full-SOC PV-only export branch; missing holdoff input')
+        try:
+            general, weight = float(effective_general_price), float(discharge_weight)
+        except (TypeError, ValueError):
+            raise ValueError('missing causal PV-only general-price/discharge-weight inputs') from None
+        if not math.isfinite(general) or not math.isfinite(weight):
+            raise ValueError('nonfinite causal PV-only general-price/discharge-weight inputs')
+        prevent = general <= weight
+        return {'mode': 'Maximum Self Consumption', 'export_kw': 10.,
+                'branch': 'pv_export_prevent_discharge' if prevent else 'pv_export_allow_discharge',
+                'charge_limit_kw': 0., 'discharge_limit_kw': 0. if prevent else 24.}
     if plan['battery'] <= 0:
         raise ValueError('unsupported PV-only export branch')
     if soc < minimum_export_soc:
@@ -66,10 +96,13 @@ def guarded_controls(command, history, at, soc, minimum_export_soc):
     mode = command['mode']
     if mode == 'Command Discharging (PV First)' and soc < minimum_export_soc:
         mode = 'Maximum Self Consumption'
+    discharge, charge = command.get('discharge_limit_kw', 24.), command.get('charge_limit_kw', 21.)
+    if any(not math.isfinite(float(value)) or float(value) < 0 for value in (discharge, charge)):
+        raise ValueError('invalid controller charge/discharge limit override')
     # Script defaults, not incumbent readbacks; caller guards plant hardware too.
     return {'ems_mode': {'state': mode}, 'grid_export_limit': {'value': min(command['export_kw'], flexible, 10. if feed > 0 else 0.)},
-            'pcs_export_limit': {'value': 100.}, 'discharge_limit': {'value': 24.},
-            'charge_limit': {'value': 21.}}
+            'pcs_export_limit': {'value': 100.}, 'discharge_limit': {'value': discharge},
+            'charge_limit': {'value': charge}}
 
 
 def publication_events(history, start, end):

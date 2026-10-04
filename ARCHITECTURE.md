@@ -638,3 +638,8 @@ continuation. Unsupported branches fail.30min/72 solves still trades~0.20kWh for
 no demonstrated net gain. [Installed MPC formatter audit](docs/mpc_publication_audit_2026-10-05.md)
 passes60 saved cases/60,528 power points. Actual activation/capture timing and longer inventory
 use remain gates; unchanged SoC helper receipts do not prove an absent solve.
+[PV controller continuation](docs/pv_controller_feedback_2026-10-05.md) adds causal PV-only price/
+weight decisions and tariff-dependent surplus-PV charging. Revision/timezone/clock assumptions
+bound in checkpoints; no inferred time without two retrospective consistency candidates. Exact
+validated core request caches reduce recomputation, with backend/reuse lineage explicit.1h/144
+requests per profile:6.39c credit for0.275kWh stock, no demonstrated net gain; full-cycle gate next.

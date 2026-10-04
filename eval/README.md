@@ -58,6 +58,10 @@ inventory; no demonstrated net gain. Unsupported branches fail.
 without additional solves or HA calls. [60-case parity and missing-anchor clocks](../docs/mpc_publication_audit_2026-10-05.md).
 `audit_mpc_clock.py` diagnoses unchanged helper receipts using separate25s/25.1s timer candidates,
 causal input consistency and subsequent paired publication evidence; never admits inferred origins.
+`dh_feedback_replay.py --pv-export --timer-clock-seconds 25` enables a separate controller/
+clock contract with causal PV-only price/weight inputs, local-time surplus charging and narrowly
+supported inferred clocks. `--reuse-solves` validates exact saved requests; `--cached-only` fails
+on a required new solve and runs no optimizer. [One-hour results and limits](../docs/pv_controller_feedback_2026-10-05.md).
 
 ## Price Source Contracts
 

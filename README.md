@@ -221,3 +221,6 @@ identify a moving BMS SoC denominator and omitted DC overhead. Holding accepted 
 now completes30min/72 solves: similar tradeoff, no demonstrated net gain; longer inventory use remains the gate.
 [Installed MPC formatter parity](docs/mpc_publication_audit_2026-10-05.md) passes all60 saved MPC cases;
 missing-anchor clock reconstruction remains a separate diagnostic before longer replay admission.
+[PV controller and clock sensitivities](docs/pv_controller_feedback_2026-10-05.md) now complete1h/
+144 requests per profile: extra6.39c spends0.275kWh; illustrative20c inventory/4c wear turns slightly
+negative. No production change; full-cycle value/physical gates remain.

@@ -19,6 +19,8 @@ def contract(bundle):
         # Guard histories may extend between chunks; policy and physics may not change.
         result['ems_execution'] = {key:value for key,value in bundle['ems_execution'].items() if key != 'guards'}
         result['execution_plant_sha256'] = digest(bundle['execution_plant'])
+    if 'timer_clock_seconds' in bundle:
+        result['timer_clock_seconds'] = bundle['timer_clock_seconds']
     return result
 
 

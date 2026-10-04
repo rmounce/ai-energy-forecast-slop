@@ -160,7 +160,25 @@ def simulate(bundle, solve):
         'observed': bundle['observed'], 'steps': rows, 'solves': artifacts, 'publication_authorized': False}
 
 
-def build_bundle(args, *, apf_revisions=None, captured_states=None):
+def publication_clock(history, publication, *, offset=None, controls=None, captured=None, plant=None):
+    """Observed clock first; explicit retrospective sensitivity only for supported timer gaps."""
+    if offset is not None and offset not in (25.,25.1): raise ValueError('unsupported timer-clock sensitivity')
+    try:
+        anchor = asof(history['mpc_anchor'],publication['time'],15)
+        return pd.Timestamp(anchor['time']),None
+    except ValueError:
+        if offset is None or controls is None or captured is None: raise
+    from eval.audit_mpc_clock import candidate
+    candidates = [candidate(history,controls,captured,plant,publication,
+        pd.Timestamp(publication['time']).floor('min')+pd.Timedelta(seconds=value)) for value in (25.,25.1)]
+    if not all(row['supported'] for row in candidates):
+        raise ValueError('missing clock lacks two supported timer candidates: '+publication['time'])
+    chosen = candidates[0 if offset == 25. else 1]
+    return pd.Timestamp(chosen['modeled_origin']), {'kind':'modeled_timer_clock_sensitivity_not_observed_capture',
+        'selected_seconds':offset,'candidates':candidates}
+
+
+def build_bundle(args, *, apf_revisions=None, captured_states=None, clock_controls=None):
     read = lambda path: json.loads(path.read_text())
     sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     manifest = read(args.history/'manifest.json')
@@ -180,9 +198,12 @@ def build_bundle(args, *, apf_revisions=None, captured_states=None):
     publications = [row for row in history['mpc_battery'] if start <= pd.Timestamp(row['time']) < end]
     if not 1 <= len(publications) <= 30: raise ValueError('require 1–30 publications')
     timing = []
+    inferred = {}
     for publication in publications:
-        anchor = asof(history['mpc_anchor'], publication['time'], 15)
-        timing.append((pd.Timestamp(anchor['time']), pd.Timestamp(publication['time']), publication['value']))
+        origin,clock = publication_clock(history,publication,offset=getattr(args,'timer_clock_seconds',None),
+            controls=clock_controls,captured=captured_states,plant=parent_bundle['configuration']['plant_conf'])
+        if clock is not None: inferred[origin.isoformat()] = clock
+        timing.append((origin, pd.Timestamp(publication['time']), publication['value']))
     if timing[0][0] < start or any(b[0] <= a[1] for a, b in zip(timing, timing[1:])):
         raise ValueError('overlapping/ambiguous decision-publication timings')
     start = timing[0][0]
@@ -205,8 +226,9 @@ def build_bundle(args, *, apf_revisions=None, captured_states=None):
         frozen, apf = snapshot_at(states, soc, telemetry, origin, parent_bundle['apf_revisions'], quotes)
         frozen.pop('sensor.sigen_plant_battery_state_of_charge_derived')
         refs.pop('soc')
+        clock_ref = {'modeled_origin_clock':inferred[origin.isoformat()]} if origin.isoformat() in inferred else {}
         steps.append({'origin': origin.isoformat(), 'activation': activation.isoformat(), 'end': finish.isoformat(),
-            'states': frozen, 'input_receipts': {'telemetry_and_parent': refs, 'apf': apf},
+            'states': frozen, 'input_receipts': {'telemetry_and_parent': refs, 'apf': apf} | clock_ref,
             'published_battery_discharge_w': published,
             'before_activation': execution_segments(history, origin, activation, rates),
             'after_activation': execution_segments(history, activation, finish, rates)})
@@ -226,6 +248,9 @@ def build_bundle(args, *, apf_revisions=None, captured_states=None):
             max(0, float(asof(history['mode'], start, 120)['export_limit_kw'])*1000))}
     provenance = {'history_sha256': manifest['history_sha256'], 'parent_bundle_sha256': digest(parent_bundle),
         'start': start.isoformat(), 'end': end.isoformat()}
+    if getattr(args,'timer_clock_seconds',None) is not None:
+        provenance['modeled_timer_clock'] = {'seconds':args.timer_clock_seconds,'inferred_origins':list(inferred),
+            'rule':'known clocks retained; missing non-five-minute timer origins require both25/25.1 consistency candidates'}
     if apf_revisions is not None or captured_states is not None:
         provenance['source_overrides'] = {'apf': digest(apf_revisions) if apf_revisions is not None else None,
             'capture': digest(captured_states) if captured_states is not None else None}

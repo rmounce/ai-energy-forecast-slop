@@ -1,5 +1,10 @@
 # Price and load accuracy review — 2026-10-04
 
+- Latest Oct5: [one-hour PV controller/clock continuation](pv_controller_feedback_2026-10-05.md),
+ 144 requests/profile, extra6.39c for0.275kWh stock. Illustrative20c inventory/4c DC wear turns
+  slightly negative;25.0/25.1s sensitivity agrees. Next full-cycle inventory/capacity states;
+  keep APF and avoid forecast/controller promotion on cash or MAE alone.
+
 - Oct5 checkpoint: [timing with own optimizer feedback](ems_timing_feedback_2026-10-05.md),
   30min/72 solves: extra4.96c, ending stock−0.198kWh, own later MPC/DH plans differ. No demonstrated
   net gain; illustrative4c DC wear gives21.07c/kWh ending-energy break-even. APF retained;
