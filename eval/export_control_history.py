@@ -26,6 +26,7 @@ SOURCES = {
     'pv': ('sensor__power', 'sigen_power_pv_gross', ['value']),
     'load': ('sensor__power', 'sigen_plant_consumed_power', ['value']),
     'battery': ('sensor__power', 'sigen_inverter_battery_power', ['value']),
+    'grid': ('sensor__power', 'sigen_plant_grid_active_power', ['value']),
     'loss': ('sensor__power', 'sigen_inverter_conversion_loss', ['value']),
     'soc': ('sensor__battery', 'sigen_plant_battery_state_of_charge_derived', ['value']),
 }

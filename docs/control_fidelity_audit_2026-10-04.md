@@ -108,8 +108,9 @@ data/energy_replay/control_fidelity_20261004_v4/report.json` to reuse the origin
 
 ## Next effort
 
-1. Minute-cadence replay, subinterval measured execution targets, current as-of telemetry/APF,
-   matched physical limits; preserve endogenous simulated inventory.
+1. [Minute-cadence replay completed](minute_economic_replay_2026-10-04.md):15m/30m pilots,
+   raw subinterval execution, publication delay, endogenous inventory. Conditional parents retained;
+   no meaningful terminal-policy gain. Representative high-value windows next.
 2. Refresh each arm's DH/HWC parent and feedback state at historical input revisions. Recorded
    live DH plans can validate baseline inputs; injecting them into both arms does not reproduce
    each arm's counterfactual feedback. Label conditional-parent experiments explicitly.

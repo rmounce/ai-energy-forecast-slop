@@ -111,8 +111,14 @@ Authoritative v6 observed credit $13.326/week; previous v5 financial summaries s
 
 [Control fidelity audit](control_fidelity_audit_2026-10-04.md): 60 MPC publications, 14 DH/HWC
 updates; three recorded-parent core checks match live commands≤0.005W. Fixed-parent solar
-differs ~2.9kWh/14h; boundary-held commands add0.458kWh. Next minute-cadence/parent-feedback
-replay; device execution is not supported as the main cause of this pilot's discrepancy.
+differs ~2.9kWh/14h; boundary-held commands add0.458kWh. Device execution is not supported as
+the main cause of this pilot's discrepancy; cadence/parent replay follow-up below.
+
+[Minute policy replay](minute_economic_replay_2026-10-04.md):90 core solves across15m/30m,
+recorded activation delay/raw execution/own inventory;30m baseline command MAE19W, ending gap
+−0.108kWh. Removing positive lock-in changes one command, cash−$0.000089/+0.016kWh inventory.
+Conditional live DH/HWC parents retained. Next representative valuable-dispatch windows and
+each arm's own refreshed DH source/feedback; no policy/forecast promotion.
 
 1. Historical one-cycle projection/chain completed. Preserve it while auditing multi-cycle feedback;
    do not require a production cutover to conduct economic experiments.

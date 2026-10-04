@@ -2,7 +2,9 @@
 
 Status: runtime routing baseline checked 2026-10-01; pure payload extraction and resident price shadow implemented offline.
 Economic replay [control fidelity](control_fidelity_audit_2026-10-04.md): three live MPC commands
-reproduced with recorded parents/current telemetry; minute cadence and parent feedback still replay gates.
+reproduced with recorded parents/current telemetry; cadence/parent input differences identified.
+Minute cadence/raw execution pilots now [completed](minute_economic_replay_2026-10-04.md);
+each arm's own DH/HWC feedback and multi-regime economic proof remain gates.
 Replay evidence: [payload extraction](energy_pipeline_payload_replay.md),
 [resident price shadow](energy_pipeline_resident_price.md),
 [source-cache/memory checkpoint](energy_pipeline_source_cache.md). Production unchanged.

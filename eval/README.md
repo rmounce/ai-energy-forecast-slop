@@ -22,6 +22,9 @@ endogenous inventory; ideal physical executor and fixed DH parents. [Result/limi
 `export_control_history.py` / `audit_control_fidelity.py` → bounded raw control archive, offline
 timing/input diagnostics, optional six pinned checkpoint solves or exact saved-request reuse.
 [Live reproduction and next replay gates](../docs/control_fidelity_audit_2026-10-04.md).
+`minute_core_replay.py` → bounded paired terminal-policy experiment at recorded minute decision/
+activation clocks; raw subinterval physical scoring and own inventory. Archived DH/HWC parents
+remain conditional; [results/commands/gates](../docs/minute_economic_replay_2026-10-04.md).
 
 ## Price Source Contracts
 

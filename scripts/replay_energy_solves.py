@@ -1,5 +1,6 @@
 """Rehearse a recorded handoff using isolated installed EMHASS, never live endpoints."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -64,6 +65,42 @@ def run_request(request, image):
     return {'schema': 1, 'mode': 'historical_solver_replay',
                 'publication_authorized': False, 'image': image,
                 'request': request, 'result': result, 'summary': forecast_summary(request, frame)}
+
+
+def run_batch(bundle, worker, files):
+    """Stage selected replay code; one bounded network-free disposable worker."""
+    if worker not in ('eval/sequential_core_replay.py', 'eval/minute_core_replay.py') or worker not in files:
+        raise ValueError('unsupported batch worker')
+    if any(Path(filename).is_absolute() or '..' in Path(filename).parts or
+            Path(filename).parts[0] not in ('scripts', 'eval', 'energy_pipeline') for filename in files):
+        raise ValueError('unsupported staged code path')
+    with tempfile.TemporaryDirectory(prefix='energy-batch-') as folder:
+        staging = Path(folder)
+        for filename in files:
+            path = staging/filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT/filename, path)
+            path.chmod(0o444)
+        hashes = {filename: hashlib.sha256((staging/filename).read_bytes()).hexdigest() for filename in files}
+        (staging/'worker.py').write_text('# unused entrypoint placeholder\n')
+        (staging/'request.json').write_text(json.dumps(bundle, allow_nan=False))
+        for path in staging.iterdir():
+            path.chmod(0o755 if path.is_dir() else 0o444)
+        command = container_command(bundle['image'], folder)
+        for directory in sorted({Path(filename).parts[0] for filename in files}):
+            position = command.index('--env')
+            command[position:position] = ['--mount', f'type=bind,src={folder}/{directory},dst=/work/{directory},readonly']
+        command[-2:] = ['/work/'+worker, '--worker', '/work/request.json']
+        name = 'energy-batch-'+uuid.uuid4().hex[:16]
+        command[2:2] = ['--name', name]
+        try:
+            completed = subprocess.run(command, text=True, capture_output=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            subprocess.run(['docker', 'stop', '--time', '1', name], capture_output=True, timeout=15)
+            raise
+        if completed.returncode: raise RuntimeError(completed.stderr[-4000:])
+        result = json.loads(completed.stdout)
+    return result, hashes
 
 
 def main():

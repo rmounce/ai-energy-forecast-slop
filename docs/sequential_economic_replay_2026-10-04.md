@@ -114,7 +114,8 @@
 
 1. [Control fidelity audit](control_fidelity_audit_2026-10-04.md) reproduces three live commands
    within0.005W using recorded parents/current inputs; 60 minute-cadence publications versus
-   pilot12 held commands. Implement minute cadence and each arm's refreshed DH/HWC feedback.
+   pilot12 held commands. [Minute-cadence pilots](minute_economic_replay_2026-10-04.md) now
+   completed with conditional archived parents; each arm's own DH/HWC feedback remains open.
 2. Cover later low-solar, full-battery and high-value export windows; same-row scoring, explicit
    available-PV uncertainty, persistent endogenous inventory, and matched final-inventory treatment.
 3. Compare conditional terminal/lock-in policies separately from load calibration. Keep cheap tail

@@ -5,13 +5,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import sqlite3
-import subprocess
 import sys
-import tempfile
 import time
-import uuid
 
 import numpy as np
 import pandas as pd
@@ -34,14 +30,15 @@ ENTITIES = ('sensor.sigen_plant_rated_energy_capacity', 'sensor.sigen_plant_batt
     'sensor.solcast_pv_forecast_power_now')
 
 
-def execute(plant, soc, battery_w, curtail_w, pv_w, load_w, export_limit_w):
+def execute(plant, soc, battery_w, curtail_w, pv_w, load_w, export_limit_w, *, duration_seconds=300):
     """Ideal DC battery command; deterministic feasible AC/DC projection, no gap fill."""
-    inputs = [soc, battery_w, curtail_w, pv_w, load_w, export_limit_w]
-    if not np.isfinite(inputs).all() or min(pv_w, load_w, export_limit_w) < 0:
+    inputs = [soc, battery_w, curtail_w, pv_w, load_w, export_limit_w, duration_seconds]
+    if (not np.isfinite(inputs).all() or min(pv_w, load_w, export_limit_w) < 0
+            or not 0 < duration_seconds <= 300):
         raise ValueError('invalid execution input')
     if not plant['inverter_is_hybrid']:
         raise ValueError('require hybrid plant')
-    dt = 5/60
+    dt = duration_seconds/3600
     capacity = plant['battery_nominal_energy_capacity']
     minimum, maximum = plant['battery_minimum_state_of_charge'], plant['battery_maximum_state_of_charge']
     if not minimum-1e-8 <= soc <= maximum+1e-8:
@@ -338,36 +335,11 @@ def main():
         (args.output/'report.json').write_text(json.dumps(result, indent=2, allow_nan=False)+'\n')
         print(json.dumps({key: result[key] for key in ('scope', 'summary', 'comparison')}))
         return
-    from scripts.replay_energy_solves import container_command
+    from scripts.replay_energy_solves import run_batch
     files = ['scripts/emhass_solver_worker.py', 'eval/sequential_core_replay.py',
         'eval/audit_amber_forecast_archive.py', 'eval/amber_quote_actuals.py',
         'energy_pipeline/payloads.py', 'energy_pipeline/solver_replay.py']
-    with tempfile.TemporaryDirectory(prefix='energy-sequential-') as folder:
-        staging = Path(folder)
-        for filename in files:
-            path = staging/filename
-            path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(ROOT/filename, path)
-            path.chmod(0o444)
-        staged_hashes = {filename: hashlib.sha256((staging/filename).read_bytes()).hexdigest() for filename in files}
-        (staging/'worker.py').write_text('# unused entrypoint placeholder\n')
-        (staging/'request.json').write_text(json.dumps(bundle, allow_nan=False))
-        for path in staging.iterdir():
-            if path.is_dir(): path.chmod(0o755)
-            else: path.chmod(0o444)
-        command = container_command(bundle['image'], folder)
-        for code_directory in ('scripts', 'eval', 'energy_pipeline'):
-            command[command.index('--env'):command.index('--env')] = ['--mount', f'type=bind,src={folder}/{code_directory},dst=/work/{code_directory},readonly']
-        command[-2:] = ['/work/eval/sequential_core_replay.py', '--worker', '/work/request.json']
-        name = 'energy-sequential-'+uuid.uuid4().hex[:16]
-        command[2:2] = ['--name', name]
-        try:
-            completed = subprocess.run(command, text=True, capture_output=True, timeout=180)
-        except subprocess.TimeoutExpired:
-            subprocess.run(['docker', 'stop', '--time', '1', name], capture_output=True, timeout=15)
-            raise
-        if completed.returncode: raise RuntimeError(completed.stderr[-4000:])
-        result = json.loads(completed.stdout)
+    result, staged_hashes = run_batch(bundle, 'eval/sequential_core_replay.py', files)
     # Revalidate every solve outside the worker, and retain all inputs/results.
     for artifact in result['solves']: validate_result(artifact['request'], artifact['result'])
     result.update({'bundle_sha256': digest(bundle), 'provenance': bundle['provenance'],

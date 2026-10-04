@@ -201,4 +201,6 @@ accounting, fixed-endpoint load and fixed-forecast terminal sensitivities; APF a
 [Sequential one-hour MPC comparison](docs/sequential_economic_replay_2026-10-04.md) now scored
 against common measurements: near-zero load-calibration gain here; baseline execution mismatch open.
 [Control fidelity audit](docs/control_fidelity_audit_2026-10-04.md) reproduces three live commands;
-minute cadence and refreshed DH/HWC parents are the next replay improvements.
+identifies minute cadence and refreshed DH/HWC parents as major replay differences.
+[Minute replay pilots](docs/minute_economic_replay_2026-10-04.md) now preserve inventory and
+recorded activation delays; no meaningful terminal-lock-in gain in the bounded30m comparison.

@@ -603,4 +603,6 @@ historical APF pilot retains revision receipts separately from quoted targets.
 one isolated container, evolving simulated inventory per arm with lagged telemetry and as-of APF.
 Fixed DH/HWC/risk inputs and delivered-PV lower bound remain explicit limits; no savings promotion.
 [Control fidelity audit](docs/control_fidelity_audit_2026-10-04.md) reconstructs recorded inputs:
-three pinned core checkpoints reproduce live commands≤0.005W; minute cadence/parent feedback next.
+three pinned core checkpoints reproduce live commands≤0.005W; cadence/parent input differences identified.
+[Minute replay](docs/minute_economic_replay_2026-10-04.md) now uses raw event-grid targets and
+historical activation delays; conditional archived parents, own inventory, shared isolated batch runner.
