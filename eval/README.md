@@ -37,7 +37,10 @@ aligned-source admission, own inventory and delayed activation; archived HWC rem
 exact-vector p65 calibration fitted at forecast creation, endogenous DH feedback.
 `prepare_load_feedback.py` freezes corrections; `audit_feedback_sensitivity.py` checks paired
 saved plans and optionally scores each vintage once on measured future targets, posthoc only.
-[72-solve results and next longer-window gate](../docs/causal_load_feedback_results_2026-10-04.md).
+[Initial 72-solve results](../docs/causal_load_feedback_results_2026-10-04.md).
+`--resume-from` verifies prior saved replay before carrying own state/command;
+`summarize_feedback_chain.py` validates chain lineage and totals flows/final inventory.
+[40min/96-solve continuation and export delivery](../docs/continued_feedback_and_delivery_2026-10-04.md).
 
 ## Price Source Contracts
 

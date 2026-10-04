@@ -212,4 +212,6 @@ parents across rollover; two stress subwindows show no terminal-lock-in gain. HW
 next causal net-energy calibration and export device-delivery diagnosis.
 [Causal load feedback comparison](docs/causal_load_feedback_results_2026-10-04.md) now completes
 72 core solves: forecast/path changes but no 15-minute cash/inventory gain. Quantile loss is mixed;
-next longer inventory-constrained execution and requested-vs-delivered power diagnosis.
+[Verified continuation](docs/continued_feedback_and_delivery_2026-10-04.md) extends export execution
+to40min/96 solves: still zero cash/inventory gain. Boundary timing and conversion residual explain
+parts of the export-delivery discrepancy; controller fidelity and coherent solve clocks come next.

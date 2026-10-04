@@ -19,7 +19,10 @@ from energy_pipeline.solver_chain import project_dh_entities
 from energy_pipeline.solver_replay import digest, prepare_request, validate_result
 from eval.audit_dh_source_history import source_states, source_coverage, SETTINGS
 from eval.audit_amber_forecast_archive import parse_revision
-from eval.minute_core_replay import build_bundle as minute_bundle, advance, policy_payload
+from eval.minute_core_replay import build_bundle as minute_bundle, advance, policy_payload, execution_segments
+from eval.feedback_checkpoint import contract, verified_checkpoint, validate_resume
+from eval.audit_control_fidelity import asof
+from eval.amber_quote_actuals import canonical_rates
 
 OWN = ('sensor.dh_soc_batt_forecast','sensor.dh_p_load_forecast','sensor.dh_p_pv_forecast',
     'input_number.dh_last_soc_init','input_text.dh_last_reground_block',
@@ -70,6 +73,7 @@ def simulate(bundle, solve):
     if not 1 <= len(bundle['steps']) <= 15 or len(bundle['dh_events']) > 8:
         raise ValueError('require 1–15 MPC origins and <=8 DH origins')
     start,end = pd.Timestamp(bundle['steps'][0]['origin']),pd.Timestamp(bundle['steps'][-1]['end'])
+    if 'resume_checkpoint' in bundle: start = validate_resume(bundle)
     events = []
     for step in bundle['steps']:
         events.extend([(pd.Timestamp(step['origin']),2,'mpc',step),
@@ -83,18 +87,22 @@ def simulate(bundle, solve):
             if not at < activation < end: raise ValueError('DH activation outside bounded timeline')
             events.append((activation,0,'dh_activation',event))
     events.sort(key=lambda event:(event[0],event[1],event[2]))
-    segments = [row for step in bundle['steps'] for key in ('before_activation','after_activation') for row in step[key]]
+    segments = bundle.get('prelude',[])+[row for step in bundle['steps'] for key in ('before_activation','after_activation') for row in step[key]]
     execution_plant = bundle.get('execution_plant',bundle['configuration']['plant_conf'])
     experiment = bundle.get('experiment','terminal_policy')
     if experiment not in ('terminal_policy','load_calibration'): raise ValueError('unknown feedback experiment')
     challenger = 'calibrated_load' if experiment == 'load_calibration' else 'without_positive_lockin'
     arms = ('baseline',challenger)
-    summaries, rows, artifacts = {},[],[]
+    summaries, rows, artifacts, checkpoints = {},[],[],{}
     started = time.monotonic()
     for arm in arms:
         parent = deepcopy(bundle['initial_parent'])
         soc, command, cursor = bundle['initial_soc'],deepcopy(bundle['initial_command']),start
         totals,pending,revision = {},{},'initial_archived_parent:'+digest(parent)
+        if 'resume_checkpoint' in bundle:
+            seed = bundle['resume_checkpoint']['arms'][arm]
+            parent,soc,command,revision = deepcopy(seed['parent']),seed['soc'],deepcopy(seed['command']),seed['revision']
+        initial_soc = soc
         for stamp,_,kind,event in events:
             if time.monotonic()-started > 150: raise TimeoutError('feedback batch budget exceeded')
             soc, flows = advance(command.get('plant',execution_plant),soc,command,
@@ -163,14 +171,16 @@ def simulate(bundle, solve):
         for key,value in flows.items(): totals[key] = totals.get(key,0.)+value
         if pending: raise ValueError('unactivated plans at end of replay')
         capacity = execution_plant['battery_nominal_energy_capacity']/1000
-        summaries[arm] = totals | {'initial_soc':bundle['initial_soc'],'final_soc':soc,'ending_inventory_kwh':soc*capacity,
+        summaries[arm] = totals | {'initial_soc':initial_soc,'final_soc':soc,'ending_inventory_kwh':soc*capacity,
             'final_parent_revision':revision,'final_offset_pct':float(parent['input_number.emhass_target_soc_offset']['state'])}
+        checkpoints[arm] = {'parent':deepcopy(parent),'soc':soc,'command':deepcopy(command),'revision':revision}
     cash = summaries['baseline']['variable_cost_aud']-summaries[challenger]['variable_cost_aud']
     energy = summaries[challenger]['ending_inventory_kwh']-summaries['baseline']['ending_inventory_kwh']
     return {'scope':'own_battery_dh_feedback_exogenous_hwc','summary':summaries,'events':rows,'solves':artifacts,
         'comparison':{'cashflow_delta_aud':cash,'ending_inventory_delta_kwh':energy,
             'inventory_value_break_even_aud_per_kwh':-cash/energy if abs(energy)>1e-8 else None},
-        'publication_authorized':False,'observed':bundle['observed']}
+        'publication_authorized':False,'observed':bundle['observed'],
+        'checkpoint':{'schema':1,'cursor':end.isoformat(),'contract':contract(bundle),'arms':checkpoints}}
 
 
 def build_bundle(args):
@@ -182,13 +192,32 @@ def build_bundle(args):
     bundle = minute_bundle(args,apf_revisions=apf,captured_states=captured)
     if len(bundle['steps']) > 15: raise ValueError('pilot limited to15 MPC origins')
     first,last = pd.Timestamp(bundle['steps'][0]['origin']),pd.Timestamp(bundle['steps'][-1]['end'])
+    resume = None
+    if getattr(args,'resume_from',None):
+        resume,parent_sha = verified_checkpoint(args.resume_from)
+        cursor = pd.Timestamp(resume['cursor'])
+        manifest = json.loads((args.history/'manifest.json').read_text())
+        if not pd.Timestamp(manifest['start']) <= cursor <= first <= cursor+pd.Timedelta(seconds=120):
+            raise ValueError('continuation cursor outside history or gap exceeds120s')
+        previous = json.loads((args.replay/'bundle.json').read_text())
+        rates = {key:canonical_rates(previous['quote_rows'][key],cursor.floor('5min'),first.ceil('5min'))[0]
+            for key in ('general','feed')}
+        prelude = execution_segments(history,cursor,first,rates) if cursor < first else []
+        bundle['prelude'] = prelude
+        for key,sign in (('grid_import_kwh',1),('grid_export_kwh',-1)):
+            bundle['observed'][key] += sum(max(sign*r['observed_grid_import_w'],0)*r['duration_seconds']/3_600_000 for r in prelude)
+        bundle['observed']['variable_cost_aud'] += sum((max(r['observed_grid_import_w'],0)*r['general_rate']
+            -max(-r['observed_grid_import_w'],0)*r['feed_rate'])*r['duration_seconds']/3_600_000 for r in prelude)
+        bundle['observed']['initial_soc'] = float(asof(history['soc'],cursor,120)['value'])/100
+        bundle['provenance']['resume_parent_report_sha256'] = parent_sha
+        bundle['provenance']['execution_start'] = cursor.isoformat()
     initial,initial_refs,initial_inherited = source_states(history,captured,first)
     bundle['initial_parent'] = {key:deepcopy(initial[key]) for key in OWN}
     bundle['initial_parent_evidence'] = {'input_receipts':initial_refs,'capture_confirmed_settings':initial_inherited}
     events = []
     for anchor in history['dh_anchor']:
         at = pd.Timestamp(anchor['time'])-pd.Timedelta(microseconds=1)
-        if not first <= at < last: continue
+        if not (pd.Timestamp(resume['cursor']) if resume else first) <= at < last: continue
         states,refs,inherited = source_states(history,captured,at)
         coverage = source_coverage(states,at)
         event = {'origin':at.isoformat(),'ready':coverage['coverage_ready'],'reasons':coverage['reasons'],
@@ -237,6 +266,9 @@ def build_bundle(args):
         bundle['provenance']['load_calibration'] = {'report_sha256':sha(args.calibration/'report.json'),
             'challenger_sha256':sha(path),'measured_actuals_sha256':measured['parquet_sha256'],
             'settings':calibration['settings']}
+    if resume:
+        bundle['resume_checkpoint'] = resume
+        validate_resume(bundle)
     return bundle
 
 
@@ -252,6 +284,7 @@ def main():
     parser.add_argument('--experiment',choices=('terminal_policy','load_calibration'),default='terminal_policy')
     parser.add_argument('--calibration',type=Path)
     parser.add_argument('--dataset',type=Path)
+    parser.add_argument('--resume-from',type=Path,help='verified preceding replay; carry own parents, inventory and command')
     args = parser.parse_args()
     if args.output.exists(): parser.error('new output directory required')
     if args.experiment == 'load_calibration' and (args.calibration is None or args.dataset is None):
@@ -265,7 +298,7 @@ def main():
         'eval/archived_forecasts.py','eval/audit_amber_forecast_archive.py','eval/amber_quote_actuals.py',
         'eval/measured_actuals.py','energy_pipeline/payloads.py','energy_pipeline/solver_replay.py',
         'energy_pipeline/solver_chain.py','eval/prepare_load_feedback.py',
-        'eval/compare_load_solver_sensitivity.py','eval/calibrate_measured_load.py']
+        'eval/compare_load_solver_sensitivity.py','eval/calibrate_measured_load.py','eval/feedback_checkpoint.py']
     result,hashes = run_batch(bundle,'eval/dh_feedback_replay.py',files)
     for artifact in result['solves']: validate_result(artifact['request'],artifact['result'])
     result.update(bundle_sha256=digest(bundle),code_sha256=hashes,provenance=bundle['provenance'],limitations=[

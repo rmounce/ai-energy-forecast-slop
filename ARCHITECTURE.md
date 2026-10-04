@@ -615,3 +615,8 @@ on bad alignment. HWC exogenous; execution uses runtime capacity, not base-confi
 [Load calibration experiment](docs/causal_load_feedback_results_2026-10-04.md) freezes p65 corrections
 at matched forecast creation, applies only admitted DH base load, and retains incumbent terminal
 policy. Separate saved-plan/future-target auditor; no scored future labels in replay decision inputs.
+
+[Verified feedback continuation](docs/continued_feedback_and_delivery_2026-10-04.md) reproduces saved
+requests/results before carrying each arm's SoC/parent/helpers/command across bounded batches.
+Explicit raw-telemetry gap execution; chain totals count final inventory once. 40min export execution
+shows no calibration gain; inconsistent solve/publication clock blocks the next longer batch.

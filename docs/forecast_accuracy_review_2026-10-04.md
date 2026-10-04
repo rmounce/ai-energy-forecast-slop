@@ -289,3 +289,8 @@ variable cashflow with verified state/attribute signs, tests load and terminal c
 and finds archived extended APF sufficient for inspected 14h MPC origins. Paid-export cost below
 one cent in the measured week; conditional inventory/load work remains ahead of curtailment rewrite.
 Single-origin forecast cashflow differences remain distinct from realised savings.
+
+[Own-feedback continuation](continued_feedback_and_delivery_2026-10-04.md) now spans40min/96 export
+core solves; p65 calibration has no executed cash/inventory gain despite forecast/path changes.
+Measured delivery shows tracking and conversion/asynchronous residuals; validate actual controller
+grid-cap/mode/fallback semantics and solve clocks before promoting forecast changes. APF retained.

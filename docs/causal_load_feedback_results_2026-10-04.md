@@ -2,7 +2,8 @@
 
 - Decision: retain rolling p65 residual calibration as an offline challenger. Better load MAE
   does not establish economic gain; these two 15-minute pilots have effectively zero cash/inventory
-  difference. Next longer inventory-constrained execution, with quantile loss and delivery fidelity.
+  difference. Continued40min export replay also has zero gain; next controller fidelity/coherent
+  solve clocks and inventory-constrained execution, with quantile loss.
 - `dh_feedback_replay.py --experiment load_calibration`: both arms retain incumbent terminal
   policy. Challenger changes admitted DH **base load only**, then regenerates its own DH/MPC
   trajectory/anchor/reground/offset/inventory. HWC, PV source, prices, settings and scoring targets common.
@@ -108,8 +109,9 @@ future measured base-load half-hours only. Scoring never enters correction fitti
   deprecation warning only. Tested receipt/creation cutoffs, exact vector lineage, held per-vintage
   correction, future-target exclusion, unchanged terminal policy and isolated own-DH feedback;
   paired request/result checks, target completeness and no repeated-vintage score inflation.
-- Next: carry each arm's state/accepted plan/command across bounded replay chunks; extend the
-  export run past the first projected divergence, then test inventory-constrained periods.
+- [Continuation completed](continued_feedback_and_delivery_2026-10-04.md): own state/plan/command
+  carried through40min/96 export solves, past original projected divergences; no cash/inventory gain.
+  Next controller fidelity/coherent solve clocks, then inventory-constrained periods.
   Diagnose requested-vs-delivered DC power in parallel with longer replay. Compare cashflow,
   throughput, curtailment and ending inventory; keep APF unchanged for this load experiment.
 - No production changes, publication, device writes or new model training.
