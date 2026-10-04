@@ -1,5 +1,9 @@
 # Full-cycle PV support audit — 2026-10-05
 
+- Follow-up [controlled cycle mechanisms](controlled_cycle_value_2026-10-05.md) completed:
+  solar replacement/export opportunity cost and later import scarcity change sign; no historical
+  savings claim. Equal ending stock reached physically; both-leg wear included.
+
 - Offline; APF retained; no optimizer runs, HA/device writes, service changes or training.
 - Follow-up to [inventory screening](inventory_cycle_screen_2026-10-05.md): selected20.583h
   full-to-full excursion Sep27 08:40–Sep28 05:15 UTC; minimum observed SoC41.34%.

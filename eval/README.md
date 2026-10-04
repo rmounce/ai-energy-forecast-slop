@@ -72,6 +72,13 @@ archive; exclusive of full DH/EMS/energy flags, default90min profile unchanged.
 checks fresh-string recovery and historical full-helper timing, never fills missing actuals.
 [Full-cycle support findings](../docs/cycle_pv_support_2026-10-05.md): zero recovered intervals;
 controlled mechanisms next, no historical full-cycle savings claim.
+`controlled_cycle_scenarios.py --output NEW.json`:16 paired synthetic physical cycles,
+solar-recovery/export-opportunity/scarcity cases, explicit wear/terminal sensitivities.
+[Cycle mechanisms](../docs/controlled_cycle_value_2026-10-05.md); no optimizer/promotion.
+`apf_packet_regret.py --archive APF --quotes QUOTES [--control-history FOLDER ...] --output NEW_FOLDER`:
+fully future one-shot export/withhold versus hindsight; hashes, signs, power and DC wear explicit.
+[APF timing results](../docs/apf_packet_timing_2026-10-05.md); overlapping market-only packets,
+not additive site savings. Terminal value flag refers to stored DC energy, wear to discharged DC.
 
 ## Price Source Contracts
 

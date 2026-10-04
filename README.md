@@ -228,3 +228,6 @@ negative. No production change; full-cycle value/physical gates remain.
 find four excursions with missing PV support;15min/36 requests near15% SoC show zero timing gain.
 [Full-cycle PV support audit](docs/cycle_pv_support_2026-10-05.md): raw strings recover no missing
 night intervals. Next controlled cycle mechanisms; historical full-cycle savings remain unproven.
+[Controlled cycles](docs/controlled_cycle_value_2026-10-05.md) distinguish solar replacement,
+foregone export and scarce later imports. [APF packet timing](docs/apf_packet_timing_2026-10-05.md)
+finds conditional ranking gaps across four clustered windows; no site savings or promotion claim.

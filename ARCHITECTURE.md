@@ -651,3 +651,8 @@ low-stock comparison yields identical cashflow/inventory; full-cycle input cover
 derived balance from independent validation. Fixed eight-source≤24h archive profile; no broad
 control-window expansion. Full-helper state historical; own-state replay must distinguish99.99%
 timestamp transition from99.5% controller threshold. Controlled cycle mechanisms next.
+[Controlled cycles](docs/controlled_cycle_value_2026-10-05.md) reuse physical EMS execution with
+common synthetic inputs and persistent stock; both-leg wear, foregone solar export, capacity/floor
+closure explicit. [APF packet timing](docs/apf_packet_timing_2026-10-05.md) scores frozen feed
+ranking/withholding against confirmed quotes with explicit DC throughput/terminal value and spare
+power bound. Conditional diagnostics independent of missing historical PV, not site savings.

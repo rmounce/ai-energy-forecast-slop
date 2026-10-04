@@ -1,25 +1,17 @@
 # Price and load accuracy review — 2026-10-04
 
-- Latest Oct5: [full-cycle PV support](cycle_pv_support_2026-10-05.md). Raw strings recover
-  zero of130 missing cycle intervals; derived balance cannot independently validate zero PV.
-  Full timestamp trigger99.99% differs from99.5% controller branch. Next controlled cycle
-  mechanisms, pause historical timing expansion; no forecast/controller promotion evidence.
-
-- Latest Oct5: [inventory-cycle coverage and low-stock replay](inventory_cycle_screen_2026-10-05.md).
-  Four full-to-full excursions have missing PV support;15min/36 requests near15% SoC show
-  zero command-hold cash/inventory gain. Runtime floor differs from10% base config. Audit shorter
-  20.6h cycle inputs before expensive full-cycle replay; no promotion evidence.
-
-- Latest Oct5: [one-hour PV controller/clock continuation](pv_controller_feedback_2026-10-05.md),
- 144 requests/profile, extra6.39c for0.275kWh stock. Illustrative20c inventory/4c DC wear turns
-  slightly negative;25.0/25.1s sensitivity agrees. Next full-cycle inventory/capacity states;
-  keep APF and avoid forecast/controller promotion on cash or MAE alone.
-
-- Oct5 checkpoint: [timing with own optimizer feedback](ems_timing_feedback_2026-10-05.md),
-  30min/72 solves: extra4.96c, ending stock−0.198kWh, own later MPC/DH plans differ. No demonstrated
-  net gain; illustrative4c DC wear gives21.07c/kWh ending-energy break-even. APF retained;
-  [installed MPC formatter parity](mpc_publication_audit_2026-10-05.md) passes all60 saved cases;
-  next capture/activation timing and longer scarce-inventory execution.
+- Current Oct5 checkpoint (parallel work): [controlled cycles](controlled_cycle_value_2026-10-05.md)
+  establish replacement/export-opportunity/scarcity mechanisms with physical equal-stock endpoints;
+  [APF packet timing](apf_packet_timing_2026-10-05.md) scores98 clustered receipts,294 cases/profile.
+  Conditional timing gaps; conservative bounds not uniformly better. No site savings/promotion.
+- Historical [one-hour timing comparison](pv_controller_feedback_2026-10-05.md): extra6.39c for
+  0.275kWh stock, slightly negative at illustrative20c inventory/4c wear. [Low-stock15min](inventory_cycle_screen_2026-10-05.md)
+  shows zero gain. [Full-cycle PV audit](cycle_pv_support_2026-10-05.md) recovers zero of130 missing
+  intervals; pause historical timing expansion. [Formatter parity](mpc_publication_audit_2026-10-05.md)
+  passes60 cases; missing historical inputs remain explicit.
+- Next: predeclared spaced APF origins across more regimes, simple causal ranking/residual
+  corrections; controlled load-information arms where inventory creates headroom. Keep APF;
+  prioritize usable net-energy and reserve/timing decisions over larger model architecture search.
 
 ## Decision summary
 
