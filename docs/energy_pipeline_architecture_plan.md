@@ -10,6 +10,9 @@ four reconstructed origins have load one half-hour behind price/PV.
 [Own-battery DH feedback](dh_feedback_economic_replay_2026-10-04.md) now passes two bounded
 core pilots with aligned admission/coherent acceptance. HWC stays exogenous; next causal net-energy
 calibration and export execution tracking. Full-battery and seasonal economic proof remain open.
+[Causal load feedback](causal_load_feedback_results_2026-10-04.md) now passes two 36-solve pilots;
+forecast/path changes, zero short-window cash/inventory gain, mixed quantile loss. Next state-carrying
+bounded chunks beyond projected divergence; inventory constraints and device delivery still gates.
 Replay evidence: [payload extraction](energy_pipeline_payload_replay.md),
 [resident price shadow](energy_pipeline_resident_price.md),
 [source-cache/memory checkpoint](energy_pipeline_source_cache.md). Production unchanged.

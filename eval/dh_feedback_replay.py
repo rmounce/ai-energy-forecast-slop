@@ -1,6 +1,7 @@
 """Bounded DH/MPC event replay with own battery feedback and exogenous HWC."""
 import argparse
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -84,7 +85,10 @@ def simulate(bundle, solve):
     events.sort(key=lambda event:(event[0],event[1],event[2]))
     segments = [row for step in bundle['steps'] for key in ('before_activation','after_activation') for row in step[key]]
     execution_plant = bundle.get('execution_plant',bundle['configuration']['plant_conf'])
-    arms = ('baseline','without_positive_lockin')
+    experiment = bundle.get('experiment','terminal_policy')
+    if experiment not in ('terminal_policy','load_calibration'): raise ValueError('unknown feedback experiment')
+    challenger = 'calibrated_load' if experiment == 'load_calibration' else 'without_positive_lockin'
+    arms = ('baseline',challenger)
     summaries, rows, artifacts = {},[],[]
     started = time.monotonic()
     for arm in arms:
@@ -115,15 +119,21 @@ def simulate(bundle, solve):
                 continue
             states = overlay(event['states'],parent,soc)
             if kind == 'dh':
+                if arm == 'calibrated_load':
+                    if 'calibrated_load_rows' not in event: raise ValueError('missing frozen load calibration')
+                    states['sensor.ai_load_forecast_high'] = {'attributes':{'forecasts':deepcopy(event['calibrated_load_rows'])}}
                 coverage = source_coverage(states,stamp)
                 if not coverage['coverage_ready']: raise ValueError('admitted DH sources changed')
                 inputs = Inputs(states,stamp.to_pydatetime())
                 policy = dh_soc(inputs)
                 payload = build_dh_payload(inputs)
             else:
-                payload = policy_payload(states,stamp,soc,arm)
+                payload = policy_payload(states,stamp,soc,'baseline' if arm == 'calibrated_load' else arm)
+            refs = event['input_receipts']
+            if arm == 'calibrated_load' and kind == 'dh':
+                refs = refs | {'load_calibration':event['load_calibration']}
             artifact,frame = solve_payload(bundle,payload,kind,event['origin'],arm,
-                event['input_receipts'],revision,solve)
+                refs,revision,solve)
             artifacts.append(artifact)
             request = artifact['request']
             if payload['battery_nominal_energy_capacity'] != execution_plant['battery_nominal_energy_capacity']:
@@ -155,8 +165,8 @@ def simulate(bundle, solve):
         capacity = execution_plant['battery_nominal_energy_capacity']/1000
         summaries[arm] = totals | {'initial_soc':bundle['initial_soc'],'final_soc':soc,'ending_inventory_kwh':soc*capacity,
             'final_parent_revision':revision,'final_offset_pct':float(parent['input_number.emhass_target_soc_offset']['state'])}
-    cash = summaries['baseline']['variable_cost_aud']-summaries['without_positive_lockin']['variable_cost_aud']
-    energy = summaries['without_positive_lockin']['ending_inventory_kwh']-summaries['baseline']['ending_inventory_kwh']
+    cash = summaries['baseline']['variable_cost_aud']-summaries[challenger]['variable_cost_aud']
+    energy = summaries[challenger]['ending_inventory_kwh']-summaries['baseline']['ending_inventory_kwh']
     return {'scope':'own_battery_dh_feedback_exogenous_hwc','summary':summaries,'events':rows,'solves':artifacts,
         'comparison':{'cashflow_delta_aud':cash,'ending_inventory_delta_kwh':energy,
             'inventory_value_break_even_aud_per_kwh':-cash/energy if abs(energy)>1e-8 else None},
@@ -212,6 +222,21 @@ def build_bundle(args):
         bundle['execution_plant'][key] = initial_payload[key]
     bundle['dh_events'] = events
     bundle['provenance']['captured_handoff_sha256'] = digest(capture)
+    if getattr(args,'experiment','terminal_policy') == 'load_calibration':
+        from eval.prepare_load_feedback import prepare_calibrated_events
+        calibration = json.loads((args.calibration/'report.json').read_text())
+        sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        path = args.calibration/'challenger.parquet'
+        measured = json.loads((args.dataset/'manifest.json').read_text())
+        if (sha(path) != calibration['challenger_sha256'] or not measured['export_complete']
+                or sha(args.dataset/'manifest.json') != calibration['dataset_manifest_sha256']
+                or sha(args.dataset/'actuals.parquet') != measured['parquet_sha256']):
+            raise ValueError('changed or incompatible calibration/measurement archive')
+        bundle['experiment'] = 'load_calibration'
+        bundle = prepare_calibrated_events(bundle,pd.read_parquet(path),calibration['settings'])
+        bundle['provenance']['load_calibration'] = {'report_sha256':sha(args.calibration/'report.json'),
+            'challenger_sha256':sha(path),'measured_actuals_sha256':measured['parquet_sha256'],
+            'settings':calibration['settings']}
     return bundle
 
 
@@ -224,15 +249,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ('history','replay','journal','output'): parser.add_argument('--'+flag,type=Path,required=True)
     for flag in ('start','end'): parser.add_argument('--'+flag,required=True)
+    parser.add_argument('--experiment',choices=('terminal_policy','load_calibration'),default='terminal_policy')
+    parser.add_argument('--calibration',type=Path)
+    parser.add_argument('--dataset',type=Path)
     args = parser.parse_args()
     if args.output.exists(): parser.error('new output directory required')
+    if args.experiment == 'load_calibration' and (args.calibration is None or args.dataset is None):
+        parser.error('load_calibration requires --calibration and --dataset')
+    if args.experiment == 'terminal_policy' and (args.calibration is not None or args.dataset is not None):
+        parser.error('calibration/dataset apply only to load_calibration')
     bundle = build_bundle(args)
     from scripts.replay_energy_solves import run_batch
     files = ['scripts/emhass_solver_worker.py','eval/dh_feedback_replay.py','eval/minute_core_replay.py',
         'eval/sequential_core_replay.py','eval/audit_control_fidelity.py','eval/audit_dh_source_history.py',
         'eval/archived_forecasts.py','eval/audit_amber_forecast_archive.py','eval/amber_quote_actuals.py',
         'eval/measured_actuals.py','energy_pipeline/payloads.py','energy_pipeline/solver_replay.py',
-        'energy_pipeline/solver_chain.py']
+        'energy_pipeline/solver_chain.py','eval/prepare_load_feedback.py',
+        'eval/compare_load_solver_sensitivity.py','eval/calibrate_measured_load.py']
     result,hashes = run_batch(bundle,'eval/dh_feedback_replay.py',files)
     for artifact in result['solves']: validate_result(artifact['request'],artifact['result'])
     result.update(bundle_sha256=digest(bundle),code_sha256=hashes,provenance=bundle['provenance'],limitations=[
@@ -244,6 +277,11 @@ def main():
         'delivered measured PV lower bound, ideal physical executor, device mode/ramp behavior not simulated',
         'archived settings/captured static fallback and current frozen plant config; not independent historical availability',
         'retrospective stress selection; variable cashflow excludes wear, fixed charges and terminal inventory value'])
+    if bundle.get('experiment') == 'load_calibration':
+        result['experiment'] = 'load_calibration'
+        result['limitations'].extend(['calibration fits at logged forecast creation with assumed30m measurement release lag',
+            'p65 version inferred from exact overlapping vector; archived HA lacks model-version identity',
+            'common initial archived parent; calibration begins at first admitted DH refresh; tail labels not used'])
     args.output.mkdir(parents=True)
     for name,content in [('bundle',bundle),('report',result)]:
         (args.output/(name+'.json')).write_text(json.dumps(content,indent=2,allow_nan=False)+'\n')

@@ -77,6 +77,10 @@ subwindows of retrospective stress cases; 15 MPC origins and 3 accepted DH origi
 
 ## Next effort
 
+Update: [causal load calibration comparison](causal_load_feedback_results_2026-10-04.md) now
+complete for both 15m pilots. No cash/inventory gain; forecast/path changes and mixed quantile loss.
+Next longer state-carrying execution/inventory constraints and device-delivery diagnosis.
+
 1. Replay the cheap causal p65 load/net-energy calibration through own DH/MPC feedback, paired
    with unchanged forecasts/settings and frozen targets; score cash and terminal inventory separately.
 2. Diagnose export requested-vs-delivered DC power and grid balance; extend full-battery window

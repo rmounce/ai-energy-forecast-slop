@@ -8,6 +8,9 @@ replay admission now precedes own-DH feedback and new model ranking.
 Update: [own-battery feedback pilots](dh_feedback_economic_replay_2026-10-04.md) now implement that
 admission/feedback path; 72 completed core solves across export/near-full approach show zero
 terminal-policy cash/inventory difference. Next net-energy calibration; export delivery gap remains.
+Update: [load calibration through own feedback](causal_load_feedback_results_2026-10-04.md) now
+complete: another 72 core solves, forecast/path changes but zero short-window economic difference.
+Next longer state-carrying replay and inventory-constrained periods; p65 pinball loss can worsen.
 
 ## Existing work retained
 

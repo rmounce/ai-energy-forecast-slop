@@ -33,6 +33,11 @@ evaluation. [Windows, four load lags and next gates](../docs/economic_regimes_an
 `dh_feedback_replay.py` → paired chronological DH/MPC events, endogenous battery plans/helpers,
 aligned-source admission, own inventory and delayed activation; archived HWC remains exogenous.
 [Two installed-core pilots, limits and next work](../docs/dh_feedback_economic_replay_2026-10-04.md).
+`--experiment load_calibration --calibration ... --dataset ...` → same controller/terminal policy,
+exact-vector p65 calibration fitted at forecast creation, endogenous DH feedback.
+`prepare_load_feedback.py` freezes corrections; `audit_feedback_sensitivity.py` checks paired
+saved plans and optionally scores each vintage once on measured future targets, posthoc only.
+[72-solve results and next longer-window gate](../docs/causal_load_feedback_results_2026-10-04.md).
 
 ## Price Source Contracts
 

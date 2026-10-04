@@ -612,3 +612,6 @@ lags. Static capture fallbacks identified explicitly; no production admission ch
 [Own-DH event replay](docs/dh_feedback_economic_replay_2026-10-04.md) persists each arm's SoC,
 trajectories/anchors/reground/offset, delays parent/command activation, and holds accepted parents
 on bad alignment. HWC exogenous; execution uses runtime capacity, not base-config placeholder.
+[Load calibration experiment](docs/causal_load_feedback_results_2026-10-04.md) freezes p65 corrections
+at matched forecast creation, applies only admitted DH base load, and retains incumbent terminal
+policy. Separate saved-plan/future-target auditor; no scored future labels in replay decision inputs.

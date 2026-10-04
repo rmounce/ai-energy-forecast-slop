@@ -210,3 +210,6 @@ behind price/PV despite equal array lengths. Input alignment precedes new model 
 [Own-battery DH feedback pilots](docs/dh_feedback_economic_replay_2026-10-04.md) now retain aligned
 parents across rollover; two stress subwindows show no terminal-lock-in gain. HWC remains exogenous;
 next causal net-energy calibration and export device-delivery diagnosis.
+[Causal load feedback comparison](docs/causal_load_feedback_results_2026-10-04.md) now completes
+72 core solves: forecast/path changes but no 15-minute cash/inventory gain. Quantile loss is mixed;
+next longer inventory-constrained execution and requested-vs-delivered power diagnosis.
