@@ -226,3 +226,5 @@ missing-anchor clock reconstruction remains a separate diagnostic before longer 
 negative. No production change; full-cycle value/physical gates remain.
 [Inventory-cycle screening and low-stock replay](docs/inventory_cycle_screen_2026-10-05.md)
 find four excursions with missing PV support;15min/36 requests near15% SoC show zero timing gain.
+[Full-cycle PV support audit](docs/cycle_pv_support_2026-10-05.md): raw strings recover no missing
+night intervals. Next controlled cycle mechanisms; historical full-cycle savings remain unproven.

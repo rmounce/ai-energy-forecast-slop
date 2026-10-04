@@ -647,3 +647,7 @@ requests per profile:6.39c credit for0.275kWh stock, no demonstrated net gain; f
 excursions/low-stock episodes from admission. Missing energy never summed as zero; observed endpoints
 do not impose equal counterfactual ending stock or establish runtime floor binding.15min/36-request
 low-stock comparison yields identical cashflow/inventory; full-cycle input coverage remains a gate.
+[Cycle PV audit](docs/cycle_pv_support_2026-10-05.md) retains raw string gaps and distinguishes
+derived balance from independent validation. Fixed eight-source≤24h archive profile; no broad
+control-window expansion. Full-helper state historical; own-state replay must distinguish99.99%
+timestamp transition from99.5% controller threshold. Controlled cycle mechanisms next.

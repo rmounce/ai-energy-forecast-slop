@@ -1,5 +1,10 @@
 # Inventory cycles and low-stock replay — 2026-10-05
 
+- Follow-up [full-cycle PV support audit](cycle_pv_support_2026-10-05.md): raw strings recover
+  none of130 missing intervals in selected20.6h cycle. Full-helper state available;99.99% update
+  threshold differs from99.5% controller branch. Next controlled cycle mechanisms; stop expanding
+  historical clock reconstruction for now, retain unavailable-input boundaries.
+
 - Offline; APF retained; no production/device/service changes or training.
 - Next economic gate after one-hour timing result: complete battery excursions and scarce/full stock.
 - `eval/screen_inventory_cycles.py`: hash-verified measured archive; full≥99.5%, material

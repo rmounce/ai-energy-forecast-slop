@@ -66,6 +66,12 @@ on a required new solve and runs no optimizer. [One-hour results and limits](../
 full-to-full excursions and low-stock episodes, retaining missing support and endpoint conventions.
 [Cycle coverage and low-stock replay](../docs/inventory_cycle_screen_2026-10-05.md); diagnostic,
 not causal admission or savings. Incomplete unsigned energy totals stay null.
+`export_control_history.py --cycle-support-only`: fixed eight-source≤24h PV/energy/full-helper
+archive; exclusive of full DH/EMS/energy flags, default90min profile unchanged.
+`audit_cycle_support.py --history ARCHIVE --start UTC --end UTC --local-time-zone ZONE --output NEW.json`
+checks fresh-string recovery and historical full-helper timing, never fills missing actuals.
+[Full-cycle support findings](../docs/cycle_pv_support_2026-10-05.md): zero recovered intervals;
+controlled mechanisms next, no historical full-cycle savings claim.
 
 ## Price Source Contracts
 

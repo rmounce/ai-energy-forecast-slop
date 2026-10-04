@@ -1,5 +1,10 @@
 # Price and load accuracy review — 2026-10-04
 
+- Latest Oct5: [full-cycle PV support](cycle_pv_support_2026-10-05.md). Raw strings recover
+  zero of130 missing cycle intervals; derived balance cannot independently validate zero PV.
+  Full timestamp trigger99.99% differs from99.5% controller branch. Next controlled cycle
+  mechanisms, pause historical timing expansion; no forecast/controller promotion evidence.
+
 - Latest Oct5: [inventory-cycle coverage and low-stock replay](inventory_cycle_screen_2026-10-05.md).
   Four full-to-full excursions have missing PV support;15min/36 requests near15% SoC show
   zero command-hold cash/inventory gain. Runtime floor differs from10% base config. Audit shorter

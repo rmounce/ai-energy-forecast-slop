@@ -85,6 +85,26 @@ ENERGY_SOURCES = {
 }
 
 
+def archive_profile(start, end, *, dh=False, ems=False, energy=False, cycle_support=False):
+    """Longer windows only for the fixed small PV/energy/holdoff diagnostic surface."""
+    maximum = pd.Timedelta(hours=24) if cycle_support else pd.Timedelta(minutes=90)
+    if (start.tzinfo is None or end.tzinfo is None or pd.isna(start) or pd.isna(end)
+            or not start < end <= start+maximum):
+        raise ValueError('aware positive window inside profile duration bound required')
+    if cycle_support:
+        if dh or ems or energy:
+            raise ValueError('cycle-support-only cannot include full forecast/controller archives')
+        sources = {key:SOURCES[key] for key in ('pv','battery','loss','soc')}
+        sources.update({key:ENERGY_SOURCES[key] for key in ('pv1','pv2','inverter_ac')})
+        sources['last_full'] = ('input_datetime','battery_last_reached_full',['state','value','value_str'])
+        return sources, 100000
+    sources = dict(SOURCES)
+    if dh: sources.update(DH_SOURCES)
+    if ems: sources.update(EMS_SOURCES)
+    if energy: sources.update(ENERGY_SOURCES)
+    return sources, 10000
+
+
 def main():
     os.nice(19)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -94,11 +114,15 @@ def main():
     parser.add_argument('--include-dh-inputs', action='store_true', help='include strategic forecast/settings lineage')
     parser.add_argument('--include-ems-inputs', action='store_true', help='include published controller curves and device limits/modes')
     parser.add_argument('--include-energy-balance', action='store_true', help='include AC/DC and available battery capacity reconciliation')
+    parser.add_argument('--cycle-support-only', action='store_true', help='fixed eight-source PV/energy/full-helper diagnostic, <=24h; no forecast/controller archive')
     args = parser.parse_args()
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
-    if (start.tzinfo is None or end.tzinfo is None or pd.isna(start) or pd.isna(end) or
-            not start < end <= start+pd.Timedelta(minutes=90) or args.output.exists()):
-        parser.error('aware positive window <=90m and new output directory required')
+    if args.output.exists(): parser.error('new output directory required')
+    try:
+        sources,row_budget = archive_profile(start,end,dh=args.include_dh_inputs,
+            ems=args.include_ems_inputs,energy=args.include_energy_balance,cycle_support=args.cycle_support_only)
+    except ValueError as exc:
+        parser.error(str(exc))
     start, end = start.tz_convert('UTC'), end.tz_convert('UTC')
     from config_utils import load_config
     from influxdb import InfluxDBClient
@@ -106,10 +130,6 @@ def main():
     client = InfluxDBClient(host=config['host'], port=config.get('port', 8086),
         username=config['username'], password=config['password'], database=config['database'],
         timeout=20, retries=0)
-    sources = dict(SOURCES)
-    if args.include_dh_inputs: sources.update(DH_SOURCES)
-    if args.include_ems_inputs: sources.update(EMS_SOURCES)
-    if args.include_energy_balance: sources.update(ENERGY_SOURCES)
     raw, queries, schema, resolved = {}, {}, {}, {}
     try:
         for measurement in sorted({source[0] for source in sources.values() if source[0]}):
@@ -140,14 +160,14 @@ def main():
             columns = ','.join('"'+field+'"' for field in fields)
             query = (f'SELECT {columns} FROM "rp_raw"."{measurement}" '
                 f'WHERE "entity_id" = \'{entity}\' AND time >= \'{start.isoformat()}\' '
-                f'AND time < \'{end.isoformat()}\' ORDER BY time ASC LIMIT 10001')
+                f'AND time < \'{end.isoformat()}\' ORDER BY time ASC LIMIT {row_budget+1}')
             # Stable settings/forecasts may not emit inside a short window.
             # Retain the latest prior record; downstream admission controls age.
             prior_query = (f'SELECT {columns} FROM "rp_raw"."{measurement}" '
                 f'WHERE "entity_id" = \'{entity}\' AND time < \'{start.isoformat()}\' ORDER BY time DESC LIMIT 1')
             queries[name] = {'window': query, 'prior': prior_query}
             raw[name] = list(client.query(query).get_points())
-            if len(raw[name]) > 10000:
+            if len(raw[name]) > row_budget:
                 raise ValueError('source exceeds bounded row budget: '+name)
             raw[name] = list(client.query(prior_query).get_points())+raw[name]
             print(json.dumps({'source': name, 'rows': len(raw[name])}), flush=True)
@@ -157,6 +177,8 @@ def main():
     archive = args.output/'history.json'
     archive.write_text(json.dumps(raw, indent=2, allow_nan=False)+'\n')
     manifest = {'mode': 'read_only_control_fidelity_archive', 'start': start.isoformat(),
+        'profile':'cycle_support_only' if args.cycle_support_only else 'bounded_control_history',
+        'window_row_budget_per_source':row_budget,
         'end': end.isoformat(), 'queries': queries, 'sources': sources, 'resolved_sources': resolved,
         'selected_schema': {key: {field: schema.get(resolved[key].get('measurement'), {}).get(field) for field in fields}
             for key, (_, _, fields) in sources.items()},
