@@ -25,6 +25,11 @@ timing/input diagnostics, optional six pinned checkpoint solves or exact saved-r
 `minute_core_replay.py` → bounded paired terminal-policy experiment at recorded minute decision/
 activation clocks; raw subinterval physical scoring and own inventory. Archived DH/HWC parents
 remain conditional; [results/commands/gates](../docs/minute_economic_replay_2026-10-04.md).
+`select_economic_windows.py` → deterministic complete-target stress cases, retrospective selection.
+`export_control_history.py --include-dh-inputs` → raw as-issued DH/APF/settings with prior seeds.
+`audit_dh_source_history.py` → causal-source age/target alignment, optional same-vintage measured
+load scoring. `archived_forecasts.py` parses recorded Solcast constructor representations without
+evaluation. [Windows, four load lags and next gates](../docs/economic_regimes_and_dh_admission_2026-10-04.md).
 
 ## Price Source Contracts
 

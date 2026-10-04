@@ -204,3 +204,6 @@ against common measurements: near-zero load-calibration gain here; baseline exec
 identifies minute cadence and refreshed DH/HWC parents as major replay differences.
 [Minute replay pilots](docs/minute_economic_replay_2026-10-04.md) now preserve inventory and
 recorded activation delays; no meaningful terminal-lock-in gain in the bounded30m comparison.
+[Regime selection and DH source admission](docs/economic_regimes_and_dh_admission_2026-10-04.md)
+now freeze three stress windows; four reconstructed DH origins have load timestamps one half-hour
+behind price/PV despite equal array lengths. Input alignment precedes new model comparisons.

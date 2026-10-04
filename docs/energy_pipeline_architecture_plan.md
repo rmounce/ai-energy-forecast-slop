@@ -5,6 +5,9 @@ Economic replay [control fidelity](control_fidelity_audit_2026-10-04.md): three 
 reproduced with recorded parents/current telemetry; cadence/parent input differences identified.
 Minute cadence/raw execution pilots now [completed](minute_economic_replay_2026-10-04.md);
 each arm's own DH/HWC feedback and multi-regime economic proof remain gates.
+[Three stress windows/source admission](economic_regimes_and_dh_admission_2026-10-04.md) frozen;
+four reconstructed origins have load one half-hour behind price/PV. Next enforce aligned inputs
+and retain accepted parents during source rollover before own-DH feedback/model comparisons.
 Replay evidence: [payload extraction](energy_pipeline_payload_replay.md),
 [resident price shadow](energy_pipeline_resident_price.md),
 [source-cache/memory checkpoint](energy_pipeline_source_cache.md). Production unchanged.

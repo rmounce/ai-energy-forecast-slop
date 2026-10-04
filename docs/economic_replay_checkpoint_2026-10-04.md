@@ -2,6 +2,9 @@
 
 Decision: reuse existing economic evaluation; add production solver/policy fidelity before
 ranking terminal-policy, net-energy and APF-tail changes. No production change.
+Update: [stress windows/DH source admission](economic_regimes_and_dh_admission_2026-10-04.md)
+find four reconstructed half-hour load lags across three archives. Input alignment/hold-last-plan
+replay admission now precedes own-DH feedback and new model ranking.
 
 ## Existing work retained
 

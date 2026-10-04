@@ -606,3 +606,6 @@ Fixed DH/HWC/risk inputs and delivered-PV lower bound remain explicit limits; no
 three pinned core checkpoints reproduce live commands≤0.005W; cadence/parent input differences identified.
 [Minute replay](docs/minute_economic_replay_2026-10-04.md) now uses raw event-grid targets and
 historical activation delays; conditional archived parents, own inventory, shared isolated batch runner.
+[DH source admission](docs/economic_regimes_and_dh_admission_2026-10-04.md) reconstructs as-of
+production price/load/Solcast/settings; exact UTC target-grid validation catches four half-hour load
+lags. Static capture fallbacks identified explicitly; no production admission change yet.

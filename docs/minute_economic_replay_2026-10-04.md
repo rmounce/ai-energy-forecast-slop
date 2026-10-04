@@ -104,10 +104,11 @@ Choose a new output path; household evidence stays ignored.
 
 ## Next effort / economic priorities
 
-1. Freeze representative low-solar, full-battery and positive high-value export windows, with
-   complete raw targets and as-issued DH price/PV/load/HWC lineage. This midday pilot has no
-   exports and does not test missed profitable discharge/export opportunities.
-2. Regenerate each arm's DH trajectory/anchors at historical source updates; preserve its own
+1. [Three diagnostic stress windows now frozen](economic_regimes_and_dh_admission_2026-10-04.md).
+   Four reconstructed DH origins have half-hour load lags despite equal array lengths. Enforce
+   aligned-input admission and retain the accepted parent while waiting for fresh sources.
+   Midday source archive still needs APF legs; static-setting availability remains qualified.
+2. Regenerate each arm's DH trajectory/anchors at admitted historical source updates; preserve its own
    feedback and document whether HWC remains exogenous. Conditional live parents can validate
    tactical fidelity; do not use them to claim a full forecast/policy counterfactual.
 3. Compare forecast net-energy calibration and cheap APF-tail price residual corrections on

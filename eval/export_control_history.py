@@ -31,6 +31,25 @@ SOURCES = {
     'soc': ('sensor__battery', 'sigen_plant_battery_state_of_charge_derived', ['value']),
 }
 
+DH_SOURCES = {
+    **{'mpc_apf_'+leg: ('sensor__monetary', 'amber_5min_forecasts_extended_'+leg+'_price',
+        ['Forecasts_str', 'unit_of_measurement_str']) for leg in ('general', 'feed_in')},
+    'dh_price': (None, 'ai_price_forecast', ['forecasts_str']),
+    'dh_price_low': (None, 'ai_price_forecast_low', ['forecasts_str']),
+    'dh_price_high': (None, 'ai_price_forecast_high', ['forecasts_str']),
+    'load_forecast': (None, 'ai_load_forecast_high', ['forecasts_str']),
+    **{'solcast_'+day: (None, 'solcast_pv_forecast_forecast_'+day, ['detailedForecast_str'])
+       for day in ('today', 'tomorrow', 'day_3', 'day_4')},
+    **{name: ('input_number', entity, ['value']) for name, entity in (
+        ('buy_weight', 'emhass_weight_buy_forecast'), ('sell_weight', 'emhass_weight_sell_forecast'),
+        ('pv_weight', 'emhass_weight_pv_forecast'), ('discharge_weight', 'emhass_weight_battery_discharge'),
+        ('minimum_soc', 'battery_soc_min_target'), ('soc_buffer', 'battery_soc_min_buffer'),
+        ('target_offset', 'emhass_target_soc_offset'), ('export_allowance', 'sapn_free_exports'))},
+    'reground_block': ('input_text', 'dh_last_reground_block', ['state', 'value', 'value_str']),
+    'rated_capacity': (None, 'sigen_plant_rated_energy_capacity', ['value', 'unit_of_measurement_str']),
+    'battery_health': (None, 'sigen_plant_battery_state_of_health', ['value', 'unit_of_measurement_str']),
+}
+
 
 def main():
     os.nice(19)
@@ -38,6 +57,7 @@ def main():
     parser.add_argument('--start', required=True)
     parser.add_argument('--end', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--include-dh-inputs', action='store_true', help='include strategic forecast/settings lineage')
     args = parser.parse_args()
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
     if (start.tzinfo is None or end.tzinfo is None or pd.isna(start) or pd.isna(end) or
@@ -50,12 +70,30 @@ def main():
     client = InfluxDBClient(host=config['host'], port=config.get('port', 8086),
         username=config['username'], password=config['password'], database=config['database'],
         timeout=20, retries=0)
-    raw, queries, schema = {}, {}, {}
+    sources = dict(SOURCES)
+    if args.include_dh_inputs: sources.update(DH_SOURCES)
+    raw, queries, schema, resolved = {}, {}, {}, {}
     try:
-        for measurement in sorted({source[0] for source in SOURCES.values()}):
+        for measurement in sorted({source[0] for source in sources.values() if source[0]}):
             schema[measurement] = {row['fieldKey']: row['fieldType'] for row in
                 client.query(f'SHOW FIELD KEYS FROM "{measurement}"').get_points()}
-        for name, (measurement, entity, requested) in SOURCES.items():
+        for name, (measurement, entity, requested) in sources.items():
+            if measurement is None:
+                keys = list(client.query(f'SHOW SERIES WHERE "entity_id" = \'{entity}\'').get_points())
+                available = sorted({row['key'].split(',', 1)[0] for row in keys
+                    if row['key'].split(',', 1)[0] == 'sensor' or row['key'].split(',', 1)[0].startswith('sensor__')})
+                matching = []
+                for candidate in available:
+                    if candidate not in schema:
+                        schema[candidate] = {row['fieldKey']: row['fieldType'] for row in
+                            client.query(f'SHOW FIELD KEYS FROM "{candidate}"').get_points()}
+                    if any(field in schema[candidate] for field in requested): matching.append(candidate)
+                if len(matching) != 1:
+                    raw[name] = []
+                    resolved[name] = {'entity': entity, 'status': 'missing_or_ambiguous_raw_measurement', 'candidates': matching}
+                    continue
+                measurement = matching[0]
+            resolved[name] = {'entity': entity, 'measurement': measurement}
             fields = [field for field in requested if field in schema[measurement]]
             if not fields:
                 raw[name] = []
@@ -64,10 +102,15 @@ def main():
             query = (f'SELECT {columns} FROM "rp_raw"."{measurement}" '
                 f'WHERE "entity_id" = \'{entity}\' AND time >= \'{start.isoformat()}\' '
                 f'AND time < \'{end.isoformat()}\' ORDER BY time ASC LIMIT 10001')
-            queries[name] = query
+            # Stable settings/forecasts may not emit inside a short window.
+            # Retain the latest prior record; downstream admission controls age.
+            prior_query = (f'SELECT {columns} FROM "rp_raw"."{measurement}" '
+                f'WHERE "entity_id" = \'{entity}\' AND time < \'{start.isoformat()}\' ORDER BY time DESC LIMIT 1')
+            queries[name] = {'window': query, 'prior': prior_query}
             raw[name] = list(client.query(query).get_points())
             if len(raw[name]) > 10000:
                 raise ValueError('source exceeds bounded row budget: '+name)
+            raw[name] = list(client.query(prior_query).get_points())+raw[name]
             print(json.dumps({'source': name, 'rows': len(raw[name])}), flush=True)
     finally:
         client.close()
@@ -75,9 +118,9 @@ def main():
     archive = args.output/'history.json'
     archive.write_text(json.dumps(raw, indent=2, allow_nan=False)+'\n')
     manifest = {'mode': 'read_only_control_fidelity_archive', 'start': start.isoformat(),
-        'end': end.isoformat(), 'queries': queries, 'sources': SOURCES,
-        'selected_schema': {key: {field: schema[measurement].get(field) for field in fields}
-            for key, (measurement, _, fields) in SOURCES.items()},
+        'end': end.isoformat(), 'queries': queries, 'sources': sources, 'resolved_sources': resolved,
+        'selected_schema': {key: {field: schema.get(resolved[key].get('measurement'), {}).get(field) for field in fields}
+            for key, (_, _, fields) in sources.items()},
         'history_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
         'exporter_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'export_complete': True, 'publication_authorized': False,
@@ -85,6 +128,7 @@ def main():
             'independently recorded entities are not an atomic solver input snapshot',
             'published plan revisions can include state/attribute publication transitions',
             'a plan publication is not proof of a separate successful solve',
+            'latest prior record included; downstream admission must enforce source-specific age/coverage',
             'missing historical state remains missing; no current-state fallback']}
     (args.output/'manifest.json').write_text(json.dumps(manifest, indent=2, allow_nan=False)+'\n')
 
