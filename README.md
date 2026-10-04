@@ -231,3 +231,6 @@ night intervals. Next controlled cycle mechanisms; historical full-cycle savings
 [Controlled cycles](docs/controlled_cycle_value_2026-10-05.md) distinguish solar replacement,
 foregone export and scarce later imports. [APF packet timing](docs/apf_packet_timing_2026-10-05.md)
 finds conditional ranking gaps across four clustered windows; no site savings or promotion claim.
+[Spaced causal APF correction](docs/apf_causal_correction_2026-10-05.md) changes only one packet
+choice; no broad benefit. [Controlled load information](docs/load_information_value_2026-10-05.md)
+matters at scarce reserves, while ample stock/replenishment makes corrections mostly irrelevant.

@@ -79,6 +79,13 @@ solar-recovery/export-opportunity/scarcity cases, explicit wear/terminal sensiti
 fully future one-shot export/withhold versus hindsight; hashes, signs, power and DC wear explicit.
 [APF timing results](../docs/apf_packet_timing_2026-10-05.md); overlapping market-only packets,
 not additive site savings. Terminal value flag refers to stored DC energy, wear to discharged DC.
+`export_spaced_apf.py --start UTC_MIDNIGHT --end UTC_MIDNIGHT --output NEW_FOLDER`: fixed
+00/06/12/18 UTC feed snapshots,≤7 complete days, one read-only row per two-minute window.
+`apf_causal_correction.py --archive APF --quotes QUOTES --control-history TRAIN_FOLDERS ...`
+`--evaluation-history SPACED_FOLDER --output NEW_FOLDER`: earlier-day band-bias challenger;
+quote receipt/end cutoffs, target/bin dedup and zero warm-up fallback. [Causal results](../docs/apf_causal_correction_2026-10-05.md).
+`controlled_load_information.py --output NEW.json`: forecast-only reserve/export selection,
+four synthetic information arms, identical actuals/own inventory. [Load mechanisms](../docs/load_information_value_2026-10-05.md).
 
 ## Price Source Contracts
 

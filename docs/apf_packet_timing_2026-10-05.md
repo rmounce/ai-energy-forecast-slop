@@ -1,5 +1,9 @@
 # APF packet timing diagnostic — 2026-10-05
 
+- Follow-up [predeclared spaced causal correction](apf_causal_correction_2026-10-05.md):28
+  receipts/146 paired cases, one changed choice, no broad benefit. Current APF retained; reserve-
+  constrained empirical load-calibration comparison next.
+
 - Parallel forecast effort, alongside [controlled cycle mechanisms](controlled_cycle_value_2026-10-05.md).
   APF retained; no optimizer, network, training, service or device calls.
 - `eval/apf_packet_regret.py`: at each frozen APF feed receipt, choose one fully future export
@@ -56,7 +60,7 @@ Mean14h regret, cents per hypothetical stored kWh;4c/DC-kWh wear common:
 - Conservative price/terminal choices interact; test separately, avoid counting same risk twice.
   Load calibration still needs inventory-sensitive controlled information arms;40min zero gain
   alone does not rule out longer-horizon value.
--25 new tests pass: raw sign, future/stale/missing receipts, complete labels, partial intervals,
+- 25 new tests pass: raw sign, future/stale/missing receipts, complete labels, partial intervals,
   power bound, withholding, DC wear versus stored value, canonical/source mutation and conflicts.
  27 existing parser/quote tests pass; combined new cycle/packet tests51 pass.
 - Private authoritative outputs under `data/energy_replay/`:

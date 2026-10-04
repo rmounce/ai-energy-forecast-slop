@@ -656,3 +656,9 @@ common synthetic inputs and persistent stock; both-leg wear, foregone solar expo
 closure explicit. [APF packet timing](docs/apf_packet_timing_2026-10-05.md) scores frozen feed
 ranking/withholding against confirmed quotes with explicit DC throughput/terminal value and spare
 power bound. Conditional diagnostics independent of missing historical PV, not site savings.
+[Spaced APF correction](docs/apf_causal_correction_2026-10-05.md): fixed six-hour sampling,
+earlier-day forecast vintages, quote receipt+interval-end cutoff, newest target/bin dedup;
+pre-indexed band-bias fit. Evaluation origins separate from dense training archives.146 paired
+cases yield one changed action; no promotion. [Load-information test](docs/load_information_value_2026-10-05.md)
+enumerates forecast-based reserve/export choices, then carries own stock through common actuals;
+synthetic correction/oracle/worse-bias controls, no historical calibration-savings claim.

@@ -1,17 +1,20 @@
 # Price and load accuracy review — 2026-10-04
 
-- Current Oct5 checkpoint (parallel work): [controlled cycles](controlled_cycle_value_2026-10-05.md)
-  establish replacement/export-opportunity/scarcity mechanisms with physical equal-stock endpoints;
-  [APF packet timing](apf_packet_timing_2026-10-05.md) scores98 clustered receipts,294 cases/profile.
-  Conditional timing gaps; conservative bounds not uniformly better. No site savings/promotion.
+- Current Oct5 checkpoint (parallel work): [spaced causal APF correction](apf_causal_correction_2026-10-05.md)
+  evaluates28 predeclared receipts/146 pairs; one changed packet choice, no broad benefit.
+  [Controlled load information](load_information_value_2026-10-05.md) has value at scarce reserves,
+  not ample/replenished stock. Synthetic mechanism only; empirical calibration savings unproven.
+- Earlier [controlled cycles](controlled_cycle_value_2026-10-05.md) establish replacement/export-
+  opportunity/scarcity mechanisms with physical equal-stock endpoints; [APF packet timing](apf_packet_timing_2026-10-05.md)
+  shows conditional ranking gaps. Conservative bounds not uniformly better; no site savings/promotion.
 - Historical [one-hour timing comparison](pv_controller_feedback_2026-10-05.md): extra6.39c for
   0.275kWh stock, slightly negative at illustrative20c inventory/4c wear. [Low-stock15min](inventory_cycle_screen_2026-10-05.md)
   shows zero gain. [Full-cycle PV audit](cycle_pv_support_2026-10-05.md) recovers zero of130 missing
   intervals; pause historical timing expansion. [Formatter parity](mpc_publication_audit_2026-10-05.md)
   passes60 cases; missing historical inputs remain explicit.
-- Next: predeclared spaced APF origins across more regimes, simple causal ranking/residual
-  corrections; controlled load-information arms where inventory creates headroom. Keep APF;
-  prioritize usable net-energy and reserve/timing decisions over larger model architecture search.
+- Next: empirical existing load-calibration comparison at constrained reserves, common explicit
+  PV scenarios and perfect-load headroom. Keep APF/band correction offline; later price candidates
+  need broader causal revision/spread/calendar evidence. Avoid larger architectures on MAE alone.
 
 ## Decision summary
 

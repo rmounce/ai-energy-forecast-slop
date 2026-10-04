@@ -1,5 +1,9 @@
 # Controlled cycle value — 2026-10-05
 
+- Follow-up [controlled load-information value](load_information_value_2026-10-05.md): correcting
+  synthetic demand matters at scarce reserves, not ample/replenished cases; empirical calibration
+  savings remain unproven. Common realised inputs, own stock, adverse-bias/oracle controls.
+
 - Parallel follow-up to [cycle-input audit](cycle_pv_support_2026-10-05.md); economic mechanism
   checks, not historical savings. APF/production unchanged; no optimizer, network or device calls.
 - `eval/controlled_cycle_scenarios.py` reuses existing `execute_ems`/physical executor.
