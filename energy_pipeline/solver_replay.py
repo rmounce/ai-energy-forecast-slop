@@ -40,6 +40,8 @@ def prepare_request(record, config, *, kind, optimization_sha256):
     """
     if kind not in ('dh', 'mpc'):
         raise ValueError('unsupported solve kind')
+    if record.get('mode') == 'historical_chained_handoff' and kind != 'mpc':
+        raise ValueError('chained handoff only supports the rebuilt MPC payload')
     if not re.fullmatch(r'[0-9a-f]{64}', optimization_sha256):
         raise ValueError('require pinned optimization source SHA-256')
     ready = record['readiness'][kind]
@@ -116,6 +118,8 @@ def prepare_request(record, config, *, kind, optimization_sha256):
                'configuration': effective, 'payload': payload,
                'resource_overrides': {'num_threads': 1,
                                       'lp_solver_timeout': effective['optim_conf']['lp_solver_timeout']}}
+    if 'historical_chain' in record:
+        request['historical_chain'] = deepcopy(record['historical_chain'])
     request['request_id'] = digest(request)
     return request
 

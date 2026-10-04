@@ -169,7 +169,7 @@ CREATE CONTINUOUS QUERY cq_weather_temp_30m ON hass BEGIN SELECT mean(value) AS 
 CREATE CONTINUOUS QUERY cq_weather_humidity_30m ON hass BEGIN SELECT mean(value) AS mean_value INTO hass.rp_30m.humidity_adelaide FROM hass.rp_raw.sensor__humidity WHERE entity_id = 'adelaide_west_terrace_ngayirdapira_humidity' GROUP BY time(30m), entity_id END
 CREATE CONTINUOUS QUERY cq_weather_wind_30m ON hass BEGIN SELECT mean(value) AS mean_value INTO hass.rp_30m.wind_speed_adelaide FROM hass.rp_raw.sensor__wind_speed WHERE entity_id = 'adelaide_west_terrace_ngayirdapira_wind_speed_kilometre' GROUP BY time(30m), entity_id END
 CREATE CONTINUOUS QUERY cq_pv_5m_to_30m ON hass BEGIN SELECT mean(mean_value) AS mean_value, min(min_value) AS min_value, max(max_value) AS max_value INTO hass.rp_30m.power_pv_30m FROM hass.rp_5m.power_pv_5m GROUP BY time(30m), source_metadata_id, entity_id END
-CREATE CONTINUOUS QUERY cq_pv_raw_to_5m ON hass RESAMPLE FOR 1d BEGIN SELECT mean(value) AS mean_value, min(value) AS min_value, max(value) AS max_value INTO hass.rp_5m.power_pv_5m FROM hass.rp_raw.sensor__power WHERE entity_id = 'sensor.solcast_pv_forecast_power_now' GROUP BY time(5m), entity_id fill(0) END
+CREATE CONTINUOUS QUERY cq_pv_raw_to_5m ON hass RESAMPLE FOR 1d BEGIN SELECT mean(value) AS mean_value, min(value) AS min_value, max(value) AS max_value INTO hass.rp_5m.power_pv_5m FROM hass.rp_raw.sensor__power WHERE entity_id = 'solcast_pv_forecast_power_now' GROUP BY time(5m), entity_id fill(0) END
 CREATE CONTINUOUS QUERY cq_aemo_raw_sa1_to_5m ON hass BEGIN SELECT mean(value) * 1000 AS price INTO hass.rp_5m.aemo_dispatch_sa1_5m FROM hass.rp_raw.sensor__monetary WHERE entity_id = 'aemo_5min_current_price_sa' GROUP BY time(5m) END
 CREATE CONTINUOUS QUERY cq_dump_load_raw_to_5m ON hass BEGIN SELECT mean(value) AS mean_value, min(value) AS min_value, max(value) AS max_value INTO hass.rp_5m.power_dump_load_5m FROM hass.rp_raw.sensor__power WHERE entity_id = 'estimated_dump_load_power' GROUP BY time(5m), entity_id END
 CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_value) AS mean_value, min(min_value) AS min_value, max(max_value) AS max_value INTO hass.rp_30m.power_dump_load_30m FROM hass.rp_5m.power_dump_load_5m GROUP BY time(30m), entity_id END
@@ -192,4 +192,5 @@ CREATE CONTINUOUS QUERY cq_dump_load_5m_to_30m ON hass BEGIN SELECT mean(mean_va
 The initial version of the core `forecast.py` script was generated with assistance from Google's Gemini.
 
 Isolated solver checkpoint: [audit and result contract](docs/energy_pipeline_solver_isolation.md).
-Recorded DH/MPC core solves verified; [economic replay gaps and next work](docs/economic_replay_checkpoint_2026-10-04.md).
+Recorded core solves and [historical DH→MPC chain](docs/energy_pipeline_solver_chain.md) verified;
+[economic replay gaps/PV provenance and next work](docs/economic_replay_checkpoint_2026-10-04.md).

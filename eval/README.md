@@ -1,5 +1,10 @@
 # Evaluation Scripts
 
+Oct 4 economic fidelity: existing rolling evaluator retained; [installed core solver and historical
+DH→MPC chain](../docs/economic_replay_checkpoint_2026-10-04.md) now verified. Recent `power_pv`
+in the actuals export is a Solcast estimate, not measured generation. Correct target provenance and
+current state/physical policy before treating old replay PnL as realised savings evidence.
+
 ## Price Source Contracts
 
 Before interpreting price-model results, check `eval/price_source_contracts.py`

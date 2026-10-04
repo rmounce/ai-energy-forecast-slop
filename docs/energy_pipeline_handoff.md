@@ -58,7 +58,8 @@ Parent: [local publication transaction](energy_pipeline_publication.md).
 
 Isolated recorded DH and MPC core solves now pass, preserving request/source identity:
 [solver boundary](energy_pipeline_solver_isolation.md). They use independent recorded payloads;
-the new DH result has not been injected into MPC. Next: verify DH projection and feed that plan
-into chained MPC shadow with fresh-parent admission. Existing EMHASS wrappers share output state;
+the initial rehearsal kept recorded parents. [Historical chain](energy_pipeline_solver_chain.md) now
+injects a validated matching DH result into MPC at the frozen capture clock and matches HA Jinja.
+Next: multi-cycle feedback and fresh-parent admission. Existing EMHASS wrappers share output state;
 use the disposable worker. See [shared-state history](emhass_shared_state_race.md). Current HA solve/control
 ownership unchanged; remote publication, provider freshness and sustained-memory gates remain open.

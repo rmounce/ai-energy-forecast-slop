@@ -1,6 +1,6 @@
 # Data Sources & Pipeline Audit
 
-**Last updated: 2026-06-14**
+**PV provenance checked: 2026-10-04; other sections retain their earlier audit dates.**
 
 ---
 
@@ -42,11 +42,18 @@
 |--------|---------------------|-----|--------|---------|
 | Household load | `power_load_5m`, `power_load_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | Gross HA consumed power; retained for history |
 | Household load without deferrable loads | `power_load_without_deferrable_5m`, `power_load_without_deferrable_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA `sensor.power_consumed_without_deferrable_loads` → `rp_raw` → CQs; excludes both HWC heat sources (heat-pump compressor and resistive element) and all dump loads |
-| Solar PV | `power_pv_5m`, `power_pv_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | HA sensor → `rp_raw` → CQs |
+| Solar PV proxy | `power_pv_5m`, `power_pv_30m` | `rp_5m`, `rp_30m` | `mean_value` (W) | Current CQ: `solcast_pv_forecast_power_now` estimate; historical source mixture |
 | Dump load | `power_dump_load_30m` | `rp_30m` | `mean_value` (W) | `sensor.estimated_dump_load_power` → `rp_raw` → CQ; fixed estimates for two fan heaters plus live metering (with switched-on fallback) for two oil heaters; see `docs/dump_load_control.md` |
 | Temperature | `temperature_adelaide` | `rp_30m` | `mean_value` (°C) | HA sensor → `rp_raw` → CQ |
 | Humidity | `humidity_adelaide` | `rp_30m` | `mean_value` (%) | HA sensor → `rp_raw` → CQ |
 | Wind speed | `wind_speed_adelaide` | `rp_30m` | `mean_value` (m/s) | HA sensor → `rp_raw` → CQ |
+
+Economic target warning, Oct 4: read-only live CQ/source-tag audit confirms the last seven days
+of `power_pv_5m` contain only Solcast estimates (2015 points). The exporter names its 30m derivative
+`power_pv` inside `actuals_sa1.parquet`; that name does not establish measured-generation provenance.
+Separate raw `sigen_power_pv_gross` telemetry exists (~132,700 points/7d); validate units/derivation/
+curtailment before using as an economic target. Preserve existing model covariates; export measured
+targets separately. [Queries and implications](economic_replay_checkpoint_2026-10-04.md).
 
 Forecast/export code prefers `power_load_without_deferrable_30m`. Where that newer series is
 missing, it falls back to `power_load_30m` minus `power_dump_load_30m` so older history remains

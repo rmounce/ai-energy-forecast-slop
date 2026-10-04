@@ -12,6 +12,7 @@ import time
 import numpy as np
 import pandas as pd
 from emhass.optimization import Optimization
+from emhass.retrieve_hass import RetrieveHass
 from emhass import utils
 
 
@@ -57,6 +58,23 @@ def main():
                   'targets': [at.isoformat() for at in frame.index], 'columns': columns,
                   'values': frame[columns].to_numpy().tolist(),
                   'temporary_files': sorted(p.name for p in Path(workspace).rglob('*'))}
+        if request['kind'] == 'dh':
+            # Exercise only the pure static formatter: never instantiate the HA
+            # client or call post_data/publish_data, even with dont_post flags.
+            projected = {}
+            for column, entity, attribute, scale, device, unit in (
+                    ('P_Load', 'sensor.dh_p_load_forecast', 'forecasts', 1, 'power', 'W'),
+                    ('P_PV', 'sensor.dh_p_pv_forecast', 'forecasts', 1, 'power', 'W'),
+                    ('SOC_opt', 'sensor.dh_soc_batt_forecast', 'battery_scheduled_soc', 100,
+                     'battery', '%')):
+                values = frame[column]*scale
+                data = RetrieveHass.get_attr_data_dict(values, 0, entity, device, unit,
+                    entity, attribute, np.round(values.iloc[0], 2))
+                projected[entity] = {'state': data['state'],
+                                     'attributes': {attribute: data['attributes'][attribute]}}
+            result['projected_dh_entities'] = projected
+            result['projection_source_sha256'] = hashlib.sha256(
+                Path(inspect.getfile(RetrieveHass)).read_bytes()).hexdigest()
         print(json.dumps(result, allow_nan=False))
 
 

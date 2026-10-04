@@ -21,7 +21,8 @@
   result contract, not permission to publish/control.
 - Source and real outputs verify `SOC_opt` is end-of-interval; positive `P_batt` is DC discharge.
   Terminal SoC is enforced by an exact energy equality, not a soft objective.
-  HA projection/new DH → MPC parent injection remains unverified.
+  [Historical projection/new DH → MPC](energy_pipeline_solver_chain.md) now verified for one frozen
+  ordered cycle; multi-cycle/fresh-parent admission remains unverified.
 
 ## Historical worker implemented
 
@@ -44,5 +45,5 @@
   Forecast cashflow is not realised savings. No live result admission, publishing or control.
 
 Reproduction and economic gaps: [economic replay checkpoint](economic_replay_checkpoint_2026-10-04.md).
-Next: verify DH projection, reproduce chained policy against matched historical inputs/actuals,
+Next: correct PV target provenance, reproduce successive policy against matched historical inputs/actuals,
 then economic loss attribution. Production ownership unchanged.

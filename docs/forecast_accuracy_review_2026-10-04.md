@@ -269,4 +269,6 @@ observed. No training or production-policy change was launched by this follow-up
 
 Execution checkpoint: [existing replay audit and isolated DH/MPC core solves](economic_replay_checkpoint_2026-10-04.md).
 Both recorded horizons solved Optimal and passed physical checks. This establishes solver mechanics;
-chained current-policy replay and realised economic loss attribution remain outstanding.
+one-cycle historical DH→MPC handoff is now verified; multi-cycle replay and realised loss attribution
+remain outstanding. Live PV source audit found recent `power_pv` actuals-export values are Solcast
+estimates. Establish independent measured PV targets before assessing PV accuracy/economic headroom.

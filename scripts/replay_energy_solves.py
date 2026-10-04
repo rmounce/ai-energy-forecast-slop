@@ -12,7 +12,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from energy_pipeline.solver_replay import prepare_request, validate_result, forecast_summary
+from energy_pipeline.solver_replay import digest, prepare_request, validate_result, forecast_summary
+from energy_pipeline.solver_chain import build_chained_handoff
 
 
 def container_command(image, workspace):
@@ -40,14 +41,27 @@ def main():
     parser.add_argument('--optimization-sha256', required=True)
     parser.add_argument('--kind', choices=('dh', 'mpc'), default='dh')
     parser.add_argument('--record-index', type=int, default=-1)
+    parser.add_argument('--dh-result', type=Path,
+                        help='for MPC: replace recorded DH parent with a matching historical DH result')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         parser.error('output already exists; choose a new path')
+    if args.dh_result and args.kind != 'mpc':
+        parser.error('--dh-result requires --kind mpc')
     with sqlite3.connect(args.journal.resolve().as_uri()+'?mode=ro', uri=True) as db:
         rows = db.execute('SELECT record FROM handoffs ORDER BY rowid').fetchall()
     record = json.loads(rows[args.record_index][0])
     config = json.loads(args.config.read_text())
+    if args.dh_result:
+        parent = json.loads(args.dh_result.read_text())
+        if parent['image'] != args.image:
+            parser.error('DH/MPC chain must use the same pinned image')
+        if parent['request']['config_revision'] != digest(config):
+            parser.error('DH/MPC chain must use the same frozen configuration')
+        if parent['request']['optimization_sha256'] != args.optimization_sha256:
+            parser.error('DH/MPC chain must use the same pinned solver source')
+        record = build_chained_handoff(record, parent)
     request = prepare_request(record, config, kind=args.kind,
                               optimization_sha256=args.optimization_sha256)
     with tempfile.TemporaryDirectory(prefix='energy-solve-replay-') as workspace:
@@ -75,6 +89,8 @@ def main():
     artifact = {'schema': 1, 'mode': 'historical_solver_replay',
                 'publication_authorized': False, 'image': args.image,
                 'request': request, 'result': result, 'summary': forecast_summary(request, frame)}
+    if args.dh_result:
+        artifact['chained_handoff'] = record
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(artifact, indent=2, allow_nan=False)+'\n')
     print(json.dumps({'output': str(args.output), 'status': result['status'],

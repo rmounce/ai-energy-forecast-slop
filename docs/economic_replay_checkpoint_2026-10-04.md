@@ -18,7 +18,7 @@ ranking terminal-policy, net-energy and APF-tail changes. No production change.
 | Battery | 40 kWh, 10 kW, 0.95 charge/discharge efficiencies | Runtime 40.3 kWh; 0.99 battery efficiencies plus separate 0.95 inverter conversions; 9.98 kW AC inverter limits | Model DC/AC losses and limits consistently |
 | Optimisation penalties | $0.05/kWh throughput default | Runtime discharge weight 0.04, charge 0; inverter stress enabled | Match objective; report cashflow and assumed wear separately |
 | Strategic DH | Price-only 72h solve; optional exact terminal constraint already implemented | Load, PV, tariffs, hybrid inverter and recorded exact terminal target | Feed causal site forecasts into strategic solve |
-| Forecast inputs | `netload_tariffed` defaults to realised load/PV; logged load alternatives available | Production uses forecast load/PV with HWC in load | Label oracle inputs; record forecast coverage and fallback use |
+| Forecast inputs | `netload_tariffed` defaults to actuals-file load/PV; logged load alternatives available; recent PV series is a Solcast proxy | Production uses forecast load/PV with HWC in load | Verify target provenance; label oracle/proxy inputs and fallback use |
 | State feedback | Re-solves from simulated current state | DH persisted anchor/offset, signed deviation; MPC positive lock-in and full-SoC guard | Reproduce current [SoC policy](production_soc_policy.md) over successive solves |
 | Delivered action | Simulated first-step dispatch | Device limits, execution modes, curtailment/top balancing | Compare planned and delivered power before attributing forecast loss |
 | Data window | Historical comparisons and exports predate current policy/post-PEC conditions | Fresh forecast logs exist; matched evaluation exports need refresh | Freeze causal origins, actuals, tariff/config lineage and missing-data exclusions |
@@ -40,8 +40,9 @@ Separate historical core-solver runner; [isolation contract](energy_pipeline_sol
 - MPC: 168 five-minute rows, Optimal, 1.20s; initial SoC 48.44%, exact final 83.82%.
 - Both pass input, tariff, power-balance, grid/inverter-limit and SoC/end-point checks.
   `SOC_opt` is end-of-interval, `P_batt` positive means DC discharge.
-- Independent recorded payloads: MPC still uses its recorded DH parent. Chained new DH → MPC
-  projection and production feedback are not yet implemented.
+- Initial rehearsal used independent recorded payloads. Follow-up [historical DH → MPC chain](energy_pipeline_solver_chain.md)
+  now replaces the DH parent, matches installed formatter/HA arithmetic and solves Optimal.
+  Multi-cycle feedback and fresh-parent admission remain unverified.
 - No realised settlement comparison, loss ranking or savings claim yet. No live admission.
 - Validation: 172 energy-pipeline tests pass outside sandbox; restricted sandbox stalls existing
   thread-to-asyncio wakeups. Replay/result-contract subset: 35 pass inside sandbox.
@@ -63,11 +64,37 @@ Use `--kind mpc` for recorded MPC; output must not already exist. Config require
 Output includes full request/result identities, physical outputs, forecast-only cashflow and
 `publication_authorized: false`. It is not an `AcceptedDHSolve` or a control artefact.
 
+## PV target provenance — confirmed live Oct 4
+
+- Read-only `SHOW CONTINUOUS QUERIES`: `cq_pv_raw_to_5m` selects
+  `rp_raw.sensor__power` where `entity_id='solcast_pv_forecast_power_now'`; 30m CQ aggregates it.
+- Seven-day `rp_5m.power_pv_5m` source grouping: one series, entity
+  `solcast_pv_forecast_power_now`, 2015 samples; no measured-generation series in that window.
+- `data/export_parquet.py` exports `rp_30m.power_pv_30m` as `power_pv` in `actuals_sa1.parquet`.
+  Rolling replay consumes that column for PV accounting/forecast inputs. Recent values are estimates,
+  not independent realised PV. Historical ingestion also used other sources; audit windows individually.
+- Separate `rp_raw.sensor__power` / `entity_id='sigen_power_pv_gross'` exists: ~132,700 samples
+  in seven days. Candidate for measured targets; verify units, sign, derivation and curtailment first.
+- Do not alter shared model covariates/CQs as an evaluation fix. Export distinct economic measured
+  power targets, retain source labels; distinguish realised curtailed output from available solar.
+
+Read-only reproduction (retain series tags, not just `get_points()`):
+
+```sql
+SHOW CONTINUOUS QUERIES;
+SELECT count(mean_value), last(mean_value) FROM "rp_5m"."power_pv_5m"
+WHERE time > now()-7d GROUP BY entity_id, source_metadata_id;
+SELECT count(value), last(value) FROM "rp_raw"."sensor__power"
+WHERE time > now()-7d AND "entity_id" = 'sigen_power_pv_gross' GROUP BY entity_id;
+```
+
 ## Next bounded work
 
-1. Verify end-of-interval DH projection against HA, then chained DH/MPC anchor/offset/lock-in.
+1. Historical one-cycle projection/chain completed. Preserve it while auditing multi-cycle feedback;
+   do not require a production cutover to conduct economic experiments.
 2. Freeze a recent matched event/quiet-day manifest: as-issued APF/tail/load/PV/HWC, current
-   tariff and config, actual price/load/PV/SoC, delivered battery/grid power. Record gaps explicitly.
+   tariff and config, actual price/load/PV/SoC, delivered battery/grid power. Correct PV provenance
+   first; use measured gross site load plus separately identified HWC/base load. Record gaps explicitly.
 3. Reuse rolling evaluator/reporting; compare fast replay with core solver on a small set of origins
    before a multi-day run. Keep oracle inputs out of the baseline.
 4. Attribute realised loss/headroom to execution, state policy, PV, load/HWC and price horizon.
