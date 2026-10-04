@@ -177,3 +177,6 @@ Solver isolation audit: [installed side effects/result contract](energy_pipeline
 Live wrappers write shared state even with saving/posts disabled; direct-core disposable worker
 implemented for historical evidence only. [Economic replay checkpoint](economic_replay_checkpoint_2026-10-04.md)
 records policy/input/physical gaps before realised-loss attribution.
+Separate [measured economic targets](measured_economic_actuals_2026-10-04.md) now exported for
+two completed days with causal forecast windows. Extend matched periods and verify settlement/APF
+lineage before financial ranking; this evaluation work does not require orchestration cutover.

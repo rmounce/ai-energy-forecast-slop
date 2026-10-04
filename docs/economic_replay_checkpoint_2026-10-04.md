@@ -90,9 +90,14 @@ WHERE time > now()-7d AND "entity_id" = 'sigen_power_pv_gross' GROUP BY entity_i
 
 ## Next bounded work
 
+Measured target milestone: [separate two-day export and causal load/price audit](measured_economic_actuals_2026-10-04.md).
+576 complete grid/load/battery intervals; curtailment context retained, PV gaps explicit. Fresh p65
+coverage 88–95% on 96 targets supports a calibration experiment; no savings/quantile promotion claim.
+
 1. Historical one-cycle projection/chain completed. Preserve it while auditing multi-cycle feedback;
    do not require a production cutover to conduct economic experiments.
-2. Freeze a recent matched event/quiet-day manifest: as-issued APF/tail/load/PV/HWC, current
+2. Two-day measured pilot and causal log windows frozen. Extend to recent matched event/quiet
+   manifest: as-issued APF/tail/load/PV/HWC, current
    tariff and config, actual price/load/PV/SoC, delivered battery/grid power. Correct PV provenance
    first; use measured gross site load plus separately identified HWC/base load. Record gaps explicitly.
 3. Reuse rolling evaluator/reporting; compare fast replay with core solver on a small set of origins

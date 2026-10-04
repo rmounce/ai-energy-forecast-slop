@@ -55,6 +55,11 @@ Separate raw `sigen_power_pv_gross` telemetry exists (~132,700 points/7d); valid
 curtailment before using as an economic target. Preserve existing model covariates; export measured
 targets separately. [Queries and implications](economic_replay_checkpoint_2026-10-04.md).
 
+[Measured economic export](measured_economic_actuals_2026-10-04.md) now freezes separate raw
+Sigenergy/site/base-load/SoC targets and curtailment context. Installed gross PV sums strings 1/2;
+signs/units checked with recorded balances. Unchanged zero states cause conservative hold gaps;
+do not relabel a filled proxy as measured output. Separate HWC component attribution still pending.
+
 Forecast/export code prefers `power_load_without_deferrable_30m`. Where that newer series is
 missing, it falls back to `power_load_30m` minus `power_dump_load_30m` so older history remains
 usable.

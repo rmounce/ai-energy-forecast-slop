@@ -272,3 +272,8 @@ Both recorded horizons solved Optimal and passed physical checks. This establish
 one-cycle historical DH→MPC handoff is now verified; multi-cycle replay and realised loss attribution
 remain outstanding. Live PV source audit found recent `power_pv` actuals-export values are Solcast
 estimates. Establish independent measured PV targets before assessing PV accuracy/economic headroom.
+
+[Measured target pilot](measured_economic_actuals_2026-10-04.md) now supplies a separate two-day
+dataset and causal forecast-window snapshots. Short-window p65 coverage is 88–95%, current-PV
+estimate/delivered ratio 0.904 on strict measured-mode samples. Supports cheap calibration trials;
+larger matched windows and dispatch/settlement evidence still needed before ranking realised gains.

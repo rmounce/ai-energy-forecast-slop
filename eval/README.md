@@ -5,6 +5,11 @@ DH→MPC chain](../docs/economic_replay_checkpoint_2026-10-04.md) now verified. 
 in the actuals export is a Solcast estimate, not measured generation. Correct target provenance and
 current state/physical policy before treating old replay PnL as realised savings evidence.
 
+Independent telemetry: `export_measured_actuals.py` → new ignored dataset/manifest;
+`audit_measured_actuals.py` → coverage, balance/tracking and causal load/price windows.
+[Contract, commands and Oct 4 evidence](../docs/measured_economic_actuals_2026-10-04.md).
+Time-weighted raw samples; bounded holds, no gap filling; current Solcast proxy kept separate.
+
 ## Price Source Contracts
 
 Before interpreting price-model results, check `eval/price_source_contracts.py`
