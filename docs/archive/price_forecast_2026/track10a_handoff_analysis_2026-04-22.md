@@ -4,12 +4,12 @@ Purpose: record what changed when the strategic `14h` SoC handoff was added to t
 Track 10A rolling MPC eval, and what did **not** change.
 
 Related artifacts:
-- [Window B pre-handoff summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_summary_vs_baseline.csv:1)
-- [Window B handoff exact summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_summary_vs_baseline.csv:1)
-- [Window B handoff floor summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_floor_summary_vs_baseline.csv:1)
-- [Window B pre-handoff behavior](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_behavior_prices_behavior_summary_vs_baseline.csv:1)
-- [Window B handoff exact behavior](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_behavior_summary_vs_baseline.csv:1)
-- [Window A handoff exact summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_windowA_handoff_exact_summary_vs_baseline.csv:1)
+- [Window B pre-handoff summary](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_summary_vs_baseline.csv)
+- [Window B handoff exact summary](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_summary_vs_baseline.csv)
+- [Window B handoff floor summary](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_floor_summary_vs_baseline.csv)
+- [Window B pre-handoff behavior](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_behavior_prices_behavior_summary_vs_baseline.csv)
+- [Window B handoff exact behavior](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_behavior_summary_vs_baseline.csv)
+- [Window A handoff exact summary](../../../eval/results/rolling_mpc_eval_tracka_windowA_handoff_exact_summary_vs_baseline.csv)
 
 ---
 

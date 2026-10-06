@@ -18,11 +18,20 @@ import pytz
 import pandas as pd
 from influxdb import InfluxDBClient
 
-INFLUXDB_HOST = 'localhost'
-INFLUXDB_PORT = 8086
-INFLUXDB_USERNAME = 'user'
-INFLUXDB_PASSWORD = 'REDACTED'
-INFLUXDB_DATABASE = 'hass'
+# Use the shared config and ignored config.secrets.yaml overlay.
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from config_utils import load_config
+
+INFLUX_CONFIG = load_config(ROOT / "config.yaml")["influxdb"]
+INFLUXDB_HOST = INFLUX_CONFIG["host"]
+INFLUXDB_PORT = INFLUX_CONFIG["port"]
+INFLUXDB_USERNAME = INFLUX_CONFIG["username"]
+INFLUXDB_PASSWORD = INFLUX_CONFIG["password"]
+INFLUXDB_DATABASE = INFLUX_CONFIG["database"]
 
 HEATER_SWITCHES = ['snf15_snf15', 'snf18_snf18', 'snf19_snf19']
 WATTS_PER_HEATER = 2000

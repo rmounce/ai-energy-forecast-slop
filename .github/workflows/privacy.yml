@@ -1,0 +1,15 @@
+name: Privacy scan
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan all reachable history
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git --config=/repo/.gitleaks.toml --redact --log-opts=--all /repo

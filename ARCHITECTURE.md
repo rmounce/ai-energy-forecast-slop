@@ -93,7 +93,7 @@ Seven pairs of `.service` + `.timer` units plus one event-driven daemon drive th
 | `ai-energy-sevendayoutlook.timer` | Every 30 min (`:15` and `:45`) | `ingest/ingest-sevendayoutlook.py --fetch` |
 | `ai-energy-p5min.timer` | Every 5 min (`:02/:07/:12/…/:57`) | `ingest/ingest-p5min.py --fetch` — AEMO P5MIN ingest only; tactical Tier 1 publish archived 2026-06-15 |
 
-All units run as systemd user units (`systemctl --user`), `WorkingDirectory=~/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority). Linger is enabled so units run without an active login session.
+All units run as systemd user units (`systemctl --user`), `WorkingDirectory=%h/src/ai-energy-forecast-slop`, activate `.venv` before running. Training is `Nice=19` (lowest CPU priority). Linger is enabled so units run without an active login session.
 
 ---
 

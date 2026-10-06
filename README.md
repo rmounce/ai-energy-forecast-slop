@@ -234,3 +234,10 @@ finds conditional ranking gaps across four clustered windows; no site savings or
 [Spaced causal APF correction](docs/apf_causal_correction_2026-10-05.md) changes only one packet
 choice; no broad benefit. [Controlled load information](docs/load_information_value_2026-10-05.md)
 matters at scarce reserves, while ample stock/replenishment makes corrections mostly irrelevant.
+
+## Development checks
+
+Install the development hook with `uvx pre-commit install`, then run
+`uvx pre-commit run --all-files`. Gitleaks checks staged changes using the
+repository configuration; CI also scans Git history. Keep credentials in
+ignored local configuration.

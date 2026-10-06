@@ -4,7 +4,7 @@
     "n_samples": 1081,
     "val_start": "2026-01-13T14:00:00",
     "val_end": "2026-04-13T14:00:00",
-    "checkpoint": "~/src/ai-energy-forecast-slop/models/tft_load/checkpoint_best.pt",
+    "checkpoint": "models/tft_load/checkpoint_best.pt",
     "q50_mae": {
       "0-24h": 235.29551696777344,
       "24-48h": 234.3732147216797,

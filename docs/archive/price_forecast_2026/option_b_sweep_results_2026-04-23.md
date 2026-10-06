@@ -9,10 +9,10 @@ Related:
 - [eval/rolling_mpc_eval.py](../eval/rolling_mpc_eval.py)
 
 Artifacts:
-- [blend 0.25 summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend025_q90_summary_vs_baseline.csv:1)
-- [blend 0.50 summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend050_q90_summary_vs_baseline.csv:1)
-- [blend 0.75 summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend075_q90_summary_vs_baseline.csv:1)
-- [blend 1.00 summary](~/src/ai-energy-forecast-slop/eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend100_q90_summary_vs_baseline.csv:1)
+- [blend 0.25 summary](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend025_q90_summary_vs_baseline.csv)
+- [blend 0.50 summary](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend050_q90_summary_vs_baseline.csv)
+- [blend 0.75 summary](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend075_q90_summary_vs_baseline.csv)
+- [blend 1.00 summary](../../../eval/results/rolling_mpc_eval_tracka_followup_6week_handoff_exact_blend100_q90_summary_vs_baseline.csv)
 
 ---
 

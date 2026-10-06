@@ -1,0 +1,21 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "private-os-handle"
+description = "Private OS handle must not enter public repository content"
+regex = '''(?i)\x73\x61\x6c\x74\x73\x70\x6f\x72\x6b'''
+
+[[rules]]
+id = "personal-home-path"
+description = "Use relative paths, HOME or systemd %h"
+regex = '''/(?:home|Users)/[^/\s"'<>]+'''
+
+[[rules]]
+id = "literal-influx-password"
+description = "InfluxDB passwords belong in ignored secrets configuration"
+regex = '''(?i)INFLUXDB_PASSWORD\s*=\s*["']([^"'\r\n]+)["']'''
+secretGroup = 1
+[[rules.allowlists]]
+regexTarget = "secret"
+regexes = ['''^REDACTED$''']

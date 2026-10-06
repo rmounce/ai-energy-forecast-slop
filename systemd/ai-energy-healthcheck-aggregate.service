@@ -5,8 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=energy-user
-Group=energy-user
 WorkingDirectory=%h/src/ai-energy-forecast-slop
 EnvironmentFile=%h/src/ai-energy-forecast-slop/.env
 ExecStart=%h/src/ai-energy-forecast-slop/.venv/bin/python %h/src/ai-energy-forecast-slop/healthchecks.py aggregate

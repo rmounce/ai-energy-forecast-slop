@@ -12,7 +12,7 @@
 #     'bash $HOME/src/ai-energy-forecast-slop/eval/results/run_loadsrc_B_v4_calibrated.sh'
 set -uo pipefail
 
-cd $HOME/src/ai-energy-forecast-slop
+cd "$HOME/src/ai-energy-forecast-slop"
 LOG="eval/results/loadsrc_B_v4_cal_$(date -u +%Y%m%dT%H%M%SZ).log"
 EXITCODE="${LOG%.log}.exitcode"
 
