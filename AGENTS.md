@@ -12,14 +12,20 @@
 
 ## Project Documentation
 
-- Keep `docs/`, `README.md`, `ARCHITECTURE.md` current.
-- Behaviour change affecting docs: update docs in same work.
+- Update `docs/`, `README.md`, and `ARCHITECTURE.md` when needed to explain durable
+  behaviour or correct misleading guidance. Not every change needs a documentation update.
+- Public documentation describes software behaviour and reusable setup instructions.
+  Keep private operational records, audit findings, credential administration, sensitive incident
+  details and private recovery records in local-only notes unless publication is explicitly requested.
+- Do not add personal OS usernames, machine hostnames or private infrastructure domains
+  to tracked content. Prefer relative paths, `$HOME`, systemd `%h` or neutral examples.
 - Caveman compression: short bullets, concrete facts, decisions, commands, paths, status.
-- Frequently referenced docs: keep compressed summary current.
+- Maintain frequently referenced summaries when substantive behaviour changes.
 
 ## External Systems
 
-- Document confirmed black-box behaviour promptly.
+- Record confirmed black-box behaviour when useful for future work; choose public
+  documentation or private local notes according to the information involved.
 - Cover device/API quirks, HA entity lifecycle, mode/setpoint semantics, operational limits.
 - Record concrete facts: date/context, command/service, observed state, remaining uncertainty.
 - Home Assistant: prefer domain hot reloads through the HA API whenever supported; restart
@@ -35,7 +41,7 @@
 
 - Session start: check plan files against memory files.
 - Conflict: memory wins.
-- Plan changed or rejected: update plan file immediately.
+- Update active plans when decisions change; keep routine session bookkeeping local.
 
 ## Infrastructure Notes
 
