@@ -1,6 +1,8 @@
 alias: Battery EMS Control Based on EMHASS Forecasts
 description: ""
 triggers:
+  - trigger: state
+    entity_id: sensor.sigen_plant_grid_connection_status
   - minutes: /5
     trigger: time_pattern
 actions:
@@ -565,4 +567,5 @@ actions:
         action: script.configure_sigen_ems_state
 trace:
   stored_traces: 10
-mode: single
+mode: queued
+max: 10

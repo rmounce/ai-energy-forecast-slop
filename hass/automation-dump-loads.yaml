@@ -1,0 +1,149 @@
+id: '1773472044412'
+alias: Amber negative price dump loads
+description: Controls two fan and two oil-heater dump loads during negative prices.
+  Fan heaters have admission priority; oil heaters are shed first. Each pair uses
+  least-recently-changed order for round-robin wear and heat distribution.
+triggers:
+- trigger: state
+  entity_id: sensor.sigen_plant_grid_connection_status
+- trigger: state
+  entity_id: sensor.amber_effective_general_price
+- trigger: state
+  entity_id:
+  - sensor.planned_pv_curtailment_remaining_today
+  - binary_sensor.curtailment_threshold_order_valid
+  - input_number.curtailment_dump_load_threshold
+- trigger: numeric_state
+  entity_id: sensor.sigen_plant_grid_import_power
+  below: 14500
+- trigger: numeric_state
+  entity_id: sensor.sigen_plant_grid_import_power
+  above: 14500
+- trigger: state
+  entity_id:
+  - switch.snf15_snf15
+  - switch.snf18_snf18
+  - switch.powerwaster_3_athom_c3_d97c
+  - switch.powerwaster_4_athom_c3_dfb0
+  for:
+    seconds: 20
+- trigger: time_pattern
+  minutes: /1
+actions:
+- choose:
+  - conditions:
+    - condition: template
+      value_template: '{{ not is_state(''sensor.sigen_plant_grid_connection_status'',
+        ''On Grid'') }}'
+    sequence:
+    - action: switch.turn_off
+      target:
+        entity_id:
+        - switch.snf15_snf15
+        - switch.snf18_snf18
+        - switch.powerwaster_3_athom_c3_d97c
+        - switch.powerwaster_4_athom_c3_dfb0
+  - conditions:
+    - condition: template
+      value_template: '{{ price >= 0 }}'
+    sequence:
+    - repeat:
+        for_each: '{{ heaters_on_shed_order }}'
+        sequence:
+        - action: switch.turn_off
+          target:
+            entity_id: '{{ repeat.item }}'
+        - delay:
+            seconds: 1
+  - conditions:
+    - condition: template
+      value_template: "{{ not is_state('binary_sensor.curtailment_threshold_order_valid',\
+        \ 'on')\n   or not has_value('sensor.planned_pv_curtailment_remaining_today')\
+        \ }}"
+    sequence:
+    - repeat:
+        for_each: '{{ heaters_on_shed_order }}'
+        sequence:
+        - action: switch.turn_off
+          target:
+            entity_id: '{{ repeat.item }}'
+        - delay:
+            seconds: 1
+  - conditions:
+    - condition: template
+      value_template: '{{ price < 0 }}'
+    - condition: template
+      value_template: "{{ is_state('binary_sensor.curtailment_threshold_order_valid',\
+        \ 'on')\n   and planned_pv_curtailment_kwh > pv_curtailment_kwh_threshold\
+        \ }}"
+    sequence:
+    - repeat:
+        for_each: '{{ heaters_off_admission_order }}'
+        sequence:
+        - action: switch.turn_on
+          target:
+            entity_id: '{{ repeat.item }}'
+        - delay:
+            seconds: 1
+  - conditions:
+    - condition: template
+      value_template: '{{ price < 0 }}'
+    - condition: template
+      value_template: "{{ is_state('binary_sensor.curtailment_threshold_order_valid',\
+        \ 'on')\n   and planned_pv_curtailment_kwh <= pv_curtailment_kwh_threshold\
+        \ }}"
+    - condition: template
+      value_template: '{{ now() - as_datetime(last_heater_change) > timedelta(seconds=15)
+        }}'
+    sequence:
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ grid_import > grid_import_ceiling }}'
+        - condition: template
+          value_template: '{{ heaters_on_shed_order | length > 0 }}'
+        sequence:
+        - action: switch.turn_off
+          target:
+            entity_id: '{{ heaters_on_shed_order[0] }}'
+      - conditions:
+        - condition: template
+          value_template: '{{ heaters_off_admission_order | length > 0 }}'
+        - condition: template
+          value_template: '{{ grid_import + next_heater_assumed_power <= grid_import_ceiling
+            }}'
+        sequence:
+        - action: switch.turn_on
+          target:
+            entity_id: '{{ heaters_off_admission_order[0] }}'
+mode: restart
+variables:
+  price: '{{ states(''sensor.amber_effective_general_price'') | float(0) }}'
+  grid_import: '{{ states(''sensor.sigen_plant_grid_import_power'') | float(0) }}'
+  grid_import_ceiling: 14500
+  pv_curtailment_kwh_threshold: '{{ states(''input_number.curtailment_dump_load_threshold'')
+    | float(''unknown'') }}'
+  planned_pv_curtailment_kwh: '{{ states(''sensor.planned_pv_curtailment_remaining_today'')
+    | float(''unknown'') }}'
+  fan_heaters_on: "{{ expand('switch.snf15_snf15', 'switch.snf18_snf18')\n   | selectattr('state',\
+    \ 'eq', 'on') | sort(attribute='last_changed')\n   | map(attribute='entity_id')\
+    \ | list }}"
+  fan_heaters_off: "{{ expand('switch.snf15_snf15', 'switch.snf18_snf18')\n   | selectattr('state',\
+    \ 'eq', 'off') | sort(attribute='last_changed')\n   | map(attribute='entity_id')\
+    \ | list }}"
+  oil_heaters_on: "{{ expand('switch.powerwaster_3_athom_c3_d97c',\n          'switch.powerwaster_4_athom_c3_dfb0')\n\
+    \   | selectattr('state', 'eq', 'on') | sort(attribute='last_changed')\n   | map(attribute='entity_id')\
+    \ | list }}"
+  oil_heaters_off: "{{ expand('switch.powerwaster_3_athom_c3_d97c',\n          'switch.powerwaster_4_athom_c3_dfb0')\n\
+    \   | selectattr('state', 'eq', 'off') | sort(attribute='last_changed')\n   |\
+    \ map(attribute='entity_id') | list }}"
+  heaters_on_shed_order: '{{ oil_heaters_on + fan_heaters_on }}'
+  heaters_off_admission_order: '{{ fan_heaters_off + oil_heaters_off }}'
+  next_heater_assumed_power: "{{ 2000 if heaters_off_admission_order | length > 0\n\
+    \           and heaters_off_admission_order[0] in fan_heaters_off\n   else 2250\
+    \ }}"
+  last_heater_change: "{{ expand('switch.snf15_snf15', 'switch.snf18_snf18',\n   \
+    \       'switch.powerwaster_3_athom_c3_d97c',\n          'switch.powerwaster_4_athom_c3_dfb0')\n\
+    \   | map(attribute='last_changed') | max }}"
+trace:
+  stored_traces: 10

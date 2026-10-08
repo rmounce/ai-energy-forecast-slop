@@ -1,0 +1,74 @@
+--- actrl.py
++++ actrl.py
+@@ -905,39 +905,41 @@
+         lookahead_intervals = 12
+         grid_surplus = 0  # Default to 0 surplus
+ 
+-        try:
+-            # Fetch the forecast data from the EMHASS sensor attribute
+-            forecast_list = self.get_state(
+-                "sensor.mpc_p_pv_curtailment", attribute="forecasts"
+-            )
+-
+-            if forecast_list and isinstance(forecast_list, list):
+-                # Get the curtailment values for the next hour (first 12 elements)
+-                curtailment_forecasts = [
+-                    float(item.get("mpc_p_pv_curtailment", 0))
+-                    for item in forecast_list[:lookahead_intervals]
+-                ]
+-
+-                # Calculate the average curtailment over the lookahead window
+-                if curtailment_forecasts:
+-                    grid_surplus = sum(curtailment_forecasts) / len(
+-                        curtailment_forecasts
+-                    )
++        # Off-grid or unavailable grid telemetry: wind down using normal decay.
++        if self.get_state('sensor.sigen_plant_grid_connection_status') == 'On Grid':
++            try:
++                # Fetch the forecast data from the EMHASS sensor attribute
++                forecast_list = self.get_state(
++                    "sensor.mpc_p_pv_curtailment", attribute="forecasts"
++                )
++
++                if forecast_list and isinstance(forecast_list, list):
++                    # Get the curtailment values for the next hour (first 12 elements)
++                    curtailment_forecasts = [
++                        float(item.get("mpc_p_pv_curtailment", 0))
++                        for item in forecast_list[:lookahead_intervals]
++                    ]
++
++                    # Calculate the average curtailment over the lookahead window
++                    if curtailment_forecasts:
++                        grid_surplus = sum(curtailment_forecasts) / len(
++                            curtailment_forecasts
++                        )
++                        self.log(
++                            f"EMHASS Forecast: Avg curtailment of {grid_surplus:.2f}W over the next hour.",
++                            level="DEBUG",
++                        )
++                    else:
++                        self.log("EMHASS forecast list was empty, assuming 0 surplus.")
++
++                else:
+                     self.log(
+-                        f"EMHASS Forecast: Avg curtailment of {grid_surplus:.2f}W over the next hour.",
+-                        level="DEBUG",
++                        "Warning: Could not retrieve valid EMHASS forecast data for curtailment."
+                     )
+-                else:
+-                    self.log("EMHASS forecast list was empty, assuming 0 surplus.")
+-
+-            else:
+-                self.log(
+-                    "Warning: Could not retrieve valid EMHASS forecast data for curtailment."
+-                )
+ 
+-        except Exception as e:
+-            self.log(f"Error processing EMHASS forecast: {e}", level="ERROR")
+-            grid_surplus = 0  # Ensure we fail safe
++            except Exception as e:
++                self.log(f"Error processing EMHASS forecast: {e}", level="ERROR")
++                grid_surplus = 0  # Ensure we fail safe
+ 
+         # The rest of the integral logic remains the same, but now fed by the forecast
+         grid_surplus_upper_threshold = grid_surplus_lower_threshold + (

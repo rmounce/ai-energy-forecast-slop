@@ -11,6 +11,9 @@
 ## Controller
 
 - HA automation: `automation.amber_negative_price_dump_loads` (ID `1773472044412`).
+- Any grid status other than `On Grid`: turn all four loads off in one service call.
+- Grid-status changes trigger immediate reevaluation; restart mode interrupts an admission sequence.
+- Tracked automation: `hass/automation-dump-loads.yaml`.
 - Non-negative effective import price: turn all loads off.
 - Invalid curtailment policy or unavailable planned curtailment: turn all loads off.
 - Negative price plus planned curtailment above the aggressive threshold: turn all available loads on.
